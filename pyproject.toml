@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dqlite-dbapi"
-version = "0.1.0"
+version = "0.1.1"
 description = "PEP 249 (DB-API 2.0) compliant interface for dqlite"
 readme = "README.md"
 requires-python = ">=3.13"
