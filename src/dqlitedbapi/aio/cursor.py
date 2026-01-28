@@ -64,8 +64,11 @@ class AsyncCursor:
 
         params = list(parameters) if parameters else None
 
-        # Determine if this is a SELECT query
-        is_query = operation.strip().upper().startswith(("SELECT", "PRAGMA", "EXPLAIN"))
+        # Determine if this is a query that returns rows
+        normalized = operation.strip().upper()
+        is_query = normalized.startswith(("SELECT", "PRAGMA", "EXPLAIN")) or (
+            " RETURNING " in normalized or normalized.endswith(" RETURNING")
+        )
 
         if is_query:
             assert conn._protocol is not None and conn._db_id is not None
