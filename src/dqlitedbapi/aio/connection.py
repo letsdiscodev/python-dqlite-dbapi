@@ -30,24 +30,28 @@ class AsyncConnection:
         self._async_conn: DqliteConnection | None = None
         self._closed = False
 
-    async def connect(self) -> None:
-        """Establish the connection."""
+    async def _ensure_connection(self) -> DqliteConnection:
+        """Ensure the underlying connection is established."""
         if self._closed:
             raise InterfaceError("Connection is closed")
 
-        if self._async_conn is not None:
-            return
+        if self._async_conn is None:
+            self._async_conn = DqliteConnection(
+                self._address,
+                database=self._database,
+                timeout=self._timeout,
+            )
+            try:
+                await self._async_conn.connect()
+            except Exception as e:
+                self._async_conn = None
+                raise OperationalError(f"Failed to connect: {e}") from e
 
-        self._async_conn = DqliteConnection(
-            self._address,
-            database=self._database,
-            timeout=self._timeout,
-        )
-        try:
-            await self._async_conn.connect()
-        except Exception as e:
-            self._async_conn = None
-            raise OperationalError(f"Failed to connect: {e}") from e
+        return self._async_conn
+
+    async def connect(self) -> None:
+        """Establish the connection."""
+        await self._ensure_connection()
 
     async def close(self) -> None:
         """Close the connection."""
@@ -72,8 +76,12 @@ class AsyncConnection:
         if self._async_conn is not None:
             await self._async_conn.execute("ROLLBACK")
 
-    async def cursor(self) -> AsyncCursor:
-        """Return a new AsyncCursor object."""
+    def cursor(self) -> AsyncCursor:
+        """Return a new AsyncCursor object.
+
+        This is intentionally sync — SQLAlchemy calls cursor() from
+        sync context within its greenlet-based async adapter.
+        """
         if self._closed:
             raise InterfaceError("Connection is closed")
         return AsyncCursor(self)

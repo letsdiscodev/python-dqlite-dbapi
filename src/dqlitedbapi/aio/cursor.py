@@ -58,10 +58,7 @@ class AsyncCursor:
         """Execute a database operation (query or command)."""
         self._check_closed()
 
-        conn = self._connection._async_conn
-        if conn is None:
-            raise InterfaceError("Connection is not open")
-
+        conn = await self._connection._ensure_connection()
         params = list(parameters) if parameters else None
 
         # Determine if this is a query that returns rows
