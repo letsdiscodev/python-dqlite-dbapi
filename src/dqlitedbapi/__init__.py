@@ -76,7 +76,7 @@ __all__ = [
     "ROWID",
 ]
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 
 def connect(
