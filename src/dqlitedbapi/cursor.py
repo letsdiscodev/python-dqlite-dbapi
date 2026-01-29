@@ -1,6 +1,5 @@
 """PEP 249 Cursor implementation for dqlite."""
 
-import asyncio
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -62,16 +61,11 @@ class Cursor:
         if self._closed:
             raise InterfaceError("Cursor is closed")
 
-    def _get_loop(self) -> asyncio.AbstractEventLoop:
-        # Use the connection's event loop for consistency
-        return self._connection._get_loop()
-
     def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> "Cursor":
         """Execute a database operation (query or command)."""
         self._check_closed()
 
-        loop = self._get_loop()
-        loop.run_until_complete(self._execute_async(operation, parameters))
+        self._connection._run_sync(self._execute_async(operation, parameters))
         return self
 
     async def _execute_async(self, operation: str, parameters: Sequence[Any] | None = None) -> None:
@@ -104,8 +98,7 @@ class Cursor:
         """Execute a database operation multiple times."""
         self._check_closed()
 
-        loop = self._get_loop()
-        loop.run_until_complete(self._executemany_async(operation, seq_of_parameters))
+        self._connection._run_sync(self._executemany_async(operation, seq_of_parameters))
         return self
 
     async def _executemany_async(

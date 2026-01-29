@@ -3,7 +3,19 @@
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 
+# PEP 249 module-level attributes (required by SQLAlchemy dialect initialization)
+apilevel = "2.0"
+threadsafety = 1  # Threads may share the module, but not connections
+paramstyle = "qmark"  # Question mark style: WHERE name=?
+
+# SQLite compatibility attributes (for SQLAlchemy)
+sqlite_version_info = (3, 35, 0)
+sqlite_version = "3.35.0"
+
 __all__ = [
+    "apilevel",
+    "threadsafety",
+    "paramstyle",
     "aconnect",
     "AsyncConnection",
     "AsyncCursor",
