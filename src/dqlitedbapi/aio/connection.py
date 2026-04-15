@@ -1,5 +1,6 @@
 """Async connection implementation for dqlite."""
 
+import asyncio
 from typing import Any
 
 from dqliteclient import DqliteConnection
@@ -29,23 +30,32 @@ class AsyncConnection:
         self._timeout = timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
+        self._connect_lock = asyncio.Lock()
 
     async def _ensure_connection(self) -> DqliteConnection:
         """Ensure the underlying connection is established."""
         if self._closed:
             raise InterfaceError("Connection is closed")
 
-        if self._async_conn is None:
-            self._async_conn = DqliteConnection(
+        if self._async_conn is not None:
+            return self._async_conn
+
+        async with self._connect_lock:
+            # Double-check after acquiring lock
+            if self._async_conn is not None:
+                return self._async_conn
+
+            conn = DqliteConnection(
                 self._address,
                 database=self._database,
                 timeout=self._timeout,
             )
             try:
-                await self._async_conn.connect()
+                await conn.connect()
             except Exception as e:
-                self._async_conn = None
                 raise OperationalError(f"Failed to connect: {e}") from e
+
+            self._async_conn = conn
 
         return self._async_conn
 

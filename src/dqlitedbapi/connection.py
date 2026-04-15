@@ -33,6 +33,7 @@ class Connection:
         self._closed = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        self._loop_lock = threading.Lock()
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         """Ensure a dedicated event loop is running in a background thread.
@@ -40,10 +41,13 @@ class Connection:
         This allows sync methods to work even when called from within
         an already-running async context (e.g. uvicorn).
         """
-        if self._loop is None or self._loop.is_closed():
-            self._loop = asyncio.new_event_loop()
-            self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-            self._thread.start()
+        if self._loop is not None and not self._loop.is_closed():
+            return self._loop
+        with self._loop_lock:
+            if self._loop is None or self._loop.is_closed():
+                self._loop = asyncio.new_event_loop()
+                self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+                self._thread.start()
         return self._loop
 
     def _run_sync(self, coro: Any) -> Any:
@@ -62,16 +66,16 @@ class Connection:
             raise InterfaceError("Connection is closed")
 
         if self._async_conn is None:
-            self._async_conn = DqliteConnection(
+            conn = DqliteConnection(
                 self._address,
                 database=self._database,
                 timeout=self._timeout,
             )
             try:
-                await self._async_conn.connect()
+                await conn.connect()
             except Exception as e:
-                self._async_conn = None
                 raise OperationalError(f"Failed to connect: {e}") from e
+            self._async_conn = conn
 
         return self._async_conn
 
