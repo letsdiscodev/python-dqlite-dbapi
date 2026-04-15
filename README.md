@@ -28,7 +28,7 @@ from dqlitedbapi.aio import aconnect
 
 async def main():
     conn = await aconnect("localhost:9001")
-    cursor = await conn.cursor()
+    cursor = conn.cursor()
     await cursor.execute("SELECT 1")
     print(await cursor.fetchone())
     await conn.close()
