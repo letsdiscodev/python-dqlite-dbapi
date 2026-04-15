@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from dqlitedbapi.exceptions import InterfaceError
+from dqlitedbapi.exceptions import InterfaceError, InternalError
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection
@@ -89,14 +89,16 @@ class AsyncCursor:
         )
 
         if is_query:
-            assert conn._protocol is not None and conn._db_id is not None
+            if conn._protocol is None or conn._db_id is None:
+                raise InternalError("Connection protocol not initialized")
             columns, rows = await conn._protocol.query_sql(conn._db_id, operation, params)
             self._description = [(name, None, None, None, None, None, None) for name in columns]
             self._rows = [tuple(row) for row in rows]
             self._row_index = 0
             self._rowcount = len(rows)
         else:
-            assert conn._protocol is not None and conn._db_id is not None
+            if conn._protocol is None or conn._db_id is None:
+                raise InternalError("Connection protocol not initialized")
             last_id, affected = await conn._protocol.exec_sql(conn._db_id, operation, params)
             self._lastrowid = last_id
             self._rowcount = affected
