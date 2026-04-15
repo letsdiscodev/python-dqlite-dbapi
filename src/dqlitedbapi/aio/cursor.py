@@ -125,11 +125,16 @@ class AsyncCursor:
         self._rowcount = total_affected
         return self
 
+    def _check_result_set(self) -> None:
+        if self._description is None:
+            raise InterfaceError("No result set: execute a query before fetching")
+
     async def fetchone(self) -> tuple[Any, ...] | None:
         """Fetch the next row of a query result set."""
         self._check_closed()
+        self._check_result_set()
 
-        if not self._rows or self._row_index >= len(self._rows):
+        if self._row_index >= len(self._rows):
             return None
 
         row = self._rows[self._row_index]
@@ -139,6 +144,7 @@ class AsyncCursor:
     async def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
         """Fetch the next set of rows of a query result."""
         self._check_closed()
+        self._check_result_set()
 
         if size is None:
             size = self._arraysize
@@ -155,6 +161,7 @@ class AsyncCursor:
     async def fetchall(self) -> list[tuple[Any, ...]]:
         """Fetch all remaining rows of a query result."""
         self._check_closed()
+        self._check_result_set()
 
         result = self._rows[self._row_index :]
         self._row_index = len(self._rows)

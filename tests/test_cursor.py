@@ -43,23 +43,23 @@ class TestCursor:
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             cursor.fetchone()
 
-    def test_fetchone_no_results(self) -> None:
+    def test_fetchone_without_execute_raises(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        result = cursor.fetchone()
-        assert result is None
+        with pytest.raises(InterfaceError, match="No result set"):
+            cursor.fetchone()
 
-    def test_fetchall_no_results(self) -> None:
+    def test_fetchall_without_execute_raises(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        result = cursor.fetchall()
-        assert result == []
+        with pytest.raises(InterfaceError, match="No result set"):
+            cursor.fetchall()
 
-    def test_fetchmany_no_results(self) -> None:
+    def test_fetchmany_without_execute_raises(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        result = cursor.fetchmany(5)
-        assert result == []
+        with pytest.raises(InterfaceError, match="No result set"):
+            cursor.fetchmany(5)
 
     def test_context_manager(self) -> None:
         conn = Connection("localhost:9001")
@@ -71,6 +71,7 @@ class TestCursor:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
         cursor._rows = [(1, "a"), (2, "b"), (3, "c")]
+        cursor._description = [("id", None, None, None, None, None, None)]
 
         results = list(cursor)
         assert results == [(1, "a"), (2, "b"), (3, "c")]
