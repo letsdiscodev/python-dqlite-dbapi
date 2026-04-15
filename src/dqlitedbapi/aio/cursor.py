@@ -59,7 +59,7 @@ class AsyncCursor:
         self._check_closed()
 
         conn = await self._connection._ensure_connection()
-        params = list(parameters) if parameters else None
+        params = list(parameters) if parameters is not None else None
 
         # Determine if this is a query that returns rows
         normalized = operation.strip().upper()

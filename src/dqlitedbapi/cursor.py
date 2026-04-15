@@ -71,7 +71,7 @@ class Cursor:
     async def _execute_async(self, operation: str, parameters: Sequence[Any] | None = None) -> None:
         """Async implementation of execute."""
         conn = await self._connection._get_async_connection()
-        params = list(parameters) if parameters else None
+        params = list(parameters) if parameters is not None else None
 
         # Determine if this is a query that returns rows
         normalized = operation.strip().upper()
