@@ -41,6 +41,7 @@ sqlite_version = "3.35.0"
 
 __all__ = [
     # Module attributes
+    "__version__",
     "apilevel",
     "threadsafety",
     "paramstyle",
