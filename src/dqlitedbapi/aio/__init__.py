@@ -14,6 +14,20 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
     Warning,
 )
+from dqlitedbapi.types import (
+    BINARY,
+    DATETIME,
+    NUMBER,
+    ROWID,
+    STRING,
+    Binary,
+    Date,
+    DateFromTicks,
+    Time,
+    TimeFromTicks,
+    Timestamp,
+    TimestampFromTicks,
+)
 
 # PEP 249 module-level attributes (required by SQLAlchemy dialect initialization)
 apilevel = "2.0"
@@ -46,6 +60,20 @@ __all__ = [
     "InternalError",
     "ProgrammingError",
     "NotSupportedError",
+    # Type constructors
+    "Date",
+    "Time",
+    "Timestamp",
+    "DateFromTicks",
+    "TimeFromTicks",
+    "TimestampFromTicks",
+    "Binary",
+    # Type objects
+    "STRING",
+    "BINARY",
+    "NUMBER",
+    "DATETIME",
+    "ROWID",
 ]
 
 
