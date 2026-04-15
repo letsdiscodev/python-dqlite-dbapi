@@ -1,6 +1,7 @@
 """PEP 249 Connection implementation for dqlite."""
 
 import asyncio
+import contextlib
 import threading
 from typing import Any
 
@@ -85,17 +86,20 @@ class Connection:
 
     def close(self) -> None:
         """Close the connection."""
-        if self._async_conn is not None:
-            self._run_sync(self._async_conn.close())
-            self._async_conn = None
-        if self._loop is not None and not self._loop.is_closed():
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            if self._thread is not None:
-                self._thread.join(timeout=5)
-            self._loop.close()
-            self._loop = None
-            self._thread = None
-        self._closed = True
+        try:
+            if self._async_conn is not None:
+                with contextlib.suppress(Exception):
+                    self._run_sync(self._async_conn.close())
+                self._async_conn = None
+        finally:
+            if self._loop is not None and not self._loop.is_closed():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+                if self._thread is not None:
+                    self._thread.join(timeout=5)
+                self._loop.close()
+                self._loop = None
+                self._thread = None
+            self._closed = True
 
     def commit(self) -> None:
         """Commit any pending transaction."""
