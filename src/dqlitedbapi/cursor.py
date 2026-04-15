@@ -9,6 +9,25 @@ if TYPE_CHECKING:
     from dqlitedbapi.connection import Connection
 
 
+def _strip_leading_comments(sql: str) -> str:
+    """Strip leading SQL comments (-- and /* */) and whitespace."""
+    s = sql.strip()
+    while True:
+        if s.startswith("--"):
+            newline = s.find("\n")
+            if newline == -1:
+                return ""
+            s = s[newline + 1 :].strip()
+        elif s.startswith("/*"):
+            end = s.find("*/")
+            if end == -1:
+                return s
+            s = s[end + 2 :].strip()
+        else:
+            break
+    return s
+
+
 class Cursor:
     """PEP 249 compliant database cursor."""
 
@@ -73,9 +92,11 @@ class Cursor:
         conn = await self._connection._get_async_connection()
         params = list(parameters) if parameters is not None else None
 
-        # Determine if this is a query that returns rows
-        normalized = operation.strip().upper()
-        is_query = normalized.startswith(("SELECT", "PRAGMA", "EXPLAIN")) or (
+        # Determine if this is a query that returns rows.
+        # Note: WITH ... INSERT/UPDATE/DELETE (without RETURNING) will be
+        # misrouted to query_sql. This is a known limitation of the heuristic.
+        normalized = _strip_leading_comments(operation).upper()
+        is_query = normalized.startswith(("SELECT", "PRAGMA", "EXPLAIN", "WITH")) or (
             " RETURNING " in normalized or normalized.endswith(" RETURNING")
         )
 
