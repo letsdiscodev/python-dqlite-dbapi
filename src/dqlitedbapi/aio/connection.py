@@ -100,5 +100,13 @@ class AsyncConnection:
         await self.connect()
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
-        await self.close()
+    async def __aexit__(self, exc_type: type[BaseException] | None, *args: Any) -> None:
+        try:
+            if exc_type is None:
+                await self.commit()
+            else:
+                await self.rollback()
+        except Exception:
+            pass
+        finally:
+            await self.close()

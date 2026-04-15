@@ -128,5 +128,13 @@ class Connection:
     def __enter__(self) -> "Connection":
         return self
 
-    def __exit__(self, *args: Any) -> None:
-        self.close()
+    def __exit__(self, exc_type: type[BaseException] | None, *args: Any) -> None:
+        try:
+            if exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
+        except Exception:
+            pass
+        finally:
+            self.close()
