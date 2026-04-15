@@ -58,7 +58,11 @@ class Connection:
         """
         loop = self._ensure_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
-        return future.result()
+        try:
+            return future.result(timeout=self._timeout)
+        except TimeoutError as e:
+            future.cancel()
+            raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
 
     async def _get_async_connection(self) -> DqliteConnection:
         """Get or create the underlying async connection."""
