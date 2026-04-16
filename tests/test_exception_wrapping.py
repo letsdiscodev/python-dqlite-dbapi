@@ -1,4 +1,10 @@
-"""Tests that protocol exceptions are wrapped in PEP 249 exception types."""
+"""Tests that protocol exceptions propagate through the cursor.
+
+Now that the cursor delegates to DqliteConnection.query_raw()/execute(),
+exception wrapping is handled by DqliteConnection._run_protocol().
+These tests verify that exceptions from the connection layer propagate
+correctly through the cursor.
+"""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
@@ -10,14 +16,10 @@ from dqlitedbapi.exceptions import OperationalError
 
 
 def _make_mock_connection_with_error(error: Exception) -> MagicMock:
-    """Create a mock Connection where protocol raises the given error."""
-    mock_protocol = AsyncMock()
-    mock_protocol.exec_sql = AsyncMock(side_effect=error)
-    mock_protocol.query_sql = AsyncMock(side_effect=error)
-
+    """Create a mock Connection where query_raw/execute raise the given error."""
     mock_async_conn = AsyncMock()
-    mock_async_conn._protocol = mock_protocol
-    mock_async_conn._db_id = 0
+    mock_async_conn.execute = AsyncMock(side_effect=error)
+    mock_async_conn.query_raw = AsyncMock(side_effect=error)
 
     mock_conn = MagicMock()
 
@@ -39,26 +41,26 @@ def _make_mock_connection_with_error(error: Exception) -> MagicMock:
 
 
 class TestExceptionWrapping:
-    def test_connection_error_wrapped_as_operational_error(self) -> None:
-        """ConnectionError from protocol should become OperationalError."""
-        mock_conn = _make_mock_connection_with_error(ConnectionError("connection lost"))
+    def test_operational_error_propagates(self) -> None:
+        """OperationalError from DqliteConnection should propagate through cursor."""
+        mock_conn = _make_mock_connection_with_error(OperationalError("connection lost"))
         cursor = Cursor(mock_conn)
 
         with pytest.raises(OperationalError, match="connection lost"):
             cursor.execute("SELECT 1")
 
-    def test_os_error_wrapped_as_operational_error(self) -> None:
-        """OSError from protocol should become OperationalError."""
-        mock_conn = _make_mock_connection_with_error(OSError("network unreachable"))
+    def test_dml_error_propagates(self) -> None:
+        """Errors from DqliteConnection.execute() should propagate through cursor."""
+        mock_conn = _make_mock_connection_with_error(OperationalError("network unreachable"))
         cursor = Cursor(mock_conn)
 
         with pytest.raises(OperationalError, match="network unreachable"):
             cursor.execute("INSERT INTO t VALUES (1)")
 
-    def test_runtime_error_wrapped_as_operational_error(self) -> None:
-        """Generic exceptions from protocol should become OperationalError."""
+    def test_generic_exception_propagates(self) -> None:
+        """Generic exceptions from DqliteConnection should propagate through cursor."""
         mock_conn = _make_mock_connection_with_error(RuntimeError("unexpected"))
         cursor = Cursor(mock_conn)
 
-        with pytest.raises(OperationalError, match="unexpected"):
+        with pytest.raises(RuntimeError, match="unexpected"):
             cursor.execute("SELECT 1")

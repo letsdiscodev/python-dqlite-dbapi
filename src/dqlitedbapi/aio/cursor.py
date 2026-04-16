@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from dqlitedbapi.exceptions import InterfaceError, InternalError, OperationalError
+from dqlitedbapi.exceptions import InterfaceError
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection
@@ -74,7 +74,13 @@ class AsyncCursor:
     async def execute(
         self, operation: str, parameters: Sequence[Any] | None = None
     ) -> "AsyncCursor":
-        """Execute a database operation (query or command)."""
+        """Execute a database operation (query or command).
+
+        Routes through DqliteConnection's public API (execute/query_raw)
+        which goes through _run_protocol(), providing the _in_use guard,
+        connection invalidation on fatal errors, and leader-change detection.
+        The _op_lock serializes operations on the same connection.
+        """
         self._check_closed()
 
         conn = await self._connection._ensure_connection()
@@ -82,37 +88,25 @@ class AsyncCursor:
 
         # Determine if this is a query that returns rows.
         # Note: WITH ... INSERT/UPDATE/DELETE (without RETURNING) will be
-        # misrouted to query_sql. This is a known limitation of the heuristic.
+        # misrouted to query_raw. This is a known limitation of the heuristic.
         normalized = _strip_leading_comments(operation).upper()
         is_query = normalized.startswith(("SELECT", "PRAGMA", "EXPLAIN", "WITH")) or (
             " RETURNING " in normalized or normalized.endswith(" RETURNING")
         )
 
-        if conn._protocol is None or conn._db_id is None:
-            raise InternalError("Connection protocol not initialized")
-
         async with self._connection._op_lock:
-            try:
-                if is_query:
-                    columns, rows = await conn._protocol.query_sql(conn._db_id, operation, params)
-                    self._description = [
-                        (name, None, None, None, None, None, None) for name in columns
-                    ]
-                    self._rows = [tuple(row) for row in rows]
-                    self._row_index = 0
-                    self._rowcount = len(rows)
-                else:
-                    last_id, affected = await conn._protocol.exec_sql(
-                        conn._db_id, operation, params
-                    )
-                    self._lastrowid = last_id
-                    self._rowcount = affected
-                    self._description = None
-                    self._rows = []
-            except (OperationalError, InterfaceError, InternalError):
-                raise
-            except Exception as e:
-                raise OperationalError(str(e)) from e
+            if is_query:
+                columns, rows = await conn.query_raw(operation, params)
+                self._description = [(name, None, None, None, None, None, None) for name in columns]
+                self._rows = [tuple(row) for row in rows]
+                self._row_index = 0
+                self._rowcount = len(rows)
+            else:
+                last_id, affected = await conn.execute(operation, params)
+                self._lastrowid = last_id
+                self._rowcount = affected
+                self._description = None
+                self._rows = []
 
         return self
 

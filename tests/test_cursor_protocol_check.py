@@ -1,4 +1,4 @@
-"""Tests that cursor raises InternalError when protocol is not initialized."""
+"""Tests that cursor raises errors when the connection is not usable."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
@@ -6,14 +6,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from dqlitedbapi.cursor import Cursor
-from dqlitedbapi.exceptions import InternalError
 
 
-def _make_mock_connection_no_protocol() -> MagicMock:
-    """Create a mock Connection where _protocol is None."""
+def _make_mock_connection_not_connected() -> MagicMock:
+    """Create a mock Connection where the underlying DqliteConnection is not connected."""
+    from dqliteclient.exceptions import DqliteConnectionError
+
     mock_async_conn = AsyncMock()
-    mock_async_conn._protocol = None
-    mock_async_conn._db_id = None
+    mock_async_conn.query_raw = AsyncMock(side_effect=DqliteConnectionError("Not connected"))
+    mock_async_conn.execute = AsyncMock(side_effect=DqliteConnectionError("Not connected"))
 
     mock_conn = MagicMock()
 
@@ -35,18 +36,18 @@ def _make_mock_connection_no_protocol() -> MagicMock:
 
 
 class TestCursorProtocolCheck:
-    def test_execute_query_raises_internal_error_when_protocol_none(self) -> None:
-        """execute() should raise InternalError, not AssertionError, when protocol is None."""
-        mock_conn = _make_mock_connection_no_protocol()
+    def test_execute_query_raises_error_when_not_connected(self) -> None:
+        """execute() should raise when the connection is not connected."""
+        mock_conn = _make_mock_connection_not_connected()
         cursor = Cursor(mock_conn)
 
-        with pytest.raises(InternalError, match="Connection protocol not initialized"):
+        with pytest.raises(Exception, match="Not connected"):
             cursor.execute("SELECT 1")
 
-    def test_execute_dml_raises_internal_error_when_protocol_none(self) -> None:
-        """execute() should raise InternalError for DML when protocol is None."""
-        mock_conn = _make_mock_connection_no_protocol()
+    def test_execute_dml_raises_error_when_not_connected(self) -> None:
+        """execute() should raise for DML when the connection is not connected."""
+        mock_conn = _make_mock_connection_not_connected()
         cursor = Cursor(mock_conn)
 
-        with pytest.raises(InternalError, match="Connection protocol not initialized"):
+        with pytest.raises(Exception, match="Not connected"):
             cursor.execute("INSERT INTO t VALUES (1)")

@@ -6,7 +6,7 @@ Concurrent protocol operations must be serialized to prevent wire corruption.
 
 import asyncio
 import threading
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -22,21 +22,21 @@ class TestAsyncProtocolSerialization:
     async def test_concurrent_execute_is_serialized(self) -> None:
         """Two concurrent execute() calls must not overlap on the wire.
 
-        Without serialization, both coroutines would call query_sql/exec_sql
-        concurrently, corrupting the TCP stream. With serialization, they
-        must run one after the other.
+        Without serialization, both coroutines would run concurrently
+        on the same protocol socket, corrupting the TCP stream. With
+        serialization via _op_lock, they must run one after the other.
         """
         conn = AsyncConnection("localhost:9001")
 
         call_log: list[tuple[str, str]] = []  # (operation, phase) pairs
 
-        async def mock_query_sql(db_id: int, sql: str, params: object) -> tuple:
+        async def mock_query_raw(sql: str, params: object) -> tuple:
             call_log.append((sql, "start"))
             await asyncio.sleep(0.05)  # Simulate network I/O
             call_log.append((sql, "end"))
             return (["id"], [[1]])
 
-        async def mock_exec_sql(db_id: int, sql: str, params: object) -> tuple:
+        async def mock_execute(sql: str, params: object) -> tuple:
             call_log.append((sql, "start"))
             await asyncio.sleep(0.05)
             call_log.append((sql, "end"))
@@ -45,10 +45,8 @@ class TestAsyncProtocolSerialization:
         with patch("dqlitedbapi.aio.connection.DqliteConnection") as MockDqliteConn:
             mock_instance = AsyncMock()
             mock_instance.connect = AsyncMock()
-            mock_instance._protocol = MagicMock()
-            mock_instance._protocol.query_sql = mock_query_sql
-            mock_instance._protocol.exec_sql = mock_exec_sql
-            mock_instance._db_id = 0
+            mock_instance.query_raw = mock_query_raw
+            mock_instance.execute = mock_execute
             MockDqliteConn.return_value = mock_instance
 
             await conn.connect()
