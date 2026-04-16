@@ -31,6 +31,7 @@ class AsyncConnection:
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         self._connect_lock = asyncio.Lock()
+        self._op_lock = asyncio.Lock()
 
     async def _ensure_connection(self) -> DqliteConnection:
         """Ensure the underlying connection is established."""
@@ -76,7 +77,8 @@ class AsyncConnection:
             raise InterfaceError("Connection is closed")
 
         if self._async_conn is not None:
-            await self._async_conn.execute("COMMIT")
+            async with self._op_lock:
+                await self._async_conn.execute("COMMIT")
 
     async def rollback(self) -> None:
         """Roll back any pending transaction."""
@@ -84,7 +86,8 @@ class AsyncConnection:
             raise InterfaceError("Connection is closed")
 
         if self._async_conn is not None:
-            await self._async_conn.execute("ROLLBACK")
+            async with self._op_lock:
+                await self._async_conn.execute("ROLLBACK")
 
     def cursor(self) -> AsyncCursor:
         """Return a new AsyncCursor object.

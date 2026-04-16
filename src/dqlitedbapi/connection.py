@@ -35,6 +35,8 @@ class Connection:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._loop_lock = threading.Lock()
+        self._op_lock = threading.Lock()
+        self._connect_lock: asyncio.Lock | None = None
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         """Ensure a dedicated event loop is running in a background thread.
@@ -55,22 +57,36 @@ class Connection:
         """Run an async coroutine from sync code.
 
         Submits the coroutine to the dedicated background event loop
-        and blocks until the result is available.
+        and blocks until the result is available. The operation lock
+        ensures only one operation runs at a time, preventing wire
+        protocol corruption from concurrent access.
         """
-        loop = self._ensure_loop()
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        try:
-            return future.result(timeout=self._timeout)
-        except TimeoutError as e:
-            future.cancel()
-            raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
+        with self._op_lock:
+            loop = self._ensure_loop()
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            try:
+                # Future.result() provides a happens-before memory barrier,
+                # ensuring all writes by the event loop thread are visible here.
+                return future.result(timeout=self._timeout)
+            except TimeoutError as e:
+                future.cancel()
+                raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
 
     async def _get_async_connection(self) -> DqliteConnection:
         """Get or create the underlying async connection."""
         if self._closed:
             raise InterfaceError("Connection is closed")
 
-        if self._async_conn is None:
+        if self._async_conn is not None:
+            return self._async_conn
+
+        if self._connect_lock is None:
+            self._connect_lock = asyncio.Lock()
+
+        async with self._connect_lock:
+            if self._async_conn is not None:
+                return self._async_conn
+
             conn = DqliteConnection(
                 self._address,
                 database=self._database,

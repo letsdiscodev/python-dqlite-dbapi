@@ -91,23 +91,28 @@ class AsyncCursor:
         if conn._protocol is None or conn._db_id is None:
             raise InternalError("Connection protocol not initialized")
 
-        try:
-            if is_query:
-                columns, rows = await conn._protocol.query_sql(conn._db_id, operation, params)
-                self._description = [(name, None, None, None, None, None, None) for name in columns]
-                self._rows = [tuple(row) for row in rows]
-                self._row_index = 0
-                self._rowcount = len(rows)
-            else:
-                last_id, affected = await conn._protocol.exec_sql(conn._db_id, operation, params)
-                self._lastrowid = last_id
-                self._rowcount = affected
-                self._description = None
-                self._rows = []
-        except (OperationalError, InterfaceError, InternalError):
-            raise
-        except Exception as e:
-            raise OperationalError(str(e)) from e
+        async with self._connection._op_lock:
+            try:
+                if is_query:
+                    columns, rows = await conn._protocol.query_sql(conn._db_id, operation, params)
+                    self._description = [
+                        (name, None, None, None, None, None, None) for name in columns
+                    ]
+                    self._rows = [tuple(row) for row in rows]
+                    self._row_index = 0
+                    self._rowcount = len(rows)
+                else:
+                    last_id, affected = await conn._protocol.exec_sql(
+                        conn._db_id, operation, params
+                    )
+                    self._lastrowid = last_id
+                    self._rowcount = affected
+                    self._description = None
+                    self._rows = []
+            except (OperationalError, InterfaceError, InternalError):
+                raise
+            except Exception as e:
+                raise OperationalError(str(e)) from e
 
         return self
 
