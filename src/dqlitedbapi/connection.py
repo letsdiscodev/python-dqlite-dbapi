@@ -118,46 +118,50 @@ class Connection:
             return
         self._closed = True
         try:
-            if self._async_conn is not None:
-                with contextlib.suppress(Exception):
-                    self._run_sync(self._async_conn.close())
-                self._async_conn = None
-        finally:
             if self._loop is not None and not self._loop.is_closed():
-                self._loop.call_soon_threadsafe(self._loop.stop)
-                if self._thread is not None:
-                    self._thread.join(timeout=5)
-                self._loop.close()
-                self._loop = None
-                self._thread = None
+                with contextlib.suppress(Exception):
+                    self._run_sync(self._close_async())
+        finally:
+            with self._loop_lock:
+                if self._loop is not None and not self._loop.is_closed():
+                    self._loop.call_soon_threadsafe(self._loop.stop)
+                    if self._thread is not None:
+                        self._thread.join(timeout=5)
+                    self._loop.close()
+                    self._loop = None
+                    self._thread = None
+
+    async def _close_async(self) -> None:
+        """Async implementation of close -- runs on event loop thread."""
+        if self._async_conn is not None:
+            try:
+                await self._async_conn.close()
+            finally:
+                self._async_conn = None
 
     def commit(self) -> None:
         """Commit any pending transaction."""
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
-
-        if self._async_conn is not None:
-            self._run_sync(self._commit_async())
+        self._run_sync(self._commit_async())
 
     async def _commit_async(self) -> None:
         """Async implementation of commit."""
-        conn = await self._get_async_connection()
-        await conn.execute("COMMIT")
+        if self._async_conn is not None:
+            await self._async_conn.execute("COMMIT")
 
     def rollback(self) -> None:
         """Roll back any pending transaction."""
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
-
-        if self._async_conn is not None:
-            self._run_sync(self._rollback_async())
+        self._run_sync(self._rollback_async())
 
     async def _rollback_async(self) -> None:
         """Async implementation of rollback."""
-        conn = await self._get_async_connection()
-        await conn.execute("ROLLBACK")
+        if self._async_conn is not None:
+            await self._async_conn.execute("ROLLBACK")
 
     def cursor(self) -> Cursor:
         """Return a new Cursor object."""
