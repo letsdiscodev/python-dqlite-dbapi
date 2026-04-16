@@ -74,122 +74,31 @@ class TestAsyncProtocolSerialization:
 
 
 class TestSyncProtocolSerialization:
-    """Test that concurrent sync operations are serialized."""
+    """Test that concurrent sync operations from wrong threads are rejected."""
 
-    def test_concurrent_run_sync_is_serialized(self) -> None:
-        """Two threads calling _run_sync must not overlap on the event loop.
+    def test_cross_thread_execute_raises_programming_error(self) -> None:
+        """Threads sharing a connection must get ProgrammingError.
 
-        Without serialization, both threads submit coroutines concurrently
-        to the same event loop, where they interleave at await points.
+        The thread-identity check (like sqlite3) prevents cross-thread
+        access before it reaches the protocol layer.
         """
+        from dqlitedbapi.exceptions import ProgrammingError
+
         conn = Connection("localhost:9001", timeout=5.0)
+        cursor = Cursor(conn)
 
-        call_log: list[tuple[str, str]] = []
-        log_lock = threading.Lock()
+        errors: list[Exception] = []
 
-        async def mock_query_sql(db_id: int, sql: str, params: object) -> tuple:
-            with log_lock:
-                call_log.append((sql, "start"))
-            await asyncio.sleep(0.05)
-            with log_lock:
-                call_log.append((sql, "end"))
-            return (["id"], [[1]])
+        def thread_work() -> None:
+            try:
+                cursor.execute("SELECT 1")
+            except Exception as e:
+                errors.append(e)
 
-        async def mock_exec_sql(db_id: int, sql: str, params: object) -> tuple:
-            with log_lock:
-                call_log.append((sql, "start"))
-            await asyncio.sleep(0.05)
-            with log_lock:
-                call_log.append((sql, "end"))
-            return (0, 1)
+        t = threading.Thread(target=thread_work)
+        t.start()
+        t.join(timeout=5)
 
-        with patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn:
-            mock_instance = AsyncMock()
-            mock_instance.connect = AsyncMock()
-            mock_instance._protocol = MagicMock()
-            mock_instance._protocol.query_sql = mock_query_sql
-            mock_instance._protocol.exec_sql = mock_exec_sql
-            mock_instance._db_id = 0
-            MockDqliteConn.return_value = mock_instance
-
-            cursor1 = Cursor(conn)
-            cursor2 = Cursor(conn)
-
-            barrier = threading.Barrier(2)
-            errors: list[Exception] = []
-
-            def thread_work(cursor: Cursor, sql: str) -> None:
-                try:
-                    barrier.wait(timeout=5)
-                    cursor.execute(sql)
-                except Exception as e:
-                    errors.append(e)
-
-            t1 = threading.Thread(target=thread_work, args=(cursor1, "SELECT 1"))
-            t2 = threading.Thread(target=thread_work, args=(cursor2, "INSERT INTO t VALUES (1)"))
-            t1.start()
-            t2.start()
-            t1.join(timeout=10)
-            t2.join(timeout=10)
-
-            assert not errors, f"Threads raised errors: {errors}"
-
-            # Operations must be serialized: one completes before the other starts
-            assert len(call_log) == 4
-            assert call_log[0][1] == "start"
-            assert call_log[1][1] == "end"
-            assert call_log[2][1] == "start"
-            assert call_log[3][1] == "end"
-
-            conn.close()
-
-
-class TestSyncConnectionLazyInitRace:
-    """Test that _get_async_connection doesn't create duplicate connections."""
-
-    def test_concurrent_first_use_creates_single_connection(self) -> None:
-        """Two threads using a connection for the first time must not
-        create two underlying DqliteConnection instances."""
-        conn = Connection("localhost:9001", timeout=5.0)
-
-        connect_count = 0
-        count_lock = threading.Lock()
-
-        async def slow_connect() -> None:
-            nonlocal connect_count
-            with count_lock:
-                connect_count += 1
-            await asyncio.sleep(0.05)
-
-        with patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn:
-            mock_instance = AsyncMock()
-            mock_instance.connect = slow_connect
-            mock_instance._protocol = MagicMock()
-            mock_instance._protocol.query_sql = AsyncMock(return_value=(["id"], [[1]]))
-            mock_instance._db_id = 0
-            MockDqliteConn.return_value = mock_instance
-
-            barrier = threading.Barrier(2)
-            errors: list[Exception] = []
-
-            def thread_work() -> None:
-                try:
-                    barrier.wait(timeout=5)
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT 1")
-                except Exception as e:
-                    errors.append(e)
-
-            t1 = threading.Thread(target=thread_work)
-            t2 = threading.Thread(target=thread_work)
-            t1.start()
-            t2.start()
-            t1.join(timeout=10)
-            t2.join(timeout=10)
-
-            assert not errors, f"Threads raised errors: {errors}"
-            # Only one DqliteConnection should have been created
-            assert MockDqliteConn.call_count == 1
-            assert connect_count == 1
-
-            conn.close()
+        assert len(errors) == 1
+        assert isinstance(errors[0], ProgrammingError)
+        conn.close()

@@ -82,6 +82,7 @@ class Cursor:
 
     def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> "Cursor":
         """Execute a database operation (query or command)."""
+        self._connection._check_thread()
         self._check_closed()
 
         self._connection._run_sync(self._execute_async(operation, parameters))
@@ -123,6 +124,7 @@ class Cursor:
 
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> "Cursor":
         """Execute a database operation multiple times."""
+        self._connection._check_thread()
         self._check_closed()
 
         self._connection._run_sync(self._executemany_async(operation, seq_of_parameters))
@@ -145,6 +147,7 @@ class Cursor:
 
     def fetchone(self) -> tuple[Any, ...] | None:
         """Fetch the next row of a query result set."""
+        self._connection._check_thread()
         self._check_closed()
         self._check_result_set()
 
@@ -157,6 +160,7 @@ class Cursor:
 
     def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
         """Fetch the next set of rows of a query result."""
+        self._connection._check_thread()
         self._check_closed()
         self._check_result_set()
 
@@ -174,6 +178,7 @@ class Cursor:
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         """Fetch all remaining rows of a query result."""
+        self._connection._check_thread()
         self._check_closed()
         self._check_result_set()
 
@@ -183,6 +188,7 @@ class Cursor:
 
     def close(self) -> None:
         """Close the cursor."""
+        self._connection._check_thread()
         self._closed = True
         self._rows = []
         self._description = None

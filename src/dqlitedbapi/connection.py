@@ -7,7 +7,7 @@ from typing import Any
 
 from dqliteclient import DqliteConnection
 from dqlitedbapi.cursor import Cursor
-from dqlitedbapi.exceptions import InterfaceError, OperationalError
+from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 
 class Connection:
@@ -37,6 +37,17 @@ class Connection:
         self._loop_lock = threading.Lock()
         self._op_lock = threading.Lock()
         self._connect_lock: asyncio.Lock | None = None
+        self._creator_thread = threading.get_ident()
+
+    def _check_thread(self) -> None:
+        """Raise ProgrammingError if called from a different thread than the creator."""
+        current = threading.get_ident()
+        if current != self._creator_thread:
+            raise ProgrammingError(
+                f"Connection objects created in a thread can only be used in that "
+                f"same thread. The object was created in thread id "
+                f"{self._creator_thread} and this is thread id {current}."
+            )
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         """Ensure a dedicated event loop is running in a background thread.
@@ -102,6 +113,10 @@ class Connection:
 
     def close(self) -> None:
         """Close the connection."""
+        self._check_thread()
+        if self._closed:
+            return
+        self._closed = True
         try:
             if self._async_conn is not None:
                 with contextlib.suppress(Exception):
@@ -115,10 +130,10 @@ class Connection:
                 self._loop.close()
                 self._loop = None
                 self._thread = None
-            self._closed = True
 
     def commit(self) -> None:
         """Commit any pending transaction."""
+        self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
 
@@ -132,6 +147,7 @@ class Connection:
 
     def rollback(self) -> None:
         """Roll back any pending transaction."""
+        self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
 
@@ -145,6 +161,7 @@ class Connection:
 
     def cursor(self) -> Cursor:
         """Return a new Cursor object."""
+        self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
         return Cursor(self)

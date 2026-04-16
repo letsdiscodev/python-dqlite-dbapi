@@ -66,10 +66,12 @@ class AsyncConnection:
 
     async def close(self) -> None:
         """Close the connection."""
+        if self._closed:
+            return
+        self._closed = True
         if self._async_conn is not None:
             await self._async_conn.close()
             self._async_conn = None
-        self._closed = True
 
     async def commit(self) -> None:
         """Commit any pending transaction."""
