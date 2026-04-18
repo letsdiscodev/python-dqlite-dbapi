@@ -134,6 +134,10 @@ class Cursor:
         self._row_index = 0
         self._closed = False
         self._lastrowid: int | None = None
+        # PEP 249 optional extension. Currently no driver path appends
+        # to this list; it's here so consumers can rely on the
+        # attribute existing and being mutable.
+        self.messages: list[tuple[type, Any]] = []
 
     @property
     def connection(self) -> "Connection":

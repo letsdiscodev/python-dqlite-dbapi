@@ -47,6 +47,8 @@ class AsyncConnection:
         # glue code before any loop exists).
         self._connect_lock: asyncio.Lock | None = None
         self._op_lock: asyncio.Lock | None = None
+        # PEP 249 optional extension; see Connection.messages.
+        self.messages: list[tuple[type, Any]] = []
 
     def _ensure_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
         """Lazy-create the asyncio locks on the currently-running loop."""

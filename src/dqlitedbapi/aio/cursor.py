@@ -30,6 +30,8 @@ class AsyncCursor:
         self._row_index = 0
         self._closed = False
         self._lastrowid: int | None = None
+        # PEP 249 optional extension; see Cursor.messages.
+        self.messages: list[tuple[type, Any]] = []
 
     @property
     def connection(self) -> "AsyncConnection":

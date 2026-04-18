@@ -91,6 +91,9 @@ class Connection:
         self._op_lock = threading.Lock()
         self._connect_lock: asyncio.Lock | None = None
         self._creator_thread = threading.get_ident()
+        # PEP 249 optional extension. No driver path currently appends
+        # here; callers can rely on the attribute existing.
+        self.messages: list[tuple[type, Any]] = []
         # 1-element list (mutable, captured by the finalizer) that
         # close() flips to True. Using a list avoids the finalizer
         # closing over ``self`` and preventing GC.
