@@ -282,6 +282,11 @@ class Connection:
                     self._loop.close()
                     self._loop = None
                     self._thread = None
+                # Drop the asyncio.Lock bound to the loop we just closed;
+                # the lazy-create branch in _get_async_connection rebuilds it
+                # against the next loop so the primitive never outlives its
+                # owning event loop.
+                self._connect_lock = None
 
     async def _close_async(self) -> None:
         """Async implementation of close -- runs on event loop thread."""

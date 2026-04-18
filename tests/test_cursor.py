@@ -130,3 +130,24 @@ class TestOptionalCursorMethodsRaise:
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError):
             cursor.scroll(0)
+
+
+class TestConnectionCloseResetsLock:
+    def test_close_nulls_connect_lock(self) -> None:
+        """After close(), the asyncio connect lock must be reset so it
+        doesn't outlive its owning loop (symmetry with the async side)."""
+        import asyncio
+
+        conn = Connection("localhost:9001")
+        # Simulate the state a lazy _get_async_connection would have left:
+        # a background loop running and an asyncio.Lock created on it.
+        loop = conn._ensure_loop()
+
+        async def _make_lock() -> asyncio.Lock:
+            return asyncio.Lock()
+
+        conn._connect_lock = asyncio.run_coroutine_threadsafe(_make_lock(), loop).result(timeout=5)
+        assert conn._connect_lock is not None
+
+        conn.close()
+        assert conn._connect_lock is None
