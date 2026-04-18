@@ -47,8 +47,16 @@ class AsyncCursor:
     ) -> list[tuple[str, int | None, None, None, None, None, None]] | None:
         """Column descriptions for the last query.
 
-        Returns a fresh shallow copy so a caller can't corrupt internal
-        cursor state by mutating the returned list.
+        Returns a list of 7-tuples:
+        (name, type_code, display_size, internal_size, precision, scale, null_ok)
+
+        ``type_code`` is the wire-level ``ValueType`` integer from the first
+        result frame (e.g. 10 for ISO8601, 9 for UNIXTIME). The other fields
+        are None — dqlite doesn't expose them.
+
+        Returns a fresh shallow copy each call so that a caller
+        mutating the list (e.g. ``cursor.description.clear()``) can't
+        corrupt the cursor's internal state.
         """
         if self._description is None:
             return None
@@ -56,7 +64,10 @@ class AsyncCursor:
 
     @property
     def rowcount(self) -> int:
-        """Number of rows affected by the last execute."""
+        """Number of rows affected by the last execute.
+
+        Returns -1 if not applicable or unknown.
+        """
         return self._rowcount
 
     @property
@@ -68,8 +79,10 @@ class AsyncCursor:
     def rownumber(self) -> int | None:
         """0-based index of the next row in the current result set.
 
-        PEP 249 optional extension. ``None`` when no result set is
-        active.
+        PEP 249 optional extension: returns ``None`` if no result set is
+        active (no query executed, or last statement was DML without
+        RETURNING); otherwise returns the index of the row that the next
+        ``fetchone()`` would produce.
         """
         if self._description is None:
             return None
