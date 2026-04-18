@@ -11,9 +11,6 @@ from dqlitedbapi.exceptions import (
     OperationalError,
     ProgrammingError,
 )
-from dqlitedbapi.exceptions import (
-    InterfaceError as _DbapiInterfaceError,
-)
 from dqlitedbapi.types import (
     _convert_bind_param,
     _datetime_from_iso8601,
@@ -53,16 +50,16 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
     except _client_exc.ClusterError as e:
         raise OperationalError(str(e)) from e
     except _client_exc.ProtocolError as e:
-        raise _DbapiInterfaceError(str(e)) from e
+        raise InterfaceError(str(e)) from e
     except _client_exc.DataError as e:
         raise DataError(str(e)) from e
     except _client_exc.InterfaceError as e:
-        raise _DbapiInterfaceError(str(e)) from e
+        raise InterfaceError(str(e)) from e
     except _client_exc.DqliteError as e:
         # Catch-all for any future subclass of DqliteError not enumerated
         # above. Surface as InterfaceError rather than leaking to the
         # caller as a non-DBAPI exception.
-        raise _DbapiInterfaceError(f"unrecognized client error ({type(e).__name__}): {e}") from e
+        raise InterfaceError(f"unrecognized client error ({type(e).__name__}): {e}") from e
 
 
 if TYPE_CHECKING:
