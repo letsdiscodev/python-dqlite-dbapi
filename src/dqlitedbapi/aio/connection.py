@@ -30,8 +30,21 @@ class AsyncConnection:
         self._timeout = timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
-        self._connect_lock = asyncio.Lock()
-        self._op_lock = asyncio.Lock()
+        # asyncio primitives MUST be created inside the loop they will
+        # run on. We instantiate lazily in _ensure_connection / the
+        # op-serializing paths so constructors can safely run outside
+        # a running loop (SQLAlchemy creates AsyncConnection in sync
+        # glue code before any loop exists). See ISSUE-11.
+        self._connect_lock: asyncio.Lock | None = None
+        self._op_lock: asyncio.Lock | None = None
+
+    def _ensure_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
+        """Lazy-create the asyncio locks on the currently-running loop."""
+        if self._connect_lock is None:
+            self._connect_lock = asyncio.Lock()
+        if self._op_lock is None:
+            self._op_lock = asyncio.Lock()
+        return self._connect_lock, self._op_lock
 
     async def _ensure_connection(self) -> DqliteConnection:
         """Ensure the underlying connection is established."""
@@ -41,7 +54,8 @@ class AsyncConnection:
         if self._async_conn is not None:
             return self._async_conn
 
-        async with self._connect_lock:
+        connect_lock, _ = self._ensure_locks()
+        async with connect_lock:
             # Double-check after acquiring lock
             if self._async_conn is not None:
                 return self._async_conn
@@ -86,7 +100,8 @@ class AsyncConnection:
             return
         import dqliteclient.exceptions as _client_exc
 
-        async with self._op_lock:
+        _, op_lock = self._ensure_locks()
+        async with op_lock:
             try:
                 await self._async_conn.execute("COMMIT")
             except (OperationalError, _client_exc.OperationalError) as e:
@@ -101,7 +116,8 @@ class AsyncConnection:
             return
         import dqliteclient.exceptions as _client_exc
 
-        async with self._op_lock:
+        _, op_lock = self._ensure_locks()
+        async with op_lock:
             try:
                 await self._async_conn.execute("ROLLBACK")
             except (OperationalError, _client_exc.OperationalError) as e:
@@ -117,6 +133,12 @@ class AsyncConnection:
         if self._closed:
             raise InterfaceError("Connection is closed")
         return AsyncCursor(self)
+
+    def __repr__(self) -> str:
+        state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
+        return (
+            f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
+        )
 
     async def __aenter__(self) -> "AsyncConnection":
         await self.connect()

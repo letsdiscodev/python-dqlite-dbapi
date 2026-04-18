@@ -267,6 +267,10 @@ class Cursor:
         """Set output size (no-op for dqlite)."""
         pass
 
+    def __repr__(self) -> str:
+        state = "closed" if self._closed else "open"
+        return f"<Cursor rowcount={self._rowcount} {state}>"
+
     def __iter__(self) -> "Cursor":
         return self
 

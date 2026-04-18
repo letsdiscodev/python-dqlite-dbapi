@@ -199,6 +199,12 @@ class Connection:
             raise InterfaceError("Connection is closed")
         return Cursor(self)
 
+    def __repr__(self) -> str:
+        state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
+        return (
+            f"<Connection address={self._address!r} database={self._database!r} {state}>"
+        )
+
     def __enter__(self) -> "Connection":
         return self
 

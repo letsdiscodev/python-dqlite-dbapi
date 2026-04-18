@@ -79,7 +79,8 @@ class AsyncCursor:
             " RETURNING " in normalized or normalized.endswith(" RETURNING")
         )
 
-        async with self._connection._op_lock:
+        _, op_lock = self._connection._ensure_locks()
+        async with op_lock:
             if is_query:
                 columns, column_types, rows = await conn.query_raw_typed(operation, params)
                 self._description = [
@@ -175,6 +176,10 @@ class AsyncCursor:
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite)."""
         pass
+
+    def __repr__(self) -> str:
+        state = "closed" if self._closed else "open"
+        return f"<AsyncCursor rowcount={self._rowcount} {state}>"
 
     def __aiter__(self) -> "AsyncCursor":
         return self
