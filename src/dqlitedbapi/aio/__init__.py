@@ -1,5 +1,6 @@
 """Async PEP 249-style interface for dqlite."""
 
+from dqlitedbapi import __version__
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.exceptions import (
@@ -45,6 +46,7 @@ sqlite_version = "3.35.0"
 
 __all__ = [
     # Module attributes
+    "__version__",
     "apilevel",
     "threadsafety",
     "paramstyle",
