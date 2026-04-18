@@ -61,7 +61,7 @@ class _DBAPIType:
     (int).
     """
 
-    def __init__(self, *values: str | int | ValueType) -> None:
+    def __init__(self, *values: str | int | ValueType, _name: str = "") -> None:
         normalized: set[str | int] = set()
         for v in values:
             if isinstance(v, ValueType):
@@ -69,6 +69,7 @@ class _DBAPIType:
             else:
                 normalized.add(v)
         self.values = normalized
+        self._name = _name
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
@@ -82,9 +83,12 @@ class _DBAPIType:
     def __hash__(self) -> int:
         return hash(frozenset(self.values))
 
+    def __repr__(self) -> str:
+        return self._name or f"_DBAPIType({sorted(self.values, key=str)!r})"
 
-STRING = _DBAPIType("TEXT", "VARCHAR", "CHAR", "CLOB", ValueType.TEXT)
-BINARY = _DBAPIType("BLOB", "BINARY", "VARBINARY", ValueType.BLOB)
+
+STRING = _DBAPIType("TEXT", "VARCHAR", "CHAR", "CLOB", ValueType.TEXT, _name="STRING")
+BINARY = _DBAPIType("BLOB", "BINARY", "VARBINARY", ValueType.BLOB, _name="BINARY")
 NUMBER = _DBAPIType(
     "INTEGER",
     "INT",
@@ -97,6 +101,7 @@ NUMBER = _DBAPIType(
     ValueType.INTEGER,
     ValueType.FLOAT,
     ValueType.BOOLEAN,
+    _name="NUMBER",
 )
 DATETIME = _DBAPIType(
     "DATE",
@@ -105,8 +110,9 @@ DATETIME = _DBAPIType(
     "DATETIME",
     ValueType.ISO8601,
     ValueType.UNIXTIME,
+    _name="DATETIME",
 )
-ROWID = _DBAPIType("ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER)
+ROWID = _DBAPIType("ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER, _name="ROWID")
 
 
 # Internal conversion helpers.
@@ -132,8 +138,11 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
             base += f".{value.microsecond:06d}"
         if value.tzinfo is None:
             return base
+        # tzinfo is set (checked above), so utcoffset() returns timedelta.
+        # A None here would indicate a broken tzinfo subclass; be explicit.
         offset = value.utcoffset()
-        assert offset is not None
+        if offset is None:
+            return base
         total_seconds = int(offset.total_seconds())
         sign = "+" if total_seconds >= 0 else "-"
         hours, remainder = divmod(abs(total_seconds), 3600)

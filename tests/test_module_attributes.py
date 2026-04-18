@@ -90,3 +90,26 @@ class TestTypeObjects:
 
     def test_rowid_type(self) -> None:
         assert dqlitedbapi.ROWID == "ROWID"
+
+
+class TestDBAPITypeRepr:
+    def test_named_types_have_readable_repr(self) -> None:
+        assert repr(dqlitedbapi.STRING) == "STRING"
+        assert repr(dqlitedbapi.BINARY) == "BINARY"
+        assert repr(dqlitedbapi.NUMBER) == "NUMBER"
+        assert repr(dqlitedbapi.DATETIME) == "DATETIME"
+        assert repr(dqlitedbapi.ROWID) == "ROWID"
+
+
+class TestCursorModuleAll:
+    def test_cursor_module_has_all(self) -> None:
+        from dqlitedbapi import cursor as cursor_mod
+
+        assert cursor_mod.__all__ == ["Cursor"]
+
+    def test_cursor_module_wildcard_import_does_not_leak_helpers(self) -> None:
+        from dqlitedbapi import cursor as cursor_mod
+
+        # Verify private helpers exist on the module but are not in __all__.
+        assert hasattr(cursor_mod, "_call_client")
+        assert "_call_client" not in cursor_mod.__all__

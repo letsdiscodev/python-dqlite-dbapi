@@ -21,6 +21,8 @@ from dqlitedbapi.types import (
 )
 from dqlitewire.constants import ValueType
 
+__all__ = ["Cursor"]
+
 
 async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
     """Await a client-layer coroutine, mapping its exceptions into the
