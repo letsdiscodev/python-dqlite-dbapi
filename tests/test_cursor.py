@@ -18,6 +18,11 @@ class TestCursor:
         cursor = Cursor(conn)
         assert cursor.rowcount == -1
 
+    def test_lastrowid_initially_none(self) -> None:
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        assert cursor.lastrowid is None
+
     def test_arraysize_default(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
