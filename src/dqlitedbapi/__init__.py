@@ -1,5 +1,7 @@
 """PEP 249 compliant interface for dqlite."""
 
+import math
+
 from dqlitedbapi.connection import Connection
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import (
@@ -118,8 +120,6 @@ def connect(
     Returns:
         A Connection object
     """
-    import math
-
     if not math.isfinite(timeout) or timeout <= 0:
         raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
     return Connection(
