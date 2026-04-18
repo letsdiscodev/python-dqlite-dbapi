@@ -104,5 +104,5 @@ def connect(
     import math
 
     if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError(f"timeout must be a positive finite number, got {timeout}")
+        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
     return Connection(address, database=database, timeout=timeout)

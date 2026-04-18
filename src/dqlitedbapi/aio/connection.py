@@ -8,7 +8,7 @@ from typing import Any
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
-from dqlitedbapi.exceptions import InterfaceError, OperationalError
+from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 
 class AsyncConnection:
@@ -33,7 +33,7 @@ class AsyncConnection:
                 ``None`` disables the cap.
         """
         if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError(f"timeout must be a positive finite number, got {timeout}")
+            raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
         self._address = address
         self._database = database
         self._timeout = timeout
