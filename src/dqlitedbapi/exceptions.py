@@ -32,9 +32,18 @@ class DataError(DatabaseError):
 
 
 class OperationalError(DatabaseError):
-    """Error related to database operation."""
+    """Error related to database operation.
 
-    pass
+    Optional ``code`` attribute carries the SQLite extended error code
+    forwarded from the dqlite server (e.g. ``SQLITE_IOERR_NOT_LEADER``).
+    Callers can inspect ``getattr(exc, "code", None)`` to branch on
+    specific wire-level failures without importing the lower-level
+    client exception module.
+    """
+
+    def __init__(self, message: object = "", code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class IntegrityError(DatabaseError):

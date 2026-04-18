@@ -348,3 +348,39 @@ class TestIsRowReturning:
     )
     def test_detects_non_row_returning(self, sql: str) -> None:
         assert not _is_row_returning(sql)
+
+
+class TestOperationalErrorCode:
+    """dbapi OperationalError carries the SQLite extended error code
+    forwarded from the client layer. Consumers like
+    ``_is_no_transaction_error`` and the SQLAlchemy dialect's
+    ``is_disconnect`` key on ``getattr(exc, 'code', None)``.
+    """
+
+    def test_default_code_is_none(self) -> None:
+        from dqlitedbapi.exceptions import OperationalError
+
+        e = OperationalError("boom")
+        assert e.code is None
+        assert str(e) == "boom"
+
+    def test_explicit_code_preserved(self) -> None:
+        from dqlitedbapi.exceptions import OperationalError
+
+        e = OperationalError("not leader", code=10250)
+        assert e.code == 10250
+
+    def test_call_client_preserves_client_code(self) -> None:
+        import asyncio
+
+        import dqliteclient.exceptions as _client_exc
+        from dqlitedbapi.cursor import _call_client
+        from dqlitedbapi.exceptions import OperationalError
+
+        async def raiser() -> None:
+            raise _client_exc.OperationalError(10250, "not the leader")
+
+        with pytest.raises(OperationalError) as excinfo:
+            asyncio.run(_call_client(raiser()))
+
+        assert excinfo.value.code == 10250

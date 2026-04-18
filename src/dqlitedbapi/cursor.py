@@ -45,7 +45,11 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
     try:
         return await coro
     except _client_exc.OperationalError as e:
-        raise OperationalError(str(e)) from e
+        # Forward the SQLite extended error code so callers that branch
+        # on leader-change / busy / integrity codes (see
+        # ``_is_no_transaction_error`` and the SQLAlchemy dialect's
+        # ``is_disconnect``) continue to work after the remap.
+        raise OperationalError(str(e), code=e.code) from e
     except _client_exc.DqliteConnectionError as e:
         raise OperationalError(str(e)) from e
     except _client_exc.ClusterError as e:
