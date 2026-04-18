@@ -14,8 +14,6 @@ import gc
 import threading
 import warnings
 
-import pytest
-
 from dqlitedbapi.connection import Connection
 
 

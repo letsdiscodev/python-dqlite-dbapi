@@ -8,7 +8,6 @@ the body's exception still wins on rollback failure (attached as
 instead of disappearing.
 """
 
-import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -31,9 +30,8 @@ class TestExitPropagatesCommitFailure:
         """No body exception → commit failure surfaces, not swallowed."""
         conn = _make_conn_with_failing_commit()
         try:
-            with pytest.raises(OperationalError, match="disk full"):
-                with conn:
-                    pass  # clean body → __exit__ calls commit, which raises
+            with pytest.raises(OperationalError, match="disk full"), conn:
+                pass  # clean body → __exit__ calls commit, which raises
         finally:
             conn.close()
 
@@ -45,9 +43,8 @@ class TestExitPropagatesCommitFailure:
         conn = _make_conn_with_failing_commit()
         body_error = ValueError("user bug")
         try:
-            with pytest.raises(ValueError, match="user bug"):
-                with conn:
-                    raise body_error
+            with pytest.raises(ValueError, match="user bug"), conn:
+                raise body_error
         finally:
             conn.close()
 

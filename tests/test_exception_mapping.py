@@ -9,9 +9,9 @@ surface to the user.
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import dqliteclient.exceptions as client_exc
 import pytest
 
+import dqliteclient.exceptions as client_exc
 import dqlitedbapi.exceptions as dbapi_exc
 from dqlitedbapi.cursor import Cursor
 

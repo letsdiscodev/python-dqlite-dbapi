@@ -1,6 +1,7 @@
 """Async connection implementation for dqlite."""
 
 import asyncio
+import contextlib
 from typing import Any
 
 from dqliteclient import DqliteConnection
@@ -159,9 +160,7 @@ class AsyncConnection:
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
-        return (
-            f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
-        )
+        return f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
 
     async def __aenter__(self) -> "AsyncConnection":
         await self.connect()
@@ -175,9 +174,7 @@ class AsyncConnection:
             if exc_type is None:
                 await self.commit()
             else:
-                try:
-                    await self.rollback()
-                except Exception:
-                    pass  # Body's exception wins.
+                with contextlib.suppress(Exception):
+                    await self.rollback()  # Body's exception wins.
         finally:
             await self.close()

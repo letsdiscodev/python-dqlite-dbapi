@@ -8,9 +8,9 @@ name strings.
 """
 
 import pytest
-from dqlitewire.constants import ValueType
 
 from dqlitedbapi import BINARY, DATETIME, NUMBER, ROWID, STRING
+from dqlitewire.constants import ValueType
 
 
 class TestStringType:
@@ -21,36 +21,36 @@ class TestStringType:
 
     def test_equals_wire_text_value_type(self) -> None:
         assert STRING == ValueType.TEXT
-        assert STRING == int(ValueType.TEXT)
+        assert int(ValueType.TEXT) == STRING
 
     def test_does_not_equal_non_text_wire_types(self) -> None:
-        assert not (STRING == ValueType.INTEGER)
-        assert not (STRING == ValueType.BLOB)
-        assert not (STRING == ValueType.ISO8601)
+        assert STRING != ValueType.INTEGER
+        assert STRING != ValueType.BLOB
+        assert STRING != ValueType.ISO8601
 
 
 class TestBinaryType:
     def test_equals_blob_wire_type(self) -> None:
         assert BINARY == ValueType.BLOB
-        assert BINARY == int(ValueType.BLOB)
+        assert int(ValueType.BLOB) == BINARY
         assert BINARY == "BLOB"
 
 
 class TestNumberType:
     @pytest.mark.parametrize("vt", [ValueType.INTEGER, ValueType.FLOAT, ValueType.BOOLEAN])
     def test_equals_numeric_wire_types(self, vt: ValueType) -> None:
-        assert NUMBER == vt
-        assert NUMBER == int(vt)
+        assert vt == NUMBER
+        assert int(vt) == NUMBER
 
     def test_does_not_equal_text(self) -> None:
-        assert not (NUMBER == ValueType.TEXT)
+        assert NUMBER != ValueType.TEXT
 
 
 class TestDatetimeType:
     @pytest.mark.parametrize("vt", [ValueType.ISO8601, ValueType.UNIXTIME])
     def test_equals_datetime_wire_types(self, vt: ValueType) -> None:
-        assert DATETIME == vt
-        assert DATETIME == int(vt)
+        assert vt == DATETIME
+        assert int(vt) == DATETIME
 
     def test_equals_declared_type_names(self) -> None:
         assert DATETIME == "DATETIME"
@@ -61,7 +61,7 @@ class TestDatetimeType:
 class TestRowidType:
     def test_equals_integer_wire_type(self) -> None:
         assert ROWID == ValueType.INTEGER
-        assert ROWID == int(ValueType.INTEGER)
+        assert int(ValueType.INTEGER) == ROWID
 
 
 class TestHashability:

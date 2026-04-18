@@ -1,6 +1,6 @@
 """executemany([]) doesn't leak stale SELECT state (ISSUE-34)."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from dqlitedbapi.cursor import Cursor
 

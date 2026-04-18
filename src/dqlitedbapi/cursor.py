@@ -4,8 +4,6 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import dqliteclient.exceptions as _client_exc
-from dqlitewire.constants import ValueType
-
 from dqlitedbapi.exceptions import (
     DataError,
     InterfaceError,
@@ -20,6 +18,7 @@ from dqlitedbapi.types import (
     _datetime_from_iso8601,
     _datetime_from_unixtime,
 )
+from dqlitewire.constants import ValueType
 
 
 async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
@@ -48,6 +47,7 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
         raise DataError(str(e)) from e
     except _client_exc.InterfaceError as e:
         raise _DbapiInterfaceError(str(e)) from e
+
 
 if TYPE_CHECKING:
     from dqlitedbapi.connection import Connection

@@ -5,8 +5,6 @@ a custom cap set on the DBAPI Connection actually propagates down to
 the protocol, so users can't silently end up with the default.
 """
 
-import asyncio
-
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.connection import Connection
 

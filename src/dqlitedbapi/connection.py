@@ -29,7 +29,7 @@ def _cleanup_loop_thread(
     if closed_flag[0] is False:
         # User never called close() → leak warning (matches stdlib
         # sqlite3). Don't crash at interpreter shutdown.
-        try:
+        with contextlib.suppress(Exception):
             warnings.warn(
                 f"Connection(address={address!r}) was garbage-collected "
                 f"without close(); cleaning up event-loop thread. Call "
@@ -37,17 +37,13 @@ def _cleanup_loop_thread(
                 ResourceWarning,
                 stacklevel=2,
             )
-        except Exception:
-            pass
     try:
         if not loop.is_closed():
             loop.call_soon_threadsafe(loop.stop)
     except Exception:
         pass
-    try:
+    with contextlib.suppress(Exception):
         thread.join(timeout=5)
-    except Exception:
-        pass
     try:
         if not loop.is_closed():
             loop.close()
@@ -170,13 +166,12 @@ class Connection:
                 # half-written a request; the wire is in unknown state.
                 # Fire-and-forget on the loop thread (don't await).
                 if self._async_conn is not None:
-                    try:
+                    # RuntimeError if the loop is already shutting down.
+                    with contextlib.suppress(RuntimeError):
                         loop.call_soon_threadsafe(
                             self._async_conn._invalidate,
                             OperationalError(f"sync timeout after {self._timeout}s"),
                         )
-                    except RuntimeError:
-                        pass  # loop already shutting down
                 raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
 
     async def _get_async_connection(self) -> DqliteConnection:
@@ -306,9 +301,7 @@ class Connection:
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
-        return (
-            f"<Connection address={self._address!r} database={self._database!r} {state}>"
-        )
+        return f"<Connection address={self._address!r} database={self._database!r} {state}>"
 
     def __enter__(self) -> "Connection":
         return self
@@ -328,9 +321,7 @@ class Connection:
                 # Body already raised; attempt rollback but don't mask
                 # the original exception. If rollback itself fails, its
                 # error is attached via __context__ automatically.
-                try:
+                with contextlib.suppress(Exception):
                     self.rollback()
-                except Exception:
-                    pass  # Body's exception wins; rollback failure is attached as context.
         finally:
             self.close()

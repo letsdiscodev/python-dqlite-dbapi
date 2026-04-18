@@ -10,10 +10,10 @@ import asyncio
 import datetime
 
 import pytest
-from dqlitewire.constants import ValueType
 
 from dqlitedbapi import connect
 from dqlitedbapi.aio.connection import AsyncConnection
+from dqlitewire.constants import ValueType
 
 
 @pytest.mark.integration
@@ -29,7 +29,9 @@ class TestDateTimeRoundTrip:
         dt = datetime.datetime(2024, 1, 15, 10, 30, 45)  # noqa: DTZ001 - naive is the point
         with connect(cluster_address, database="test_dt_naive") as conn:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS dt_naive (id INTEGER PRIMARY KEY, ts DATETIME)")
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS dt_naive (id INTEGER PRIMARY KEY, ts DATETIME)"
+            )
             cursor.execute("DELETE FROM dt_naive")
             cursor.execute("INSERT INTO dt_naive (ts) VALUES (?)", [dt])
             cursor.execute("SELECT ts FROM dt_naive")
@@ -45,7 +47,9 @@ class TestDateTimeRoundTrip:
         dt = datetime.datetime(2024, 6, 15, 12, 30, 45, tzinfo=tz)
         with connect(cluster_address, database="test_dt_aware") as conn:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS dt_aware (id INTEGER PRIMARY KEY, ts DATETIME)")
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS dt_aware (id INTEGER PRIMARY KEY, ts DATETIME)"
+            )
             cursor.execute("DELETE FROM dt_aware")
             cursor.execute("INSERT INTO dt_aware (ts) VALUES (?)", [dt])
             cursor.execute("SELECT ts FROM dt_aware")
@@ -72,7 +76,9 @@ class TestDateTimeRoundTrip:
         """NULL in a DATETIME column is None on read (not an exception)."""
         with connect(cluster_address, database="test_dt_null") as conn:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS dt_null (id INTEGER PRIMARY KEY, ts DATETIME)")
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS dt_null (id INTEGER PRIMARY KEY, ts DATETIME)"
+            )
             cursor.execute("DELETE FROM dt_null")
             cursor.execute("INSERT INTO dt_null (ts) VALUES (NULL)")
             cursor.execute("SELECT ts FROM dt_null")
@@ -117,7 +123,9 @@ class TestUnixtimeColumn:
         epoch = int(expected.timestamp())
         with connect(cluster_address, database="test_unixtime") as conn:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS ut_test (id INTEGER PRIMARY KEY, ts DATETIME)")
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS ut_test (id INTEGER PRIMARY KEY, ts DATETIME)"
+            )
             cursor.execute("DELETE FROM ut_test")
             # Bind an int — SQLite stores it as INTEGER affinity; server then
             # tags the column as DQLITE_UNIXTIME on readback.
@@ -136,11 +144,11 @@ class TestDescriptionTypeCode:
     def test_iso8601_column_description(self, cluster_address: str) -> None:
         with connect(cluster_address, database="test_desc_iso") as conn:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS desc_iso (id INTEGER PRIMARY KEY, ts DATETIME)")
-            cursor.execute("DELETE FROM desc_iso")
             cursor.execute(
-                "INSERT INTO desc_iso (ts) VALUES (?)", ["2024-01-15 10:30:45"]
+                "CREATE TABLE IF NOT EXISTS desc_iso (id INTEGER PRIMARY KEY, ts DATETIME)"
             )
+            cursor.execute("DELETE FROM desc_iso")
+            cursor.execute("INSERT INTO desc_iso (ts) VALUES (?)", ["2024-01-15 10:30:45"])
             cursor.execute("SELECT id, ts FROM desc_iso")
             cursor.fetchall()
             assert cursor.description is not None

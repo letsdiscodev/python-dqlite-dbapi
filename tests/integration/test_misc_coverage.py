@@ -5,9 +5,9 @@
 - ISSUE-28: multi-statement SQL is rejected with a specific error.
 """
 
-import dqliteclient.exceptions
 import pytest
 
+import dqliteclient.exceptions
 from dqlitedbapi import connect
 from dqlitedbapi.exceptions import OperationalError
 
