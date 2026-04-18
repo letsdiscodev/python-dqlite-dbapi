@@ -49,6 +49,11 @@ class TestAsyncCursor:
         await cursor.close()  # must not raise
         assert cursor._closed
 
+    def test_connection_property(self) -> None:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        assert cursor.connection is conn
+
     @pytest.mark.asyncio
     async def test_fetchone_on_closed_cursor_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")

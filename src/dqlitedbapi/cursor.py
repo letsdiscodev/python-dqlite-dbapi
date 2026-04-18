@@ -135,6 +135,14 @@ class Cursor:
         self._lastrowid: int | None = None
 
     @property
+    def connection(self) -> "Connection":
+        """The Connection this Cursor was created from.
+
+        PEP 249 optional extension. Read-only.
+        """
+        return self._connection
+
+    @property
     def description(
         self,
     ) -> list[tuple[str, int | None, None, None, None, None, None]] | None:
