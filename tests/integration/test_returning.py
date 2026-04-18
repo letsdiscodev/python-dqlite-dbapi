@@ -17,6 +17,23 @@ class TestReturning:
             assert row == (1, "alice")
             cursor.execute("DROP TABLE ret_test")
 
+    def test_insert_returning_rowcount(self, cluster_address: str) -> None:
+        """After RETURNING, rowcount reflects the number of returned rows.
+
+        dqlite routes RETURNING through the query path, so rowcount is
+        len(rows) — matches SQLAlchemy's expectation for RETURNING clauses.
+        """
+        with connect(cluster_address, database="test_ret_rowcount") as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE rc_test (id INTEGER PRIMARY KEY, v INT)")
+            cursor.execute(
+                "INSERT INTO rc_test (id, v) VALUES (1, 10), (2, 20), (3, 30) RETURNING id"
+            )
+            rows = cursor.fetchall()
+            assert len(rows) == 3
+            assert cursor.rowcount == 3
+            cursor.execute("DROP TABLE rc_test")
+
     def test_insert_returning_multiple(self, cluster_address: str) -> None:
         """INSERT ... RETURNING should support fetching all returned rows."""
         with connect(cluster_address, database="test_returning_multi") as conn:
