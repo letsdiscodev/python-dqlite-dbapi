@@ -44,7 +44,7 @@ class AsyncConnection:
         # run on. We instantiate lazily in _ensure_connection / the
         # op-serializing paths so constructors can safely run outside
         # a running loop (SQLAlchemy creates AsyncConnection in sync
-        # glue code before any loop exists). See ISSUE-11.
+        # glue code before any loop exists).
         self._connect_lock: asyncio.Lock | None = None
         self._op_lock: asyncio.Lock | None = None
 
