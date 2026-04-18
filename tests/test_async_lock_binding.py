@@ -46,3 +46,22 @@ class TestAsyncLockBinding:
         conn._connect_lock = None
         conn._op_lock = None
         asyncio.run(touch_locks())
+
+
+class TestAsyncCloseResetsLocks:
+    """close() nulls the lazily-created locks so a subsequent re-use
+    from a new event loop cannot observe primitives bound to the dead
+    loop. Parity with the sync close() connect_lock reset.
+    """
+
+    def test_close_without_ever_connecting_nulls_locks(self) -> None:
+        async def scenario() -> None:
+            conn = AsyncConnection("localhost:19001", database="x")
+            # No cursor/execute has run; _async_conn is None but the
+            # caller calls close() anyway (matches the docstring
+            # promise that close is safe even on unused connections).
+            await conn.close()
+            assert conn._connect_lock is None
+            assert conn._op_lock is None
+
+        asyncio.run(scenario())

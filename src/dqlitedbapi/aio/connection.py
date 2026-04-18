@@ -123,12 +123,24 @@ class AsyncConnection:
         # in-flight op (if any) under the lock.
         self._closed = True
         if self._async_conn is None:
+            # Null the lazy locks so a subsequent fixture or
+            # SQLAlchemy-glue reuse of the object in a different event
+            # loop cannot observe a primitive bound to the dead loop.
+            # Parity with the sync close() reset established for
+            # connect_lock.
+            self._connect_lock = None
+            self._op_lock = None
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
             if self._async_conn is not None:
                 await self._async_conn.close()
                 self._async_conn = None
+        # Reset the locks *after* closing so any task that was parked on
+        # ``op_lock`` observes the "_closed -> raise InterfaceError"
+        # re-check before it touches the now-None primitive.
+        self._connect_lock = None
+        self._op_lock = None
 
     async def commit(self) -> None:
         """Commit any pending transaction.
