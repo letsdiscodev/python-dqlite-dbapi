@@ -99,7 +99,7 @@ class Connection:
         # close() flips to True. Using a list avoids the finalizer
         # closing over ``self`` and preventing GC.
         self._closed_flag: list[bool] = [False]
-        self._finalizer: weakref.finalize | None = None
+        self._finalizer: weakref.finalize[Any, Any] | None = None
 
     def _check_thread(self) -> None:
         """Raise ProgrammingError if called from a different thread than the creator."""
