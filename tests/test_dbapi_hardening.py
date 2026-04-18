@@ -113,7 +113,7 @@ class TestFetchmanyNegativeSize:
         cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
         cursor._description = [("x", None, None, None, None, None, None)]
         cursor._rows = [(1,), (2,)]
-        with pytest.raises(ProgrammingError, match=">= 0"):
+        with pytest.raises(ProgrammingError, match="non-negative"):
             cursor.fetchmany(-5)
         # 0 is allowed per PEP 249.
         assert cursor.fetchmany(0) == []
@@ -129,7 +129,7 @@ class TestFetchmanyNegativeSize:
         cursor._rows = [(1,), (2,)]
 
         async def _run() -> None:
-            with pytest.raises(ProgrammingError, match=">= 0"):
+            with pytest.raises(ProgrammingError, match="non-negative"):
                 await cursor.fetchmany(-3)
             assert await cursor.fetchmany(0) == []
 

@@ -199,7 +199,7 @@ class AsyncCursor:
         if size < 0:
             # See sync Cursor.fetchmany: silently returning [] on a
             # negative size hides caller bugs.
-            raise ProgrammingError(f"fetchmany size must be >= 0, got {size}")
+            raise ProgrammingError(f"fetchmany size must be non-negative, got {size}")
 
         result: list[tuple[Any, ...]] = []
         for _ in range(size):

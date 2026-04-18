@@ -371,7 +371,7 @@ class Cursor:
             # Previously ``range(-5)`` silently returned [] — hid caller
             # bugs. ``arraysize`` setter already validates >= 1; mirror
             # that here.
-            raise ProgrammingError(f"fetchmany size must be >= 0, got {size}")
+            raise ProgrammingError(f"fetchmany size must be non-negative, got {size}")
 
         result: list[tuple[Any, ...]] = []
         for _ in range(size):
