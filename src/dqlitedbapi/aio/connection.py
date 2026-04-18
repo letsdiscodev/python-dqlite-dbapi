@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import math
+import weakref
 from types import TracebackType
 from typing import Any
 
@@ -62,15 +63,41 @@ class AsyncConnection:
         # glue code before any loop exists).
         self._connect_lock: asyncio.Lock | None = None
         self._op_lock: asyncio.Lock | None = None
+        # Weak reference to the loop the locks were first bound to.
+        # Captured at first ``_ensure_locks()`` so subsequent use from a
+        # different event loop raises a clean ProgrammingError instead
+        # of asyncio's internal "got Future attached to a different
+        # loop" RuntimeError. Weakref avoids pinning a closed loop
+        # alive once the caller has moved on.
+        self._loop_ref: weakref.ref[asyncio.AbstractEventLoop] | None = None
         # PEP 249 optional extension; see Connection.messages.
         self.messages: list[tuple[type, Any]] = []
 
     def _ensure_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
-        """Lazy-create the asyncio locks on the currently-running loop."""
+        """Lazy-create the asyncio locks on the currently-running loop.
+
+        Also pins the connection to that loop: subsequent calls from a
+        different loop raise ``ProgrammingError`` up front. The
+        underlying ``DqliteConnection`` protocol's StreamReader/Writer
+        is also loop-bound, so transparently rebinding is not safe;
+        fail fast with a clear message instead.
+        """
+        loop = asyncio.get_running_loop()
         if self._connect_lock is None:
+            self._loop_ref = weakref.ref(loop)
             self._connect_lock = asyncio.Lock()
-        if self._op_lock is None:
             self._op_lock = asyncio.Lock()
+        else:
+            bound = self._loop_ref() if self._loop_ref is not None else None
+            if bound is not loop:
+                raise ProgrammingError(
+                    "AsyncConnection was first used on a different event loop; "
+                    "AsyncConnection instances are loop-bound and cannot be "
+                    "reused across asyncio.run() invocations."
+                )
+        # ``_op_lock`` is created together with ``_connect_lock`` above;
+        # the assertion keeps mypy narrow without a runtime cost.
+        assert self._op_lock is not None
         return self._connect_lock, self._op_lock
 
     async def _ensure_connection(self) -> DqliteConnection:
@@ -130,6 +157,7 @@ class AsyncConnection:
             # connect_lock.
             self._connect_lock = None
             self._op_lock = None
+            self._loop_ref = None
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
@@ -141,6 +169,7 @@ class AsyncConnection:
         # re-check before it touches the now-None primitive.
         self._connect_lock = None
         self._op_lock = None
+        self._loop_id = None
 
     async def commit(self) -> None:
         """Commit any pending transaction.

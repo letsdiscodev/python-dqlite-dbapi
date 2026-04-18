@@ -65,3 +65,68 @@ class TestAsyncCloseResetsLocks:
             assert conn._op_lock is None
 
         asyncio.run(scenario())
+
+
+class TestLoopAffinityEnforcement:
+    """After the first _ensure_locks() call, the AsyncConnection is
+    pinned to that loop. Any subsequent use from a different loop must
+    raise a clean ProgrammingError instead of asyncio's internal
+    "got Future attached to a different loop" RuntimeError.
+    """
+
+    def test_cross_loop_use_raises_programming_error(self) -> None:
+        import asyncio
+
+        from dqlitedbapi.aio.connection import AsyncConnection
+        from dqlitedbapi.exceptions import ProgrammingError
+
+        conn = AsyncConnection("localhost:19001", database="x")
+
+        async def touch() -> None:
+            conn._ensure_locks()
+
+        asyncio.run(touch())
+
+        loop2 = asyncio.new_event_loop()
+        try:
+            with pytest.raises(ProgrammingError, match="loop"):
+                loop2.run_until_complete(touch())
+        finally:
+            loop2.close()
+
+    def test_same_loop_reuse_is_fine(self) -> None:
+        import asyncio
+
+        from dqlitedbapi.aio.connection import AsyncConnection
+
+        conn = AsyncConnection("localhost:19001", database="x")
+
+        async def touch() -> tuple[asyncio.Lock, asyncio.Lock]:
+            a1, b1 = conn._ensure_locks()
+            a2, b2 = conn._ensure_locks()
+            assert a1 is a2
+            assert b1 is b2
+            return a1, b1
+
+        asyncio.run(touch())
+
+    def test_close_clears_loop_pin(self) -> None:
+        """Close resets the pin so a subsequent asyncio.run on the
+        same object (e.g. test fixture reuse) works without tripping
+        the cross-loop guard.
+        """
+        import asyncio
+
+        from dqlitedbapi.aio.connection import AsyncConnection
+
+        conn = AsyncConnection("localhost:19001", database="x")
+
+        async def _scenario() -> None:
+            conn._ensure_locks()
+            await conn.close()
+
+        asyncio.run(_scenario())
+        assert conn._loop_ref is None
+
+
+import pytest  # noqa: E402
