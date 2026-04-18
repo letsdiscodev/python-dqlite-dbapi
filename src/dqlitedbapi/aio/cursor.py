@@ -8,6 +8,7 @@ from dqlitedbapi.cursor import (
     _call_client,
     _convert_params,
     _convert_row,
+    _ExecuteManyAccumulator,
     _is_row_returning,
 )
 from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
@@ -169,22 +170,11 @@ class AsyncCursor:
         self._description = None
         self._rows = []
         self._row_index = 0
-        total_affected = 0
-        accumulated_rows: list[tuple[Any, ...]] = []
-        accumulated_desc: list[tuple[str, int | None, None, None, None, None, None]] | None = None
+        acc = _ExecuteManyAccumulator()
         for params in seq_of_parameters:
             await self.execute(operation, params)
-            if self._rowcount >= 0:
-                total_affected += self._rowcount
-            if self._description is not None:
-                if accumulated_desc is None:
-                    accumulated_desc = self._description
-                accumulated_rows.extend(self._rows)
-        self._rowcount = total_affected
-        if accumulated_desc is not None:
-            self._description = accumulated_desc
-            self._rows = accumulated_rows
-            self._row_index = 0
+            acc.push(self)
+        acc.apply(self)
         return self
 
     def _check_result_set(self) -> None:

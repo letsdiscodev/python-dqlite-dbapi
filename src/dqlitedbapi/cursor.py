@@ -151,6 +151,54 @@ def _strip_leading_comments(sql: str) -> str:
 _ROW_RETURNING_PREFIXES = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
 
 
+class _ExecuteManyAccumulator:
+    """Shared state for the RETURNING-aware ``executemany`` loop.
+
+    Both the sync and async cursor implementations iterate
+    ``seq_of_parameters`` calling their respective single-statement
+    helper. For statements with a RETURNING clause, rows produced on
+    each iteration must accumulate so a subsequent ``fetchall`` yields
+    every returned row across parameter sets. The bodies differ only
+    by the ``await`` on the inner call, so both flavours drive this
+    accumulator and then apply it to the cursor.
+    """
+
+    __slots__ = ("total_affected", "rows", "description")
+
+    def __init__(self) -> None:
+        self.total_affected = 0
+        self.rows: list[tuple[Any, ...]] = []
+        self.description: list[tuple[str, int | None, None, None, None, None, None]] | None = None
+
+    def push(self, cursor: Any) -> None:
+        """Record one iteration's output into the accumulator.
+
+        Accepts either :class:`Cursor` or :class:`AsyncCursor`; both
+        expose the same ``_rowcount`` / ``_description`` / ``_rows``
+        attributes.
+        """
+        if cursor._rowcount >= 0:
+            self.total_affected += cursor._rowcount
+        if cursor._description is not None:
+            if self.description is None:
+                self.description = cursor._description
+            self.rows.extend(cursor._rows)
+
+    def apply(self, cursor: Any) -> None:
+        """Materialise the accumulator's state onto the cursor.
+
+        ``description is None`` means none of the iterations produced a
+        result set (plain DML without RETURNING); leave ``_description``
+        / ``_rows`` as reset. Inherit the first-seen description
+        otherwise.
+        """
+        cursor._rowcount = self.total_affected
+        if self.description is not None:
+            cursor._description = self.description
+            cursor._rows = self.rows
+            cursor._row_index = 0
+
+
 def _is_row_returning(sql: str) -> bool:
     """Heuristic for "does this statement return a result set?"
 
@@ -331,22 +379,11 @@ class Cursor:
         self._description = None
         self._rows = []
         self._row_index = 0
-        total_affected = 0
-        accumulated_rows: list[tuple[Any, ...]] = []
-        accumulated_desc: list[tuple[str, int | None, None, None, None, None, None]] | None = None
+        acc = _ExecuteManyAccumulator()
         for params in seq_of_parameters:
             await self._execute_async(operation, params)
-            if self._rowcount >= 0:
-                total_affected += self._rowcount
-            if self._description is not None:
-                if accumulated_desc is None:
-                    accumulated_desc = self._description
-                accumulated_rows.extend(self._rows)
-        self._rowcount = total_affected
-        if accumulated_desc is not None:
-            self._description = accumulated_desc
-            self._rows = accumulated_rows
-            self._row_index = 0
+            acc.push(self)
+        acc.apply(self)
 
     def _check_result_set(self) -> None:
         if self._description is None:
