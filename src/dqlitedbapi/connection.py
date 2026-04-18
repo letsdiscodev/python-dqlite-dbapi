@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import math
 import threading
 import warnings
 import weakref
@@ -75,8 +76,6 @@ class Connection:
                 frames for a single query. Forwarded to the underlying
                 :class:`DqliteConnection`. ``None`` disables the cap.
         """
-        import math
-
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError(f"timeout must be a positive finite number, got {timeout}")
         self._address = address

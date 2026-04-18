@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import math
 from typing import Any
 
 from dqliteclient import DqliteConnection
@@ -30,8 +31,6 @@ class AsyncConnection:
                 frames. Forwarded to the underlying DqliteConnection;
                 ``None`` disables the cap.
         """
-        import math
-
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError(f"timeout must be a positive finite number, got {timeout}")
         self._address = address
