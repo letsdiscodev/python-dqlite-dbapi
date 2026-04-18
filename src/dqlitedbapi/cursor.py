@@ -1,16 +1,53 @@
 """PEP 249 Cursor implementation for dqlite."""
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+import dqliteclient.exceptions as _client_exc
 from dqlitewire.constants import ValueType
 
-from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
+from dqlitedbapi.exceptions import (
+    DataError,
+    InterfaceError,
+    OperationalError,
+    ProgrammingError,
+)
+from dqlitedbapi.exceptions import (
+    InterfaceError as _DbapiInterfaceError,
+)
 from dqlitedbapi.types import (
     _convert_bind_param,
     _datetime_from_iso8601,
     _datetime_from_unixtime,
 )
+
+
+async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Await a client-layer coroutine, mapping its exceptions into the
+    PEP 249 hierarchy. Preserves the original via ``from``.
+
+    Mapping:
+      client.OperationalError      → dbapi.OperationalError (same code/msg)
+      client.DqliteConnectionError → dbapi.OperationalError (network flavor)
+      client.ClusterError          → dbapi.OperationalError
+      client.ProtocolError         → dbapi.InterfaceError
+      client.DataError             → dbapi.DataError
+      client.InterfaceError        → dbapi.InterfaceError
+    """
+    try:
+        return await coro
+    except _client_exc.OperationalError as e:
+        raise OperationalError(str(e)) from e
+    except _client_exc.DqliteConnectionError as e:
+        raise OperationalError(str(e)) from e
+    except _client_exc.ClusterError as e:
+        raise OperationalError(str(e)) from e
+    except _client_exc.ProtocolError as e:
+        raise _DbapiInterfaceError(str(e)) from e
+    except _client_exc.DataError as e:
+        raise DataError(str(e)) from e
+    except _client_exc.InterfaceError as e:
+        raise _DbapiInterfaceError(str(e)) from e
 
 if TYPE_CHECKING:
     from dqlitedbapi.connection import Connection
@@ -165,7 +202,9 @@ class Cursor:
         )
 
         if is_query:
-            columns, column_types, rows = await conn.query_raw_typed(operation, params)
+            columns, column_types, rows = await _call_client(
+                conn.query_raw_typed(operation, params)
+            )
             self._description = [
                 (
                     name,
@@ -182,7 +221,7 @@ class Cursor:
             self._row_index = 0
             self._rowcount = len(rows)
         else:
-            last_id, affected = await conn.execute(operation, params)
+            last_id, affected = await _call_client(conn.execute(operation, params))
             self._lastrowid = last_id
             self._rowcount = affected
             self._description = None

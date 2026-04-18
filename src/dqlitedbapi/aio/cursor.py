@@ -3,7 +3,12 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from dqlitedbapi.cursor import _convert_params, _convert_row, _strip_leading_comments
+from dqlitedbapi.cursor import (
+    _call_client,
+    _convert_params,
+    _convert_row,
+    _strip_leading_comments,
+)
 from dqlitedbapi.exceptions import InterfaceError
 
 if TYPE_CHECKING:
@@ -82,7 +87,9 @@ class AsyncCursor:
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:
             if is_query:
-                columns, column_types, rows = await conn.query_raw_typed(operation, params)
+                columns, column_types, rows = await _call_client(
+                    conn.query_raw_typed(operation, params)
+                )
                 self._description = [
                     (
                         name,
@@ -99,7 +106,7 @@ class AsyncCursor:
                 self._row_index = 0
                 self._rowcount = len(rows)
             else:
-                last_id, affected = await conn.execute(operation, params)
+                last_id, affected = await _call_client(conn.execute(operation, params))
                 self._lastrowid = last_id
                 self._rowcount = affected
                 self._description = None

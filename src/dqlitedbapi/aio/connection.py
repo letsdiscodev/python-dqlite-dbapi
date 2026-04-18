@@ -79,13 +79,26 @@ class AsyncConnection:
         await self._ensure_connection()
 
     async def close(self) -> None:
-        """Close the connection."""
+        """Close the connection.
+
+        Serializes with any in-flight operation via ``_op_lock`` so we
+        never tear down the underlying protocol while another task is
+        mid-execute/mid-commit — that races would leave the caller
+        with mysterious "connection closed" errors mid-query.
+        """
         if self._closed:
             return
+        # Set _closed first so any task waiting on the lock sees the
+        # closed state as soon as it acquires. Then drain the current
+        # in-flight op (if any) under the lock.
         self._closed = True
-        if self._async_conn is not None:
-            await self._async_conn.close()
-            self._async_conn = None
+        if self._async_conn is None:
+            return
+        _, op_lock = self._ensure_locks()
+        async with op_lock:
+            if self._async_conn is not None:
+                await self._async_conn.close()
+                self._async_conn = None
 
     async def commit(self) -> None:
         """Commit any pending transaction.
