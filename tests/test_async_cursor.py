@@ -108,3 +108,30 @@ class TestAsyncCursor:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         cursor.setoutputsize(100, 0)
+
+
+class TestOptionalAsyncCursorMethodsRaise:
+    @pytest.mark.asyncio
+    async def test_callproc_raises_not_supported(self) -> None:
+        from dqlitedbapi.exceptions import NotSupportedError
+
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        with pytest.raises(NotSupportedError):
+            await cursor.callproc("some_proc")
+
+    def test_nextset_raises_not_supported(self) -> None:
+        from dqlitedbapi.exceptions import NotSupportedError
+
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        with pytest.raises(NotSupportedError):
+            cursor.nextset()
+
+    def test_scroll_raises_not_supported(self) -> None:
+        from dqlitedbapi.exceptions import NotSupportedError
+
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        with pytest.raises(NotSupportedError):
+            cursor.scroll(0)

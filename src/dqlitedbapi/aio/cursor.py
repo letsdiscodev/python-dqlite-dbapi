@@ -9,7 +9,7 @@ from dqlitedbapi.cursor import (
     _convert_row,
     _strip_leading_comments,
 )
-from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
+from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection
@@ -212,6 +212,20 @@ class AsyncCursor:
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite)."""
         pass
+
+    async def callproc(
+        self, procname: str, parameters: Sequence[Any] | None = None
+    ) -> Sequence[Any] | None:
+        """PEP 249 optional extension — not supported."""
+        raise NotSupportedError("dqlite does not support stored procedures")
+
+    def nextset(self) -> bool | None:
+        """PEP 249 optional extension — not supported."""
+        raise NotSupportedError("dqlite does not support multiple result sets")
+
+    def scroll(self, value: int, mode: str = "relative") -> None:
+        """PEP 249 optional extension — not supported."""
+        raise NotSupportedError("dqlite cursors are not scrollable")
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else "open"

@@ -99,3 +99,29 @@ class TestCursor:
         cursor = Cursor(conn)
         # Should not raise
         cursor.setoutputsize(100, 0)
+
+
+class TestOptionalCursorMethodsRaise:
+    def test_callproc_raises_not_supported(self) -> None:
+        from dqlitedbapi.exceptions import NotSupportedError
+
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        with pytest.raises(NotSupportedError):
+            cursor.callproc("some_proc")
+
+    def test_nextset_raises_not_supported(self) -> None:
+        from dqlitedbapi.exceptions import NotSupportedError
+
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        with pytest.raises(NotSupportedError):
+            cursor.nextset()
+
+    def test_scroll_raises_not_supported(self) -> None:
+        from dqlitedbapi.exceptions import NotSupportedError
+
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        with pytest.raises(NotSupportedError):
+            cursor.scroll(0)

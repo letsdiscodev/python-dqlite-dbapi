@@ -7,6 +7,7 @@ import dqliteclient.exceptions as _client_exc
 from dqlitedbapi.exceptions import (
     DataError,
     InterfaceError,
+    NotSupportedError,
     OperationalError,
     ProgrammingError,
 )
@@ -337,6 +338,30 @@ class Cursor:
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite)."""
         pass
+
+    def callproc(
+        self, procname: str, parameters: Sequence[Any] | None = None
+    ) -> Sequence[Any] | None:
+        """PEP 249 optional extension — not supported.
+
+        dqlite (and SQLite) have no stored-procedure concept.
+        """
+        raise NotSupportedError("dqlite does not support stored procedures")
+
+    def nextset(self) -> bool | None:
+        """PEP 249 optional extension — not supported.
+
+        dqlite's wire protocol does not return multiple result sets.
+        """
+        raise NotSupportedError("dqlite does not support multiple result sets")
+
+    def scroll(self, value: int, mode: str = "relative") -> None:
+        """PEP 249 optional extension — not supported.
+
+        The dqlite cursor is forward-only; rows are buffered from a
+        streamed wire response.
+        """
+        raise NotSupportedError("dqlite cursors are not scrollable")
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else "open"
