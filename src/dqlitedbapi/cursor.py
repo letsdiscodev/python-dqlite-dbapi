@@ -265,16 +265,33 @@ class Cursor:
         state around: reset description / rows to None / empty so
         callers can't confuse an empty executemany with a preceding
         SELECT.
+
+        For statements with a RETURNING clause (or any result-producing
+        DML), each iteration's rows are accumulated so ``fetchall`` at
+        the end yields every returned row across all parameter sets.
+        Without the accumulation, ``_execute_async`` would overwrite
+        ``_rows`` on each iteration and only the rows from the last
+        parameter set would survive.
         """
         self._description = None
         self._rows = []
         self._row_index = 0
         total_affected = 0
+        accumulated_rows: list[tuple[Any, ...]] = []
+        accumulated_desc: list[tuple[str, int | None, None, None, None, None, None]] | None = None
         for params in seq_of_parameters:
             await self._execute_async(operation, params)
             if self._rowcount >= 0:
                 total_affected += self._rowcount
+            if self._description is not None:
+                if accumulated_desc is None:
+                    accumulated_desc = self._description
+                accumulated_rows.extend(self._rows)
         self._rowcount = total_affected
+        if accumulated_desc is not None:
+            self._description = accumulated_desc
+            self._rows = accumulated_rows
+            self._row_index = 0
 
     def _check_result_set(self) -> None:
         if self._description is None:

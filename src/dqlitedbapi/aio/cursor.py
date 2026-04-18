@@ -140,6 +140,10 @@ class AsyncCursor:
         An empty ``seq_of_parameters`` must not leave stale SELECT
         state around: reset description / rows so callers can't
         confuse an empty executemany with a preceding SELECT.
+
+        For statements with a RETURNING clause, rows produced by each
+        iteration are accumulated into ``_rows`` so a subsequent
+        ``fetchall`` yields every returned row across parameter sets.
         """
         self._check_closed()
 
@@ -147,11 +151,21 @@ class AsyncCursor:
         self._rows = []
         self._row_index = 0
         total_affected = 0
+        accumulated_rows: list[tuple[Any, ...]] = []
+        accumulated_desc: list[tuple[str, int | None, None, None, None, None, None]] | None = None
         for params in seq_of_parameters:
             await self.execute(operation, params)
             if self._rowcount >= 0:
                 total_affected += self._rowcount
+            if self._description is not None:
+                if accumulated_desc is None:
+                    accumulated_desc = self._description
+                accumulated_rows.extend(self._rows)
         self._rowcount = total_affected
+        if accumulated_desc is not None:
+            self._description = accumulated_desc
+            self._rows = accumulated_rows
+            self._row_index = 0
         return self
 
     def _check_result_set(self) -> None:
