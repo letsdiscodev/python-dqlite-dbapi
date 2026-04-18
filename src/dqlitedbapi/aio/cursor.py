@@ -69,7 +69,7 @@ class AsyncCursor:
         """0-based index of the next row in the current result set.
 
         PEP 249 optional extension. ``None`` when no result set is
-        active (ISSUE-80).
+        active.
         """
         if self._description is None:
             return None
@@ -198,7 +198,7 @@ class AsyncCursor:
             size = self._arraysize
         if size < 0:
             # See sync Cursor.fetchmany: silently returning [] on a
-            # negative size hides caller bugs (ISSUE-82).
+            # negative size hides caller bugs.
             raise ProgrammingError(f"fetchmany size must be >= 0, got {size}")
 
         result: list[tuple[Any, ...]] = []

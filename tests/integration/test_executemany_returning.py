@@ -1,5 +1,5 @@
-"""Integration test for ISSUE-57: executemany must accumulate rows from
-every parameter set when the statement has a RETURNING clause."""
+"""Executemany must accumulate rows from every parameter set when the
+statement has a RETURNING clause."""
 
 import pytest
 

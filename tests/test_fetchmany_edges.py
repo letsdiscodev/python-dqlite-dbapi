@@ -1,4 +1,4 @@
-"""PEP 249 fetchmany edge cases (ISSUE-25)."""
+"""PEP 249 fetchmany edge cases."""
 
 from unittest.mock import AsyncMock, MagicMock
 

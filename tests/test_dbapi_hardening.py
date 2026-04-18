@@ -1,15 +1,15 @@
-"""Regression tests for cycle-3 DB-API hardening (bundle D).
+"""Regression tests for DB-API hardening.
 
 Covers:
-- ISSUE-80: Cursor.rownumber optional PEP 249 attribute
-- ISSUE-82: fetchmany rejects negative size
-- ISSUE-84: *FromTicks wrap stdlib errors as DataError
-- ISSUE-85: _call_client catch-all for unknown DqliteError subclasses
-- ISSUE-86: execute() rejects str/bytes as parameters (iterable trap)
-- ISSUE-88: Time()/Timestamp() accept optional microsecond/tzinfo
-- ISSUE-102: _datetime_from_iso8601 wraps parse failures as DataError
-- ISSUE-107: _datetime_from_unixtime wraps bad server values as DataError
-- ISSUE-110: _is_row_returning helper (shared between sync/async)
+- Cursor.rownumber optional PEP 249 attribute
+- fetchmany rejects negative size
+- *FromTicks wrap stdlib errors as DataError
+- _call_client catch-all for unknown DqliteError subclasses
+- execute() rejects str/bytes as parameters (iterable trap)
+- Time()/Timestamp() accept optional microsecond/tzinfo
+- _datetime_from_iso8601 wraps parse failures as DataError
+- _datetime_from_unixtime wraps bad server values as DataError
+- _is_row_returning helper (shared between sync/async)
 """
 
 import asyncio
@@ -243,7 +243,7 @@ class TestDatetimeFromUnixtimeWrapping:
 
 
 class TestIsNoTransactionError:
-    """ISSUE-97: commit/rollback no-op is gated on SQLite result code first.
+    """commit/rollback no-op is gated on SQLite result code first.
 
     A malicious/impostor server must not be able to silence an unrelated
     error just by crafting a ``message`` that contains the magic
@@ -280,7 +280,7 @@ class TestIsNoTransactionError:
 
 
 class TestConnectForwardsMaxTotalRows:
-    """ISSUE-111: module-level connect() forwards max_total_rows.
+    """Module-level connect() forwards max_total_rows.
 
     These tests only verify parameter plumbing — they do not open a
     socket. Connection.__init__ is pure state machine; no cluster

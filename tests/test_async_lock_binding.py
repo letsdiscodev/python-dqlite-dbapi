@@ -1,4 +1,4 @@
-"""AsyncConnection constructed outside a running loop still works (ISSUE-11).
+"""AsyncConnection constructed outside a running loop still works.
 
 Previously AsyncConnection eagerly called ``asyncio.Lock()`` in ``__init__``,
 binding the lock to whatever loop happened to be the current event loop at

@@ -1,4 +1,4 @@
-"""Event-loop thread is cleaned up on Connection GC (ISSUE-10).
+"""Event-loop thread is cleaned up on Connection GC.
 
 Previously Connection spawned a daemon thread via _ensure_loop() and
 only stopped it on explicit close(). A GC'd connection leaked its

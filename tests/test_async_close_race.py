@@ -1,4 +1,4 @@
-"""AsyncConnection.close serializes with in-flight operations (ISSUE-32).
+"""AsyncConnection.close serializes with in-flight operations.
 
 Previously close() called await self._async_conn.close() without
 acquiring _op_lock; a concurrent task mid-execute would find the

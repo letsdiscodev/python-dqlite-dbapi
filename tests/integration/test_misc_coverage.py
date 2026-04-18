@@ -1,8 +1,8 @@
 """Integration tests for previously-uncovered territory.
 
-- ISSUE-26: large result set (forces continuation frames) + large BLOB.
-- ISSUE-27: Unicode in identifiers + emoji in TEXT.
-- ISSUE-28: multi-statement SQL is rejected with a specific error.
+- Large result set (forces continuation frames) + large BLOB.
+- Unicode in identifiers + emoji in TEXT.
+- Multi-statement SQL is rejected with a specific error.
 """
 
 import pytest

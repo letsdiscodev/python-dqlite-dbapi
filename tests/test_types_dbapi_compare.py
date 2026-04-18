@@ -1,4 +1,4 @@
-"""PEP 249 type-object comparison tests (ISSUE-06).
+"""PEP 249 type-object comparison tests.
 
 Per PEP 249 the module's type objects (STRING, BINARY, NUMBER, DATETIME,
 ROWID) must compare equal to whatever `cursor.description[i][1]` carries.

@@ -1,4 +1,4 @@
-"""Cursor.arraysize rejects non-positive values (ISSUE-33)."""
+"""Cursor.arraysize rejects non-positive values."""
 
 import pytest
 

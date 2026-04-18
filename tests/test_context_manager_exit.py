@@ -1,5 +1,5 @@
 """Context-manager ``__exit__`` should not silently swallow commit/rollback
-failures (ISSUE-09).
+failures.
 
 Previous behavior: ``except Exception: pass`` around commit/rollback
 masked real production errors (network drops, disk-full, etc.). Now

@@ -1,4 +1,4 @@
-"""PEP 249 qmark parameter validation tests (ISSUE-07).
+"""PEP 249 qmark parameter validation tests.
 
 PEP 249: for ``qmark`` paramstyle, "the sequence is mandatory and the
 driver will not accept mappings." We additionally reject ``set``/

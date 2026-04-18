@@ -35,10 +35,10 @@ class AsyncConnection:
             max_total_rows: Cumulative row cap across continuation
                 frames. Forwarded to the underlying DqliteConnection;
                 ``None`` disables the cap.
-            max_continuation_frames: Per-query continuation-frame cap
-                (ISSUE-98). Forwarded to the underlying DqliteConnection.
+            max_continuation_frames: Per-query continuation-frame cap.
+                Forwarded to the underlying DqliteConnection.
             trust_server_heartbeat: When True, let the server-advertised
-                heartbeat widen the per-read deadline (ISSUE-101).
+                heartbeat widen the per-read deadline.
         """
         if not math.isfinite(timeout) or timeout <= 0:
             raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")

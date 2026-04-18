@@ -1,6 +1,6 @@
 """max_total_rows plumbing from Connection → DqliteConnection → Protocol.
 
-Cycle 9 added max_total_rows to every layer. This test verifies that
+max_total_rows is wired through every layer. This test verifies that
 a custom cap set on the DBAPI Connection actually propagates down to
 the protocol, so users can't silently end up with the default.
 """

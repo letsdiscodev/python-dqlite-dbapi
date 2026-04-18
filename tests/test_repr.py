@@ -1,4 +1,4 @@
-"""__repr__ returns useful, non-default strings (ISSUE-14)."""
+"""__repr__ returns useful, non-default strings."""
 
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor

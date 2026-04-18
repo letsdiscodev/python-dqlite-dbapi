@@ -1,8 +1,5 @@
-"""Cycle-3 bundle E: regression tests pinning previously-untested edges.
-
-Covers:
-- ISSUE-103: cursor.execute() on a cursor whose connection was closed
-  externally (not via cursor.close()) raises InterfaceError.
+"""Cursor.execute() on a cursor whose connection was closed externally
+(not via cursor.close()) raises InterfaceError.
 """
 
 import asyncio
@@ -15,9 +12,9 @@ from dqlitedbapi.exceptions import InterfaceError
 
 
 class TestCursorAfterExternalConnectionClose:
-    """ISSUE-103: operations on a live cursor whose connection was
-    closed externally must raise InterfaceError rather than hanging
-    or surfacing a cryptic lower-layer error.
+    """Operations on a live cursor whose connection was closed
+    externally must raise InterfaceError rather than hanging or
+    surfacing a cryptic lower-layer error.
     """
 
     def test_sync_cursor_execute_after_connection_close(self) -> None:

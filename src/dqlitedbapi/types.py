@@ -24,7 +24,7 @@ def Time(  # noqa: N802
     """Construct a time value.
 
     Accepts optional ``microsecond`` and ``tzinfo`` for parity with
-    stdlib ``datetime.time`` (ISSUE-88). PEP 249 does not require this,
+    stdlib ``datetime.time``. PEP 249 does not require this,
     but mixing the driver's ``Time()`` with ``datetime.time`` would
     otherwise drop sub-second precision silently.
     """
@@ -51,7 +51,7 @@ def _validate_ticks(ticks: float) -> None:
     ``fromtimestamp`` raises different stdlib exceptions depending on
     the failure mode (``ValueError`` for NaN on some platforms,
     ``OverflowError`` / ``OSError`` for out-of-range). Guard up front so
-    the caller always sees a single DB-API ``DataError`` (ISSUE-84).
+    the caller always sees a single DB-API ``DataError``.
     """
     if isinstance(ticks, float) and not math.isfinite(ticks):
         raise DataError(f"Invalid timestamp ticks: {ticks}")
@@ -209,8 +209,7 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
 
     A malformed string from the server (bug, corruption, or MitM) would
     otherwise escape as a raw ``ValueError``; wrap as ``DataError`` to
-    satisfy PEP 249's "all DB errors funnel through Error" contract
-    (ISSUE-102).
+    satisfy PEP 249's "all DB errors funnel through Error" contract.
     """
     if not text:
         return None
@@ -234,7 +233,7 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
 
     A corrupt server or MitM-modified bytes could deliver a non-integer
     or out-of-range value; wrap the resulting stdlib exceptions as
-    ``DataError`` (ISSUE-107).
+    ``DataError``.
     """
     try:
         return datetime.datetime.fromtimestamp(value, tz=datetime.UTC)

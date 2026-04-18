@@ -1,4 +1,4 @@
-"""executemany([]) doesn't leak stale SELECT state (ISSUE-34)."""
+"""executemany([]) doesn't leak stale SELECT state."""
 
 from unittest.mock import MagicMock
 

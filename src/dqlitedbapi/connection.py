@@ -19,7 +19,7 @@ from dqlitedbapi.exceptions import InterfaceError, OperationalError, Programming
 # time; some code paths return ``SQLITE_MISUSE`` (21). Check the
 # numeric code first so a malicious or impostor server cannot silence
 # unrelated errors just by crafting a message string that contains the
-# magic substring (ISSUE-97). The substring remains as a secondary
+# magic substring. The substring remains as a secondary
 # filter because SQLite has many uses of code=1.
 _NO_TX_CODES = frozenset({1, 21})
 _NO_TX_SUBSTRING = "no transaction is active"
@@ -65,7 +65,7 @@ def _cleanup_loop_thread(
                 stacklevel=2,
             )
     # Narrow suppression to the specific exceptions loop/thread teardown
-    # can legitimately raise during finalization (ISSUE-113). Wider
+    # can legitimately raise during finalization. Wider
     # ``except Exception: pass`` would hide programmer bugs like a
     # missing attribute reference introduced during a refactor.
     try:
@@ -109,14 +109,14 @@ class Connection:
             max_total_rows: Cumulative row cap across continuation
                 frames for a single query. Forwarded to the underlying
                 :class:`DqliteConnection`. ``None`` disables the cap.
-            max_continuation_frames: Per-query continuation-frame cap
-                (ISSUE-98). Bounds Python-side decode work a hostile
-                server can inflict by drip-feeding 1-row frames.
-                Forwarded to the underlying :class:`DqliteConnection`.
+            max_continuation_frames: Per-query continuation-frame cap.
+                Bounds Python-side decode work a hostile server can
+                inflict by drip-feeding 1-row frames. Forwarded to the
+                underlying :class:`DqliteConnection`.
             trust_server_heartbeat: When True, widen the per-read
                 deadline to the server-advertised heartbeat (subject to
                 a 300 s hard cap). Default False so the configured
-                ``timeout`` is authoritative (ISSUE-101).
+                ``timeout`` is authoritative.
         """
         if not math.isfinite(timeout) or timeout <= 0:
             raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")

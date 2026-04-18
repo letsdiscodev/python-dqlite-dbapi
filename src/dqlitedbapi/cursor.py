@@ -35,7 +35,7 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
       client.ProtocolError         → dbapi.InterfaceError
       client.DataError             → dbapi.DataError
       client.InterfaceError        → dbapi.InterfaceError
-      any other DqliteError        → dbapi.InterfaceError (ISSUE-85)
+      any other DqliteError        → dbapi.InterfaceError
 
     Every ``dqliteclient`` exception is a subclass of ``DqliteError``;
     the trailing catch-all ensures a new client exception class cannot
@@ -61,7 +61,7 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
     except _client_exc.DqliteError as e:
         # Catch-all for any future subclass of DqliteError not enumerated
         # above. Surface as InterfaceError rather than leaking to the
-        # caller as a non-DBAPI exception (ISSUE-85).
+        # caller as a non-DBAPI exception.
         raise _DbapiInterfaceError(f"unrecognized client error ({type(e).__name__}): {e}") from e
 
 
@@ -97,7 +97,7 @@ def _reject_non_sequence_params(params: Any) -> None:
     scrambles positional bindings. And we reject ``str`` /
     ``bytes`` / ``bytearray`` / ``memoryview`` — they are iterable, so
     they would silently "explode" into character/byte binds and the
-    caller almost always meant ``(value,)`` instead (ISSUE-86).
+    caller almost always meant ``(value,)`` instead.
     """
     if params is None:
         return
@@ -152,7 +152,7 @@ _ROW_RETURNING_PREFIXES = ("SELECT", "PRAGMA", "EXPLAIN", "WITH")
 def _is_row_returning(sql: str) -> bool:
     """Heuristic for "does this statement return a result set?"
 
-    Single source of truth for sync and async cursors (ISSUE-110).
+    Single source of truth for sync and async cursors.
     Matches leading SELECT/PRAGMA/EXPLAIN/WITH after stripping comments,
     and catches trailing/embedded RETURNING clauses on DML.
 
@@ -232,7 +232,7 @@ class Cursor:
         PEP 249 optional extension: returns ``None`` if no result set is
         active (no query executed, or last statement was DML without
         RETURNING); otherwise returns the index of the row that the next
-        ``fetchone()`` would produce (ISSUE-80).
+        ``fetchone()`` would produce.
         """
         if self._description is None:
             return None
@@ -369,8 +369,8 @@ class Cursor:
             size = self._arraysize
         if size < 0:
             # Previously ``range(-5)`` silently returned [] — hid caller
-            # bugs (ISSUE-82). ``arraysize`` setter already validates
-            # >= 1; mirror that here.
+            # bugs. ``arraysize`` setter already validates >= 1; mirror
+            # that here.
             raise ProgrammingError(f"fetchmany size must be >= 0, got {size}")
 
         result: list[tuple[Any, ...]] = []

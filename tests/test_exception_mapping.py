@@ -1,4 +1,4 @@
-"""PEP 249 exception wrapping at the cursor layer (ISSUE-31).
+"""PEP 249 exception wrapping at the cursor layer.
 
 The underlying client raises ``dqliteclient.exceptions.*``. PEP 249
 requires a specific exception hierarchy under the DBAPI module, so the
