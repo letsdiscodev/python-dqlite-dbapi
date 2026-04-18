@@ -5,6 +5,7 @@ import contextlib
 import math
 from typing import Any
 
+import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.exceptions import InterfaceError, OperationalError
@@ -121,8 +122,6 @@ class AsyncConnection:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
             return
-        import dqliteclient.exceptions as _client_exc
-
         _, op_lock = self._ensure_locks()
         async with op_lock:
             try:
@@ -137,8 +136,6 @@ class AsyncConnection:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
             return
-        import dqliteclient.exceptions as _client_exc
-
         _, op_lock = self._ensure_locks()
         async with op_lock:
             try:

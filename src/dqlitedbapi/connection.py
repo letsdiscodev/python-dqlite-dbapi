@@ -8,6 +8,7 @@ import warnings
 import weakref
 from typing import Any
 
+import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
@@ -259,8 +260,6 @@ class Connection:
     async def _commit_async(self) -> None:
         """Async implementation of commit."""
         assert self._async_conn is not None
-        import dqliteclient.exceptions as _client_exc
-
         try:
             await self._async_conn.execute("COMMIT")
         except (OperationalError, _client_exc.OperationalError) as e:
@@ -283,8 +282,6 @@ class Connection:
     async def _rollback_async(self) -> None:
         """Async implementation of rollback."""
         assert self._async_conn is not None
-        import dqliteclient.exceptions as _client_exc
-
         try:
             await self._async_conn.execute("ROLLBACK")
         except (OperationalError, _client_exc.OperationalError) as e:
