@@ -25,6 +25,10 @@ classifiers = [
 ]
 dependencies = ["dqlite-client>=0.1.0"]
 
+[tool.uv.sources]
+dqlite-client = { path = "../python-dqlite-client", editable = true }
+dqlite-wire = { path = "../python-dqlite-wire", editable = true }
+
 [project.urls]
 Homepage = "https://github.com/letsdiscodev/python-dqlite-dbapi"
 Repository = "https://github.com/letsdiscodev/python-dqlite-dbapi"
