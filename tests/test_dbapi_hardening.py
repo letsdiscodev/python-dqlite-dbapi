@@ -324,6 +324,13 @@ class TestIsRowReturning:
             "WITH cte AS (SELECT 1) SELECT * FROM cte",
             "INSERT INTO t VALUES (?) RETURNING id",
             "UPDATE t SET x = 1 WHERE id = ? RETURNING *",
+            # VALUES (...) is a valid top-level row-returning SQLite statement.
+            "VALUES (1), (2), (3)",
+            "values (1, 'a')",
+            "  -- preamble\nVALUES (1)",
+            # Leading paren on a row-returning form.
+            "(SELECT 1)",
+            "(SELECT a FROM t) UNION (SELECT b FROM u)",
         ],
     )
     def test_detects_row_returning(self, sql: str) -> None:

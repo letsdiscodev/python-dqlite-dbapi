@@ -144,21 +144,25 @@ def _strip_leading_comments(sql: str) -> str:
     return s
 
 
-_ROW_RETURNING_PREFIXES = ("SELECT", "PRAGMA", "EXPLAIN", "WITH")
+_ROW_RETURNING_PREFIXES = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
 
 
 def _is_row_returning(sql: str) -> bool:
     """Heuristic for "does this statement return a result set?"
 
     Single source of truth for sync and async cursors.
-    Matches leading SELECT/PRAGMA/EXPLAIN/WITH after stripping comments,
-    and catches trailing/embedded RETURNING clauses on DML.
+    Matches leading SELECT/VALUES/PRAGMA/EXPLAIN/WITH after stripping
+    comments and a single leading ``(``, and catches trailing or
+    embedded RETURNING clauses on DML.
+
+    ``VALUES (...)`` and ``(SELECT ...)`` are valid top-level
+    row-returning SQLite statements, so they take the query branch.
 
     Note: ``WITH ... INSERT/UPDATE/DELETE`` (no RETURNING) will be
     misclassified as a query. This is a known limitation of a
     prefix-only check — a full SQL parser is out of scope.
     """
-    normalized = _strip_leading_comments(sql).upper()
+    normalized = _strip_leading_comments(sql).upper().lstrip("(")
     if normalized.startswith(_ROW_RETURNING_PREFIXES):
         return True
     return " RETURNING " in normalized or normalized.endswith(" RETURNING")
