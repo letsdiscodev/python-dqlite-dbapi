@@ -31,7 +31,12 @@ from dqlitedbapi.types import (
 
 # PEP 249 module-level attributes (required by SQLAlchemy dialect initialization)
 apilevel = "2.0"
-threadsafety = 1  # Threads may share the module, but not connections
+# PEP 249 value 1: threads may share the module.
+#
+# The async API is further restricted: each AsyncConnection is bound
+# to the event loop it was first used on (see dqlitedbapi.aio.connection).
+# Use one AsyncConnection per loop.
+threadsafety = 1
 paramstyle = "qmark"  # Question mark style: WHERE name=?
 
 # SQLite compatibility attributes (for SQLAlchemy)

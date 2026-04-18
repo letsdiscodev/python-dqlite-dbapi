@@ -31,7 +31,14 @@ from dqlitedbapi.types import (
 
 # PEP 249 module-level attributes
 apilevel = "2.0"
-threadsafety = 1  # Threads may share the module, but not connections
+# PEP 249 value 1: threads may share the module.
+#
+# This driver is stricter than the PEP minimum: each Connection is
+# bound to the thread that created it. Any method call from a
+# different thread raises ProgrammingError. Use one Connection per
+# thread, or use the async API (dqlitedbapi.aio.aconnect) for a
+# single-thread-per-loop model.
+threadsafety = 1
 paramstyle = "qmark"  # Question mark style: WHERE name=?
 
 # SQLite compatibility attributes (for SQLAlchemy)
