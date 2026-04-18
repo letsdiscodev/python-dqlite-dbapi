@@ -12,6 +12,8 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import _is_no_transaction_error
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
+__all__ = ["AsyncConnection"]
+
 
 class AsyncConnection:
     """Async database connection."""

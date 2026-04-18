@@ -14,6 +14,8 @@ from dqliteclient.protocol import _validate_max_total_rows, _validate_positive_i
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
+__all__ = ["Connection"]
+
 # SQLite result codes for "you tried to COMMIT/ROLLBACK but there's no
 # transaction active." SQLite returns ``SQLITE_ERROR`` (1) most of the
 # time; some code paths return ``SQLITE_MISUSE`` (21). Check the
