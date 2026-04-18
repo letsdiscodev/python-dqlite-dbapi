@@ -93,9 +93,16 @@ def connect(
     Args:
         address: Node address in "host:port" format
         database: Database name to open
-        timeout: Connection timeout in seconds
+        timeout: Connection timeout in seconds — must be a positive
+            finite number. ``0``, negatives, and non-finite values are
+            rejected here rather than silently passed through to the
+            underlying connection.
 
     Returns:
         A Connection object
     """
+    import math
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"timeout must be a positive finite number, got {timeout}")
     return Connection(address, database=database, timeout=timeout)

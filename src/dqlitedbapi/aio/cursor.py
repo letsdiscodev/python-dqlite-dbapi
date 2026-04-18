@@ -35,8 +35,14 @@ class AsyncCursor:
     def description(
         self,
     ) -> list[tuple[str, int | None, None, None, None, None, None]] | None:
-        """Column descriptions for the last query."""
-        return self._description
+        """Column descriptions for the last query.
+
+        Returns a fresh shallow copy so a caller can't corrupt internal
+        cursor state by mutating the returned list.
+        """
+        if self._description is None:
+            return None
+        return list(self._description)
 
     @property
     def rowcount(self) -> int:

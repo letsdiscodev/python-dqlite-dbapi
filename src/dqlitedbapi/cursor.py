@@ -146,8 +146,14 @@ class Cursor:
         ``type_code`` is the wire-level ``ValueType`` integer from the first
         result frame (e.g. 10 for ISO8601, 9 for UNIXTIME). The other fields
         are None — dqlite doesn't expose them.
+
+        Returns a fresh shallow copy each call so that a caller
+        mutating the list (e.g. ``cursor.description.clear()``) can't
+        corrupt the cursor's internal state.
         """
-        return self._description
+        if self._description is None:
+            return None
+        return list(self._description)
 
     @property
     def rowcount(self) -> int:
