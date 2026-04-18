@@ -1,6 +1,7 @@
 """PEP 249 Connection implementation for dqlite."""
 
 import asyncio
+import concurrent.futures
 import contextlib
 import math
 import threading
@@ -223,6 +224,19 @@ class Connection:
                             self._async_conn._invalidate,
                             OperationalError(f"sync timeout after {self._timeout}s"),
                         )
+                # Wait a bounded time for the cancelled coroutine to
+                # unwind. Without this, the next sync call can race the
+                # still-running prior coroutine — both want the
+                # underlying DqliteConnection's ``_in_use`` flag, and the
+                # new op sees ``already in use`` even though from the
+                # caller's perspective the previous operation already
+                # raised. The 1s cap is enough for normal cancellation
+                # to land; ``_invalidate`` above is the safety net for
+                # a genuinely stuck coroutine.
+                with contextlib.suppress(
+                    concurrent.futures.CancelledError, concurrent.futures.TimeoutError, Exception
+                ):
+                    future.result(timeout=1.0)
                 raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
 
     async def _get_async_connection(self) -> DqliteConnection:
