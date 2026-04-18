@@ -71,6 +71,12 @@ class Connection:
         and blocks until the result is available. The operation lock
         ensures only one operation runs at a time, preventing wire
         protocol corruption from concurrent access.
+
+        On sync-side timeout we cancel the future AND invalidate the
+        underlying connection. The coroutine may have already written
+        partial bytes to the socket before observing the cancel;
+        invalidation poisons the wire stream so the next operation
+        reconnects instead of reusing a torn protocol state.
         """
         with self._op_lock:
             loop = self._ensure_loop()
@@ -81,6 +87,17 @@ class Connection:
                 return future.result(timeout=self._timeout)
             except TimeoutError as e:
                 future.cancel()
+                # Poison the underlying connection. The coroutine may have
+                # half-written a request; the wire is in unknown state.
+                # Fire-and-forget on the loop thread (don't await).
+                if self._async_conn is not None:
+                    try:
+                        loop.call_soon_threadsafe(
+                            self._async_conn._invalidate,
+                            OperationalError(f"sync timeout after {self._timeout}s"),
+                        )
+                    except RuntimeError:
+                        pass  # loop already shutting down
                 raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
 
     async def _get_async_connection(self) -> DqliteConnection:
