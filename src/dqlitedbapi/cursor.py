@@ -62,9 +62,7 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
         # Catch-all for any future subclass of DqliteError not enumerated
         # above. Surface as InterfaceError rather than leaking to the
         # caller as a non-DBAPI exception (ISSUE-85).
-        raise _DbapiInterfaceError(
-            f"unrecognized client error ({type(e).__name__}): {e}"
-        ) from e
+        raise _DbapiInterfaceError(f"unrecognized client error ({type(e).__name__}): {e}") from e
 
 
 if TYPE_CHECKING:
