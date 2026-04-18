@@ -9,13 +9,13 @@ from dqlitedbapi.cursor import (
     _convert_row,
     _strip_leading_comments,
 )
-from dqlitedbapi.exceptions import InterfaceError
+from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection
 
 
-__all__ = ["AsyncCursor", "_strip_leading_comments"]
+__all__ = ["AsyncCursor"]
 
 
 class AsyncCursor:
@@ -62,8 +62,6 @@ class AsyncCursor:
     @arraysize.setter
     def arraysize(self, value: int) -> None:
         if value < 1:
-            from dqlitedbapi.exceptions import ProgrammingError
-
             raise ProgrammingError(f"arraysize must be >= 1, got {value}")
         self._arraysize = value
 
