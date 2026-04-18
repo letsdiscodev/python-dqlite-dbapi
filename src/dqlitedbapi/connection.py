@@ -40,17 +40,23 @@ def _cleanup_loop_thread(
                 ResourceWarning,
                 stacklevel=2,
             )
+    # Narrow suppression to the specific exceptions loop/thread teardown
+    # can legitimately raise during finalization (ISSUE-113). Wider
+    # ``except Exception: pass`` would hide programmer bugs like a
+    # missing attribute reference introduced during a refactor.
     try:
         if not loop.is_closed():
             loop.call_soon_threadsafe(loop.stop)
-    except Exception:
+    except RuntimeError:
+        # Loop was closed between is_closed() and the threadsafe call.
         pass
-    with contextlib.suppress(Exception):
+    with contextlib.suppress(RuntimeError):
         thread.join(timeout=5)
     try:
         if not loop.is_closed():
             loop.close()
-    except Exception:
+    except RuntimeError:
+        # Raised if the loop was somehow restarted mid-finalization.
         pass
 
 

@@ -1,8 +1,10 @@
 """PEP 249 type objects and constructors for dqlite."""
 
 import datetime
+import math
 from typing import Any
 
+from dqlitedbapi.exceptions import DataError
 from dqlitewire.constants import ValueType
 
 
@@ -12,31 +14,74 @@ def Date(year: int, month: int, day: int) -> datetime.date:  # noqa: N802
     return datetime.date(year, month, day)
 
 
-def Time(hour: int, minute: int, second: int) -> datetime.time:  # noqa: N802
-    """Construct a time value."""
-    return datetime.time(hour, minute, second)
+def Time(  # noqa: N802
+    hour: int,
+    minute: int,
+    second: int,
+    microsecond: int = 0,
+    tzinfo: datetime.tzinfo | None = None,
+) -> datetime.time:
+    """Construct a time value.
+
+    Accepts optional ``microsecond`` and ``tzinfo`` for parity with
+    stdlib ``datetime.time`` (ISSUE-88). PEP 249 does not require this,
+    but mixing the driver's ``Time()`` with ``datetime.time`` would
+    otherwise drop sub-second precision silently.
+    """
+    return datetime.time(hour, minute, second, microsecond, tzinfo=tzinfo)
 
 
 def Timestamp(  # noqa: N802
-    year: int, month: int, day: int, hour: int, minute: int, second: int
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
+    second: int,
+    microsecond: int = 0,
+    tzinfo: datetime.tzinfo | None = None,
 ) -> datetime.datetime:
     """Construct a timestamp value."""
-    return datetime.datetime(year, month, day, hour, minute, second)
+    return datetime.datetime(year, month, day, hour, minute, second, microsecond, tzinfo=tzinfo)
+
+
+def _validate_ticks(ticks: float) -> None:
+    """Reject NaN/inf before handing to datetime.fromtimestamp.
+
+    ``fromtimestamp`` raises different stdlib exceptions depending on
+    the failure mode (``ValueError`` for NaN on some platforms,
+    ``OverflowError`` / ``OSError`` for out-of-range). Guard up front so
+    the caller always sees a single DB-API ``DataError`` (ISSUE-84).
+    """
+    if isinstance(ticks, float) and not math.isfinite(ticks):
+        raise DataError(f"Invalid timestamp ticks: {ticks}")
 
 
 def DateFromTicks(ticks: float) -> datetime.date:  # noqa: N802
     """Construct a date from a Unix timestamp."""
-    return datetime.date.fromtimestamp(ticks)
+    _validate_ticks(ticks)
+    try:
+        return datetime.date.fromtimestamp(ticks)
+    except (OverflowError, OSError, ValueError) as e:
+        raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
 
 def TimeFromTicks(ticks: float) -> datetime.time:  # noqa: N802
     """Construct a time from a Unix timestamp."""
-    return datetime.datetime.fromtimestamp(ticks).time()
+    _validate_ticks(ticks)
+    try:
+        return datetime.datetime.fromtimestamp(ticks).time()
+    except (OverflowError, OSError, ValueError) as e:
+        raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
 
 def TimestampFromTicks(ticks: float) -> datetime.datetime:  # noqa: N802
     """Construct a timestamp from a Unix timestamp."""
-    return datetime.datetime.fromtimestamp(ticks)
+    _validate_ticks(ticks)
+    try:
+        return datetime.datetime.fromtimestamp(ticks)
+    except (OverflowError, OSError, ValueError) as e:
+        raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
 
 def Binary(data: bytes) -> bytes:  # noqa: N802
@@ -161,6 +206,11 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
     PEP 249 NULL semantics.
 
     Naive input round-trips as naive; aware input preserves the offset.
+
+    A malformed string from the server (bug, corruption, or MitM) would
+    otherwise escape as a raw ``ValueError``; wrap as ``DataError`` to
+    satisfy PEP 249's "all DB errors funnel through Error" contract
+    (ISSUE-102).
     """
     if not text:
         return None
@@ -172,7 +222,7 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
     try:
         d = datetime.date.fromisoformat(s)
     except ValueError as exc:
-        raise ValueError(f"Cannot parse ISO 8601 datetime: {text!r}") from exc
+        raise DataError(f"Cannot parse ISO 8601 datetime from server: {text!r}") from exc
     return datetime.datetime(d.year, d.month, d.day)
 
 
@@ -181,8 +231,15 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
 
     UNIXTIME is unambiguously seconds-since-epoch in UTC, so returning a
     UTC-aware value is faithful. Callers that want local time can convert.
+
+    A corrupt server or MitM-modified bytes could deliver a non-integer
+    or out-of-range value; wrap the resulting stdlib exceptions as
+    ``DataError`` (ISSUE-107).
     """
-    return datetime.datetime.fromtimestamp(value, tz=datetime.UTC)
+    try:
+        return datetime.datetime.fromtimestamp(value, tz=datetime.UTC)
+    except (TypeError, OverflowError, OSError, ValueError) as e:
+        raise DataError(f"Invalid UNIXTIME from server: {value!r}") from e
 
 
 def _convert_bind_param(value: Any) -> Any:

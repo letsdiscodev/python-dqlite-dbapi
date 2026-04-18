@@ -7,7 +7,7 @@ from dqlitedbapi.cursor import (
     _call_client,
     _convert_params,
     _convert_row,
-    _strip_leading_comments,
+    _is_row_returning,
 )
 from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
 
@@ -65,6 +65,17 @@ class AsyncCursor:
         return self._lastrowid
 
     @property
+    def rownumber(self) -> int | None:
+        """0-based index of the next row in the current result set.
+
+        PEP 249 optional extension. ``None`` when no result set is
+        active (ISSUE-80).
+        """
+        if self._description is None:
+            return None
+        return self._row_index
+
+    @property
     def arraysize(self) -> int:
         """Number of rows to fetch at a time with fetchmany()."""
         return self._arraysize
@@ -94,13 +105,7 @@ class AsyncCursor:
         conn = await self._connection._ensure_connection()
         params = _convert_params(parameters)
 
-        # Determine if this is a query that returns rows.
-        # Note: WITH ... INSERT/UPDATE/DELETE (without RETURNING) will be
-        # misrouted to query_raw_typed. This is a known limitation of the heuristic.
-        normalized = _strip_leading_comments(operation).upper()
-        is_query = normalized.startswith(("SELECT", "PRAGMA", "EXPLAIN", "WITH")) or (
-            " RETURNING " in normalized or normalized.endswith(" RETURNING")
-        )
+        is_query = _is_row_returning(operation)
 
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:
@@ -191,6 +196,10 @@ class AsyncCursor:
 
         if size is None:
             size = self._arraysize
+        if size < 0:
+            # See sync Cursor.fetchmany: silently returning [] on a
+            # negative size hides caller bugs (ISSUE-82).
+            raise ProgrammingError(f"fetchmany size must be >= 0, got {size}")
 
         result: list[tuple[Any, ...]] = []
         for _ in range(size):

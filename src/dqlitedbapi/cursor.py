@@ -35,6 +35,14 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
       client.ProtocolError         → dbapi.InterfaceError
       client.DataError             → dbapi.DataError
       client.InterfaceError        → dbapi.InterfaceError
+      any other DqliteError        → dbapi.InterfaceError (ISSUE-85)
+
+    Every ``dqliteclient`` exception is a subclass of ``DqliteError``;
+    the trailing catch-all ensures a new client exception class cannot
+    bypass PEP 249 wrapping. PEP 249 requires all database-sourced
+    errors to surface as ``Error`` subclasses — without the fallback, a
+    future ``dqliteclient.CircuitOpenError`` or similar would leak past
+    ``except dqlitedbapi.Error`` boundaries.
     """
     try:
         return await coro
@@ -50,6 +58,13 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
         raise DataError(str(e)) from e
     except _client_exc.InterfaceError as e:
         raise _DbapiInterfaceError(str(e)) from e
+    except _client_exc.DqliteError as e:
+        # Catch-all for any future subclass of DqliteError not enumerated
+        # above. Surface as InterfaceError rather than leaking to the
+        # caller as a non-DBAPI exception (ISSUE-85).
+        raise _DbapiInterfaceError(
+            f"unrecognized client error ({type(e).__name__}): {e}"
+        ) from e
 
 
 if TYPE_CHECKING:
@@ -76,15 +91,24 @@ def _convert_row(row: Sequence[Any], column_types: Sequence[int]) -> tuple[Any, 
 
 
 def _reject_non_sequence_params(params: Any) -> None:
-    """Reject mappings and unordered containers per PEP 249 qmark rules.
+    """Reject mappings, unordered containers, and str/bytes per PEP 249 qmark rules.
 
     PEP 249: for ``qmark`` paramstyle "the sequence is mandatory and the
     driver will not accept mappings." We also reject ``set`` / ``frozenset``
     — they are sequences structurally but unordered, which silently
-    scrambles positional bindings.
+    scrambles positional bindings. And we reject ``str`` /
+    ``bytes`` / ``bytearray`` / ``memoryview`` — they are iterable, so
+    they would silently "explode" into character/byte binds and the
+    caller almost always meant ``(value,)`` instead (ISSUE-86).
     """
     if params is None:
         return
+    if isinstance(params, (str, bytes, bytearray, memoryview)):
+        raise ProgrammingError(
+            f"parameters must be a sequence of values, not "
+            f"{type(params).__name__!r}; did you mean to pass a tuple "
+            f"like (value,) with a single element?"
+        )
     if isinstance(params, Mapping):
         raise ProgrammingError(
             "qmark paramstyle requires a sequence; got a mapping. "
@@ -122,6 +146,26 @@ def _strip_leading_comments(sql: str) -> str:
         else:
             break
     return s
+
+
+_ROW_RETURNING_PREFIXES = ("SELECT", "PRAGMA", "EXPLAIN", "WITH")
+
+
+def _is_row_returning(sql: str) -> bool:
+    """Heuristic for "does this statement return a result set?"
+
+    Single source of truth for sync and async cursors (ISSUE-110).
+    Matches leading SELECT/PRAGMA/EXPLAIN/WITH after stripping comments,
+    and catches trailing/embedded RETURNING clauses on DML.
+
+    Note: ``WITH ... INSERT/UPDATE/DELETE`` (no RETURNING) will be
+    misclassified as a query. This is a known limitation of a
+    prefix-only check — a full SQL parser is out of scope.
+    """
+    normalized = _strip_leading_comments(sql).upper()
+    if normalized.startswith(_ROW_RETURNING_PREFIXES):
+        return True
+    return " RETURNING " in normalized or normalized.endswith(" RETURNING")
 
 
 class Cursor:
@@ -184,6 +228,19 @@ class Cursor:
         return self._lastrowid
 
     @property
+    def rownumber(self) -> int | None:
+        """0-based index of the next row in the current result set.
+
+        PEP 249 optional extension: returns ``None`` if no result set is
+        active (no query executed, or last statement was DML without
+        RETURNING); otherwise returns the index of the row that the next
+        ``fetchone()`` would produce (ISSUE-80).
+        """
+        if self._description is None:
+            return None
+        return self._row_index
+
+    @property
     def arraysize(self) -> int:
         """Number of rows to fetch at a time with fetchmany()."""
         return self._arraysize
@@ -216,15 +273,7 @@ class Cursor:
         conn = await self._connection._get_async_connection()
         params = _convert_params(parameters)
 
-        # Determine if this is a query that returns rows.
-        # Note: WITH ... INSERT/UPDATE/DELETE (without RETURNING) will be
-        # misrouted to query_raw_typed. This is a known limitation of the heuristic.
-        normalized = _strip_leading_comments(operation).upper()
-        is_query = normalized.startswith(("SELECT", "PRAGMA", "EXPLAIN", "WITH")) or (
-            " RETURNING " in normalized or normalized.endswith(" RETURNING")
-        )
-
-        if is_query:
+        if _is_row_returning(operation):
             columns, column_types, rows = await _call_client(
                 conn.query_raw_typed(operation, params)
             )
@@ -320,6 +369,11 @@ class Cursor:
 
         if size is None:
             size = self._arraysize
+        if size < 0:
+            # Previously ``range(-5)`` silently returned [] — hid caller
+            # bugs (ISSUE-82). ``arraysize`` setter already validates
+            # >= 1; mirror that here.
+            raise ProgrammingError(f"fetchmany size must be >= 0, got {size}")
 
         result: list[tuple[Any, ...]] = []
         for _ in range(size):
