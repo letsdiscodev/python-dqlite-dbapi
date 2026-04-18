@@ -3,30 +3,14 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from dqlitedbapi.cursor import _convert_params, _convert_row
+from dqlitedbapi.cursor import _convert_params, _convert_row, _strip_leading_comments
 from dqlitedbapi.exceptions import InterfaceError
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection
 
 
-def _strip_leading_comments(sql: str) -> str:
-    """Strip leading SQL comments (-- and /* */) and whitespace."""
-    s = sql.strip()
-    while True:
-        if s.startswith("--"):
-            newline = s.find("\n")
-            if newline == -1:
-                return ""
-            s = s[newline + 1 :].strip()
-        elif s.startswith("/*"):
-            end = s.find("*/")
-            if end == -1:
-                return s
-            s = s[end + 2 :].strip()
-        else:
-            break
-    return s
+__all__ = ["AsyncCursor", "_strip_leading_comments"]
 
 
 class AsyncCursor:

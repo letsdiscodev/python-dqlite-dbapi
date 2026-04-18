@@ -1,11 +1,11 @@
 """PEP 249 Cursor implementation for dqlite."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from dqlitewire.constants import ValueType
 
-from dqlitedbapi.exceptions import InterfaceError
+from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 from dqlitedbapi.types import (
     _convert_bind_param,
     _datetime_from_iso8601,
@@ -35,8 +35,31 @@ def _convert_row(row: Sequence[Any], column_types: Sequence[int]) -> tuple[Any, 
     return tuple(result)
 
 
+def _reject_non_sequence_params(params: Any) -> None:
+    """Reject mappings and unordered containers per PEP 249 qmark rules.
+
+    PEP 249: for ``qmark`` paramstyle "the sequence is mandatory and the
+    driver will not accept mappings." We also reject ``set`` / ``frozenset``
+    — they are sequences structurally but unordered, which silently
+    scrambles positional bindings.
+    """
+    if params is None:
+        return
+    if isinstance(params, Mapping):
+        raise ProgrammingError(
+            "qmark paramstyle requires a sequence; got a mapping. "
+            "Use a list or tuple positionally matching the ? placeholders."
+        )
+    if isinstance(params, (set, frozenset)):
+        raise ProgrammingError(
+            "qmark paramstyle requires an ordered sequence; got a set. "
+            "Use a list or tuple positionally matching the ? placeholders."
+        )
+
+
 def _convert_params(params: Sequence[Any] | None) -> list[Any] | None:
     """Convert driver-level bind parameters (e.g. datetime) to wire primitives."""
+    _reject_non_sequence_params(params)
     if params is None:
         return None
     return [_convert_bind_param(p) for p in params]

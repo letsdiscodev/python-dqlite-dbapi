@@ -3,6 +3,8 @@
 import datetime
 from typing import Any
 
+from dqlitewire.constants import ValueType
+
 
 # Type constructors
 def Date(year: int, month: int, day: int) -> datetime.date:  # noqa: N802
@@ -42,27 +44,69 @@ def Binary(data: bytes) -> bytes:  # noqa: N802
     return bytes(data)
 
 
-# Type objects for column type checking
+# Type objects for column type checking.
+#
+# PEP 249: "These objects represent a data type as represented in the
+# database. The module exports these objects: STRING, BINARY, NUMBER,
+# DATETIME, ROWID. The module should export a comparison for these types
+# and the object returned in Cursor.description[i][1]."
+#
+# Cursor.description[i][1] here is a wire-level ``ValueType`` integer
+# (e.g. 10 for ISO8601). The type objects below compare equal to both
+# the uppercase SQL type name strings (for declared-type matching) and
+# the matching ``ValueType`` ints.
 class _DBAPIType:
-    """Base type for DB-API type objects."""
+    """Base type for DB-API type objects. Compares equal to matching
+    uppercase SQL type names (str) and wire-level ``ValueType`` codes
+    (int).
+    """
 
-    def __init__(self, *values: str) -> None:
-        self.values = set(values)
+    def __init__(self, *values: str | int | ValueType) -> None:
+        normalized: set[str | int] = set()
+        for v in values:
+            if isinstance(v, ValueType):
+                normalized.add(int(v))
+            else:
+                normalized.add(v)
+        self.values = normalized
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
             return other.upper() in self.values
+        if isinstance(other, ValueType):
+            return int(other) in self.values
+        if isinstance(other, int) and not isinstance(other, bool):
+            return other in self.values
         return NotImplemented
 
     def __hash__(self) -> int:
         return hash(frozenset(self.values))
 
 
-STRING = _DBAPIType("TEXT", "VARCHAR", "CHAR", "CLOB")
-BINARY = _DBAPIType("BLOB", "BINARY", "VARBINARY")
-NUMBER = _DBAPIType("INTEGER", "INT", "SMALLINT", "BIGINT", "REAL", "FLOAT", "DOUBLE", "NUMERIC")
-DATETIME = _DBAPIType("DATE", "TIME", "TIMESTAMP", "DATETIME")
-ROWID = _DBAPIType("ROWID", "INTEGER PRIMARY KEY")
+STRING = _DBAPIType("TEXT", "VARCHAR", "CHAR", "CLOB", ValueType.TEXT)
+BINARY = _DBAPIType("BLOB", "BINARY", "VARBINARY", ValueType.BLOB)
+NUMBER = _DBAPIType(
+    "INTEGER",
+    "INT",
+    "SMALLINT",
+    "BIGINT",
+    "REAL",
+    "FLOAT",
+    "DOUBLE",
+    "NUMERIC",
+    ValueType.INTEGER,
+    ValueType.FLOAT,
+    ValueType.BOOLEAN,
+)
+DATETIME = _DBAPIType(
+    "DATE",
+    "TIME",
+    "TIMESTAMP",
+    "DATETIME",
+    ValueType.ISO8601,
+    ValueType.UNIXTIME,
+)
+ROWID = _DBAPIType("ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER)
 
 
 # Internal conversion helpers.
