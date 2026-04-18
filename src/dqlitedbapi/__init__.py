@@ -45,6 +45,8 @@ __all__ = [
     "apilevel",
     "threadsafety",
     "paramstyle",
+    "sqlite_version",
+    "sqlite_version_info",
     # Functions
     "connect",
     # Classes
