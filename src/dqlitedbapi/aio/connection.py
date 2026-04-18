@@ -7,6 +7,7 @@ from typing import Any
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
+from dqliteclient.protocol import _validate_max_total_rows
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
@@ -37,7 +38,7 @@ class AsyncConnection:
         self._address = address
         self._database = database
         self._timeout = timeout
-        self._max_total_rows = max_total_rows
+        self._max_total_rows = _validate_max_total_rows(max_total_rows)
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # asyncio primitives MUST be created inside the loop they will

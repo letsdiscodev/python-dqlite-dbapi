@@ -10,6 +10,7 @@ from typing import Any
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
+from dqliteclient.protocol import _validate_max_total_rows
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
@@ -82,7 +83,7 @@ class Connection:
         self._address = address
         self._database = database
         self._timeout = timeout
-        self._max_total_rows = max_total_rows
+        self._max_total_rows = _validate_max_total_rows(max_total_rows)
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         self._loop: asyncio.AbstractEventLoop | None = None
