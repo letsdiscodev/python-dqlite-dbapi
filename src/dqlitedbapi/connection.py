@@ -64,6 +64,7 @@ class Connection:
         *,
         database: str = "default",
         timeout: float = 10.0,
+        max_total_rows: int | None = 10_000_000,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -74,6 +75,9 @@ class Connection:
                 and finite; validated here so direct ``Connection(...)``
                 calls don't silently accept bad values that later
                 produce hangs or stranger downstream errors)
+            max_total_rows: Cumulative row cap across continuation
+                frames for a single query. Forwarded to the underlying
+                :class:`DqliteConnection`. ``None`` disables the cap.
         """
         import math
 
@@ -82,6 +86,7 @@ class Connection:
         self._address = address
         self._database = database
         self._timeout = timeout
+        self._max_total_rows = max_total_rows
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -193,6 +198,7 @@ class Connection:
                 self._address,
                 database=self._database,
                 timeout=self._timeout,
+                max_total_rows=self._max_total_rows,
             )
             try:
                 await conn.connect()

@@ -17,6 +17,7 @@ class AsyncConnection:
         *,
         database: str = "default",
         timeout: float = 10.0,
+        max_total_rows: int | None = 10_000_000,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -24,6 +25,9 @@ class AsyncConnection:
             address: Node address in "host:port" format
             database: Database name to open
             timeout: Connection timeout in seconds (positive, finite)
+            max_total_rows: Cumulative row cap across continuation
+                frames. Forwarded to the underlying DqliteConnection;
+                ``None`` disables the cap.
         """
         import math
 
@@ -32,6 +36,7 @@ class AsyncConnection:
         self._address = address
         self._database = database
         self._timeout = timeout
+        self._max_total_rows = max_total_rows
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # asyncio primitives MUST be created inside the loop they will
@@ -68,6 +73,7 @@ class AsyncConnection:
                 self._address,
                 database=self._database,
                 timeout=self._timeout,
+                max_total_rows=self._max_total_rows,
             )
             try:
                 await conn.connect()
