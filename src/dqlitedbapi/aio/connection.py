@@ -169,7 +169,7 @@ class AsyncConnection:
         # re-check before it touches the now-None primitive.
         self._connect_lock = None
         self._op_lock = None
-        self._loop_id = None
+        self._loop_ref = None
 
     async def commit(self) -> None:
         """Commit any pending transaction.
@@ -184,6 +184,12 @@ class AsyncConnection:
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
+            # Re-check under the lock: a concurrent close() may have
+            # acquired op_lock before us, closed the connection, and
+            # released. Without this second check we would dereference
+            # ``self._async_conn.execute`` on ``None``.
+            if self._closed or self._async_conn is None:
+                raise InterfaceError("Connection is closed")
             try:
                 await self._async_conn.execute("COMMIT")
             except (OperationalError, _client_exc.OperationalError) as e:
@@ -198,6 +204,9 @@ class AsyncConnection:
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
+            # Re-check under the lock for the same race as commit().
+            if self._closed or self._async_conn is None:
+                raise InterfaceError("Connection is closed")
             try:
                 await self._async_conn.execute("ROLLBACK")
             except (OperationalError, _client_exc.OperationalError) as e:

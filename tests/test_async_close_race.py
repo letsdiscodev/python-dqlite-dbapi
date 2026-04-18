@@ -63,3 +63,55 @@ async def test_close_waits_for_in_flight_execute() -> None:
         "close:start",
         "close:end",
     ], f"actual order: {order}"
+
+
+class TestCommitRollbackCloseRace:
+    """A race where ``close()`` wins the op_lock first must make the
+    parked ``commit()`` / ``rollback()`` see ``_closed=True`` and raise
+    ``InterfaceError`` instead of dereferencing ``_async_conn=None``.
+    """
+
+    async def test_commit_parked_on_lock_sees_close_first(self) -> None:
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        import pytest
+
+        from dqlitedbapi.aio.connection import AsyncConnection
+        from dqlitedbapi.exceptions import InterfaceError
+
+        conn = AsyncConnection("localhost:19001", database="x")
+
+        # Prime _async_conn and the locks from within the running loop
+        # so close() / commit() both take the lock path.
+        conn._ensure_locks()
+        inner = MagicMock()
+        inner.close = AsyncMock()
+        inner.execute = AsyncMock()
+        conn._async_conn = inner
+
+        # Gate close() inside the lock so commit() can park.
+        assert conn._op_lock is not None
+        close_release = asyncio.Event()
+
+        real_close = inner.close
+
+        async def slow_close(*args: object, **kwargs: object) -> None:
+            await close_release.wait()
+            await real_close(*args, **kwargs)
+
+        inner.close = slow_close  # type: ignore[assignment]
+
+        close_task = asyncio.create_task(conn.close())
+        # Yield so close() acquires op_lock.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        commit_task = asyncio.create_task(conn.commit())
+        await asyncio.sleep(0)
+        # Let close complete.
+        close_release.set()
+
+        await close_task
+        with pytest.raises(InterfaceError, match="Connection is closed"):
+            await commit_task
