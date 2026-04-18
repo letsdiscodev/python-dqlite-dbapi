@@ -1,5 +1,7 @@
 """Async PEP 249-style interface for dqlite."""
 
+import math
+
 from dqlitedbapi import __version__
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
@@ -91,6 +93,9 @@ def connect(
     *,
     database: str = "default",
     timeout: float = 10.0,
+    max_total_rows: int | None = 10_000_000,
+    max_continuation_frames: int | None = 100_000,
+    trust_server_heartbeat: bool = False,
 ) -> AsyncConnection:
     """Create a dqlite connection (connects lazily on first use).
 
@@ -101,12 +106,30 @@ def connect(
     Args:
         address: Node address in "host:port" format
         database: Database name to open
-        timeout: Connection timeout in seconds
+        timeout: Connection timeout in seconds — must be a positive
+            finite number. 0, negatives, and non-finite values are
+            rejected here rather than silently passed through.
+        max_total_rows: Cumulative row cap across continuation frames
+            for a single query. Forwarded to the underlying
+            AsyncConnection. None disables the cap.
+        max_continuation_frames: Per-query continuation-frame cap.
+            Forwarded to the underlying AsyncConnection.
+        trust_server_heartbeat: Let the server-advertised heartbeat
+            widen the per-read deadline. Default False.
 
     Returns:
         An AsyncConnection object
     """
-    return AsyncConnection(address, database=database, timeout=timeout)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+    return AsyncConnection(
+        address,
+        database=database,
+        timeout=timeout,
+        max_total_rows=max_total_rows,
+        max_continuation_frames=max_continuation_frames,
+        trust_server_heartbeat=trust_server_heartbeat,
+    )
 
 
 async def aconnect(
@@ -114,6 +137,9 @@ async def aconnect(
     *,
     database: str = "default",
     timeout: float = 10.0,
+    max_total_rows: int | None = 10_000_000,
+    max_continuation_frames: int | None = 100_000,
+    trust_server_heartbeat: bool = False,
 ) -> AsyncConnection:
     """Connect to a dqlite database asynchronously.
 
@@ -122,11 +148,24 @@ async def aconnect(
     Args:
         address: Node address in "host:port" format
         database: Database name to open
-        timeout: Connection timeout in seconds
+        timeout: Connection timeout in seconds — must be positive and finite.
+        max_total_rows: Cumulative row cap across continuation frames.
+        max_continuation_frames: Per-query continuation-frame cap.
+        trust_server_heartbeat: Let the server-advertised heartbeat
+            widen the per-read deadline.
 
     Returns:
         A connected AsyncConnection object
     """
-    conn = AsyncConnection(address, database=database, timeout=timeout)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+    conn = AsyncConnection(
+        address,
+        database=database,
+        timeout=timeout,
+        max_total_rows=max_total_rows,
+        max_continuation_frames=max_continuation_frames,
+        trust_server_heartbeat=trust_server_heartbeat,
+    )
     await conn.connect()
     return conn
