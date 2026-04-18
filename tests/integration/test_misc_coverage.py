@@ -93,3 +93,42 @@ class TestMultiStatementRejection:
             c = conn.cursor()
             with pytest.raises(expected, match="nonempty statement tail"):
                 c.execute("SELECT 1; SELECT 2;")
+
+
+@pytest.mark.integration
+class TestUnsupportedBindParameterTypes:
+    """Types the wire codec cannot encode (Decimal, Fraction, complex,
+    custom objects) must surface at the DBAPI boundary as ``DataError``,
+    not as a wire-layer ``EncodeError`` and not as a silent misencoding.
+    Pins the PEP 249 "all DB errors funnel through Error" contract through
+    the DqliteConnection._run_protocol wrapper, which maps EncodeError
+    into the client-layer DataError that the DBAPI re-exports.
+    """
+
+    def test_decimal_rejected_as_data_error(self, cluster_address: str) -> None:
+        from decimal import Decimal
+
+        from dqlitedbapi.exceptions import DataError
+
+        with connect(cluster_address, database="test_bind_types") as conn:
+            c = conn.cursor()
+            with pytest.raises(DataError):
+                c.execute("SELECT ?", [Decimal("3.14")])
+
+    def test_fraction_rejected_as_data_error(self, cluster_address: str) -> None:
+        from fractions import Fraction
+
+        from dqlitedbapi.exceptions import DataError
+
+        with connect(cluster_address, database="test_bind_types") as conn:
+            c = conn.cursor()
+            with pytest.raises(DataError):
+                c.execute("SELECT ?", [Fraction(1, 3)])
+
+    def test_complex_rejected_as_data_error(self, cluster_address: str) -> None:
+        from dqlitedbapi.exceptions import DataError
+
+        with connect(cluster_address, database="test_bind_types") as conn:
+            c = conn.cursor()
+            with pytest.raises(DataError):
+                c.execute("SELECT ?", [complex(1, 2)])
