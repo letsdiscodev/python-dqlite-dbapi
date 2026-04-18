@@ -111,14 +111,26 @@ class TestAsyncCursor:
 
 
 class TestOptionalAsyncCursorMethodsRaise:
-    @pytest.mark.asyncio
-    async def test_callproc_raises_not_supported(self) -> None:
+    def test_callproc_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError
 
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         with pytest.raises(NotSupportedError):
-            await cursor.callproc("some_proc")
+            cursor.callproc("some_proc")
+
+    def test_callproc_nextset_scroll_are_sync(self) -> None:
+        """These three PEP 249 optional extensions all unconditionally raise
+        ``NotSupportedError``. They must stay sync so callers can catch the
+        error with a bare ``try: cursor.callproc(...) except ...`` rather
+        than accidentally returning a coroutine object that is never awaited.
+        The adapter in ``sqlalchemy-dqlite`` exposes the same three as sync.
+        """
+        import inspect
+
+        assert not inspect.iscoroutinefunction(AsyncCursor.callproc)
+        assert not inspect.iscoroutinefunction(AsyncCursor.nextset)
+        assert not inspect.iscoroutinefunction(AsyncCursor.scroll)
 
     def test_nextset_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError

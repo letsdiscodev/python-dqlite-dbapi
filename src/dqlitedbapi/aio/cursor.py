@@ -251,10 +251,17 @@ class AsyncCursor:
         """Set output size (no-op for dqlite)."""
         pass
 
-    async def callproc(
+    def callproc(
         self, procname: str, parameters: Sequence[Any] | None = None
     ) -> Sequence[Any] | None:
-        """PEP 249 optional extension — not supported."""
+        """PEP 249 optional extension — not supported.
+
+        Sync despite the cursor being async: the method raises
+        unconditionally, so wrapping it in a coroutine has no value and
+        would diverge from the sync siblings (``nextset`` / ``scroll``)
+        and from the SQLAlchemy adapter (``sqlalchemy-dqlite``), which
+        both expose these as plain methods.
+        """
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> bool | None:
