@@ -23,8 +23,12 @@ class AsyncConnection:
         Args:
             address: Node address in "host:port" format
             database: Database name to open
-            timeout: Connection timeout in seconds
+            timeout: Connection timeout in seconds (positive, finite)
         """
+        import math
+
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError(f"timeout must be a positive finite number, got {timeout}")
         self._address = address
         self._database = database
         self._timeout = timeout

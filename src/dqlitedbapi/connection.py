@@ -70,8 +70,15 @@ class Connection:
         Args:
             address: Node address in "host:port" format
             database: Database name to open
-            timeout: Connection timeout in seconds
+            timeout: Connection timeout in seconds (must be positive
+                and finite; validated here so direct ``Connection(...)``
+                calls don't silently accept bad values that later
+                produce hangs or stranger downstream errors)
         """
+        import math
+
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError(f"timeout must be a positive finite number, got {timeout}")
         self._address = address
         self._database = database
         self._timeout = timeout
