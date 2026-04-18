@@ -9,6 +9,7 @@ import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqliteclient.protocol import _validate_max_total_rows
 from dqlitedbapi.aio.cursor import AsyncCursor
+from dqlitedbapi.connection import _is_no_transaction_error
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 
@@ -130,7 +131,7 @@ class AsyncConnection:
             try:
                 await self._async_conn.execute("COMMIT")
             except (OperationalError, _client_exc.OperationalError) as e:
-                if "no transaction is active" not in str(e).lower():
+                if not _is_no_transaction_error(e):
                     raise
 
     async def rollback(self) -> None:
@@ -144,7 +145,7 @@ class AsyncConnection:
             try:
                 await self._async_conn.execute("ROLLBACK")
             except (OperationalError, _client_exc.OperationalError) as e:
-                if "no transaction is active" not in str(e).lower():
+                if not _is_no_transaction_error(e):
                     raise
 
     def cursor(self) -> AsyncCursor:

@@ -94,6 +94,7 @@ def connect(
     *,
     database: str = "default",
     timeout: float = 10.0,
+    max_total_rows: int | None = 10_000_000,
 ) -> Connection:
     """Connect to a dqlite database.
 
@@ -104,6 +105,9 @@ def connect(
             finite number. ``0``, negatives, and non-finite values are
             rejected here rather than silently passed through to the
             underlying connection.
+        max_total_rows: Cumulative row cap across continuation frames
+            for a single query. Forwarded to the underlying
+            :class:`Connection` (ISSUE-111). ``None`` disables the cap.
 
     Returns:
         A Connection object
@@ -112,4 +116,9 @@ def connect(
 
     if not math.isfinite(timeout) or timeout <= 0:
         raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
-    return Connection(address, database=database, timeout=timeout)
+    return Connection(
+        address,
+        database=database,
+        timeout=timeout,
+        max_total_rows=max_total_rows,
+    )

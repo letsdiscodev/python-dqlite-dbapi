@@ -14,6 +14,30 @@ from dqliteclient.protocol import _validate_max_total_rows
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
+# SQLite result codes for "you tried to COMMIT/ROLLBACK but there's no
+# transaction active." SQLite returns ``SQLITE_ERROR`` (1) most of the
+# time; some code paths return ``SQLITE_MISUSE`` (21). Check the
+# numeric code first so a malicious or impostor server cannot silence
+# unrelated errors just by crafting a message string that contains the
+# magic substring (ISSUE-97). The substring remains as a secondary
+# filter because SQLite has many uses of code=1.
+_NO_TX_CODES = frozenset({1, 21})
+_NO_TX_SUBSTRING = "no transaction is active"
+
+
+def _is_no_transaction_error(exc: Exception) -> bool:
+    """True if ``exc`` is a genuine "no active transaction" server reply.
+
+    Gates the silent swallow on the SQLite result code in addition to
+    the English wording. A disk-full / constraint / IO error whose
+    message happens to include the magic substring will not be
+    swallowed.
+    """
+    code = getattr(exc, "code", None)
+    if code is not None and code not in _NO_TX_CODES:
+        return False
+    return _NO_TX_SUBSTRING in str(exc).lower()
+
 
 def _cleanup_loop_thread(
     loop: asyncio.AbstractEventLoop,
@@ -273,7 +297,7 @@ class Connection:
         try:
             await self._async_conn.execute("COMMIT")
         except (OperationalError, _client_exc.OperationalError) as e:
-            if "no transaction is active" not in str(e).lower():
+            if not _is_no_transaction_error(e):
                 raise
 
     def rollback(self) -> None:
@@ -295,7 +319,7 @@ class Connection:
         try:
             await self._async_conn.execute("ROLLBACK")
         except (OperationalError, _client_exc.OperationalError) as e:
-            if "no transaction is active" not in str(e).lower():
+            if not _is_no_transaction_error(e):
                 raise
 
     def cursor(self) -> Cursor:

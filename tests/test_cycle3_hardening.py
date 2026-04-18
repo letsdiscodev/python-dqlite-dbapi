@@ -183,6 +183,67 @@ class TestDatetimeFromUnixtimeWrapping:
             _datetime_from_unixtime(2**63)
 
 
+class TestIsNoTransactionError:
+    """ISSUE-97: commit/rollback no-op is gated on SQLite result code first.
+
+    A malicious/impostor server must not be able to silence an unrelated
+    error just by crafting a ``message`` that contains the magic
+    substring.
+    """
+
+    def test_substring_only_with_sqlite_error_is_no_tx(self) -> None:
+        from dqliteclient.exceptions import OperationalError as ClientOpError
+        from dqlitedbapi.connection import _is_no_transaction_error
+
+        # code=1 (SQLITE_ERROR) + substring → true
+        err = ClientOpError(1, "cannot commit - no transaction is active")
+        assert _is_no_transaction_error(err)
+
+        # code=21 (SQLITE_MISUSE) + substring → true
+        err = ClientOpError(21, "misuse: no transaction is active")
+        assert _is_no_transaction_error(err)
+
+    def test_disk_full_with_matching_substring_is_not_silenced(self) -> None:
+        from dqliteclient.exceptions import OperationalError as ClientOpError
+        from dqlitedbapi.connection import _is_no_transaction_error
+
+        # Code 13 (SQLITE_FULL) must NOT be silenced even if the message
+        # happens to contain the magic substring (attacker-controlled).
+        err = ClientOpError(13, "disk full — but no transaction is active")
+        assert not _is_no_transaction_error(err)
+
+    def test_constraint_violation_is_not_silenced(self) -> None:
+        from dqliteclient.exceptions import OperationalError as ClientOpError
+        from dqlitedbapi.connection import _is_no_transaction_error
+
+        err = ClientOpError(19, "constraint: no transaction is active anywhere")
+        assert not _is_no_transaction_error(err)
+
+
+class TestConnectForwardsMaxTotalRows:
+    """ISSUE-111: module-level connect() forwards max_total_rows."""
+
+    def test_connect_forwards_max_total_rows(self) -> None:
+        from dqlitedbapi import connect
+        from dqlitedbapi.connection import Connection
+
+        conn = connect("localhost:19001", max_total_rows=500)
+        try:
+            assert isinstance(conn, Connection)
+            assert conn._max_total_rows == 500
+        finally:
+            conn.close()
+
+    def test_connect_forwards_none_for_max_total_rows(self) -> None:
+        from dqlitedbapi import connect
+
+        conn = connect("localhost:19001", max_total_rows=None)
+        try:
+            assert conn._max_total_rows is None
+        finally:
+            conn.close()
+
+
 class TestIsRowReturning:
     @pytest.mark.parametrize(
         "sql",
