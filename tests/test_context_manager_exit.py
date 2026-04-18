@@ -1,0 +1,84 @@
+"""Context-manager ``__exit__`` should not silently swallow commit/rollback
+failures (ISSUE-09).
+
+Previous behavior: ``except Exception: pass`` around commit/rollback
+masked real production errors (network drops, disk-full, etc.). Now
+the body's exception still wins on rollback failure (attached as
+``__context__``), but a clean-exit commit failure surfaces cleanly
+instead of disappearing.
+"""
+
+import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
+
+from dqlitedbapi.connection import Connection
+from dqlitedbapi.exceptions import OperationalError
+
+
+def _make_conn_with_failing_commit() -> Connection:
+    """Build a Connection whose underlying _async_conn.execute raises."""
+    conn = Connection("localhost:9001", timeout=2.0)
+    mock_async_conn = AsyncMock()
+    mock_async_conn.execute = AsyncMock(side_effect=OperationalError("disk full"))
+    conn._async_conn = mock_async_conn  # pretend already connected
+    return conn
+
+
+class TestExitPropagatesCommitFailure:
+    def test_clean_exit_commit_failure_propagates(self) -> None:
+        """No body exception → commit failure surfaces, not swallowed."""
+        conn = _make_conn_with_failing_commit()
+        try:
+            with pytest.raises(OperationalError, match="disk full"):
+                with conn:
+                    pass  # clean body → __exit__ calls commit, which raises
+        finally:
+            conn.close()
+
+    def test_body_exception_wins_over_rollback_failure(self) -> None:
+        """Body raised; rollback also fails → body's exception is what the
+        caller sees. Rollback failure is attached as __context__ so it's
+        not lost entirely.
+        """
+        conn = _make_conn_with_failing_commit()
+        body_error = ValueError("user bug")
+        try:
+            with pytest.raises(ValueError, match="user bug"):
+                with conn:
+                    raise body_error
+        finally:
+            conn.close()
+
+
+class TestExitOnUnusedConnection:
+    def test_unused_connection_exit_is_silent(self) -> None:
+        """If the connection was never used, __exit__ just closes; no
+        commit/rollback is attempted (preserves 'no spurious connect'
+        contract)."""
+        conn = Connection("localhost:9001", timeout=2.0)
+        assert conn._async_conn is None
+        # Clean exit, no body exception, no TCP connection ever made.
+        with conn:
+            pass
+        assert conn._closed
+
+
+class TestCommitNoTransactionSwallowed:
+    """The 'no transaction is active' server error is still swallowed
+    (matches stdlib sqlite3 semantics), even after we removed the
+    blanket ``except Exception: pass``.
+    """
+
+    def test_commit_swallows_no_tx_error(self) -> None:
+        conn = Connection("localhost:9001", timeout=2.0)
+        mock_async_conn = AsyncMock()
+        mock_async_conn.execute = AsyncMock(
+            side_effect=OperationalError("cannot commit - no transaction is active")
+        )
+        conn._async_conn = mock_async_conn
+        try:
+            conn.commit()  # no raise — silent success
+        finally:
+            conn.close()

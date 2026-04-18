@@ -74,22 +74,39 @@ class AsyncConnection:
             self._async_conn = None
 
     async def commit(self) -> None:
-        """Commit any pending transaction."""
+        """Commit any pending transaction.
+
+        Silent no-op if the connection has never been used (preserves
+        the existing "no spurious connect" contract) or if the server
+        reports "no transaction is active" (matches stdlib sqlite3).
+        """
         if self._closed:
             raise InterfaceError("Connection is closed")
+        if self._async_conn is None:
+            return
+        import dqliteclient.exceptions as _client_exc
 
-        if self._async_conn is not None:
-            async with self._op_lock:
+        async with self._op_lock:
+            try:
                 await self._async_conn.execute("COMMIT")
+            except (OperationalError, _client_exc.OperationalError) as e:
+                if "no transaction is active" not in str(e).lower():
+                    raise
 
     async def rollback(self) -> None:
-        """Roll back any pending transaction."""
+        """Roll back any pending transaction. Same no-op rules as commit."""
         if self._closed:
             raise InterfaceError("Connection is closed")
+        if self._async_conn is None:
+            return
+        import dqliteclient.exceptions as _client_exc
 
-        if self._async_conn is not None:
-            async with self._op_lock:
+        async with self._op_lock:
+            try:
                 await self._async_conn.execute("ROLLBACK")
+            except (OperationalError, _client_exc.OperationalError) as e:
+                if "no transaction is active" not in str(e).lower():
+                    raise
 
     def cursor(self) -> AsyncCursor:
         """Return a new AsyncCursor object.
@@ -106,12 +123,16 @@ class AsyncConnection:
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, *args: Any) -> None:
+        if self._async_conn is None:
+            await self.close()
+            return
         try:
             if exc_type is None:
                 await self.commit()
             else:
-                await self.rollback()
-        except Exception:
-            pass
+                try:
+                    await self.rollback()
+                except Exception:
+                    pass  # Body's exception wins.
         finally:
             await self.close()

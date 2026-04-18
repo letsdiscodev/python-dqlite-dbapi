@@ -140,28 +140,57 @@ class Connection:
                 self._async_conn = None
 
     def commit(self) -> None:
-        """Commit any pending transaction."""
+        """Commit any pending transaction.
+
+        If the connection has never been used, this is a silent no-op
+        (matches stdlib ``sqlite3`` and the existing "no spurious
+        connect" contract). If the server reports "no transaction is
+        active," that too is swallowed — stdlib ``sqlite3.commit()``
+        silently succeeds in the same case, and callers should not
+        have to tell the difference between an empty transaction and
+        a successfully committed one.
+        """
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
+        if self._async_conn is None:
+            return
         self._run_sync(self._commit_async())
 
     async def _commit_async(self) -> None:
         """Async implementation of commit."""
-        if self._async_conn is not None:
+        assert self._async_conn is not None
+        import dqliteclient.exceptions as _client_exc
+
+        try:
             await self._async_conn.execute("COMMIT")
+        except (OperationalError, _client_exc.OperationalError) as e:
+            if "no transaction is active" not in str(e).lower():
+                raise
 
     def rollback(self) -> None:
-        """Roll back any pending transaction."""
+        """Roll back any pending transaction.
+
+        Same silent-success contract as :meth:`commit` for "no active
+        transaction" and for never-used connections.
+        """
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
+        if self._async_conn is None:
+            return
         self._run_sync(self._rollback_async())
 
     async def _rollback_async(self) -> None:
         """Async implementation of rollback."""
-        if self._async_conn is not None:
+        assert self._async_conn is not None
+        import dqliteclient.exceptions as _client_exc
+
+        try:
             await self._async_conn.execute("ROLLBACK")
+        except (OperationalError, _client_exc.OperationalError) as e:
+            if "no transaction is active" not in str(e).lower():
+                raise
 
     def cursor(self) -> Cursor:
         """Return a new Cursor object."""
@@ -174,12 +203,23 @@ class Connection:
         return self
 
     def __exit__(self, exc_type: type[BaseException] | None, *args: Any) -> None:
+        # If no query has ever run, there's no transaction to commit or
+        # roll back — just close.
+        if self._async_conn is None:
+            self.close()
+            return
         try:
             if exc_type is None:
+                # Clean exit: commit. Let exceptions propagate; silent
+                # data loss is worse than a noisy failure.
                 self.commit()
             else:
-                self.rollback()
-        except Exception:
-            pass
+                # Body already raised; attempt rollback but don't mask
+                # the original exception. If rollback itself fails, its
+                # error is attached via __context__ automatically.
+                try:
+                    self.rollback()
+                except Exception:
+                    pass  # Body's exception wins; rollback failure is attached as context.
         finally:
             self.close()
