@@ -132,3 +132,56 @@ class TestUnsupportedBindParameterTypes:
             c = conn.cursor()
             with pytest.raises(DataError):
                 c.execute("SELECT ?", [complex(1, 2)])
+
+
+@pytest.mark.integration
+class TestCursorDescriptionEdgeCases:
+    """``cursor.description`` invariants after queries whose result sets
+    are either empty or contain only NULLs. PEP 249 requires description
+    to reflect the query's column shape regardless of row count.
+    """
+
+    def test_description_populated_for_empty_resultset(self, cluster_address: str) -> None:
+        """A SELECT that returns zero rows still populates description with
+        column names. ``type_code`` is None for each column because the
+        wire layer sources it from the first row's type header and there
+        are no rows — this is the current contract; pin it.
+        """
+        with connect(cluster_address, database="test_desc_empty") as conn:
+            c = conn.cursor()
+            c.execute("CREATE TABLE IF NOT EXISTS desc_empty (a INTEGER, b TEXT)")
+            c.execute("DELETE FROM desc_empty")
+            c.execute("SELECT a, b FROM desc_empty WHERE 1=0")
+
+            assert c.description is not None
+            assert len(c.description) == 2
+            assert [col[0] for col in c.description] == ["a", "b"]
+            # No rows → no per-row type header → type_code is None on every column.
+            assert [col[1] for col in c.description] == [None, None]
+            assert c.fetchall() == []
+
+    def test_description_typecode_when_only_row_is_all_null(self, cluster_address: str) -> None:
+        """A row of all-NULLs sets every column's type nibble to NULL in the
+        wire frame, which propagates to ``description[i][1]`` as
+        ``ValueType.NULL`` (= 5). Locked in so a future refactor (e.g.
+        falling back to declared column types when the first row is all
+        NULLs) is a deliberate decision, not a silent drift.
+        """
+        from dqlitewire.constants import ValueType
+
+        with connect(cluster_address, database="test_desc_nulls") as conn:
+            c = conn.cursor()
+            c.execute("CREATE TABLE IF NOT EXISTS desc_nulls (a INTEGER, b TEXT)")
+            c.execute("DELETE FROM desc_nulls")
+            c.execute("INSERT INTO desc_nulls (a, b) VALUES (NULL, NULL)")
+            conn.commit()
+            c.execute("SELECT a, b FROM desc_nulls")
+
+            assert c.description is not None
+            assert len(c.description) == 2
+            assert [col[0] for col in c.description] == ["a", "b"]
+            # Current contract: per-row NULL override flips the type
+            # nibble, so declared column types are lost when the sample
+            # row is all-NULLs. ValueType.NULL == 5.
+            assert [col[1] for col in c.description] == [int(ValueType.NULL), int(ValueType.NULL)]
+            assert c.fetchall() == [(None, None)]
