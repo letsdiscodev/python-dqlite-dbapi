@@ -187,7 +187,12 @@ class AsyncCursor:
         return result
 
     async def close(self) -> None:
-        """Close the cursor."""
+        """Close the cursor.
+
+        Idempotent: a second call is a no-op.
+        """
+        if self._closed:
+            return
         self._closed = True
         self._rows = []
         self._description = None

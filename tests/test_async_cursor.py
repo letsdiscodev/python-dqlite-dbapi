@@ -42,6 +42,14 @@ class TestAsyncCursor:
         assert cursor._closed
 
     @pytest.mark.asyncio
+    async def test_close_is_idempotent(self) -> None:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        await cursor.close()
+        await cursor.close()  # must not raise
+        assert cursor._closed
+
+    @pytest.mark.asyncio
     async def test_fetchone_on_closed_cursor_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)

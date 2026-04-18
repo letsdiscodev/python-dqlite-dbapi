@@ -35,6 +35,13 @@ class TestCursor:
         cursor.close()
         assert cursor._closed
 
+    def test_close_is_idempotent(self) -> None:
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        cursor.close()
+        cursor.close()  # must not raise
+        assert cursor._closed
+
     def test_fetchone_on_closed_cursor_raises(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)

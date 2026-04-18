@@ -309,7 +309,14 @@ class Cursor:
         return result
 
     def close(self) -> None:
-        """Close the cursor."""
+        """Close the cursor.
+
+        Idempotent: a second call is a no-op. PEP 249 mandates that
+        operations on a closed cursor raise an Error, but the close
+        itself is permitted to be repeated.
+        """
+        if self._closed:
+            return
         self._connection._check_thread()
         self._closed = True
         self._rows = []
