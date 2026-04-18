@@ -1,6 +1,6 @@
 """Tests that protocol exceptions propagate through the cursor.
 
-Now that the cursor delegates to DqliteConnection.query_raw()/execute(),
+Now that the cursor delegates to DqliteConnection.query_raw_typed()/execute(),
 exception wrapping is handled by DqliteConnection._run_protocol().
 These tests verify that exceptions from the connection layer propagate
 correctly through the cursor.
@@ -16,10 +16,10 @@ from dqlitedbapi.exceptions import OperationalError
 
 
 def _make_mock_connection_with_error(error: Exception) -> MagicMock:
-    """Create a mock Connection where query_raw/execute raise the given error."""
+    """Create a mock Connection where query_raw_typed/execute raise the given error."""
     mock_async_conn = AsyncMock()
     mock_async_conn.execute = AsyncMock(side_effect=error)
-    mock_async_conn.query_raw = AsyncMock(side_effect=error)
+    mock_async_conn.query_raw_typed = AsyncMock(side_effect=error)
 
     mock_conn = MagicMock()
 

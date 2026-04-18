@@ -1,12 +1,45 @@
 """PEP 249 Cursor implementation for dqlite."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
+from dqlitewire.constants import ValueType
+
 from dqlitedbapi.exceptions import InterfaceError
+from dqlitedbapi.types import (
+    _convert_bind_param,
+    _datetime_from_iso8601,
+    _datetime_from_unixtime,
+)
 
 if TYPE_CHECKING:
     from dqlitedbapi.connection import Connection
+
+
+# Per-wire-type result converters. NULL/empty values pass through as None;
+# unrecognized types pass through unchanged (the wire codec already produced
+# an appropriate Python primitive).
+_RESULT_CONVERTERS: dict[int, Callable[[Any], Any]] = {
+    int(ValueType.ISO8601): lambda v: _datetime_from_iso8601(v) if isinstance(v, str) else v,
+    int(ValueType.UNIXTIME): lambda v: _datetime_from_unixtime(v) if isinstance(v, int) else v,
+}
+
+
+def _convert_row(row: Sequence[Any], column_types: Sequence[int]) -> tuple[Any, ...]:
+    """Apply result-side converters to a row based on its column wire types."""
+    result = list(row)
+    for i, tcode in enumerate(column_types):
+        converter = _RESULT_CONVERTERS.get(tcode)
+        if converter is not None and result[i] is not None:
+            result[i] = converter(result[i])
+    return tuple(result)
+
+
+def _convert_params(params: Sequence[Any] | None) -> list[Any] | None:
+    """Convert driver-level bind parameters (e.g. datetime) to wire primitives."""
+    if params is None:
+        return None
+    return [_convert_bind_param(p) for p in params]
 
 
 def _strip_leading_comments(sql: str) -> str:
@@ -33,7 +66,7 @@ class Cursor:
 
     def __init__(self, connection: "Connection") -> None:
         self._connection = connection
-        self._description: list[tuple[str, None, None, None, None, None, None]] | None = None
+        self._description: list[tuple[str, int | None, None, None, None, None, None]] | None = None
         self._rowcount = -1
         self._arraysize = 1
         self._rows: list[tuple[Any, ...]] = []
@@ -44,13 +77,15 @@ class Cursor:
     @property
     def description(
         self,
-    ) -> list[tuple[str, None, None, None, None, None, None]] | None:
+    ) -> list[tuple[str, int | None, None, None, None, None, None]] | None:
         """Column descriptions for the last query.
 
         Returns a list of 7-tuples:
         (name, type_code, display_size, internal_size, precision, scale, null_ok)
 
-        Only name is populated; others are None for compatibility.
+        ``type_code`` is the wire-level ``ValueType`` integer from the first
+        result frame (e.g. 10 for ISO8601, 9 for UNIXTIME). The other fields
+        are None — dqlite doesn't expose them.
         """
         return self._description
 
@@ -91,25 +126,36 @@ class Cursor:
     async def _execute_async(self, operation: str, parameters: Sequence[Any] | None = None) -> None:
         """Async implementation of execute.
 
-        Routes through DqliteConnection's public API (execute/query_raw)
+        Routes through DqliteConnection's public API (execute/query_raw_typed)
         which goes through _run_protocol(), providing the _in_use guard,
         connection invalidation on fatal errors, and leader-change detection.
         """
         conn = await self._connection._get_async_connection()
-        params = list(parameters) if parameters is not None else None
+        params = _convert_params(parameters)
 
         # Determine if this is a query that returns rows.
         # Note: WITH ... INSERT/UPDATE/DELETE (without RETURNING) will be
-        # misrouted to query_raw. This is a known limitation of the heuristic.
+        # misrouted to query_raw_typed. This is a known limitation of the heuristic.
         normalized = _strip_leading_comments(operation).upper()
         is_query = normalized.startswith(("SELECT", "PRAGMA", "EXPLAIN", "WITH")) or (
             " RETURNING " in normalized or normalized.endswith(" RETURNING")
         )
 
         if is_query:
-            columns, rows = await conn.query_raw(operation, params)
-            self._description = [(name, None, None, None, None, None, None) for name in columns]
-            self._rows = [tuple(row) for row in rows]
+            columns, column_types, rows = await conn.query_raw_typed(operation, params)
+            self._description = [
+                (
+                    name,
+                    column_types[i] if i < len(column_types) else None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                for i, name in enumerate(columns)
+            ]
+            self._rows = [_convert_row(row, column_types) for row in rows]
             self._row_index = 0
             self._rowcount = len(rows)
         else:

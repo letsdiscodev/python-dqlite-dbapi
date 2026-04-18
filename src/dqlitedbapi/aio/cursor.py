@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from dqlitedbapi.cursor import _convert_params, _convert_row
 from dqlitedbapi.exceptions import InterfaceError
 
 if TYPE_CHECKING:
@@ -33,7 +34,7 @@ class AsyncCursor:
 
     def __init__(self, connection: "AsyncConnection") -> None:
         self._connection = connection
-        self._description: list[tuple[str, None, None, None, None, None, None]] | None = None
+        self._description: list[tuple[str, int | None, None, None, None, None, None]] | None = None
         self._rowcount = -1
         self._arraysize = 1
         self._rows: list[tuple[Any, ...]] = []
@@ -44,7 +45,7 @@ class AsyncCursor:
     @property
     def description(
         self,
-    ) -> list[tuple[str, None, None, None, None, None, None]] | None:
+    ) -> list[tuple[str, int | None, None, None, None, None, None]] | None:
         """Column descriptions for the last query."""
         return self._description
 
@@ -76,7 +77,7 @@ class AsyncCursor:
     ) -> "AsyncCursor":
         """Execute a database operation (query or command).
 
-        Routes through DqliteConnection's public API (execute/query_raw)
+        Routes through DqliteConnection's public API (execute/query_raw_typed)
         which goes through _run_protocol(), providing the _in_use guard,
         connection invalidation on fatal errors, and leader-change detection.
         The _op_lock serializes operations on the same connection.
@@ -84,11 +85,11 @@ class AsyncCursor:
         self._check_closed()
 
         conn = await self._connection._ensure_connection()
-        params = list(parameters) if parameters is not None else None
+        params = _convert_params(parameters)
 
         # Determine if this is a query that returns rows.
         # Note: WITH ... INSERT/UPDATE/DELETE (without RETURNING) will be
-        # misrouted to query_raw. This is a known limitation of the heuristic.
+        # misrouted to query_raw_typed. This is a known limitation of the heuristic.
         normalized = _strip_leading_comments(operation).upper()
         is_query = normalized.startswith(("SELECT", "PRAGMA", "EXPLAIN", "WITH")) or (
             " RETURNING " in normalized or normalized.endswith(" RETURNING")
@@ -96,9 +97,20 @@ class AsyncCursor:
 
         async with self._connection._op_lock:
             if is_query:
-                columns, rows = await conn.query_raw(operation, params)
-                self._description = [(name, None, None, None, None, None, None) for name in columns]
-                self._rows = [tuple(row) for row in rows]
+                columns, column_types, rows = await conn.query_raw_typed(operation, params)
+                self._description = [
+                    (
+                        name,
+                        column_types[i] if i < len(column_types) else None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    for i, name in enumerate(columns)
+                ]
+                self._rows = [_convert_row(row, column_types) for row in rows]
                 self._row_index = 0
                 self._rowcount = len(rows)
             else:

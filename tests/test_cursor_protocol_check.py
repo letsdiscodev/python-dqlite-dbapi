@@ -13,7 +13,7 @@ def _make_mock_connection_not_connected() -> MagicMock:
     from dqliteclient.exceptions import DqliteConnectionError
 
     mock_async_conn = AsyncMock()
-    mock_async_conn.query_raw = AsyncMock(side_effect=DqliteConnectionError("Not connected"))
+    mock_async_conn.query_raw_typed = AsyncMock(side_effect=DqliteConnectionError("Not connected"))
     mock_async_conn.execute = AsyncMock(side_effect=DqliteConnectionError("Not connected"))
 
     mock_conn = MagicMock()

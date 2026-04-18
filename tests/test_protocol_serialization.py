@@ -30,11 +30,11 @@ class TestAsyncProtocolSerialization:
 
         call_log: list[tuple[str, str]] = []  # (operation, phase) pairs
 
-        async def mock_query_raw(sql: str, params: object) -> tuple:
+        async def mock_query_raw_typed(sql: str, params: object) -> tuple:
             call_log.append((sql, "start"))
             await asyncio.sleep(0.05)  # Simulate network I/O
             call_log.append((sql, "end"))
-            return (["id"], [[1]])
+            return (["id"], [1], [[1]])  # 1 == ValueType.INTEGER
 
         async def mock_execute(sql: str, params: object) -> tuple:
             call_log.append((sql, "start"))
@@ -45,7 +45,7 @@ class TestAsyncProtocolSerialization:
         with patch("dqlitedbapi.aio.connection.DqliteConnection") as MockDqliteConn:
             mock_instance = AsyncMock()
             mock_instance.connect = AsyncMock()
-            mock_instance.query_raw = mock_query_raw
+            mock_instance.query_raw_typed = mock_query_raw_typed
             mock_instance.execute = mock_execute
             MockDqliteConn.return_value = mock_instance
 
