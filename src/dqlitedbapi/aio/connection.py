@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import math
+from types import TracebackType
 from typing import Any
 
 import dqliteclient.exceptions as _client_exc
@@ -180,7 +181,12 @@ class AsyncConnection:
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, *args: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self._async_conn is None:
             await self.close()
             return

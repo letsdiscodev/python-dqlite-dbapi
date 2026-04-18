@@ -1,6 +1,7 @@
 """PEP 249 Cursor implementation for dqlite."""
 
 from collections.abc import Callable, Coroutine, Mapping, Sequence
+from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 import dqliteclient.exceptions as _client_exc
@@ -451,5 +452,10 @@ class Cursor:
     def __enter__(self) -> "Cursor":
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()

@@ -1,6 +1,7 @@
 """Async cursor implementation for dqlite."""
 
 from collections.abc import Sequence
+from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from dqlitedbapi.cursor import (
@@ -288,5 +289,10 @@ class AsyncCursor:
     async def __aenter__(self) -> "AsyncCursor":
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         await self.close()

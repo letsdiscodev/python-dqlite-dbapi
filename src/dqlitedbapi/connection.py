@@ -6,6 +6,7 @@ import math
 import threading
 import warnings
 import weakref
+from types import TracebackType
 from typing import Any
 
 import dqliteclient.exceptions as _client_exc
@@ -359,7 +360,12 @@ class Connection:
     def __enter__(self) -> "Connection":
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, *args: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         # If no query has ever run, there's no transaction to commit or
         # roll back — just close.
         if self._async_conn is None:
