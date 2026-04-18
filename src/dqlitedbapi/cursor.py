@@ -169,6 +169,8 @@ class Cursor:
 
     @arraysize.setter
     def arraysize(self, value: int) -> None:
+        if value < 1:
+            raise ProgrammingError(f"arraysize must be >= 1, got {value}")
         self._arraysize = value
 
     def _check_closed(self) -> None:

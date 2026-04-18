@@ -55,6 +55,10 @@ class AsyncCursor:
 
     @arraysize.setter
     def arraysize(self, value: int) -> None:
+        if value < 1:
+            from dqlitedbapi.exceptions import ProgrammingError
+
+            raise ProgrammingError(f"arraysize must be >= 1, got {value}")
         self._arraysize = value
 
     def _check_closed(self) -> None:
