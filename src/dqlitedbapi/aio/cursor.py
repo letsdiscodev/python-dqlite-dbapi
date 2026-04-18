@@ -121,9 +121,17 @@ class AsyncCursor:
     async def executemany(
         self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]
     ) -> "AsyncCursor":
-        """Execute a database operation multiple times."""
+        """Execute a database operation multiple times.
+
+        An empty ``seq_of_parameters`` must not leave stale SELECT
+        state around: reset description / rows so callers can't
+        confuse an empty executemany with a preceding SELECT.
+        """
         self._check_closed()
 
+        self._description = None
+        self._rows = []
+        self._row_index = 0
         total_affected = 0
         for params in seq_of_parameters:
             await self.execute(operation, params)

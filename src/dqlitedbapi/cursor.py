@@ -240,7 +240,16 @@ class Cursor:
     async def _executemany_async(
         self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]
     ) -> None:
-        """Async implementation of executemany."""
+        """Async implementation of executemany.
+
+        An empty ``seq_of_parameters`` must not leave stale SELECT
+        state around: reset description / rows to None / empty so
+        callers can't confuse an empty executemany with a preceding
+        SELECT.
+        """
+        self._description = None
+        self._rows = []
+        self._row_index = 0
         total_affected = 0
         for params in seq_of_parameters:
             await self._execute_async(operation, params)
