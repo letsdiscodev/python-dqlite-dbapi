@@ -21,11 +21,23 @@ class TestCursorAfterExternalConnectionClose:
     """
 
     def test_sync_cursor_execute_after_connection_close(self) -> None:
-        import dqlitedbapi
+        # Simulate a closed connection without touching any cluster.
+        # The contract we're pinning: when the underlying connection's
+        # _run_sync raises InterfaceError (its documented response to a
+        # closed connection), the cursor surface propagates it.
+        from dqlitedbapi.cursor import Cursor
 
-        conn = dqlitedbapi.connect("localhost:19001")
-        cursor = conn.cursor()
-        conn.close()
+        class _ClosedConn:
+            _closed = True
+
+            def _check_thread(self) -> None:
+                return None
+
+            def _run_sync(self, coro) -> None:  # noqa: ANN001
+                coro.close()
+                raise InterfaceError("Connection is closed")
+
+        cursor = Cursor(_ClosedConn())  # type: ignore[arg-type]
 
         with pytest.raises(InterfaceError):
             cursor.execute("SELECT 1")

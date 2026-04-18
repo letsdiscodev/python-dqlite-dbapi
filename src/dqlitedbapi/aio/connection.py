@@ -7,7 +7,7 @@ from typing import Any
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
-from dqliteclient.protocol import _validate_max_total_rows
+from dqliteclient.protocol import _validate_max_total_rows, _validate_positive_int_or_none
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import _is_no_transaction_error
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
@@ -23,6 +23,8 @@ class AsyncConnection:
         database: str = "default",
         timeout: float = 10.0,
         max_total_rows: int | None = 10_000_000,
+        max_continuation_frames: int | None = 100_000,
+        trust_server_heartbeat: bool = False,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -33,6 +35,10 @@ class AsyncConnection:
             max_total_rows: Cumulative row cap across continuation
                 frames. Forwarded to the underlying DqliteConnection;
                 ``None`` disables the cap.
+            max_continuation_frames: Per-query continuation-frame cap
+                (ISSUE-98). Forwarded to the underlying DqliteConnection.
+            trust_server_heartbeat: When True, let the server-advertised
+                heartbeat widen the per-read deadline (ISSUE-101).
         """
         if not math.isfinite(timeout) or timeout <= 0:
             raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
@@ -40,6 +46,10 @@ class AsyncConnection:
         self._database = database
         self._timeout = timeout
         self._max_total_rows = _validate_max_total_rows(max_total_rows)
+        self._max_continuation_frames = _validate_positive_int_or_none(
+            max_continuation_frames, "max_continuation_frames"
+        )
+        self._trust_server_heartbeat = trust_server_heartbeat
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # asyncio primitives MUST be created inside the loop they will
@@ -79,6 +89,8 @@ class AsyncConnection:
                 database=self._database,
                 timeout=self._timeout,
                 max_total_rows=self._max_total_rows,
+                max_continuation_frames=self._max_continuation_frames,
+                trust_server_heartbeat=self._trust_server_heartbeat,
             )
             try:
                 await conn.connect()

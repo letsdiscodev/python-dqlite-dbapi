@@ -95,6 +95,8 @@ def connect(
     database: str = "default",
     timeout: float = 10.0,
     max_total_rows: int | None = 10_000_000,
+    max_continuation_frames: int | None = 100_000,
+    trust_server_heartbeat: bool = False,
 ) -> Connection:
     """Connect to a dqlite database.
 
@@ -108,6 +110,10 @@ def connect(
         max_total_rows: Cumulative row cap across continuation frames
             for a single query. Forwarded to the underlying
             :class:`Connection` (ISSUE-111). ``None`` disables the cap.
+        max_continuation_frames: Per-query continuation-frame cap
+            (ISSUE-98). Forwarded to the underlying :class:`Connection`.
+        trust_server_heartbeat: Let the server-advertised heartbeat
+            widen the per-read deadline (ISSUE-101). Default False.
 
     Returns:
         A Connection object
@@ -121,4 +127,6 @@ def connect(
         database=database,
         timeout=timeout,
         max_total_rows=max_total_rows,
+        max_continuation_frames=max_continuation_frames,
+        trust_server_heartbeat=trust_server_heartbeat,
     )

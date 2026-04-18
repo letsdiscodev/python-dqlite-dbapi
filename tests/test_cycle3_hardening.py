@@ -43,6 +43,65 @@ class TestRownumberProperty:
         cursor = AsyncCursor(_FakeAsyncConn())  # type: ignore[arg-type]
         assert cursor.rownumber is None
 
+    def test_rownumber_increments_with_fetchone(self) -> None:
+        """After each fetchone(), rownumber points at the next row."""
+        from dqlitedbapi.cursor import Cursor
+
+        class _FakeConn:
+            def _check_thread(self) -> None: ...
+
+        cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
+        cursor._description = [("x", None, None, None, None, None, None)]
+        cursor._rows = [(1,), (2,), (3,)]
+
+        assert cursor.rownumber == 0  # before any fetch, cursor points at row 0
+
+        assert cursor.fetchone() == (1,)
+        assert cursor.rownumber == 1
+
+        assert cursor.fetchone() == (2,)
+        assert cursor.rownumber == 2
+
+        assert cursor.fetchone() == (3,)
+        assert cursor.rownumber == 3  # past the end
+
+        # Further fetches return None and do not advance rownumber past len
+        assert cursor.fetchone() is None
+        assert cursor.rownumber == 3
+
+    def test_rownumber_after_fetchall(self) -> None:
+        """fetchall advances rownumber to end of result set."""
+        from dqlitedbapi.cursor import Cursor
+
+        class _FakeConn:
+            def _check_thread(self) -> None: ...
+
+        cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
+        cursor._description = [("x", None, None, None, None, None, None)]
+        cursor._rows = [(i,) for i in range(5)]
+        assert cursor.rownumber == 0
+
+        rows = cursor.fetchall()
+        assert len(rows) == 5
+        assert cursor.rownumber == 5
+
+    def test_rownumber_after_fetchmany(self) -> None:
+        """fetchmany advances rownumber by the number of rows fetched."""
+        from dqlitedbapi.cursor import Cursor
+
+        class _FakeConn:
+            def _check_thread(self) -> None: ...
+
+        cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
+        cursor._description = [("x", None, None, None, None, None, None)]
+        cursor._rows = [(i,) for i in range(10)]
+
+        cursor.fetchmany(3)
+        assert cursor.rownumber == 3
+
+        cursor.fetchmany(4)
+        assert cursor.rownumber == 7
+
 
 class TestFetchmanyNegativeSize:
     def test_sync_fetchmany_rejects_negative(self) -> None:
@@ -221,27 +280,36 @@ class TestIsNoTransactionError:
 
 
 class TestConnectForwardsMaxTotalRows:
-    """ISSUE-111: module-level connect() forwards max_total_rows."""
+    """ISSUE-111: module-level connect() forwards max_total_rows.
 
-    def test_connect_forwards_max_total_rows(self) -> None:
+    These tests only verify parameter plumbing — they do not open a
+    socket. Connection.__init__ is pure state machine; no cluster
+    needed. The previous implementation called conn.close() which
+    required a running cluster for the event-loop thread to wind down
+    cleanly.
+    """
+
+    @pytest.mark.parametrize(
+        "max_total_rows,expected",
+        [(500, 500), (None, None), (10_000, 10_000)],
+    )
+    def test_connect_forwards_max_total_rows(
+        self, max_total_rows: int | None, expected: int | None
+    ) -> None:
         from dqlitedbapi import connect
         from dqlitedbapi.connection import Connection
 
-        conn = connect("localhost:19001", max_total_rows=500)
-        try:
-            assert isinstance(conn, Connection)
-            assert conn._max_total_rows == 500
-        finally:
-            conn.close()
-
-    def test_connect_forwards_none_for_max_total_rows(self) -> None:
-        from dqlitedbapi import connect
-
-        conn = connect("localhost:19001", max_total_rows=None)
-        try:
-            assert conn._max_total_rows is None
-        finally:
-            conn.close()
+        # connect() does NOT actually connect to the server — it
+        # instantiates a Connection with the given address and defers
+        # the real TCP until first use. Inspect the attribute and then
+        # skip close() because close() on a never-connected connection
+        # is a silent no-op (no loop thread was started).
+        conn = connect("localhost:19999", max_total_rows=max_total_rows)
+        assert isinstance(conn, Connection)
+        assert conn._max_total_rows == expected
+        # conn.close() on an unused connection is a no-op; no cluster
+        # contact happens.
+        conn.close()
 
 
 class TestIsRowReturning:
