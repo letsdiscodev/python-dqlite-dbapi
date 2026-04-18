@@ -29,6 +29,38 @@ _NO_TX_CODES = frozenset({1, 21})
 _NO_TX_SUBSTRING = "no transaction is active"
 
 
+async def _build_and_connect(
+    address: str,
+    *,
+    database: str,
+    timeout: float,
+    max_total_rows: int | None,
+    max_continuation_frames: int | None,
+    trust_server_heartbeat: bool,
+) -> DqliteConnection:
+    """Build a DqliteConnection with the given governors and connect it.
+
+    Wraps the construct-then-connect sequence that both the sync and
+    async Connection flavours execute under their respective locks. The
+    ``OperationalError`` message phrasing ("Failed to connect: ...") is
+    intentionally verbatim so test assertions that match on the prefix
+    continue to pass.
+    """
+    conn = DqliteConnection(
+        address,
+        database=database,
+        timeout=timeout,
+        max_total_rows=max_total_rows,
+        max_continuation_frames=max_continuation_frames,
+        trust_server_heartbeat=trust_server_heartbeat,
+    )
+    try:
+        await conn.connect()
+    except Exception as e:
+        raise OperationalError(f"Failed to connect: {e}") from e
+    return conn
+
+
 def _is_no_transaction_error(exc: Exception) -> bool:
     """True if ``exc`` is a genuine "no active transaction" server reply.
 
@@ -254,7 +286,7 @@ class Connection:
             if self._async_conn is not None:
                 return self._async_conn
 
-            conn = DqliteConnection(
+            self._async_conn = await _build_and_connect(
                 self._address,
                 database=self._database,
                 timeout=self._timeout,
@@ -262,11 +294,6 @@ class Connection:
                 max_continuation_frames=self._max_continuation_frames,
                 trust_server_heartbeat=self._trust_server_heartbeat,
             )
-            try:
-                await conn.connect()
-            except Exception as e:
-                raise OperationalError(f"Failed to connect: {e}") from e
-            self._async_conn = conn
 
         return self._async_conn
 

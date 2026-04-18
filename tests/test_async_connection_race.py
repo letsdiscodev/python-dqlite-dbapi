@@ -22,7 +22,7 @@ class TestAsyncConnectionRace:
             await asyncio.sleep(0.1)  # Simulate slow TCP handshake
             connect_finished.set()
 
-        with patch("dqlitedbapi.aio.connection.DqliteConnection") as MockDqliteConn:
+        with patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn:
             mock_instance = AsyncMock()
             mock_instance.connect = slow_connect
             mock_instance._protocol = AsyncMock()

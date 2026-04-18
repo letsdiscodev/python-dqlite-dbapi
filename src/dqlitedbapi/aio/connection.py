@@ -11,7 +11,7 @@ import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi.aio.cursor import AsyncCursor
-from dqlitedbapi.connection import _is_no_transaction_error
+from dqlitedbapi.connection import _build_and_connect, _is_no_transaction_error
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 __all__ = ["AsyncConnection"]
@@ -114,7 +114,7 @@ class AsyncConnection:
             if self._async_conn is not None:
                 return self._async_conn
 
-            conn = DqliteConnection(
+            self._async_conn = await _build_and_connect(
                 self._address,
                 database=self._database,
                 timeout=self._timeout,
@@ -122,12 +122,6 @@ class AsyncConnection:
                 max_continuation_frames=self._max_continuation_frames,
                 trust_server_heartbeat=self._trust_server_heartbeat,
             )
-            try:
-                await conn.connect()
-            except Exception as e:
-                raise OperationalError(f"Failed to connect: {e}") from e
-
-            self._async_conn = conn
 
         return self._async_conn
 

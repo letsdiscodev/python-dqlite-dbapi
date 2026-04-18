@@ -42,7 +42,7 @@ class TestAsyncProtocolSerialization:
             call_log.append((sql, "end"))
             return (0, 1)
 
-        with patch("dqlitedbapi.aio.connection.DqliteConnection") as MockDqliteConn:
+        with patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn:
             mock_instance = AsyncMock()
             mock_instance.connect = AsyncMock()
             mock_instance.query_raw_typed = mock_query_raw_typed
