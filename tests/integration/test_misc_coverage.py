@@ -3,13 +3,68 @@
 - Large result set (forces continuation frames) + large BLOB.
 - Unicode in identifiers + emoji in TEXT.
 - Multi-statement SQL is rejected with a specific error.
+- rowcount semantics after SELECT / empty SELECT.
 """
 
 import pytest
 
 import dqliteclient.exceptions
 from dqlitedbapi import connect
+from dqlitedbapi.aio import aconnect
 from dqlitedbapi.exceptions import OperationalError
+
+
+@pytest.mark.integration
+class TestRowcountAfterSelect:
+    """Pins the rowcount contract for SELECT statements.
+
+    dqlite knows the full result set at execute time (rows arrive in
+    the same response + continuation frames, not lazily), so the
+    driver reports ``len(rows)`` — the PEP 249 literal reading of
+    "number of rows that the last execute*() produced". This diverges
+    intentionally from stdlib ``sqlite3``'s ``-1`` convention and must
+    stay pinned: a refactor of the execute path that flipped to ``-1``
+    would be a silent semantics change.
+    """
+
+    def test_rowcount_after_select_reports_row_count(self, cluster_address: str) -> None:
+        with connect(cluster_address, database="test_rowcount_sel") as conn:
+            c = conn.cursor()
+            c.execute("DROP TABLE IF EXISTS rc")
+            c.execute("CREATE TABLE rc (x INTEGER)")
+            c.execute("INSERT INTO rc VALUES (1), (2), (3)")
+            conn.commit()
+
+            c.execute("SELECT x FROM rc ORDER BY x")
+            assert c.rowcount == 3, (
+                "SELECT rowcount pins the 'rows produced' reading, not sqlite3's -1."
+            )
+            c.execute("DROP TABLE rc")
+
+    def test_rowcount_after_empty_select_is_zero(self, cluster_address: str) -> None:
+        with connect(cluster_address, database="test_rowcount_empty") as conn:
+            c = conn.cursor()
+            c.execute("DROP TABLE IF EXISTS rc_empty")
+            c.execute("CREATE TABLE rc_empty (x INTEGER)")
+            conn.commit()
+
+            c.execute("SELECT x FROM rc_empty")
+            assert c.rowcount == 0
+            c.execute("DROP TABLE rc_empty")
+
+    async def test_async_rowcount_after_select_reports_row_count(
+        self, cluster_address: str
+    ) -> None:
+        async with await aconnect(cluster_address, database="test_rowcount_aio") as conn:
+            c = conn.cursor()
+            await c.execute("DROP TABLE IF EXISTS rc_aio")
+            await c.execute("CREATE TABLE rc_aio (x INTEGER)")
+            await c.execute("INSERT INTO rc_aio VALUES (1), (2), (3), (4)")
+            await conn.commit()
+
+            await c.execute("SELECT x FROM rc_aio ORDER BY x")
+            assert c.rowcount == 4
+            await c.execute("DROP TABLE rc_aio")
 
 
 @pytest.mark.integration

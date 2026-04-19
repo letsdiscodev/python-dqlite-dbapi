@@ -1,9 +1,11 @@
 """executemany([]) doesn't leak stale SELECT state."""
 
+from collections import deque
 from unittest.mock import MagicMock
 
 import pytest
 
+from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
 
 
@@ -12,6 +14,15 @@ def _cursor_with_prior_select() -> Cursor:
     c = Cursor(conn)
     c._description = [("id", None, None, None, None, None, None)]
     c._rows = [(1,), (2,)]
+    c._rowcount = 2
+    return c
+
+
+def _async_cursor_with_prior_select() -> AsyncCursor:
+    conn = MagicMock()
+    c = AsyncCursor(conn)
+    c._description = [("id", None, None, None, None, None, None)]
+    c._rows = deque([(1,), (2,)])
     c._rowcount = 2
     return c
 
@@ -31,4 +42,25 @@ class TestExecutemanyEmpty:
 
         assert c.description is None
         assert c._rows == []
+        assert c.rowcount == 0
+
+    @pytest.mark.asyncio
+    async def test_async_cursor_executemany_empty_via_public_surface(self) -> None:
+        """Mirror of the sync test on the async cursor's public
+        ``executemany`` entry point. The existing empty-sequence test
+        exercises the internal ``_executemany_async`` helper on the
+        sync ``Cursor`` class; without a test at the ``AsyncCursor``
+        public surface a future refactor could diverge the two paths
+        silently.
+        """
+        c = _async_cursor_with_prior_select()
+
+        async def _noop(*_a: object, **_kw: object) -> None:
+            return None
+
+        c._execute_async = _noop  # type: ignore[method-assign]
+        await c.executemany("INSERT INTO t VALUES (?)", [])
+
+        assert c.description is None
+        assert list(c._rows) == []
         assert c.rowcount == 0
