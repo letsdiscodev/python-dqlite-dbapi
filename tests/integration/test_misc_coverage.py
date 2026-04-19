@@ -240,3 +240,45 @@ class TestCursorDescriptionEdgeCases:
             # row is all-NULLs. ValueType.NULL == 5.
             assert [col[1] for col in c.description] == [int(ValueType.NULL), int(ValueType.NULL)]
             assert c.fetchall() == [(None, None)]
+
+
+@pytest.mark.integration
+class TestDescriptionNoneAfterDML:
+    """PEP 249: ``cursor.description`` must be ``None`` after any
+    statement that did not produce a result set. The
+    ``_is_row_returning`` heuristic selects the code branch that
+    sets description; pin the end-to-end contract against a real
+    server so a future heuristic change cannot silently violate
+    PEP 249 for common DML shapes (CREATE / INSERT / UPDATE /
+    DELETE / DROP).
+    """
+
+    def test_description_is_none_after_dml(self, cluster_address: str) -> None:
+        with connect(cluster_address, database="test_desc_dml") as conn:
+            c = conn.cursor()
+            c.execute("DROP TABLE IF EXISTS dt")
+            c.execute("CREATE TABLE dt (x INTEGER)")
+            assert c.description is None, "CREATE TABLE must leave description None"
+            c.execute("INSERT INTO dt VALUES (1)")
+            assert c.description is None, "INSERT (no RETURNING) must leave description None"
+            c.execute("UPDATE dt SET x = 2")
+            assert c.description is None, "UPDATE must leave description None"
+            c.execute("DELETE FROM dt WHERE x = 2")
+            assert c.description is None, "DELETE must leave description None"
+            c.execute("DROP TABLE dt")
+            assert c.description is None, "DROP TABLE must leave description None"
+
+    async def test_async_description_is_none_after_dml(self, cluster_address: str) -> None:
+        async with await aconnect(cluster_address, database="test_desc_dml_aio") as conn:
+            c = conn.cursor()
+            await c.execute("DROP TABLE IF EXISTS dt_aio")
+            await c.execute("CREATE TABLE dt_aio (x INTEGER)")
+            assert c.description is None
+            await c.execute("INSERT INTO dt_aio VALUES (1)")
+            assert c.description is None
+            await c.execute("UPDATE dt_aio SET x = 2")
+            assert c.description is None
+            await c.execute("DELETE FROM dt_aio WHERE x = 2")
+            assert c.description is None
+            await c.execute("DROP TABLE dt_aio")
+            assert c.description is None
