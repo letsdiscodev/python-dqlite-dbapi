@@ -162,6 +162,11 @@ class AsyncCursor:
                 self._rowcount = affected
                 self._description = None
                 self._rows = []
+                # Parity with the SELECT branch and with executemany:
+                # every execute must leave the cursor at row 0 of its
+                # (possibly empty) result set so a subsequent SELECT
+                # iterator starts from a clean state.
+                self._row_index = 0
 
         return self
 
