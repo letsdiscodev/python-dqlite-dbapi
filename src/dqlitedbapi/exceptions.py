@@ -47,9 +47,20 @@ class OperationalError(DatabaseError):
 
 
 class IntegrityError(DatabaseError):
-    """Error related to database integrity."""
+    """Error related to database integrity.
 
-    pass
+    Raised when the relational integrity of the database is affected,
+    e.g. a UNIQUE, NOT NULL, FOREIGN KEY, or CHECK constraint violation.
+    The SQLite primary error code is 19 (SQLITE_CONSTRAINT) plus a
+    family of extended codes that all share ``code & 0xFF == 19``.
+
+    Optional ``code`` attribute carries the SQLite extended error code
+    mirror of :class:`OperationalError`.
+    """
+
+    def __init__(self, message: object = "", code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class InternalError(DatabaseError):

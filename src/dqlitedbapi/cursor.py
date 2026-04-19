@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import dqliteclient.exceptions as _client_exc
 from dqlitedbapi.exceptions import (
     DataError,
+    IntegrityError,
     InterfaceError,
     NotSupportedError,
     OperationalError,
@@ -22,12 +23,39 @@ from dqlitewire.constants import ValueType
 __all__ = ["Cursor"]
 
 
+# SQLite primary error code 19 (SQLITE_CONSTRAINT) plus its extended
+# family (SQLITE_CONSTRAINT_CHECK = 275, UNIQUE = 2067, NOT_NULL = 1299,
+# FOREIGN_KEY = 787, etc.) all share ``code & 0xFF == 19``. PEP 249
+# mandates IntegrityError for these, so map them here rather than
+# leaving every caller to inspect the code themselves.
+_SQLITE_CONSTRAINT = 19
+
+# Registry of primary-code → PEP 249 class. Keep the default
+# (OperationalError) outside the dict so adding a code is one line.
+_CODE_TO_EXCEPTION: dict[int, type[OperationalError | IntegrityError]] = {
+    _SQLITE_CONSTRAINT: IntegrityError,
+}
+
+
+def _classify_operational(code: int | None) -> type[OperationalError | IntegrityError]:
+    """Pick a PEP 249 exception class from a SQLite error code.
+
+    Returns OperationalError for unknown / unmapped codes so the
+    existing "anything can surface as OperationalError" contract
+    holds; returns IntegrityError for the SQLITE_CONSTRAINT family.
+    """
+    if code is None:
+        return OperationalError
+    return _CODE_TO_EXCEPTION.get(code & 0xFF, OperationalError)
+
+
 async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
     """Await a client-layer coroutine, mapping its exceptions into the
     PEP 249 hierarchy. Preserves the original via ``from``.
 
     Mapping:
-      client.OperationalError      → dbapi.OperationalError (same code/msg)
+      client.OperationalError (constraint code) → dbapi.IntegrityError
+      client.OperationalError (other codes)     → dbapi.OperationalError
       client.DqliteConnectionError → dbapi.OperationalError (network flavor)
       client.ClusterError          → dbapi.OperationalError
       client.ProtocolError         → dbapi.InterfaceError
@@ -45,11 +73,13 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
     try:
         return await coro
     except _client_exc.OperationalError as e:
-        # Forward the SQLite extended error code so callers that branch
-        # on leader-change / busy / integrity codes (see
-        # ``_is_no_transaction_error`` and the SQLAlchemy dialect's
-        # ``is_disconnect``) continue to work after the remap.
-        raise OperationalError(str(e), code=e.code) from e
+        # Classify by SQLite extended error code. Constraint violations
+        # (primary code 19) become IntegrityError per PEP 249; everything
+        # else stays OperationalError so callers that branch on
+        # leader-change / busy codes (``_is_no_transaction_error``, the
+        # SQLAlchemy dialect's ``is_disconnect``) continue to work.
+        exc_cls = _classify_operational(e.code)
+        raise exc_cls(str(e), code=e.code) from e
     except _client_exc.DqliteConnectionError as e:
         raise OperationalError(str(e)) from e
     except _client_exc.ClusterError as e:
