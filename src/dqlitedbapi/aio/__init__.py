@@ -1,10 +1,9 @@
 """Async PEP 249-style interface for dqlite."""
 
-import math
-
 from dqlitedbapi import __version__
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
+from dqlitedbapi.connection import _validate_timeout
 from dqlitedbapi.exceptions import (
     DatabaseError,
     DataError,
@@ -120,8 +119,7 @@ def connect(
     Returns:
         An AsyncConnection object
     """
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+    _validate_timeout(timeout)
     return AsyncConnection(
         address,
         database=database,
@@ -157,8 +155,7 @@ async def aconnect(
     Returns:
         A connected AsyncConnection object
     """
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+    _validate_timeout(timeout)
     conn = AsyncConnection(
         address,
         database=database,

@@ -30,6 +30,18 @@ _NO_TX_CODES = frozenset({1, 21})
 _NO_TX_SUBSTRING = "no transaction is active"
 
 
+def _validate_timeout(timeout: float) -> None:
+    """Raise ProgrammingError if ``timeout`` is not a positive finite number.
+
+    Reused by ``dqlitedbapi.connect``, ``dqlitedbapi.aio.connect`` (the
+    sync-returning pun), and ``dqlitedbapi.aio.aconnect``. The exact
+    error phrasing is verbatim because several existing tests match on
+    the prefix ``"timeout must be a positive finite number"``.
+    """
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+
+
 async def _build_and_connect(
     address: str,
     *,
