@@ -1,6 +1,6 @@
 """PEP 249 Cursor implementation for dqlite."""
 
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
@@ -351,7 +351,7 @@ class Cursor:
             self._description = None
             self._rows = []
 
-    def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> "Cursor":
+    def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]) -> "Cursor":
         """Execute a database operation multiple times."""
         self._connection._check_thread()
         self._check_closed()
@@ -360,7 +360,7 @@ class Cursor:
         return self
 
     async def _executemany_async(
-        self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]
+        self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]
     ) -> None:
         """Async implementation of executemany.
 

@@ -1,6 +1,6 @@
 """Async cursor implementation for dqlite."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
@@ -153,7 +153,7 @@ class AsyncCursor:
         return self
 
     async def executemany(
-        self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]
+        self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]
     ) -> "AsyncCursor":
         """Execute a database operation multiple times.
 
