@@ -60,6 +60,20 @@ class TestCursor:
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             cursor.fetchone()
 
+    def test_fetchmany_on_closed_cursor_raises(self) -> None:
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        cursor.close()
+        with pytest.raises(InterfaceError, match="Cursor is closed"):
+            cursor.fetchmany(5)
+
+    def test_fetchall_on_closed_cursor_raises(self) -> None:
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        cursor.close()
+        with pytest.raises(InterfaceError, match="Cursor is closed"):
+            cursor.fetchall()
+
     def test_fetchone_without_execute_raises(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)

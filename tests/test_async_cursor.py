@@ -64,6 +64,43 @@ class TestAsyncCursor:
             await cursor.fetchone()
 
     @pytest.mark.asyncio
+    async def test_fetchmany_on_closed_cursor_raises(self) -> None:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        await cursor.close()
+        with pytest.raises(InterfaceError, match="Cursor is closed"):
+            await cursor.fetchmany(5)
+
+    @pytest.mark.asyncio
+    async def test_fetchall_on_closed_cursor_raises(self) -> None:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        await cursor.close()
+        with pytest.raises(InterfaceError, match="Cursor is closed"):
+            await cursor.fetchall()
+
+    @pytest.mark.asyncio
+    async def test_fetchone_without_execute_raises(self) -> None:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        with pytest.raises(InterfaceError, match="No result set"):
+            await cursor.fetchone()
+
+    @pytest.mark.asyncio
+    async def test_fetchmany_without_execute_raises(self) -> None:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        with pytest.raises(InterfaceError, match="No result set"):
+            await cursor.fetchmany(5)
+
+    @pytest.mark.asyncio
+    async def test_fetchall_without_execute_raises(self) -> None:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        with pytest.raises(InterfaceError, match="No result set"):
+            await cursor.fetchall()
+
+    @pytest.mark.asyncio
     async def test_fetchone_no_rows_returns_none(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
