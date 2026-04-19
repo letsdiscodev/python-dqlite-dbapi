@@ -3,6 +3,7 @@
 import asyncio
 import concurrent.futures
 import contextlib
+import logging
 import math
 import threading
 import warnings
@@ -18,6 +19,8 @@ from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 __all__ = ["Connection"]
+
+logger = logging.getLogger(__name__)
 
 # SQLite result codes for "you tried to COMMIT/ROLLBACK but there's no
 # transaction active." SQLite returns ``SQLITE_ERROR`` (1) most of the
@@ -296,10 +299,25 @@ class Connection:
                 # raised. The 1s cap is enough for normal cancellation
                 # to land; ``_invalidate`` above is the safety net for
                 # a genuinely stuck coroutine.
-                with contextlib.suppress(
-                    concurrent.futures.CancelledError, concurrent.futures.TimeoutError, Exception
-                ):
+                try:
                     future.result(timeout=1.0)
+                except (
+                    concurrent.futures.CancelledError,
+                    concurrent.futures.TimeoutError,
+                ):
+                    pass
+                except Exception:
+                    # Unexpected: the cancelled coroutine terminated
+                    # with something other than CancelledError /
+                    # TimeoutError (e.g. a programming bug in a
+                    # cleanup path). Outer OperationalError still
+                    # surfaces for the caller; DEBUG-log the root
+                    # cause so operators can see it instead of having
+                    # it silently absorbed.
+                    logger.debug(
+                        "sync timeout: unexpected error during bounded cancel-wait",
+                        exc_info=True,
+                    )
                 raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
 
     async def _get_async_connection(self) -> DqliteConnection:
