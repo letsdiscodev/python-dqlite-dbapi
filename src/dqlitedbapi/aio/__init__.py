@@ -146,11 +146,16 @@ async def aconnect(
     Args:
         address: Node address in "host:port" format
         database: Database name to open
-        timeout: Connection timeout in seconds — must be positive and finite.
-        max_total_rows: Cumulative row cap across continuation frames.
+        timeout: Connection timeout in seconds — must be a positive
+            finite number. 0, negatives, and non-finite values are
+            rejected here rather than silently passed through.
+        max_total_rows: Cumulative row cap across continuation frames
+            for a single query. Forwarded to the underlying
+            AsyncConnection. None disables the cap.
         max_continuation_frames: Per-query continuation-frame cap.
+            Forwarded to the underlying AsyncConnection.
         trust_server_heartbeat: Let the server-advertised heartbeat
-            widen the per-read deadline.
+            widen the per-read deadline. Default False.
 
     Returns:
         A connected AsyncConnection object
