@@ -10,6 +10,7 @@ from typing import Any
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqliteclient.protocol import _validate_positive_int_or_none
+from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import _build_and_connect, _is_no_transaction_error
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
@@ -19,6 +20,20 @@ __all__ = ["AsyncConnection"]
 
 class AsyncConnection:
     """Async database connection."""
+
+    # PEP 249 optional extension ("Attributes from Module Exceptions"):
+    # parity with the sync ``Connection`` class so cross-driver code can
+    # write ``except aconn.Error:`` without importing the driver module.
+    Error = _exc.Error
+    Warning = _exc.Warning
+    InterfaceError = _exc.InterfaceError
+    DatabaseError = _exc.DatabaseError
+    DataError = _exc.DataError
+    OperationalError = _exc.OperationalError
+    IntegrityError = _exc.IntegrityError
+    InternalError = _exc.InternalError
+    ProgrammingError = _exc.ProgrammingError
+    NotSupportedError = _exc.NotSupportedError
 
     def __init__(
         self,

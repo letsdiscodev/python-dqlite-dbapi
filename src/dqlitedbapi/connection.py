@@ -13,6 +13,7 @@ from typing import Any
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqliteclient.protocol import _validate_positive_int_or_none
+from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
@@ -122,6 +123,24 @@ def _cleanup_loop_thread(
 
 class Connection:
     """PEP 249 compliant database connection."""
+
+    # PEP 249 optional extension ("Attributes from Module Exceptions"):
+    # expose the module-level exception classes as class attributes so
+    # cross-driver generic code can write ``except conn.Error:`` without
+    # importing the driver module. Stdlib ``sqlite3.Connection`` and
+    # every mainstream driver (psycopg2, asyncpg, aiosqlite) do the same.
+    # Class attrs (not instance attrs) to keep ``type(conn).Error``
+    # identity.
+    Error = _exc.Error
+    Warning = _exc.Warning
+    InterfaceError = _exc.InterfaceError
+    DatabaseError = _exc.DatabaseError
+    DataError = _exc.DataError
+    OperationalError = _exc.OperationalError
+    IntegrityError = _exc.IntegrityError
+    InternalError = _exc.InternalError
+    ProgrammingError = _exc.ProgrammingError
+    NotSupportedError = _exc.NotSupportedError
 
     def __init__(
         self,
