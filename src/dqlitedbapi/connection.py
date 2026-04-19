@@ -15,7 +15,7 @@ import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
-from dqlitedbapi.cursor import Cursor
+from dqlitedbapi.cursor import Cursor, _call_client
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 __all__ = ["Connection"]
@@ -409,7 +409,11 @@ class Connection:
         """Async implementation of commit."""
         assert self._async_conn is not None
         try:
-            await self._async_conn.execute("COMMIT")
+            # Route through ``_call_client`` so client-layer errors
+            # (including ``DqliteConnectionError`` for an externally
+            # invalidated connection) surface as PEP 249 ``Error``
+            # subclasses, not raw client exceptions.
+            await _call_client(self._async_conn.execute("COMMIT"))
         except (OperationalError, _client_exc.OperationalError) as e:
             if not _is_no_transaction_error(e):
                 raise
@@ -431,7 +435,10 @@ class Connection:
         """Async implementation of rollback."""
         assert self._async_conn is not None
         try:
-            await self._async_conn.execute("ROLLBACK")
+            # See ``_commit_async``: route through ``_call_client`` so
+            # client-layer failures surface as PEP 249 ``Error``
+            # subclasses.
+            await _call_client(self._async_conn.execute("ROLLBACK"))
         except (OperationalError, _client_exc.OperationalError) as e:
             if not _is_no_transaction_error(e):
                 raise
