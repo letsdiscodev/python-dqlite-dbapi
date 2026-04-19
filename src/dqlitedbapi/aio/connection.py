@@ -237,7 +237,20 @@ class AsyncConnection:
         return f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
 
     async def __aenter__(self) -> "AsyncConnection":
-        await self.connect()
+        try:
+            await self.connect()
+        except BaseException:
+            # Python does not call ``__aexit__`` when ``__aenter__``
+            # raises, so partial state (lazily-constructed locks
+            # bound to the current loop, loop-ref) would leak — a
+            # subsequent retry on a different event loop would then
+            # hit "bound to a different event loop" instead of the
+            # real connect error. ``close()`` is idempotent and
+            # handles the never-connected case by resetting the
+            # lock primitives.
+            with contextlib.suppress(Exception):
+                await self.close()
+            raise
         return self
 
     async def __aexit__(
