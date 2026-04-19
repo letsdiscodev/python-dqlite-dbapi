@@ -43,3 +43,27 @@ class TestCursorRepr:
         r = repr(c)
         assert "AsyncCursor" in r
         assert "rowcount" in r
+
+    def test_cursor_repr_state_transition(self) -> None:
+        """Repr reports ``open`` before close and ``closed`` after.
+        Debuggers and tracebacks lean on the repr so the state string
+        is a lightweight API worth pinning."""
+        conn = Connection("localhost:19001", timeout=2.0)
+        try:
+            c = Cursor(conn)
+            assert "open" in repr(c)
+            c.close()
+            assert "closed" in repr(c)
+        finally:
+            conn.close()
+
+    def test_async_cursor_repr_state_transition(self) -> None:
+        import asyncio as _asyncio
+
+        conn = AsyncConnection("localhost:19001")
+        c = AsyncCursor(conn)
+        assert "open" in repr(c)
+        # ``AsyncCursor.close`` is a coroutine; run it to flip the
+        # closed-state repr.
+        _asyncio.run(c.close())
+        assert "closed" in repr(c)
