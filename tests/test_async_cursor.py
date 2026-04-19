@@ -184,3 +184,38 @@ class TestOptionalAsyncCursorMethodsRaise:
         cursor = AsyncCursor(conn)
         with pytest.raises(NotSupportedError):
             cursor.scroll(0)
+
+    @pytest.mark.asyncio
+    async def test_execute_rechecks_closed_inside_op_lock(self) -> None:
+        """A cursor closed after the fast-path check but before the
+        inner execute work must still raise ``InterfaceError`` with a
+        "Cursor is closed" message. Without the re-check inside the
+        op-lock, the caller would see a generic connection error
+        instead of the sharper cursor-state error.
+        """
+        import asyncio
+        from unittest.mock import patch
+
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+
+        close_allowed = asyncio.Event()
+        ensure_entered = asyncio.Event()
+
+        async def fake_ensure(self_arg):  # type: ignore[no-untyped-def]
+            ensure_entered.set()
+            await close_allowed.wait()
+            # Return a sentinel; we expect the re-check of _closed to
+            # fire before this value is ever dereferenced.
+            return object()
+
+        async def run_execute() -> None:
+            with patch.object(AsyncConnection, "_ensure_connection", fake_ensure):
+                await cursor.execute("SELECT 1")
+
+        task = asyncio.create_task(run_execute())
+        await ensure_entered.wait()
+        await cursor.close()
+        close_allowed.set()
+        with pytest.raises(InterfaceError, match="Cursor is closed"):
+            await task

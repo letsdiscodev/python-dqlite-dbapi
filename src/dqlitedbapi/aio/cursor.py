@@ -115,15 +115,28 @@ class AsyncCursor:
         connection invalidation on fatal errors, and leader-change detection.
         The _op_lock serializes operations on the same connection.
         """
+        # Fast-path guard outside the lock so we fail quickly on an
+        # already-closed cursor without taking the lock.
         self._check_closed()
 
-        conn = await self._connection._ensure_connection()
-        params = _convert_params(parameters)
-
         is_query = _is_row_returning(operation)
-
+        params = _convert_params(parameters)
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:
+            # Re-check after acquiring the lock so that a concurrent
+            # ``cursor.close()`` / ``connection.close()`` that reaches the
+            # closed flag first wins deterministically. Without the
+            # re-check, a cursor closed between the fast-path guard and
+            # the lock acquisition reports the race as
+            # "connection has been invalidated" or "protocol is None"
+            # rather than the sharper "Cursor is closed" / "Connection
+            # is closed" that the caller expects.
+            self._check_closed()
+            conn = await self._connection._ensure_connection()
+            # ``_ensure_connection`` awaits, so close() can still race
+            # against this window. Re-check once more before touching
+            # the wire.
+            self._check_closed()
             if is_query:
                 columns, column_types, rows = await _call_client(
                     conn.query_raw_typed(operation, params)
