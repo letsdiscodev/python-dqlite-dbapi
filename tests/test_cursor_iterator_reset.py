@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
 
 
@@ -63,4 +64,42 @@ async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
 
     await c._execute_async("SELECT x FROM u")
     rows = list(c)
+    assert rows == [(4,), (5,)]
+
+
+@pytest.mark.asyncio
+async def test_async_cursor_iterator_resets_on_reexecute() -> None:
+    """Async parity of the sync test. After a second ``execute``,
+    ``async for`` over the cursor must yield the complete new
+    result set from row 0 — not skip rows based on the prior index.
+    """
+    import asyncio
+
+    conn = MagicMock()
+    conn._closed = False
+    lock = asyncio.Lock()
+
+    scripted = _ScriptedClient(
+        [
+            (["x"], [], [[1], [2], [3]]),
+            (["x"], [], [[4], [5]]),
+        ]
+    )
+
+    async def fake_ensure_connection():  # type: ignore[no-untyped-def]
+        return scripted
+
+    conn._ensure_connection = fake_ensure_connection
+    conn._ensure_locks = MagicMock(return_value=(lock, lock))
+
+    c = AsyncCursor(conn)
+
+    await c.execute("SELECT x FROM t")
+    first = await c.__anext__()
+    assert first == (1,)  # _row_index is now 1
+
+    await c.execute("SELECT x FROM u")
+    rows: list[tuple] = []
+    async for row in c:
+        rows.append(row)
     assert rows == [(4,), (5,)]
