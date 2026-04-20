@@ -42,3 +42,48 @@ class TestArraysizeValidation:
         c = self._async_cursor()
         with pytest.raises(ProgrammingError, match=">= 1"):
             c.arraysize = -1
+
+    # Non-int types: PEP 249 says arraysize is an int attribute. A
+    # ``None`` / ``str`` / ``float`` / ``bool`` assignment must surface
+    # a clean ProgrammingError at assignment time, not a downstream
+    # TypeError from a comparison or a silently-stored non-int.
+
+    def test_none_rejected_sync(self) -> None:
+        c = self._sync_cursor()
+        with pytest.raises(ProgrammingError, match="NoneType"):
+            c.arraysize = None  # type: ignore[assignment]
+
+    def test_str_rejected_sync(self) -> None:
+        c = self._sync_cursor()
+        with pytest.raises(ProgrammingError, match="str"):
+            c.arraysize = "5"  # type: ignore[assignment]
+
+    def test_float_rejected_sync(self) -> None:
+        c = self._sync_cursor()
+        with pytest.raises(ProgrammingError, match="float"):
+            c.arraysize = 1.5  # type: ignore[assignment]
+
+    def test_bool_rejected_sync(self) -> None:
+        c = self._sync_cursor()
+        with pytest.raises(ProgrammingError, match="bool"):
+            c.arraysize = True  # type: ignore[assignment]
+
+    def test_none_rejected_async(self) -> None:
+        c = self._async_cursor()
+        with pytest.raises(ProgrammingError, match="NoneType"):
+            c.arraysize = None  # type: ignore[assignment]
+
+    def test_str_rejected_async(self) -> None:
+        c = self._async_cursor()
+        with pytest.raises(ProgrammingError, match="str"):
+            c.arraysize = "5"  # type: ignore[assignment]
+
+    def test_float_rejected_async(self) -> None:
+        c = self._async_cursor()
+        with pytest.raises(ProgrammingError, match="float"):
+            c.arraysize = 1.5  # type: ignore[assignment]
+
+    def test_bool_rejected_async(self) -> None:
+        c = self._async_cursor()
+        with pytest.raises(ProgrammingError, match="bool"):
+            c.arraysize = True  # type: ignore[assignment]

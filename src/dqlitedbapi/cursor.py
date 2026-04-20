@@ -329,6 +329,11 @@ class Cursor:
 
     @arraysize.setter
     def arraysize(self, value: int) -> None:
+        # Reject bools explicitly even though ``bool`` is an ``int``
+        # subclass: ``arraysize = True`` silently coercing to 1 is a
+        # caller-bug trap, not a useful affordance.
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ProgrammingError(f"arraysize must be a positive int, got {type(value).__name__}")
         if value < 1:
             raise ProgrammingError(f"arraysize must be >= 1, got {value}")
         self._arraysize = value
