@@ -73,7 +73,13 @@ class AsyncCursor:
 
     @property
     def lastrowid(self) -> int | None:
-        """Row ID of the last inserted row."""
+        """ROWID of the most recent successful INSERT on the connection.
+
+        Returns ``None`` before the first statement runs on this cursor.
+        Per SQLite semantics the value reflects the *connection*'s last
+        INSERT — it is not cleared by UPDATE / DELETE / DDL, nor is it
+        scoped to this cursor. Matches :attr:`sqlite3.Cursor.lastrowid`.
+        """
         return self._lastrowid
 
     @property
