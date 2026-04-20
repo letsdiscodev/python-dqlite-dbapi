@@ -72,6 +72,12 @@ async def _build_and_connect(
     )
     try:
         await conn.connect()
+    except _client_exc.OperationalError as e:
+        # Preserve the server-supplied code so sqlalchemy-dqlite's
+        # is_disconnect classifier can recognise leader-change codes
+        # (SQLITE_IOERR_NOT_LEADER / _LEADERSHIP_LOST) on the connect
+        # path via the code-based branch, matching the query path.
+        raise OperationalError(f"Failed to connect: {e.message}", code=e.code) from e
     except Exception as e:
         raise OperationalError(f"Failed to connect: {e}") from e
     return conn
