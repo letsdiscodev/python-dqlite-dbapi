@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import math
 import weakref
 from types import TracebackType
@@ -16,6 +17,8 @@ from dqlitedbapi.connection import _build_and_connect, _is_no_transaction_error
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 __all__ = ["AsyncConnection"]
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncConnection:
@@ -269,7 +272,17 @@ class AsyncConnection:
             if exc_type is None:
                 await self.commit()
             else:
-                with contextlib.suppress(Exception):
-                    await self.rollback()  # Body's exception wins.
+                try:
+                    await self.rollback()
+                except Exception:  # noqa: BLE001 — body's exception wins
+                    # The body already raised; we cannot re-raise, but a
+                    # silent suppress leaves no breadcrumb for an operator
+                    # debugging a dangling server-side transaction
+                    # (leader flip mid-commit, socket timeout, etc.).
+                    logger.debug(
+                        "AsyncConnection.__aexit__: rollback failed after body raised %s",
+                        exc_type.__name__,
+                        exc_info=True,
+                    )
         finally:
             await self.close()
