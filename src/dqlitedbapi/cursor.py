@@ -102,19 +102,33 @@ if TYPE_CHECKING:
     from dqlitedbapi.connection import Connection
 
 
-# Per-wire-type result converters. NULL/empty values pass through as None;
-# unrecognized types pass through unchanged (the wire codec already produced
-# an appropriate Python primitive).
+# Per-wire-type result converters. NULL/empty values pass through as None
+# (guarded at the call site); unrecognized types pass through unchanged
+# because the wire codec already produced an appropriate Python primitive.
+#
+# No ``isinstance`` guard inside the lambdas: the wire layer is
+# authoritative — if the per-row type says ISO8601, the value IS a str;
+# if it says UNIXTIME, the value IS an int. A mismatch indicates a
+# malformed frame, which ``_datetime_from_iso8601`` / ``_datetime_from_unixtime``
+# surface as ``DataError``.
 _RESULT_CONVERTERS: dict[int, Callable[[Any], Any]] = {
-    int(ValueType.ISO8601): lambda v: _datetime_from_iso8601(v) if isinstance(v, str) else v,
-    int(ValueType.UNIXTIME): lambda v: _datetime_from_unixtime(v) if isinstance(v, int) else v,
+    int(ValueType.ISO8601): _datetime_from_iso8601,
+    int(ValueType.UNIXTIME): _datetime_from_unixtime,
 }
 
 
-def _convert_row(row: Sequence[Any], column_types: Sequence[int]) -> tuple[Any, ...]:
-    """Apply result-side converters to a row based on its column wire types."""
+def _convert_row(row: Sequence[Any], row_types: Sequence[int]) -> tuple[Any, ...]:
+    """Apply result-side converters to a row using its per-row wire types.
+
+    ``row_types`` must be the types the wire protocol attached to *this
+    specific row*, not ``column_types`` (which only reflects row 0).
+    SQLite is dynamically typed; different rows in the same column
+    can carry different wire ``ValueType`` tags under UNION,
+    ``CASE``, ``COALESCE``, and ``typeof()``. Using per-row types
+    preserves round-trip fidelity for heterogeneous result sets.
+    """
     result = list(row)
-    for i, tcode in enumerate(column_types):
+    for i, tcode in enumerate(row_types):
         converter = _RESULT_CONVERTERS.get(tcode)
         if converter is not None and result[i] is not None:
             result[i] = converter(result[i])
@@ -364,7 +378,7 @@ class Cursor:
         params = _convert_params(parameters)
 
         if _is_row_returning(operation):
-            columns, column_types, rows = await _call_client(
+            columns, column_types, row_types, rows = await _call_client(
                 conn.query_raw_typed(operation, params)
             )
             self._description = [
@@ -379,7 +393,14 @@ class Cursor:
                 )
                 for i, name in enumerate(columns)
             ]
-            self._rows = [_convert_row(row, column_types) for row in rows]
+            # Per-row dispatch: SQLite's dynamic typing means two rows in
+            # the same column can carry different wire types. Use
+            # ``row_types[i]`` rather than ``column_types`` so a row
+            # whose wire type diverges from row 0 is decoded correctly.
+            self._rows = [
+                _convert_row(row, row_types[i] if i < len(row_types) else column_types)
+                for i, row in enumerate(rows)
+            ]
             self._row_index = 0
             self._rowcount = len(rows)
         else:

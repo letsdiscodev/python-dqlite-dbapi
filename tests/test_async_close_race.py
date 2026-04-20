@@ -28,8 +28,8 @@ async def test_close_waits_for_in_flight_execute() -> None:
         order.append("execute:end")
         return (0, 0)
 
-    async def fake_query_raw_typed(_sql: str, _params: object) -> tuple[list, list, list]:
-        return ([], [], [])
+    async def fake_query_raw_typed(_sql: str, _params: object) -> tuple[list, list, list, list]:
+        return ([], [], [], [])
 
     with patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn:
         mock_instance = AsyncMock()

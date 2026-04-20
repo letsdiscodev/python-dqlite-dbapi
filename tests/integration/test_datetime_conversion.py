@@ -185,3 +185,81 @@ class TestAsyncCursorDateTime:
         assert isinstance(value, datetime.datetime)
         assert value == dt
         assert value.tzinfo is None
+
+
+@pytest.mark.integration
+class TestHeterogeneousPerRowTypes:
+    """SQLite is dynamically typed. When a ``DATETIME`` column stores
+    rows with different underlying storage classes — a TEXT-stored
+    ISO8601 value next to an INTEGER-stored UNIX epoch — the server
+    tags each row with its own wire ``ValueType``. The cursor must
+    dispatch per row, not collapse to row 0's type.
+
+    Without per-row dispatch, row 1 (UNIXTIME-tagged) would be sent
+    through ``_datetime_from_iso8601`` because row 0 was ISO8601 —
+    which either raises ``DataError`` or returns nonsense, depending
+    on the value.
+    """
+
+    def test_datetime_column_mixes_iso8601_and_unixtime(self, cluster_address: str) -> None:
+        """Row 0 stored as ISO8601 TEXT, row 1 as INTEGER. Each must
+        decode through the converter the server tagged it with.
+        """
+        with connect(cluster_address, database="test_per_row_types") as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS per_row_mix (id INTEGER PRIMARY KEY, v DATETIME)"
+            )
+            cursor.execute("DELETE FROM per_row_mix")
+            cursor.execute("INSERT INTO per_row_mix (v) VALUES (?)", ["2024-01-15 10:30:45"])
+            cursor.execute("INSERT INTO per_row_mix (v) VALUES (?)", [42])
+            cursor.execute("SELECT v FROM per_row_mix ORDER BY id")
+            rows = cursor.fetchall()
+            cursor.execute("DROP TABLE per_row_mix")
+
+            assert len(rows) == 2
+
+            # Row 0: ISO8601 text → naive datetime.
+            assert isinstance(rows[0][0], datetime.datetime), (
+                f"row 0 should decode as datetime, got {type(rows[0][0]).__name__}: {rows[0][0]!r}"
+            )
+            assert rows[0][0] == datetime.datetime(2024, 1, 15, 10, 30, 45)  # noqa: DTZ001
+            assert rows[0][0].tzinfo is None
+
+            # Row 1: UNIXTIME integer → UTC-aware datetime at epoch+42s.
+            # With pre-fix first-row dispatch, the cursor would have
+            # tried to parse an int through ``_datetime_from_iso8601``
+            # and raised DataError.
+            assert isinstance(rows[1][0], datetime.datetime), (
+                f"row 1 should decode as datetime, got {type(rows[1][0]).__name__}: {rows[1][0]!r}"
+            )
+            expected = datetime.datetime(1970, 1, 1, 0, 0, 42, tzinfo=datetime.UTC)
+            assert rows[1][0] == expected
+
+    def test_datetime_column_reverse_order(self, cluster_address: str) -> None:
+        """Inverse order: row 0 stored as INTEGER, row 1 as ISO8601
+        TEXT. If the cursor collapsed to row 0's types, row 1 would
+        remain a string instead of becoming a datetime.
+        """
+        with connect(cluster_address, database="test_per_row_types_inv") as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS per_row_mix_inv (id INTEGER PRIMARY KEY, v DATETIME)"
+            )
+            cursor.execute("DELETE FROM per_row_mix_inv")
+            cursor.execute("INSERT INTO per_row_mix_inv (v) VALUES (?)", [100])
+            cursor.execute("INSERT INTO per_row_mix_inv (v) VALUES (?)", ["2024-06-15 08:00:00"])
+            cursor.execute("SELECT v FROM per_row_mix_inv ORDER BY id")
+            rows = cursor.fetchall()
+            cursor.execute("DROP TABLE per_row_mix_inv")
+
+            assert len(rows) == 2
+            # Row 0: UNIXTIME → aware datetime at epoch+100s.
+            assert isinstance(rows[0][0], datetime.datetime)
+            assert rows[0][0] == datetime.datetime(1970, 1, 1, 0, 1, 40, tzinfo=datetime.UTC)
+            # Row 1: ISO8601 text → naive datetime.
+            assert isinstance(rows[1][0], datetime.datetime), (
+                f"row 1 should decode as datetime, got {type(rows[1][0]).__name__}: {rows[1][0]!r}"
+            )
+            assert rows[1][0] == datetime.datetime(2024, 6, 15, 8, 0, 0)  # noqa: DTZ001
+            assert rows[1][0].tzinfo is None

@@ -34,7 +34,7 @@ class TestAsyncProtocolSerialization:
             call_log.append((sql, "start"))
             await asyncio.sleep(0.05)  # Simulate network I/O
             call_log.append((sql, "end"))
-            return (["id"], [1], [[1]])  # 1 == ValueType.INTEGER
+            return (["id"], [1], [[1]], [[1]])  # names, col_types, row_types, rows
 
         async def mock_execute(sql: str, params: object) -> tuple:
             call_log.append((sql, "start"))

@@ -26,7 +26,7 @@ class _AwaitableObj:
 class _ScriptedClient:
     """Replays pre-canned ``query_raw_typed`` responses in order."""
 
-    def __init__(self, scripted: list[tuple[list[str], list, list[list]]]) -> None:
+    def __init__(self, scripted: list[tuple[list[str], list, list[list], list[list]]]) -> None:
         self._scripted = scripted
         self._idx = 0
 
@@ -46,8 +46,8 @@ async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
     conn = MagicMock()
     scripted = _ScriptedClient(
         [
-            (["x"], [], [[1], [2], [3]]),
-            (["x"], [], [[4], [5]]),
+            (["x"], [], [[], [], []], [[1], [2], [3]]),
+            (["x"], [], [[], []], [[4], [5]]),
         ]
     )
 
@@ -81,8 +81,8 @@ async def test_async_cursor_iterator_resets_on_reexecute() -> None:
 
     scripted = _ScriptedClient(
         [
-            (["x"], [], [[1], [2], [3]]),
-            (["x"], [], [[4], [5]]),
+            (["x"], [], [[], [], []], [[1], [2], [3]]),
+            (["x"], [], [[], []], [[4], [5]]),
         ]
     )
 

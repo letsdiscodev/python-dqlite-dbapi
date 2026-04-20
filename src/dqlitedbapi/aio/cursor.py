@@ -142,7 +142,7 @@ class AsyncCursor:
             # the wire.
             self._check_closed()
             if is_query:
-                columns, column_types, rows = await _call_client(
+                columns, column_types, row_types, rows = await _call_client(
                     conn.query_raw_typed(operation, params)
                 )
                 self._description = [
@@ -157,7 +157,12 @@ class AsyncCursor:
                     )
                     for i, name in enumerate(columns)
                 ]
-                self._rows = [_convert_row(row, column_types) for row in rows]
+                # Per-row dispatch; see the sync ``_execute_async``
+                # companion for the rationale.
+                self._rows = [
+                    _convert_row(row, row_types[i] if i < len(row_types) else column_types)
+                    for i, row in enumerate(rows)
+                ]
                 self._row_index = 0
                 self._rowcount = len(rows)
             else:
