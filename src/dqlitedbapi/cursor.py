@@ -342,7 +342,10 @@ class Cursor:
             raise InterfaceError("Cursor is closed")
 
     def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> "Cursor":
-        """Execute a database operation (query or command)."""
+        """Execute a database operation (query or command).
+
+        Returns ``self`` so callers can chain ``.fetchall()`` etc.
+        """
         del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
@@ -431,7 +434,10 @@ class Cursor:
             raise InterfaceError("No result set: execute a query before fetching")
 
     def fetchone(self) -> tuple[Any, ...] | None:
-        """Fetch the next row of a query result set."""
+        """Fetch the next row of a query result set.
+
+        Returns ``None`` when no more rows are available.
+        """
         del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
@@ -445,7 +451,11 @@ class Cursor:
         return row
 
     def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
-        """Fetch the next set of rows of a query result."""
+        """Fetch up to ``size`` next rows of a query result.
+
+        Returns an empty list when no more rows are available. ``size``
+        defaults to ``self.arraysize``.
+        """
         del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
@@ -469,7 +479,10 @@ class Cursor:
         return result
 
     def fetchall(self) -> list[tuple[Any, ...]]:
-        """Fetch all remaining rows of a query result."""
+        """Fetch all remaining rows of a query result.
+
+        Returns an empty list when the cursor has no more rows.
+        """
         del self.messages[:]
         self._connection._check_thread()
         self._check_closed()

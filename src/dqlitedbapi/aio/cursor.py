@@ -114,10 +114,7 @@ class AsyncCursor:
     ) -> "AsyncCursor":
         """Execute a database operation (query or command).
 
-        Routes through DqliteConnection's public API (execute/query_raw_typed)
-        which goes through _run_protocol(), providing the _in_use guard,
-        connection invalidation on fatal errors, and leader-change detection.
-        The _op_lock serializes operations on the same connection.
+        Returns ``self`` so callers can chain ``.fetchall()`` etc.
         """
         # PEP 249 §6.1.2: ``messages`` is cleared by every standard
         # cursor method before the call runs.
@@ -208,7 +205,10 @@ class AsyncCursor:
             raise InterfaceError("No result set: execute a query before fetching")
 
     async def fetchone(self) -> tuple[Any, ...] | None:
-        """Fetch the next row of a query result set."""
+        """Fetch the next row of a query result set.
+
+        Returns ``None`` when no more rows are available.
+        """
         del self.messages[:]
         self._check_closed()
         self._check_result_set()
@@ -221,7 +221,11 @@ class AsyncCursor:
         return row
 
     async def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
-        """Fetch the next set of rows of a query result."""
+        """Fetch up to ``size`` next rows of a query result.
+
+        Returns an empty list when no more rows are available. ``size``
+        defaults to ``self.arraysize``.
+        """
         del self.messages[:]
         self._check_closed()
         self._check_result_set()
@@ -243,7 +247,10 @@ class AsyncCursor:
         return result
 
     async def fetchall(self) -> list[tuple[Any, ...]]:
-        """Fetch all remaining rows of a query result."""
+        """Fetch all remaining rows of a query result.
+
+        Returns an empty list when the cursor has no more rows.
+        """
         del self.messages[:]
         self._check_closed()
         self._check_result_set()

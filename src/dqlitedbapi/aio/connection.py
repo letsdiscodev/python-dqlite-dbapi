@@ -22,7 +22,17 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncConnection:
-    """Async database connection."""
+    """Async database connection, loop-bound.
+
+    Binds to the first asyncio event loop on which any method runs.
+    Subsequent calls from a different loop raise ``ProgrammingError``;
+    instances are NOT reusable across ``asyncio.run()`` invocations or
+    across threads with their own loops.
+
+    Safe for concurrent tasks on the SAME loop: the internal
+    ``_op_lock`` serialises in-flight operations so commit/execute/
+    rollback cannot interleave.
+    """
 
     # PEP 249 optional extension ("Attributes from Module Exceptions"):
     # parity with the sync ``Connection`` class so cross-driver code can
