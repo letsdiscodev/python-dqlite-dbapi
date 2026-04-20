@@ -484,9 +484,16 @@ class Connection:
                 self.commit()
             else:
                 # Body already raised; attempt rollback but don't mask
-                # the original exception. If rollback itself fails, its
-                # error is attached via __context__ automatically.
-                with contextlib.suppress(Exception):
+                # the original exception. Narrow except so programming
+                # bugs still surface; DEBUG-log the rollback failure so
+                # operators can tell silent-swallow from silent-success
+                # — matching the async __aexit__ pattern.
+                try:
                     self.rollback()
+                except Exception:
+                    logger.debug(
+                        "Connection.__exit__: rollback failed; propagating original body exception",
+                        exc_info=True,
+                    )
         finally:
             self.close()
