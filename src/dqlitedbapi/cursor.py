@@ -339,6 +339,7 @@ class Cursor:
 
     def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> "Cursor":
         """Execute a database operation (query or command)."""
+        del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
 
@@ -388,6 +389,7 @@ class Cursor:
 
     def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]) -> "Cursor":
         """Execute a database operation multiple times."""
+        del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
 
@@ -426,6 +428,7 @@ class Cursor:
 
     def fetchone(self) -> tuple[Any, ...] | None:
         """Fetch the next row of a query result set."""
+        del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
         self._check_result_set()
@@ -439,6 +442,7 @@ class Cursor:
 
     def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
         """Fetch the next set of rows of a query result."""
+        del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
         self._check_result_set()
@@ -462,6 +466,7 @@ class Cursor:
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         """Fetch all remaining rows of a query result."""
+        del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
         self._check_result_set()

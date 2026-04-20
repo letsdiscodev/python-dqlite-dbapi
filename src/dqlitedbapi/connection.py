@@ -398,6 +398,7 @@ class Connection:
         have to tell the difference between an empty transaction and
         a successfully committed one.
         """
+        del self.messages[:]
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
@@ -424,6 +425,7 @@ class Connection:
         Same silent-success contract as :meth:`commit` for "no active
         transaction" and for never-used connections.
         """
+        del self.messages[:]
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
@@ -445,6 +447,7 @@ class Connection:
 
     def cursor(self) -> Cursor:
         """Return a new Cursor object."""
+        del self.messages[:]
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")

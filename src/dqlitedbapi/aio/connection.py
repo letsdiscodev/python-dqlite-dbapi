@@ -187,6 +187,7 @@ class AsyncConnection:
         the existing "no spurious connect" contract) or if the server
         reports "no transaction is active" (matches stdlib sqlite3).
         """
+        del self.messages[:]
         if self._closed:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
@@ -207,6 +208,7 @@ class AsyncConnection:
 
     async def rollback(self) -> None:
         """Roll back any pending transaction. Same no-op rules as commit."""
+        del self.messages[:]
         if self._closed:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
@@ -228,6 +230,7 @@ class AsyncConnection:
         This is intentionally sync — SQLAlchemy calls cursor() from
         sync context within its greenlet-based async adapter.
         """
+        del self.messages[:]
         if self._closed:
             raise InterfaceError("Connection is closed")
         return AsyncCursor(self)

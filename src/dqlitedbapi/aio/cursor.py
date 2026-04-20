@@ -115,6 +115,9 @@ class AsyncCursor:
         connection invalidation on fatal errors, and leader-change detection.
         The _op_lock serializes operations on the same connection.
         """
+        # PEP 249 §6.1.2: ``messages`` is cleared by every standard
+        # cursor method before the call runs.
+        del self.messages[:]
         # Fast-path guard outside the lock so we fail quickly on an
         # already-closed cursor without taking the lock.
         self._check_closed()
@@ -183,6 +186,7 @@ class AsyncCursor:
         iteration are accumulated into ``_rows`` so a subsequent
         ``fetchall`` yields every returned row across parameter sets.
         """
+        del self.messages[:]
         self._check_closed()
 
         self._description = None
@@ -201,6 +205,7 @@ class AsyncCursor:
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         """Fetch the next row of a query result set."""
+        del self.messages[:]
         self._check_closed()
         self._check_result_set()
 
@@ -213,6 +218,7 @@ class AsyncCursor:
 
     async def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
         """Fetch the next set of rows of a query result."""
+        del self.messages[:]
         self._check_closed()
         self._check_result_set()
 
@@ -234,6 +240,7 @@ class AsyncCursor:
 
     async def fetchall(self) -> list[tuple[Any, ...]]:
         """Fetch all remaining rows of a query result."""
+        del self.messages[:]
         self._check_closed()
         self._check_result_set()
 
