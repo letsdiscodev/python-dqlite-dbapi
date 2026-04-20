@@ -7,6 +7,15 @@ from typing import Any
 from dqlitedbapi.exceptions import DataError
 from dqlitewire.constants import ValueType
 
+# Shape of ``cursor.description`` per PEP 249 §6.1.2: a sequence of
+# 7-tuples ``(name, type_code, display_size, internal_size, precision,
+# scale, null_ok)``. dqlite populates only ``name`` and ``type_code``
+# (the wire ``ValueType`` int); the other five are always ``None``.
+# Live here so sync/async cursors and the sqlalchemy adapter share one
+# shape instead of repeating the inline tuple at every site.
+_DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
+_Description = list[_DescriptionTuple] | None
+
 
 # Type constructors
 def Date(year: int, month: int, day: int) -> datetime.date:  # noqa: N802

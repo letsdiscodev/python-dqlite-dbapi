@@ -12,6 +12,7 @@ from dqlitedbapi.cursor import (
     _is_row_returning,
 )
 from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
+from dqlitedbapi.types import _Description
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection
@@ -25,7 +26,7 @@ class AsyncCursor:
 
     def __init__(self, connection: "AsyncConnection") -> None:
         self._connection = connection
-        self._description: list[tuple[str, int | None, None, None, None, None, None]] | None = None
+        self._description: _Description = None
         self._rowcount = -1
         self._arraysize = 1
         self._rows: list[tuple[Any, ...]] = []
@@ -44,9 +45,7 @@ class AsyncCursor:
         return self._connection
 
     @property
-    def description(
-        self,
-    ) -> list[tuple[str, int | None, None, None, None, None, None]] | None:
+    def description(self) -> _Description:
         """Column descriptions for the last query.
 
         Returns a list of 7-tuples:

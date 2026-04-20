@@ -17,6 +17,7 @@ from dqlitedbapi.types import (
     _convert_bind_param,
     _datetime_from_iso8601,
     _datetime_from_unixtime,
+    _Description,
 )
 from dqlitewire.constants import ValueType
 
@@ -198,7 +199,7 @@ class _ExecuteManyAccumulator:
     def __init__(self) -> None:
         self.total_affected = 0
         self.rows: list[tuple[Any, ...]] = []
-        self.description: list[tuple[str, int | None, None, None, None, None, None]] | None = None
+        self.description: _Description = None
 
     def push(self, cursor: Any) -> None:
         """Record one iteration's output into the accumulator.
@@ -255,7 +256,7 @@ class Cursor:
 
     def __init__(self, connection: "Connection") -> None:
         self._connection = connection
-        self._description: list[tuple[str, int | None, None, None, None, None, None]] | None = None
+        self._description: _Description = None
         self._rowcount = -1
         self._arraysize = 1
         self._rows: list[tuple[Any, ...]] = []
@@ -276,9 +277,7 @@ class Cursor:
         return self._connection
 
     @property
-    def description(
-        self,
-    ) -> list[tuple[str, int | None, None, None, None, None, None]] | None:
+    def description(self) -> _Description:
         """Column descriptions for the last query.
 
         Returns a list of 7-tuples:
