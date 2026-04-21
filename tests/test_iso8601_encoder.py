@@ -59,3 +59,38 @@ class TestIso8601FromDatetime:
         """
         d = datetime.date(2025, 1, 1)
         assert _iso8601_from_datetime(d) == "2025-01-01"
+
+    def test_sub_minute_offset_preserves_seconds(self) -> None:
+        """Historical tz data (some African, Irish, and Pacific zones in
+        the IANA database) carry LMT offsets with sub-minute precision.
+        ``datetime.fromisoformat`` on Python 3.11+ round-trips
+        ``±HH:MM:SS`` offsets; the encoder must emit them so the
+        round-trip through dqlite's TEXT column preserves the offset
+        exactly.
+        """
+        tz = datetime.timezone(datetime.timedelta(minutes=5, seconds=30))
+        d = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=tz)
+        assert _iso8601_from_datetime(d) == "2025-01-01 12:00:00+00:05:30"
+
+    def test_sub_minute_negative_offset_preserves_seconds(self) -> None:
+        tz = datetime.timezone(datetime.timedelta(hours=-1, seconds=-15))
+        d = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=tz)
+        assert _iso8601_from_datetime(d) == "2025-01-01 12:00:00-01:00:15"
+
+    def test_whole_minute_offset_stays_hh_mm(self) -> None:
+        """Common tz offsets (whole minutes) must still emit ``±HH:MM``
+        exactly — byte-identical with the pre-fix encoder. Only
+        sub-minute offsets get the widened ``±HH:MM:SS`` form."""
+        tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        d = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=tz)
+        assert _iso8601_from_datetime(d) == "2025-01-01 12:00:00+05:30"
+
+    def test_sub_minute_offset_round_trips_through_decoder(self) -> None:
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        tz = datetime.timezone(datetime.timedelta(minutes=5, seconds=30))
+        original = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=tz)
+        encoded = _iso8601_from_datetime(original)
+        decoded = _datetime_from_iso8601(encoded)
+        assert decoded == original
+        assert decoded is not None and decoded.utcoffset() == original.utcoffset()

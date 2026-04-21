@@ -231,8 +231,16 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
             return base
         total_seconds = int(offset.total_seconds())
         sign = "+" if total_seconds >= 0 else "-"
-        hours, remainder = divmod(abs(total_seconds), 3600)
-        minutes = remainder // 60
+        hours, rem = divmod(abs(total_seconds), 3600)
+        minutes, seconds = divmod(rem, 60)
+        # Common case (whole-minute offset) stays ``±HH:MM`` — byte
+        # identical with earlier encoder output. Historical tz data
+        # carrying sub-minute offsets (IANA LMT entries such as
+        # Europe/Dublin pre-1916, Africa/Lagos pre-1914, several
+        # Pacific zones) widens to ``±HH:MM:SS`` so the round-trip
+        # through datetime.fromisoformat preserves the exact offset.
+        if seconds:
+            return base + f"{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
         return base + f"{sign}{hours:02d}:{minutes:02d}"
     # datetime.date (must come after datetime check — datetime is a subclass).
     return value.isoformat()
