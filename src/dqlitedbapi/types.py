@@ -67,7 +67,19 @@ def _validate_ticks(ticks: float) -> None:
 
 
 def DateFromTicks(ticks: float) -> datetime.date:  # noqa: N802
-    """Construct a date from a Unix timestamp."""
+    """Construct a date from a Unix timestamp.
+
+    Returns a naive date interpreted as the host's **local** time zone,
+    matching stdlib ``sqlite3.dbapi2.DateFromTicks``. For an explicit
+    UTC interpretation, call ``datetime.datetime.fromtimestamp(ticks,
+    tz=datetime.UTC).date()`` directly.
+
+    Note that the wire layer's UNIXTIME decoder
+    (``_datetime_from_unixtime``) returns UTC-aware datetimes; storing
+    a value produced by this constructor on a UNIXTIME-typed column
+    and reading it back will shift by the host's UTC offset. Use
+    ISO8601 (TEXT) columns for faithful round-trip of naive values.
+    """
     _validate_ticks(ticks)
     try:
         return datetime.date.fromtimestamp(ticks)
@@ -76,7 +88,17 @@ def DateFromTicks(ticks: float) -> datetime.date:  # noqa: N802
 
 
 def TimeFromTicks(ticks: float) -> datetime.time:  # noqa: N802
-    """Construct a time from a Unix timestamp."""
+    """Construct a time from a Unix timestamp.
+
+    Returns a naive time interpreted as the host's **local** time zone,
+    matching stdlib ``sqlite3.dbapi2.TimeFromTicks``. Near midnight in
+    non-UTC locales the wall-clock time differs from the UTC time;
+    callers that need UTC should use
+    ``datetime.datetime.fromtimestamp(ticks, tz=datetime.UTC).time()``.
+
+    See ``DateFromTicks`` for the tz asymmetry with the UNIXTIME
+    decoder on readback.
+    """
     _validate_ticks(ticks)
     try:
         return datetime.datetime.fromtimestamp(ticks).time()
@@ -85,7 +107,17 @@ def TimeFromTicks(ticks: float) -> datetime.time:  # noqa: N802
 
 
 def TimestampFromTicks(ticks: float) -> datetime.datetime:  # noqa: N802
-    """Construct a timestamp from a Unix timestamp."""
+    """Construct a timestamp from a Unix timestamp.
+
+    Returns a naive datetime interpreted as the host's **local** time
+    zone, matching stdlib ``sqlite3.dbapi2.TimestampFromTicks`` (and
+    PEP 249's own convention). For UTC-aware values, call
+    ``datetime.datetime.fromtimestamp(ticks, tz=datetime.UTC)``
+    directly.
+
+    See ``DateFromTicks`` for the tz asymmetry with the UNIXTIME
+    decoder on readback.
+    """
     _validate_ticks(ticks)
     try:
         return datetime.datetime.fromtimestamp(ticks)
@@ -239,6 +271,12 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
 
     UNIXTIME is unambiguously seconds-since-epoch in UTC, so returning a
     UTC-aware value is faithful. Callers that want local time can convert.
+
+    This UTC-aware result is asymmetric with the PEP 249 ``*FromTicks``
+    constructors, which return naive local time (matching stdlib
+    sqlite3). Storing a ``TimestampFromTicks`` value on a UNIXTIME
+    column and reading it back shifts by the host's UTC offset; use
+    an ISO8601 (TEXT) column for faithful round-trip of naive values.
 
     A corrupt server or MitM-modified bytes could deliver a non-integer
     or out-of-range value; wrap the resulting stdlib exceptions as
