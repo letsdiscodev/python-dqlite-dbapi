@@ -70,3 +70,40 @@ class TestCallClientInterfaceErrorMapping:
         except Exception as exc:
             assert isinstance(exc, InterfaceError)
             assert not isinstance(exc, OperationalError)
+
+
+class TestCallClientReturnType:
+    """``_call_client`` is a thin exception-mapping wrapper — the
+    coroutine's success value must pass through unchanged and with its
+    static type preserved so callers that destructure the result (e.g.
+    ``last_id, affected = await _call_client(conn.execute(...))``) keep
+    compile-time checks on the shape.
+    """
+
+    def test_returns_value_unchanged(self) -> None:
+        async def produce_tuple() -> tuple[int, int]:
+            return 7, 3
+
+        result = asyncio.run(_call_client(produce_tuple()))
+        assert result == (7, 3)
+
+    def test_return_type_narrows_to_coroutine_type(self) -> None:
+        """Pin the TypeVar narrowing: ``_call_client(coro)`` must
+        declare the same return type as ``coro`` so type-checkers can
+        verify tuple destructures and attribute access at call-sites.
+        A regression widening the signature back to ``Any`` silently
+        erases this guarantee and would not fail a runtime test,
+        so we use ``typing.assert_type`` (evaluated at type-check
+        time; a no-op at runtime that still documents the contract).
+        """
+        from typing import assert_type
+
+        async def produce_int() -> int:
+            return 42
+
+        async def probe() -> None:
+            v = await _call_client(produce_int())
+            assert_type(v, int)
+            assert v == 42
+
+        asyncio.run(probe())

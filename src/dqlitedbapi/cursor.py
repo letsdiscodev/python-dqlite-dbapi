@@ -62,7 +62,7 @@ def _classify_operational(
     return _CODE_TO_EXCEPTION.get(code & 0xFF, OperationalError)
 
 
-async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
+async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
     """Await a client-layer coroutine, mapping its exceptions into the
     PEP 249 hierarchy. Preserves the original via ``from``.
 
