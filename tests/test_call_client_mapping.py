@@ -47,6 +47,24 @@ class TestCallClientClusterErrorMapping:
         except OperationalError as exc:
             assert not isinstance(exc, InterfaceError)
 
+    def test_cluster_error_wraps_with_code_none(self) -> None:
+        """Signature parity with the sibling DqliteConnectionError arm
+        (which explicitly passes ``code=None``). ClusterError carries
+        no SQLite code today; pinning ``.code is None`` catches a
+        future refactor that accidentally forwards a bogus code or
+        drops the explicit kwarg on the sibling in a way that makes
+        the two arms diverge again.
+        """
+
+        async def raiser() -> None:
+            raise _client_exc.ClusterError("no leader")
+
+        with pytest.raises(OperationalError) as exc_info:
+            asyncio.run(_call_client(raiser()))
+
+        assert exc_info.value.code is None
+        assert isinstance(exc_info.value.__cause__, _client_exc.ClusterError)
+
 
 class TestCallClientInterfaceErrorMapping:
     def test_interface_error_becomes_interface_error(self) -> None:
