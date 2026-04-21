@@ -79,6 +79,14 @@ class AsyncCursor:
         Per SQLite semantics the value reflects the *connection*'s last
         INSERT — it is not cleared by UPDATE / DELETE / DDL, nor is it
         scoped to this cursor. Matches :attr:`sqlite3.Cursor.lastrowid`.
+
+        **Not updated for ``INSERT ... RETURNING``** (or any row-returning
+        statement). dqlite's wire protocol does not return
+        ``last_insert_id`` on row-returning responses, so the
+        row-returning execute path cannot surface the rowid. Read the
+        id from the returned row instead. This is a known divergence
+        from ``sqlite3.Cursor.lastrowid`` which updates after
+        ``INSERT ... RETURNING``.
         """
         return self._lastrowid
 
