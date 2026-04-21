@@ -14,6 +14,7 @@ from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import _build_and_connect, _is_no_transaction_error
+from dqlitedbapi.cursor import _call_client
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 __all__ = ["AsyncConnection"]
@@ -225,7 +226,9 @@ class AsyncConnection:
             if self._closed or self._async_conn is None:
                 raise InterfaceError("Connection is closed")
             try:
-                await self._async_conn.execute("COMMIT")
+                # Parity with ``Connection._commit_async``; ``_call_client``
+                # maps raw client errors onto PEP 249 ``Error`` subclasses.
+                await _call_client(self._async_conn.execute("COMMIT"))
             except (OperationalError, _client_exc.OperationalError) as e:
                 if not _is_no_transaction_error(e):
                     raise
@@ -243,7 +246,8 @@ class AsyncConnection:
             if self._closed or self._async_conn is None:
                 raise InterfaceError("Connection is closed")
             try:
-                await self._async_conn.execute("ROLLBACK")
+                # Parity with ``Connection._rollback_async``; see ``commit``.
+                await _call_client(self._async_conn.execute("ROLLBACK"))
             except (OperationalError, _client_exc.OperationalError) as e:
                 if not _is_no_transaction_error(e):
                     raise

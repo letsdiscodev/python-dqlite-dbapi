@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import dqliteclient.exceptions as _client_exc
+from dqlitedbapi import exceptions as _dbapi_exc
 from dqlitedbapi.aio.connection import AsyncConnection
 
 
@@ -47,7 +48,12 @@ class TestAsyncCommitNoTxSwallow:
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(
             10, "some unrelated error"
         )
-        with pytest.raises(_client_exc.OperationalError, match="some unrelated error"):
+        # The client-layer OperationalError is wrapped into the PEP 249
+        # dbapi OperationalError (via ``_call_client``); the code and
+        # message are preserved. Matching on message shape so the test
+        # fails loudly if either the wrap or the str representation
+        # ("[code] message") regresses.
+        with pytest.raises(_dbapi_exc.OperationalError, match="some unrelated error"):
             await conn.commit()
 
     async def test_rollback_re_raises_other_operational_errors(self) -> None:
@@ -56,7 +62,7 @@ class TestAsyncCommitNoTxSwallow:
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(
             10, "some unrelated error"
         )
-        with pytest.raises(_client_exc.OperationalError, match="some unrelated error"):
+        with pytest.raises(_dbapi_exc.OperationalError, match="some unrelated error"):
             await conn.rollback()
 
     def test_sync_no_tx_helper_matches(self) -> None:
