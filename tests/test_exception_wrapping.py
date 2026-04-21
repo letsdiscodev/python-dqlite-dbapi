@@ -64,3 +64,29 @@ class TestExceptionWrapping:
 
         with pytest.raises(RuntimeError, match="unexpected"):
             cursor.execute("SELECT 1")
+
+
+class TestDqliteConnectionErrorWrapping:
+    """ISSUE-349 regression fence: the dbapi wraps the client-level
+    ``DqliteConnectionError`` into an ``OperationalError(code=None)``
+    with the original preserved as ``__cause__`` so downstream
+    disconnect detection can walk the chain without the dbapi needing
+    to invent a new attribute.
+    """
+
+    async def test_wrap_preserves_cause_with_code_none(self) -> None:
+        import dqliteclient.exceptions as _client_exc
+        from dqlitedbapi.cursor import _call_client
+
+        original = _client_exc.DqliteConnectionError("peer RST")
+
+        async def raise_connection() -> None:
+            raise original
+
+        with pytest.raises(OperationalError) as exc_info:
+            await _call_client(raise_connection())
+
+        wrapped = exc_info.value
+        assert wrapped.code is None
+        assert wrapped.__cause__ is original
+        assert isinstance(wrapped.__cause__, _client_exc.DqliteConnectionError)

@@ -94,7 +94,12 @@ async def _call_client(coro: Coroutine[Any, Any, Any]) -> Any:
         exc_cls = _classify_operational(e.code)
         raise exc_cls(str(e), code=e.code) from e
     except _client_exc.DqliteConnectionError as e:
-        raise OperationalError(str(e)) from e
+        # DqliteConnectionError carries no SQLite code today — pass
+        # code=None explicitly so the signature matches the sibling
+        # OperationalError handler above. Downstream disconnect
+        # detection reaches the original via ``__cause__`` (set by the
+        # ``from e``), so no information is lost.
+        raise OperationalError(str(e), code=None) from e
     except _client_exc.ClusterError as e:
         raise OperationalError(str(e)) from e
     except _client_exc.ProtocolError as e:
