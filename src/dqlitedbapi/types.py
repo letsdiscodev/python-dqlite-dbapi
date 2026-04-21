@@ -7,6 +7,25 @@ from typing import Any
 from dqlitedbapi.exceptions import DataError
 from dqlitewire.constants import ValueType
 
+# PEP 249 §3: type objects + constructors. Private helpers
+# (``_DescriptionTuple``, ``_Description``, encoder/decoder helpers)
+# are deliberately NOT exported — they are consumed by sibling
+# modules via the already-tightened import surface.
+__all__ = [
+    "BINARY",
+    "Binary",
+    "DATETIME",
+    "Date",
+    "DateFromTicks",
+    "NUMBER",
+    "ROWID",
+    "STRING",
+    "Time",
+    "TimeFromTicks",
+    "Timestamp",
+    "TimestampFromTicks",
+]
+
 # Shape of ``cursor.description`` per PEP 249 §6.1.2: a sequence of
 # 7-tuples ``(name, type_code, display_size, internal_size, precision,
 # scale, null_ok)``. dqlite populates only ``name`` and ``type_code``

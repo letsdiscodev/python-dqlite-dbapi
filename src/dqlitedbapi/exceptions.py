@@ -1,5 +1,18 @@
 """PEP 249 exception hierarchy for dqlite."""
 
+__all__ = [
+    "DataError",
+    "DatabaseError",
+    "Error",
+    "IntegrityError",
+    "InterfaceError",
+    "InternalError",
+    "NotSupportedError",
+    "OperationalError",
+    "ProgrammingError",
+    "Warning",
+]
+
 
 class Warning(Exception):  # noqa: A001
     """Exception raised for important warnings."""

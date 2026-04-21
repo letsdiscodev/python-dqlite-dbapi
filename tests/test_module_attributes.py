@@ -113,3 +113,79 @@ class TestCursorModuleAll:
         # Verify private helpers exist on the module but are not in __all__.
         assert hasattr(cursor_mod, "_call_client")
         assert "_call_client" not in cursor_mod.__all__
+
+
+class TestExceptionsModuleAll:
+    """``dqlitedbapi.exceptions`` re-exports the full PEP 249 class
+    hierarchy. Pin the ``__all__`` list so a future refactor adding a
+    private helper to this module does not leak through
+    ``from dqlitedbapi.exceptions import *``.
+    """
+
+    def test_exceptions_module_has_all(self) -> None:
+        from dqlitedbapi import exceptions as exc_mod
+
+        assert sorted(exc_mod.__all__) == sorted(
+            [
+                "Warning",
+                "Error",
+                "InterfaceError",
+                "DatabaseError",
+                "DataError",
+                "OperationalError",
+                "IntegrityError",
+                "InternalError",
+                "ProgrammingError",
+                "NotSupportedError",
+            ]
+        )
+
+    def test_exceptions_module_all_entries_resolve(self) -> None:
+        from dqlitedbapi import exceptions as exc_mod
+
+        for name in exc_mod.__all__:
+            assert hasattr(exc_mod, name), f"__all__ lists {name!r} but module lacks it"
+            assert issubclass(getattr(exc_mod, name), Exception)
+
+
+class TestTypesModuleAll:
+    """``dqlitedbapi.types`` re-exports PEP 249 type constructors and
+    type objects. Pin the ``__all__`` list so private helpers
+    (``_iso8601_from_datetime``, ``_DescriptionTuple``, ...) stay
+    private.
+    """
+
+    def test_types_module_has_all(self) -> None:
+        from dqlitedbapi import types as types_mod
+
+        assert sorted(types_mod.__all__) == sorted(
+            [
+                "Date",
+                "Time",
+                "Timestamp",
+                "DateFromTicks",
+                "TimeFromTicks",
+                "TimestampFromTicks",
+                "Binary",
+                "STRING",
+                "BINARY",
+                "NUMBER",
+                "DATETIME",
+                "ROWID",
+            ]
+        )
+
+    def test_types_module_all_entries_resolve(self) -> None:
+        from dqlitedbapi import types as types_mod
+
+        for name in types_mod.__all__:
+            assert hasattr(types_mod, name), f"__all__ lists {name!r} but module lacks it"
+
+    def test_types_module_wildcard_import_does_not_leak_private_helpers(self) -> None:
+        from dqlitedbapi import types as types_mod
+
+        # Sanity: the private alias lives on the module but stays out of __all__.
+        assert hasattr(types_mod, "_Description")
+        assert "_Description" not in types_mod.__all__
+        assert "_DescriptionTuple" not in types_mod.__all__
+        assert "_iso8601_from_datetime" not in types_mod.__all__
