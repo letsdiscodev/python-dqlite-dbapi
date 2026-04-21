@@ -142,7 +142,7 @@ class AsyncConnection:
             if self._async_conn is not None:
                 return self._async_conn
 
-            self._async_conn = await _build_and_connect(
+            built = await _build_and_connect(
                 self._address,
                 database=self._database,
                 timeout=self._timeout,
@@ -150,6 +150,17 @@ class AsyncConnection:
                 max_continuation_frames=self._max_continuation_frames,
                 trust_server_heartbeat=self._trust_server_heartbeat,
             )
+            # A concurrent close() may have flipped _closed while we were
+            # suspended in _build_and_connect. close() observes
+            # _async_conn is None at that point and early-returns, so if
+            # we published ``built`` now the caller would hold a live
+            # socket that nobody will close. Close the fresh connection
+            # and signal the caller instead.
+            if self._closed:
+                with contextlib.suppress(Exception):
+                    await built.close()
+                raise InterfaceError("Connection is closed")
+            self._async_conn = built
 
         return self._async_conn
 
