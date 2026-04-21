@@ -15,6 +15,7 @@ from dqlitedbapi.exceptions import (
     DataError,
     IntegrityError,
     InterfaceError,
+    InternalError,
     OperationalError,
 )
 
@@ -41,6 +42,11 @@ _MATRIX = [
     (5, OperationalError),  # SQLITE_BUSY
     (8, OperationalError),  # SQLITE_READONLY
     (20, OperationalError),  # SQLITE_MISMATCH
+    # SQLITE_INTERNAL (primary code 2) — PEP 249 and stdlib sqlite3 map
+    # this to InternalError. Extended-code siblings (``code & 0xFF == 2``)
+    # should follow the same mapping by the masking convention.
+    (2, InternalError),  # SQLITE_INTERNAL
+    (258, InternalError),  # hypothetical extended SQLITE_INTERNAL sibling
     # dqlite-specific leader-change codes. These share primary 10
     # (SQLITE_IOERR) per SQLite's ``primary | (ext << 8)`` convention,
     # so the mask correctly routes them to OperationalError.
@@ -71,7 +77,7 @@ async def test_call_client_maps_code(code: int | None, expected_cls: type) -> No
     assert getattr(exc_info.value, "code", None) == (code or 0)
     # The mapped exception remains a DatabaseError (PEP 249 root for
     # database-sourced failures).
-    assert isinstance(exc_info.value, OperationalError | IntegrityError)
+    assert isinstance(exc_info.value, OperationalError | IntegrityError | InternalError)
 
 
 async def test_call_client_other_client_errors_still_map() -> None:

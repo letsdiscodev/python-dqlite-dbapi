@@ -80,9 +80,24 @@ class IntegrityError(DatabaseError):
 
 
 class InternalError(DatabaseError):
-    """Internal database error."""
+    """Internal database error.
 
-    pass
+    Raised for the SQLite ``SQLITE_INTERNAL`` primary error code (2) and
+    its extended family — the same classification stdlib ``sqlite3``
+    applies. Optional ``code`` attribute mirrors :class:`OperationalError`
+    so callers that branch on the SQLite extended code can do so without
+    reaching into the client layer.
+    """
+
+    def __init__(self, message: object = "", code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+    def __repr__(self) -> str:
+        msg = self.args[0] if self.args else ""
+        if self.code is None:
+            return f"{type(self).__name__}({msg!r})"
+        return f"{type(self).__name__}({msg!r}, code={self.code})"
 
 
 class ProgrammingError(DatabaseError):

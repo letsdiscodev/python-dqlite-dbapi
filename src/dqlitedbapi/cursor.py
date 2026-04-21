@@ -9,6 +9,7 @@ from dqlitedbapi.exceptions import (
     DataError,
     IntegrityError,
     InterfaceError,
+    InternalError,
     NotSupportedError,
     OperationalError,
     ProgrammingError,
@@ -31,19 +32,30 @@ __all__ = ["Cursor"]
 # leaving every caller to inspect the code themselves.
 _SQLITE_CONSTRAINT = 19
 
+# SQLite primary error code 2 (SQLITE_INTERNAL). stdlib ``sqlite3``
+# routes this to ``sqlite3.InternalError`` (CPython's
+# ``_pysqlite_seterror``); PEP 249 defines ``InternalError`` for exactly
+# this purpose — "internal errors of the database, e.g. the cursor is
+# not valid anymore".
+_SQLITE_INTERNAL = 2
+
 # Registry of primary-code → PEP 249 class. Keep the default
 # (OperationalError) outside the dict so adding a code is one line.
-_CODE_TO_EXCEPTION: dict[int, type[OperationalError | IntegrityError]] = {
+_CODE_TO_EXCEPTION: dict[int, type[OperationalError | IntegrityError | InternalError]] = {
     _SQLITE_CONSTRAINT: IntegrityError,
+    _SQLITE_INTERNAL: InternalError,
 }
 
 
-def _classify_operational(code: int | None) -> type[OperationalError | IntegrityError]:
+def _classify_operational(
+    code: int | None,
+) -> type[OperationalError | IntegrityError | InternalError]:
     """Pick a PEP 249 exception class from a SQLite error code.
 
     Returns OperationalError for unknown / unmapped codes so the
     existing "anything can surface as OperationalError" contract
-    holds; returns IntegrityError for the SQLITE_CONSTRAINT family.
+    holds; returns IntegrityError for the SQLITE_CONSTRAINT family and
+    InternalError for the SQLITE_INTERNAL family.
     """
     if code is None:
         return OperationalError
