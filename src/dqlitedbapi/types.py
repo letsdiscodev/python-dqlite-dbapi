@@ -248,6 +248,17 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
 
     Naive input round-trips as naive; aware input preserves the offset.
 
+    **``date`` widens to ``datetime`` on round-trip.** A ``datetime.date``
+    passed to PEP 249 ``Date()`` serializes via ``isoformat()`` as
+    ``"YYYY-MM-DD"`` (no time component). The decoder's fallback path
+    parses the string with ``datetime.date.fromisoformat`` and returns
+    a ``datetime.datetime(year, month, day)`` — the value widens from
+    date to datetime. This matches pysqlite's default behaviour (stdlib
+    ``sqlite3`` with ``detect_types`` does the same widen). Callers who
+    need a strict ``date`` on readback should narrow via ``.date()`` or
+    use the SQLAlchemy ``_DqliteDate`` type that does the narrowing at
+    the ORM layer.
+
     A malformed string from the server (bug, corruption, or MitM) would
     otherwise escape as a raw ``ValueError``; wrap as ``DataError`` to
     satisfy PEP 249's "all DB errors funnel through Error" contract.

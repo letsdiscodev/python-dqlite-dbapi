@@ -45,6 +45,16 @@ class OperationalError(DatabaseError):
         super().__init__(message)
         self.code = code
 
+    def __repr__(self) -> str:
+        # Sentry/Rollbar and standard logger ``%r`` formatting surface
+        # only the default repr, which drops ``code`` because it is not
+        # in ``args``. Override so the SQLite extended error code is
+        # visible in logs without reaching into ``.code`` manually.
+        msg = self.args[0] if self.args else ""
+        if self.code is None:
+            return f"{type(self).__name__}({msg!r})"
+        return f"{type(self).__name__}({msg!r}, code={self.code})"
+
 
 class IntegrityError(DatabaseError):
     """Error related to database integrity.
@@ -61,6 +71,12 @@ class IntegrityError(DatabaseError):
     def __init__(self, message: object = "", code: int | None = None) -> None:
         super().__init__(message)
         self.code = code
+
+    def __repr__(self) -> str:
+        msg = self.args[0] if self.args else ""
+        if self.code is None:
+            return f"{type(self).__name__}({msg!r})"
+        return f"{type(self).__name__}({msg!r}, code={self.code})"
 
 
 class InternalError(DatabaseError):
