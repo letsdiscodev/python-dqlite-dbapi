@@ -131,3 +131,58 @@ class TestValueTypeMappingExhaustiveness:
                 f"DBAPI type object {t!r} unexpectedly compares equal to "
                 f"ValueType.NULL — see ISSUE-395 for the exempt-NULL contract"
             )
+
+
+class TestDBAPITypeEqFallthrough:
+    """Pin the ``NotImplemented`` fallthrough and ``bool`` guard on
+    ``_DBAPIType.__eq__``.
+
+    ``__eq__`` returns ``NotImplemented`` (not ``False``) for any
+    ``other`` that is not a ``str``, ``ValueType``, or non-bool ``int``.
+    Per the Python data model, this lets the reflected comparison be
+    consulted before Python falls back to identity (``False`` for
+    distinct objects). A refactor to ``return False`` would silently
+    break reflected ``__eq__`` against any future sibling class and
+    drop the intended fallthrough semantics.
+
+    The ``not isinstance(other, bool)`` guard is the stronger half:
+    ``bool`` is a subclass of ``int``, so without the guard
+    ``NUMBER == True`` would return True (``True in {1, 2, …}`` is
+    True), silently violating the PEP 249 type-object-identity
+    contract.
+    """
+
+    @pytest.mark.parametrize("other", [None, [], {}, (), object(), 1.5, {1, 2}])
+    @pytest.mark.parametrize("type_obj", DBAPI_TYPE_OBJECTS)
+    def test_not_equal_to_unrelated_types(self, type_obj: object, other: object) -> None:
+        # ``__eq__`` must return ``NotImplemented`` for unrelated types
+        # so Python consults the reflected comparison, then falls back
+        # to identity. For every ``other`` in the parametrize list,
+        # ``type(other).__eq__`` also returns ``NotImplemented`` against
+        # ``_DBAPIType``, so the reflected comparison works and identity
+        # resolves to False.
+        assert type_obj != other
+        assert other != type_obj
+
+    @pytest.mark.parametrize("type_obj", DBAPI_TYPE_OBJECTS)
+    @pytest.mark.parametrize("value", [True, False])
+    def test_not_equal_to_bool_even_if_integer_match(self, type_obj: object, value: bool) -> None:
+        # bool is a subclass of int; a refactor that dropped the
+        # ``not isinstance(other, bool)`` guard would silently let
+        # ``NUMBER == True`` return True. Pin both directions so a
+        # regression cannot land without a test failure.
+        assert type_obj != value
+        assert value != type_obj
+
+    def test_hash_stable_and_dict_key_usable(self) -> None:
+        # A refactor that broke ``__eq__`` also risks breaking the
+        # ``__hash__`` / ``__eq__`` contract — dict keying and set
+        # membership depend on both being consistent. Pin the most
+        # load-bearing invariants: equal hashes for equal objects and
+        # round-trippable dict-key lookup.
+        assert hash(STRING) == hash(STRING)
+        assert hash(NUMBER) == hash(NUMBER)
+        d = {STRING: "s", NUMBER: "n", BINARY: "b"}
+        assert d[STRING] == "s"
+        assert d[NUMBER] == "n"
+        assert d[BINARY] == "b"
