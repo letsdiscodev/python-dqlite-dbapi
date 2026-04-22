@@ -14,6 +14,7 @@ Covers:
 
 import asyncio
 import datetime
+import sys
 
 import pytest
 
@@ -240,6 +241,41 @@ class TestDatetimeFromUnixtimeWrapping:
 
         with pytest.raises(DataError):
             _datetime_from_unixtime(2**63)
+
+    def test_extreme_in_range_int64_wraps_as_dataerror_with_value(self) -> None:
+        """A valid int64 large enough to overflow ``datetime.fromtimestamp``
+        on every supported platform (1<<62 ≈ 4.6e18 seconds, year ~146
+        billion) must funnel through ``DataError`` with the offending
+        value in the message — not leak the raw stdlib exception
+        (``OSError`` / ``OverflowError`` / ``ValueError`` depending on
+        platform). A future "cleanup" refactor that narrows the catch
+        tuple in ``_datetime_from_unixtime`` would silently leak the
+        platform exception to PEP 249 callers; this guaranteed-fail
+        value pins the funnel.
+        """
+        from dqlitedbapi.types import _datetime_from_unixtime
+
+        value = 1 << 62
+        with pytest.raises(DataError) as ei:
+            _datetime_from_unixtime(value)
+        assert repr(value) in str(ei.value), (
+            f"DataError message must echo the offending value; got {ei.value!s}"
+        )
+
+    @pytest.mark.skipif(
+        not sys.platform.startswith("linux"),
+        reason="OSError raise mode is Linux-specific",
+    )
+    def test_int64_max_wraps_oserror_as_dataerror_on_linux(self) -> None:
+        """On Linux, ``datetime.fromtimestamp((1<<63)-1)`` raises
+        ``OSError [Errno 75]``. This pin guards the catch tuple's
+        ``OSError`` entry — the most-likely-to-be-deleted entry on a
+        narrowing refactor — on the most common deployment platform.
+        """
+        from dqlitedbapi.types import _datetime_from_unixtime
+
+        with pytest.raises(DataError):
+            _datetime_from_unixtime((1 << 63) - 1)
 
 
 class TestIsNoTransactionError:
