@@ -38,12 +38,6 @@ class DatabaseError(Error):
     pass
 
 
-class DataError(DatabaseError):
-    """Error due to problems with the processed data."""
-
-    pass
-
-
 class _DatabaseErrorWithCode(DatabaseError):
     """Internal base for DatabaseError subclasses that carry a SQLite
     extended error ``code`` attribute.
@@ -115,13 +109,32 @@ class InternalError(_DatabaseErrorWithCode):
     pass
 
 
-class ProgrammingError(DatabaseError):
-    """Programming error (e.g., table not found, SQL syntax error)."""
+class ProgrammingError(_DatabaseErrorWithCode):
+    """Programming error (e.g., table not found, SQL syntax error).
+
+    Optional ``code`` attribute carries the SQLite extended error code
+    when the error originates from a server-reported failure (e.g.
+    ``SQLITE_RANGE`` = 25, bind-index out of range). Mirror of
+    :class:`OperationalError`.
+    """
 
     pass
 
 
 class NotSupportedError(DatabaseError):
     """Method or database API not supported by database."""
+
+    pass
+
+
+class DataError(_DatabaseErrorWithCode):
+    """Error due to problems with the processed data.
+
+    Optional ``code`` attribute carries the SQLite extended error code
+    for server-reported data-category failures (e.g.
+    ``SQLITE_MISMATCH``, ``SQLITE_TOOBIG``). Mirror of
+    :class:`OperationalError` so callers that branch on the extended
+    code can do so without reaching into the client layer.
+    """
 
     pass

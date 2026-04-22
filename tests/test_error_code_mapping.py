@@ -17,6 +17,7 @@ from dqlitedbapi.exceptions import (
     InterfaceError,
     InternalError,
     OperationalError,
+    ProgrammingError,
 )
 
 # (code, expected PEP 249 class) pairs. Primary codes and the
@@ -41,7 +42,12 @@ _MATRIX = [
     (1, OperationalError),  # SQLITE_ERROR
     (5, OperationalError),  # SQLITE_BUSY
     (8, OperationalError),  # SQLITE_READONLY
-    (20, OperationalError),  # SQLITE_MISMATCH
+    # Data-category codes map to PEP 249 DataError.
+    (18, DataError),  # SQLITE_TOOBIG
+    (20, DataError),  # SQLITE_MISMATCH
+    # SQLITE_RANGE — bind-index out of range — is caller-side bad
+    # parameter, closest to PEP 249 ProgrammingError.
+    (25, ProgrammingError),  # SQLITE_RANGE
     # SQLITE_INTERNAL (primary code 2) — PEP 249 and stdlib sqlite3 map
     # this to InternalError. Extended-code siblings (``code & 0xFF == 2``)
     # should follow the same mapping by the masking convention.
@@ -77,7 +83,10 @@ async def test_call_client_maps_code(code: int | None, expected_cls: type) -> No
     assert getattr(exc_info.value, "code", None) == (code or 0)
     # The mapped exception remains a DatabaseError (PEP 249 root for
     # database-sourced failures).
-    assert isinstance(exc_info.value, OperationalError | IntegrityError | InternalError)
+    assert isinstance(
+        exc_info.value,
+        OperationalError | IntegrityError | InternalError | DataError | ProgrammingError,
+    )
 
 
 async def test_call_client_other_client_errors_still_map() -> None:

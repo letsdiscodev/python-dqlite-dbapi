@@ -39,23 +39,42 @@ _SQLITE_CONSTRAINT = 19
 # not valid anymore".
 _SQLITE_INTERNAL = 2
 
+# PEP 249 ``DataError`` — "problems with the processed data" — maps to
+# SQLite's data-category primary codes:
+#   SQLITE_TOOBIG   = 18  (value exceeds size limit)
+#   SQLITE_MISMATCH = 20  (datatype mismatch — relevant on STRICT tables)
+_SQLITE_TOOBIG = 18
+_SQLITE_MISMATCH = 20
+
+# SQLITE_RANGE (25) — "bind index out of range" — is a caller-side
+# parameter-binding error; PEP 249 ``ProgrammingError`` is the right
+# fit ("bad parameter ... wrong number of parameters") rather than
+# ``DataError``.
+_SQLITE_RANGE = 25
+
 # Registry of primary-code → PEP 249 class. Keep the default
 # (OperationalError) outside the dict so adding a code is one line.
-_CODE_TO_EXCEPTION: dict[int, type[OperationalError | IntegrityError | InternalError]] = {
+_CODE_TO_EXCEPTION: dict[
+    int,
+    type[OperationalError | IntegrityError | InternalError | DataError | ProgrammingError],
+] = {
     _SQLITE_CONSTRAINT: IntegrityError,
     _SQLITE_INTERNAL: InternalError,
+    _SQLITE_TOOBIG: DataError,
+    _SQLITE_MISMATCH: DataError,
+    _SQLITE_RANGE: ProgrammingError,
 }
 
 
 def _classify_operational(
     code: int | None,
-) -> type[OperationalError | IntegrityError | InternalError]:
+) -> type[OperationalError | IntegrityError | InternalError | DataError | ProgrammingError]:
     """Pick a PEP 249 exception class from a SQLite error code.
 
     Returns OperationalError for unknown / unmapped codes so the
     existing "anything can surface as OperationalError" contract
-    holds; returns IntegrityError for the SQLITE_CONSTRAINT family and
-    InternalError for the SQLITE_INTERNAL family.
+    holds; mapped codes surface as their PEP 249 equivalent
+    (IntegrityError, InternalError, DataError, ProgrammingError).
     """
     if code is None:
         return OperationalError
@@ -91,8 +110,11 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # else stays OperationalError so callers that branch on
         # leader-change / busy codes (``_is_no_transaction_error``, the
         # SQLAlchemy dialect's ``is_disconnect``) continue to work.
+        # ``e.message`` (not ``str(e)``) — client.OperationalError's
+        # ``__str__`` prefixes ``[code]`` so using ``str(e)`` would put
+        # the code in the message text AND as the ``code=`` attribute.
         exc_cls = _classify_operational(e.code)
-        raise exc_cls(str(e), code=e.code) from e
+        raise exc_cls(e.message, code=e.code) from e
     except _client_exc.DqliteConnectionError as e:
         # DqliteConnectionError carries no SQLite code today — pass
         # code=None explicitly so the signature matches the sibling
@@ -109,7 +131,10 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
     except _client_exc.ProtocolError as e:
         raise InterfaceError(str(e)) from e
     except _client_exc.DataError as e:
-        raise DataError(str(e)) from e
+        # client.DataError carries no server code today (encode-side
+        # error surface), but plumb code=None explicitly so the
+        # signature stays symmetric with the coded branches above.
+        raise DataError(str(e), code=None) from e
     except _client_exc.InterfaceError as e:
         raise InterfaceError(str(e)) from e
     except _client_exc.DqliteError as e:

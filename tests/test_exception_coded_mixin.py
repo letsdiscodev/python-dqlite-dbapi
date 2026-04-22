@@ -44,7 +44,10 @@ class TestCodedFamilyMembership:
     """The three coded-error classes inherit from ``_DatabaseErrorWithCode``;
     the other PEP 249 DatabaseError subclasses do not."""
 
-    @pytest.mark.parametrize("cls", [OperationalError, IntegrityError, InternalError])
+    @pytest.mark.parametrize(
+        "cls",
+        [OperationalError, IntegrityError, InternalError, DataError, ProgrammingError],
+    )
     def test_coded_class_is_in_family(self, cls: type[_DatabaseErrorWithCode]) -> None:
         assert issubclass(cls, _DatabaseErrorWithCode)
         inst = cls("x", code=5)
@@ -52,7 +55,7 @@ class TestCodedFamilyMembership:
 
     @pytest.mark.parametrize(
         "cls",
-        [DataError, ProgrammingError, NotSupportedError, InterfaceError],
+        [NotSupportedError, InterfaceError],
     )
     def test_uncoded_class_is_not_in_family(self, cls: type[Exception]) -> None:
         assert not issubclass(cls, _DatabaseErrorWithCode)
