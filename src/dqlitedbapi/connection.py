@@ -45,6 +45,20 @@ def _validate_timeout(timeout: float) -> None:
         raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
 
 
+def _validate_close_timeout(close_timeout: float) -> None:
+    """Raise ProgrammingError if ``close_timeout`` is not a positive finite number.
+
+    The client layer raises ``ValueError`` for the same predicate; the
+    dbapi layer wraps with ``ProgrammingError`` so PEP 249 error
+    classification holds at the dbapi boundary (parallel to
+    ``_validate_timeout``).
+    """
+    if not math.isfinite(close_timeout) or close_timeout <= 0:
+        raise ProgrammingError(
+            f"close_timeout must be a positive finite number, got {close_timeout}"
+        )
+
+
 async def _build_and_connect(
     address: str,
     *,
@@ -53,6 +67,7 @@ async def _build_and_connect(
     max_total_rows: int | None,
     max_continuation_frames: int | None,
     trust_server_heartbeat: bool,
+    close_timeout: float,
 ) -> DqliteConnection:
     """Build a DqliteConnection with the given governors and connect it.
 
@@ -69,6 +84,7 @@ async def _build_and_connect(
         max_total_rows=max_total_rows,
         max_continuation_frames=max_continuation_frames,
         trust_server_heartbeat=trust_server_heartbeat,
+        close_timeout=close_timeout,
     )
     try:
         await conn.connect()
@@ -172,6 +188,7 @@ class Connection:
         max_total_rows: int | None = 10_000_000,
         max_continuation_frames: int | None = 100_000,
         trust_server_heartbeat: bool = False,
+        close_timeout: float = 0.5,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -193,9 +210,15 @@ class Connection:
                 deadline to the server-advertised heartbeat (subject to
                 a 300 s hard cap). Default False so the configured
                 ``timeout`` is authoritative.
+            close_timeout: Budget (seconds) for the transport-drain
+                during ``close()``. Forwarded to the underlying
+                :class:`DqliteConnection`. The default (0.5 s) is
+                sized for LAN; callers with higher-latency links or
+                strict shutdown SLAs can override.
         """
         if not math.isfinite(timeout) or timeout <= 0:
             raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+        _validate_close_timeout(close_timeout)
         self._address = address
         self._database = database
         self._timeout = timeout
@@ -204,6 +227,7 @@ class Connection:
             max_continuation_frames, "max_continuation_frames"
         )
         self._trust_server_heartbeat = trust_server_heartbeat
+        self._close_timeout = close_timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -348,6 +372,7 @@ class Connection:
                 max_total_rows=self._max_total_rows,
                 max_continuation_frames=self._max_continuation_frames,
                 trust_server_heartbeat=self._trust_server_heartbeat,
+                close_timeout=self._close_timeout,
             )
 
         return self._async_conn

@@ -97,6 +97,7 @@ def connect(
     max_total_rows: int | None = 10_000_000,
     max_continuation_frames: int | None = 100_000,
     trust_server_heartbeat: bool = False,
+    close_timeout: float = 0.5,
 ) -> Connection:
     """Connect to a dqlite database.
 
@@ -114,6 +115,9 @@ def connect(
             Forwarded to the underlying :class:`Connection`.
         trust_server_heartbeat: Let the server-advertised heartbeat
             widen the per-read deadline. Default False.
+        close_timeout: Budget (seconds) for the transport-drain during
+            ``close()``. Forwarded to the underlying :class:`Connection`.
+            Default 0.5 s is sized for LAN.
 
     Returns:
         A Connection object
@@ -126,4 +130,5 @@ def connect(
         max_total_rows=max_total_rows,
         max_continuation_frames=max_continuation_frames,
         trust_server_heartbeat=trust_server_heartbeat,
+        close_timeout=close_timeout,
     )

@@ -52,6 +52,7 @@ async def test_connect_forwards_operational_error_code() -> None:
             max_total_rows=None,
             max_continuation_frames=None,
             trust_server_heartbeat=False,
+            close_timeout=0.5,
         )
 
     assert exc_info.value.code == _SQLITE_IOERR_NOT_LEADER_FALLBACK
@@ -83,6 +84,7 @@ async def test_connect_non_code_exception_yields_code_none() -> None:
             max_total_rows=None,
             max_continuation_frames=None,
             trust_server_heartbeat=False,
+            close_timeout=0.5,
         )
 
     assert exc_info.value.code is None

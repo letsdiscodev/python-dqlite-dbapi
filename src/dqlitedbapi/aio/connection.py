@@ -13,7 +13,11 @@ from dqliteclient import DqliteConnection
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
-from dqlitedbapi.connection import _build_and_connect, _is_no_transaction_error
+from dqlitedbapi.connection import (
+    _build_and_connect,
+    _is_no_transaction_error,
+    _validate_close_timeout,
+)
 from dqlitedbapi.cursor import _call_client
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
@@ -58,6 +62,7 @@ class AsyncConnection:
         max_total_rows: int | None = 10_000_000,
         max_continuation_frames: int | None = 100_000,
         trust_server_heartbeat: bool = False,
+        close_timeout: float = 0.5,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -72,9 +77,13 @@ class AsyncConnection:
                 Forwarded to the underlying DqliteConnection.
             trust_server_heartbeat: When True, let the server-advertised
                 heartbeat widen the per-read deadline.
+            close_timeout: Budget (seconds) for the transport-drain
+                during ``close()``. Forwarded to the underlying
+                DqliteConnection. Default 0.5 s is sized for LAN.
         """
         if not math.isfinite(timeout) or timeout <= 0:
             raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+        _validate_close_timeout(close_timeout)
         self._address = address
         self._database = database
         self._timeout = timeout
@@ -83,6 +92,7 @@ class AsyncConnection:
             max_continuation_frames, "max_continuation_frames"
         )
         self._trust_server_heartbeat = trust_server_heartbeat
+        self._close_timeout = close_timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # asyncio primitives MUST be created inside the loop they will
@@ -150,6 +160,7 @@ class AsyncConnection:
                 max_total_rows=self._max_total_rows,
                 max_continuation_frames=self._max_continuation_frames,
                 trust_server_heartbeat=self._trust_server_heartbeat,
+                close_timeout=self._close_timeout,
             )
             # A concurrent close() may have flipped _closed while we were
             # suspended in _build_and_connect. close() observes

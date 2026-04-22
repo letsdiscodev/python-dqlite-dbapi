@@ -95,6 +95,7 @@ def connect(
     max_total_rows: int | None = 10_000_000,
     max_continuation_frames: int | None = 100_000,
     trust_server_heartbeat: bool = False,
+    close_timeout: float = 0.5,
 ) -> AsyncConnection:
     """Create a dqlite connection (connects lazily on first use).
 
@@ -115,6 +116,9 @@ def connect(
             Forwarded to the underlying AsyncConnection.
         trust_server_heartbeat: Let the server-advertised heartbeat
             widen the per-read deadline. Default False.
+        close_timeout: Budget (seconds) for the transport-drain during
+            ``close()``. Forwarded to the underlying AsyncConnection.
+            Default 0.5 s is sized for LAN.
 
     Returns:
         An AsyncConnection object
@@ -127,6 +131,7 @@ def connect(
         max_total_rows=max_total_rows,
         max_continuation_frames=max_continuation_frames,
         trust_server_heartbeat=trust_server_heartbeat,
+        close_timeout=close_timeout,
     )
 
 
@@ -138,6 +143,7 @@ async def aconnect(
     max_total_rows: int | None = 10_000_000,
     max_continuation_frames: int | None = 100_000,
     trust_server_heartbeat: bool = False,
+    close_timeout: float = 0.5,
 ) -> AsyncConnection:
     """Connect to a dqlite database asynchronously.
 
@@ -156,6 +162,9 @@ async def aconnect(
             Forwarded to the underlying AsyncConnection.
         trust_server_heartbeat: Let the server-advertised heartbeat
             widen the per-read deadline. Default False.
+        close_timeout: Budget (seconds) for the transport-drain during
+            ``close()``. Forwarded to the underlying AsyncConnection.
+            Default 0.5 s is sized for LAN.
 
     Returns:
         A connected AsyncConnection object
@@ -168,6 +177,7 @@ async def aconnect(
         max_total_rows=max_total_rows,
         max_continuation_frames=max_continuation_frames,
         trust_server_heartbeat=trust_server_heartbeat,
+        close_timeout=close_timeout,
     )
     await conn.connect()
     return conn
