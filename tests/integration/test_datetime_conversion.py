@@ -108,6 +108,41 @@ class TestDateTimeRoundTrip:
 
 
 @pytest.mark.integration
+class TestTimeBindParam:
+    """``datetime.time`` bind parameters stringify to ISO 8601 so the
+    driver's own ``Time()`` / ``TimeFromTicks()`` constructors round-trip
+    through the wire. The server stores the value as TEXT; readback is
+    the ISO string (the decoder has no TIME affinity).
+    """
+
+    def test_naive_time_round_trips_as_string(self, cluster_address: str) -> None:
+        import dqlitedbapi
+
+        t = dqlitedbapi.Time(12, 30, 45)
+        with connect(cluster_address, database="test_time_naive") as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS t_naive (v TEXT)")
+            cursor.execute("DELETE FROM t_naive")
+            cursor.execute("INSERT INTO t_naive (v) VALUES (?)", [t])
+            cursor.execute("SELECT v FROM t_naive")
+            (value,) = cursor.fetchone()
+            assert value == "12:30:45"
+            cursor.execute("DROP TABLE t_naive")
+
+    def test_time_with_microseconds_and_utc(self, cluster_address: str) -> None:
+        t = datetime.time(12, 30, 45, 123456, tzinfo=datetime.UTC)
+        with connect(cluster_address, database="test_time_us") as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS t_us (v TEXT)")
+            cursor.execute("DELETE FROM t_us")
+            cursor.execute("INSERT INTO t_us (v) VALUES (?)", [t])
+            cursor.execute("SELECT v FROM t_us")
+            (value,) = cursor.fetchone()
+            assert value == "12:30:45.123456+00:00"
+            cursor.execute("DROP TABLE t_us")
+
+
+@pytest.mark.integration
 class TestUnixtimeColumn:
     """INTEGER values in DATETIME-typed columns come back as datetime.
 

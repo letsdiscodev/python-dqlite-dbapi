@@ -234,6 +234,26 @@ ROWID = _DBAPIType("ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER, _name="ROW
 # matching Go's database/sql driver split.
 
 
+def _format_utc_offset(offset: datetime.timedelta) -> str:
+    """Format a UTC offset as ``±HH:MM`` (common) or ``±HH:MM:SS``.
+
+    Historical IANA LMT entries (Europe/Dublin pre-1916, Africa/Lagos
+    pre-1914, several Pacific zones) carry sub-minute offsets.
+    ``datetime.fromisoformat`` / ``time.fromisoformat`` on Python 3.11+
+    round-trip ``±HH:MM:SS`` so emitting the seconds component keeps
+    the round-trip through a TEXT column exact. Common whole-minute
+    offsets stay in the narrower ``±HH:MM`` form byte-identical with
+    the pre-sub-minute encoder output.
+    """
+    total_seconds = int(offset.total_seconds())
+    sign = "+" if total_seconds >= 0 else "-"
+    hours, rem = divmod(abs(total_seconds), 3600)
+    minutes, seconds = divmod(rem, 60)
+    if seconds:
+        return f"{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{sign}{hours:02d}:{minutes:02d}"
+
+
 def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
     """Format a datetime/date as an ISO 8601 string for wire transmission.
 
@@ -253,21 +273,30 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
         offset = value.utcoffset()
         if offset is None:
             return base
-        total_seconds = int(offset.total_seconds())
-        sign = "+" if total_seconds >= 0 else "-"
-        hours, rem = divmod(abs(total_seconds), 3600)
-        minutes, seconds = divmod(rem, 60)
-        # Common case (whole-minute offset) stays ``±HH:MM`` — byte
-        # identical with earlier encoder output. Historical tz data
-        # carrying sub-minute offsets (IANA LMT entries such as
-        # Europe/Dublin pre-1916, Africa/Lagos pre-1914, several
-        # Pacific zones) widens to ``±HH:MM:SS`` so the round-trip
-        # through datetime.fromisoformat preserves the exact offset.
-        if seconds:
-            return base + f"{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
-        return base + f"{sign}{hours:02d}:{minutes:02d}"
+        return base + _format_utc_offset(offset)
     # datetime.date (must come after datetime check — datetime is a subclass).
     return value.isoformat()
+
+
+def _iso8601_from_time(value: datetime.time) -> str:
+    """Format a ``datetime.time`` as an ISO 8601 string.
+
+    Symmetric with the datetime/date encoder so the PEP 249 ``Time()``
+    and ``TimeFromTicks()`` constructors — which return
+    ``datetime.time`` — produce values the DB-API bind path can
+    consume. Naive times emit ``HH:MM:SS[.ffffff]``; aware times
+    append the ``±HH:MM`` (or ``±HH:MM:SS`` for sub-minute offsets)
+    suffix shared with the datetime encoder.
+    """
+    base = f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}"
+    if value.microsecond:
+        base += f".{value.microsecond:06d}"
+    if value.tzinfo is None:
+        return base
+    offset = value.utcoffset()
+    if offset is None:
+        return base
+    return base + _format_utc_offset(offset)
 
 
 def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
@@ -334,10 +363,17 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
 def _convert_bind_param(value: Any) -> Any:
     """Map driver-level Python types to wire primitives.
 
-    The wire codec accepts only bool/int/float/str/bytes/None; datetime and
-    date are driver-level conveniences that we stringify to ISO 8601 before
-    handing off. Everything else passes through unchanged.
+    The wire codec accepts only bool/int/float/str/bytes/None; datetime,
+    date, and time are driver-level conveniences that we stringify to
+    ISO 8601 before handing off. Everything else passes through
+    unchanged.
     """
+    # ``datetime.datetime`` is a subclass of ``datetime.date`` but not
+    # of ``datetime.time``, so the datetime/date check must fire first
+    # for datetime inputs. ``datetime.time`` falls through to its own
+    # branch.
     if isinstance(value, datetime.datetime | datetime.date):
         return _iso8601_from_datetime(value)
+    if isinstance(value, datetime.time):
+        return _iso8601_from_time(value)
     return value

@@ -94,3 +94,124 @@ class TestIso8601FromDatetime:
         decoded = _datetime_from_iso8601(encoded)
         assert decoded == original
         assert decoded is not None and decoded.utcoffset() == original.utcoffset()
+
+
+class TestIso8601FromTime:
+    """Encoder for ``datetime.time`` values. The DB-API ``Time()`` and
+    ``TimeFromTicks()`` constructors return ``datetime.time``; bind
+    parameters pass through ``_convert_bind_param`` which stringifies
+    to ISO 8601 (symmetric with the datetime/date branch)."""
+
+    def test_naive_time_without_microseconds(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        assert _iso8601_from_time(datetime.time(12, 30, 45)) == "12:30:45"
+
+    def test_midnight(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        assert _iso8601_from_time(datetime.time(0, 0, 0)) == "00:00:00"
+
+    def test_time_with_microseconds(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        t = datetime.time(12, 30, 45, 123456)
+        assert _iso8601_from_time(t) == "12:30:45.123456"
+
+    def test_time_with_zero_padded_microseconds(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        t = datetime.time(12, 30, 45, 7)
+        assert _iso8601_from_time(t) == "12:30:45.000007"
+
+    def test_time_with_utc_tzinfo(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        t = datetime.time(12, 30, 45, tzinfo=datetime.UTC)
+        assert _iso8601_from_time(t) == "12:30:45+00:00"
+
+    def test_time_with_fixed_negative_offset(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        tz = datetime.timezone(datetime.timedelta(hours=-5))
+        t = datetime.time(12, 30, 45, tzinfo=tz)
+        assert _iso8601_from_time(t) == "12:30:45-05:00"
+
+    def test_time_with_fixed_positive_offset_and_microseconds(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        t = datetime.time(12, 30, 45, microsecond=42, tzinfo=tz)
+        assert _iso8601_from_time(t) == "12:30:45.000042+05:30"
+
+    def test_time_sub_minute_offset_preserves_seconds(self) -> None:
+        """Matches the datetime encoder's sub-minute-offset preservation:
+        ``datetime.time.utcoffset()`` can also return a sub-minute
+        timedelta, and ``datetime.time.fromisoformat`` on Python 3.11+
+        round-trips ``±HH:MM:SS`` offsets."""
+        from dqlitedbapi.types import _iso8601_from_time
+
+        tz = datetime.timezone(datetime.timedelta(minutes=5, seconds=30))
+        t = datetime.time(12, 30, 45, tzinfo=tz)
+        assert _iso8601_from_time(t) == "12:30:45+00:05:30"
+
+    def test_time_whole_minute_offset_stays_hh_mm(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        t = datetime.time(12, 30, 45, tzinfo=tz)
+        assert _iso8601_from_time(t) == "12:30:45+05:30"
+
+    def test_time_sub_minute_round_trips_through_fromisoformat(self) -> None:
+        """The emitted ISO string must decode back to a ``datetime.time``
+        with the exact utcoffset — pinning the symmetric decode path
+        in stdlib.
+        """
+        from dqlitedbapi.types import _iso8601_from_time
+
+        tz = datetime.timezone(datetime.timedelta(minutes=5, seconds=30))
+        original = datetime.time(12, 30, 45, tzinfo=tz)
+        encoded = _iso8601_from_time(original)
+        decoded = datetime.time.fromisoformat(encoded)
+        assert decoded == original
+        assert decoded.utcoffset() == original.utcoffset()
+
+
+class TestConvertBindParamTime:
+    """``_convert_bind_param`` routes ``datetime.time`` to the new
+    ISO 8601 encoder (symmetric with the existing datetime/date
+    branch). Prior behaviour let ``datetime.time`` fall through to
+    the wire encoder, which raised ``EncodeError`` — the driver's
+    own ``Time()`` constructor produced values its own binder could
+    not consume.
+    """
+
+    def test_time_converted_to_iso_string(self) -> None:
+        from dqlitedbapi.types import _convert_bind_param
+
+        assert _convert_bind_param(datetime.time(12, 30, 45)) == "12:30:45"
+
+    def test_time_with_tzinfo_converted(self) -> None:
+        from dqlitedbapi.types import _convert_bind_param
+
+        t = datetime.time(12, 30, 45, tzinfo=datetime.UTC)
+        assert _convert_bind_param(t) == "12:30:45+00:00"
+
+    def test_datetime_branch_still_takes_precedence(self) -> None:
+        """``datetime.datetime`` is a subclass of ``datetime.date`` but
+        NOT of ``datetime.time``, so the existing branch keeps firing
+        first for datetime inputs. Defensive pin in case the order of
+        checks is ever refactored.
+        """
+        from dqlitedbapi.types import _convert_bind_param
+
+        dt = datetime.datetime(2025, 1, 1, 12, 30, 45)
+        assert _convert_bind_param(dt) == "2025-01-01 12:30:45"
+
+    def test_non_temporal_value_passes_through(self) -> None:
+        from dqlitedbapi.types import _convert_bind_param
+
+        assert _convert_bind_param(42) == 42
+        assert _convert_bind_param("hello") == "hello"
+        assert _convert_bind_param(b"bytes") == b"bytes"
+        assert _convert_bind_param(None) is None
