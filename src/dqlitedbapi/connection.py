@@ -387,6 +387,21 @@ class Connection:
 
         return self._async_conn
 
+    def connect(self) -> None:
+        """Eagerly establish the TCP session.
+
+        Optional — the connection is lazy and the first cursor() or
+        execute() will connect automatically. Call this to fail-fast
+        when the cluster is unreachable, without allocating a cursor.
+        Mirrors :meth:`AsyncConnection.connect`.
+        """
+        self._check_thread()
+        if self._closed:
+            raise InterfaceError("Connection is closed")
+        # _get_async_connection is a coroutine; route through _run_sync
+        # so we share the same loop-in-thread the cursor path uses.
+        self._run_sync(self._get_async_connection())
+
     def close(self) -> None:
         """Close the connection."""
         self._check_thread()
