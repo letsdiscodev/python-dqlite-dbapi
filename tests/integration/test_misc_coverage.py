@@ -102,6 +102,27 @@ class TestLargeData:
             assert value == payload
             c.execute("DROP TABLE big_blob")
 
+    def test_binary_constructor_blob_round_trip(self, cluster_address: str) -> None:
+        """``Binary(...)`` (= ``memoryview``) round-trips as BLOB.
+
+        The PEP 249 constructor is aliased to stdlib ``memoryview``.
+        The wire encoder accepts memoryview for BLOB columns; the
+        readback comes back as ``bytes``.
+        """
+        import dqlitedbapi
+
+        payload = b"binary-constructor-round-trip" * 40
+        with connect(cluster_address, database="test_binary_ctor") as conn:
+            c = conn.cursor()
+            c.execute("DROP TABLE IF EXISTS bin_ctor")
+            c.execute("CREATE TABLE bin_ctor (id INTEGER PRIMARY KEY, data BLOB)")
+            c.execute("INSERT INTO bin_ctor (data) VALUES (?)", [dqlitedbapi.Binary(payload)])
+            conn.commit()
+            c.execute("SELECT data FROM bin_ctor")
+            (value,) = c.fetchone()
+            assert value == payload
+            c.execute("DROP TABLE bin_ctor")
+
 
 @pytest.mark.integration
 class TestUnicode:

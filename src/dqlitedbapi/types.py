@@ -144,9 +144,14 @@ def TimestampFromTicks(ticks: float) -> datetime.datetime:  # noqa: N802
         raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
 
-def Binary(data: bytes) -> bytes:  # noqa: N802
-    """Construct a binary value."""
-    return bytes(data)
+# PEP 249 §3 "Binary(string) — construct an object capable of holding
+# a binary (long) string value." Stdlib ``sqlite3.Binary = memoryview``
+# (Python 3.13); aiosqlite inherits. Alias directly so ports from
+# stdlib sqlite3 stay drop-in (``isinstance(Binary(b), memoryview)``
+# holds on both, zero-copy wrap on both). The wire encoder accepts
+# memoryview for BLOB columns, so no conversion is needed on the
+# bind path.
+Binary = memoryview
 
 
 # Type objects for column type checking.

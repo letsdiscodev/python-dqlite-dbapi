@@ -62,8 +62,18 @@ class TestTypeConstructors:
 
     def test_binary(self) -> None:
         b = dqlitedbapi.Binary(b"hello")
-        assert isinstance(b, bytes)
-        assert b == b"hello"
+        # PEP 249 Binary() is aliased to stdlib ``memoryview`` (matches
+        # sqlite3.Binary = memoryview, drop-in compatible).
+        assert isinstance(b, memoryview)
+        assert bytes(b) == b"hello"
+
+    def test_binary_is_stdlib_memoryview_alias(self) -> None:
+        import sqlite3
+
+        # Parity pin: stdlib sqlite3 has ``Binary = memoryview``; the
+        # dqlite dbapi aliases to the same underlying type.
+        assert dqlitedbapi.Binary is memoryview
+        assert dqlitedbapi.Binary is sqlite3.Binary
 
 
 class TestTypeObjects:
