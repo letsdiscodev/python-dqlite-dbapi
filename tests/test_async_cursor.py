@@ -147,6 +147,58 @@ class TestAsyncCursor:
         cursor.setoutputsize(100, 0)
 
 
+class TestAsyncCursorDescriptionFreshCopy:
+    """Mirror of ``TestCursorDescriptionFreshCopy`` in ``test_cursor.py``.
+
+    The sync and async `description` properties share the
+    `return list(self._description)` contract; a regression on either
+    side would silently drift the two branches apart.
+    """
+
+    def _make_cursor_with_description(self) -> AsyncCursor:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        cursor._description = [
+            ("a", 4, None, None, None, None, None),
+            ("b", 4, None, None, None, None, None),
+        ]
+        return cursor
+
+    def test_description_returns_fresh_list_per_call(self) -> None:
+        cursor = self._make_cursor_with_description()
+        desc1 = cursor.description
+        desc2 = cursor.description
+        assert desc1 is not None
+        assert desc2 is not None
+        assert desc1 is not desc2
+        assert desc1 == desc2
+
+    def test_description_returned_list_is_not_the_internal_list(self) -> None:
+        cursor = self._make_cursor_with_description()
+        desc = cursor.description
+        assert desc is not cursor._description
+
+    def test_description_mutation_does_not_affect_internal_state(self) -> None:
+        cursor = self._make_cursor_with_description()
+        desc = cursor.description
+        assert desc is not None
+        desc.clear()
+        desc2 = cursor.description
+        assert desc2 is not None
+        assert len(desc2) == 2
+
+    def test_description_empty_list_is_fresh_copy(self) -> None:
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        cursor._description = []
+        desc1 = cursor.description
+        desc2 = cursor.description
+        assert desc1 == []
+        assert desc2 == []
+        assert desc1 is not desc2
+        assert desc1 is not cursor._description
+
+
 class TestOptionalAsyncCursorMethodsRaise:
     def test_callproc_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError

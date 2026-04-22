@@ -120,6 +120,71 @@ class TestCursor:
         cursor.setoutputsize(100, 0)
 
 
+class TestCursorDescriptionFreshCopy:
+    """Pin the `Cursor.description` fresh-copy-per-access contract.
+
+    The property returns `list(self._description)` so that a caller
+    mutating the returned list (e.g. `.clear()`, `.append(...)`) cannot
+    corrupt the cursor's internal state. PEP 249 does not prescribe
+    immutability, so the contract is a project convention; these tests
+    freeze it against an accidental regression to
+    `return self._description` (which would re-alias the internal list).
+    """
+
+    def _make_cursor_with_description(self) -> Cursor:
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        cursor._description = [
+            ("a", 4, None, None, None, None, None),
+            ("b", 4, None, None, None, None, None),
+        ]
+        return cursor
+
+    def test_description_returns_fresh_list_per_call(self) -> None:
+        cursor = self._make_cursor_with_description()
+        desc1 = cursor.description
+        desc2 = cursor.description
+        assert desc1 is not None
+        assert desc2 is not None
+        # Fresh list each call — distinct objects, same contents.
+        assert desc1 is not desc2
+        assert desc1 == desc2
+
+    def test_description_returned_list_is_not_the_internal_list(self) -> None:
+        cursor = self._make_cursor_with_description()
+        desc = cursor.description
+        # The returned list must not be aliased to the cursor's internal
+        # _description list. A regression that dropped the `list(...)`
+        # wrap would fail this.
+        assert desc is not cursor._description
+
+    def test_description_mutation_does_not_affect_internal_state(self) -> None:
+        cursor = self._make_cursor_with_description()
+        desc = cursor.description
+        assert desc is not None
+        desc.clear()
+        # Second access returns a full-length list again — the first
+        # caller's .clear() did not corrupt internal state.
+        desc2 = cursor.description
+        assert desc2 is not None
+        assert len(desc2) == 2
+
+    def test_description_empty_list_is_fresh_copy(self) -> None:
+        # Non-None-but-empty _description must still return a fresh
+        # empty list per call, not the same object. A regression like
+        # `return self._description or []` would re-alias on the
+        # non-empty path and silently break this on the first mutation.
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        cursor._description = []
+        desc1 = cursor.description
+        desc2 = cursor.description
+        assert desc1 == []
+        assert desc2 == []
+        assert desc1 is not desc2
+        assert desc1 is not cursor._description
+
+
 class TestOptionalCursorMethodsRaise:
     def test_callproc_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError
