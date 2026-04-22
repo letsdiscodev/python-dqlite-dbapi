@@ -302,23 +302,27 @@ class AsyncConnection:
         exc_tb: TracebackType | None,
     ) -> None:
         if self._async_conn is None:
-            await self.close()
+            # Nothing ever ran; keep the connection reusable, matching
+            # stdlib sqlite3 / aiosqlite / psycopg semantics.
             return
-        try:
-            if exc_type is None:
-                await self.commit()
-            else:
-                try:
-                    await self.rollback()
-                except Exception:  # noqa: BLE001 — body's exception wins
-                    # The body already raised; we cannot re-raise, but a
-                    # silent suppress leaves no breadcrumb for an operator
-                    # debugging a dangling server-side transaction
-                    # (leader flip mid-commit, socket timeout, etc.).
-                    logger.debug(
-                        "AsyncConnection.__aexit__: rollback failed after body raised %s",
-                        exc_type.__name__,
-                        exc_info=True,
-                    )
-        finally:
-            await self.close()
+        if exc_type is None:
+            await self.commit()
+        else:
+            try:
+                await self.rollback()
+            except Exception:  # noqa: BLE001 — body's exception wins
+                # The body already raised; we cannot re-raise, but a
+                # silent suppress leaves no breadcrumb for an operator
+                # debugging a dangling server-side transaction
+                # (leader flip mid-commit, socket timeout, etc.).
+                logger.debug(
+                    "AsyncConnection.__aexit__ (address=%s, id=%s): "
+                    "rollback failed after body raised %s",
+                    self._address,
+                    id(self),
+                    exc_type.__name__,
+                    exc_info=True,
+                )
+        # Do NOT close — matches stdlib sqlite3 / aiosqlite / psycopg.
+        # Callers who want eager close use ``conn.close()`` explicitly
+        # or go through a pool.

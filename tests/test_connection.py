@@ -30,6 +30,9 @@ class TestConnection:
             conn.cursor()
 
     def test_context_manager(self) -> None:
+        # Matches stdlib sqlite3 / psycopg: ``with conn:`` commits or
+        # rolls back but does NOT close. Connection remains reusable.
         with Connection("localhost:9001") as conn:
             assert isinstance(conn, Connection)
-        assert conn._closed
+        assert not conn._closed
+        conn.close()

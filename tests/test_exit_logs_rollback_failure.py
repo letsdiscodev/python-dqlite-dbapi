@@ -29,6 +29,7 @@ def _make_connection_with_stub_rollback(rollback_exc: Exception | None) -> Conne
     # Force the "has an async_conn" branch so commit/rollback is reached.
     conn._async_conn = MagicMock()  # type: ignore[attr-defined]
     conn._closed = False  # type: ignore[attr-defined]
+    conn._address = "mock:0"  # needed for the DEBUG log identity fields
 
     def _rollback() -> None:
         if rollback_exc is not None:
@@ -57,8 +58,9 @@ def test_exit_logs_debug_on_rollback_failure(caplog: pytest.LogCaptureFixture) -
         exc_type, exc_val, exc_tb = sys.exc_info()
         conn.__exit__(exc_type, exc_val, exc_tb)
 
-    # close() still ran.
-    assert conn.close.called  # type: ignore[attr-defined]
+    # close() is NOT called on exit (stdlib sqlite3 parity — the
+    # connection remains reusable after the ``with`` block).
+    assert not conn.close.called  # type: ignore[attr-defined]
     # DEBUG log mentions rollback failure.
     messages = [r.getMessage() for r in caplog.records if r.name == "dqlitedbapi.connection"]
     assert any("rollback failed" in m for m in messages), messages

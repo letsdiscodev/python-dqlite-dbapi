@@ -51,15 +51,16 @@ class TestExitPropagatesCommitFailure:
 
 class TestExitOnUnusedConnection:
     def test_unused_connection_exit_is_silent(self) -> None:
-        """If the connection was never used, __exit__ just closes; no
-        commit/rollback is attempted (preserves 'no spurious connect'
-        contract)."""
+        """If the connection was never used, __exit__ is a no-op; no
+        commit/rollback is attempted and the connection is not closed
+        (stdlib sqlite3 parity — it remains reusable)."""
         conn = Connection("localhost:9001", timeout=2.0)
         assert conn._async_conn is None
         # Clean exit, no body exception, no TCP connection ever made.
         with conn:
             pass
-        assert conn._closed
+        assert not conn._closed
+        conn.close()
 
 
 class TestCommitNoTransactionSwallowed:

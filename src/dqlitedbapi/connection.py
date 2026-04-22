@@ -502,27 +502,30 @@ class Connection:
         exc_tb: TracebackType | None,
     ) -> None:
         # If no query has ever run, there's no transaction to commit or
-        # roll back — just close.
+        # roll back — nothing to do; the connection remains reusable,
+        # matching stdlib sqlite3 / psycopg semantics.
         if self._async_conn is None:
-            self.close()
             return
-        try:
-            if exc_type is None:
-                # Clean exit: commit. Let exceptions propagate; silent
-                # data loss is worse than a noisy failure.
-                self.commit()
-            else:
-                # Body already raised; attempt rollback but don't mask
-                # the original exception. Narrow except so programming
-                # bugs still surface; DEBUG-log the rollback failure so
-                # operators can tell silent-swallow from silent-success
-                # — matching the async __aexit__ pattern.
-                try:
-                    self.rollback()
-                except Exception:
-                    logger.debug(
-                        "Connection.__exit__: rollback failed; propagating original body exception",
-                        exc_info=True,
-                    )
-        finally:
-            self.close()
+        if exc_type is None:
+            # Clean exit: commit. Let exceptions propagate; silent
+            # data loss is worse than a noisy failure.
+            self.commit()
+        else:
+            # Body already raised; attempt rollback but don't mask
+            # the original exception. Narrow except so programming
+            # bugs still surface; DEBUG-log the rollback failure so
+            # operators can tell silent-swallow from silent-success
+            # — matching the async __aexit__ pattern.
+            try:
+                self.rollback()
+            except Exception:
+                logger.debug(
+                    "Connection.__exit__ (address=%s, id=%s): "
+                    "rollback failed; propagating original body exception",
+                    self._address,
+                    id(self),
+                    exc_info=True,
+                )
+        # Do NOT close — matches stdlib sqlite3.Connection.__exit__ and
+        # psycopg. Callers who want eager close use ``conn.close()``
+        # explicitly or go through a pool.
