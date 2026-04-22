@@ -44,7 +44,37 @@ class DataError(DatabaseError):
     pass
 
 
-class OperationalError(DatabaseError):
+class _DatabaseErrorWithCode(DatabaseError):
+    """Internal base for DatabaseError subclasses that carry a SQLite
+    extended error ``code`` attribute.
+
+    Private by design — not part of the public PEP 249 hierarchy, not
+    re-exported via ``__all__``. Present purely to eliminate three
+    byte-identical copies of ``__init__`` and ``__repr__`` across
+    :class:`OperationalError`, :class:`IntegrityError`, and
+    :class:`InternalError`.
+
+    ``__repr__`` reads ``type(self).__name__``, so each concrete
+    subclass surfaces its own name — Sentry/Rollbar and
+    ``logger.error("%r", exc)`` show the right class and the
+    ``code=…`` attribute (which the default ``Exception.__repr__``
+    would drop because it is not in ``args``).
+    """
+
+    code: int | None
+
+    def __init__(self, message: object = "", code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+    def __repr__(self) -> str:
+        msg = self.args[0] if self.args else ""
+        if self.code is None:
+            return f"{type(self).__name__}({msg!r})"
+        return f"{type(self).__name__}({msg!r}, code={self.code})"
+
+
+class OperationalError(_DatabaseErrorWithCode):
     """Error related to database operation.
 
     Optional ``code`` attribute carries the SQLite extended error code
@@ -54,22 +84,10 @@ class OperationalError(DatabaseError):
     client exception module.
     """
 
-    def __init__(self, message: object = "", code: int | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-
-    def __repr__(self) -> str:
-        # Sentry/Rollbar and standard logger ``%r`` formatting surface
-        # only the default repr, which drops ``code`` because it is not
-        # in ``args``. Override so the SQLite extended error code is
-        # visible in logs without reaching into ``.code`` manually.
-        msg = self.args[0] if self.args else ""
-        if self.code is None:
-            return f"{type(self).__name__}({msg!r})"
-        return f"{type(self).__name__}({msg!r}, code={self.code})"
+    pass
 
 
-class IntegrityError(DatabaseError):
+class IntegrityError(_DatabaseErrorWithCode):
     """Error related to database integrity.
 
     Raised when the relational integrity of the database is affected,
@@ -81,18 +99,10 @@ class IntegrityError(DatabaseError):
     mirror of :class:`OperationalError`.
     """
 
-    def __init__(self, message: object = "", code: int | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-
-    def __repr__(self) -> str:
-        msg = self.args[0] if self.args else ""
-        if self.code is None:
-            return f"{type(self).__name__}({msg!r})"
-        return f"{type(self).__name__}({msg!r}, code={self.code})"
+    pass
 
 
-class InternalError(DatabaseError):
+class InternalError(_DatabaseErrorWithCode):
     """Internal database error.
 
     Raised for the SQLite ``SQLITE_INTERNAL`` primary error code (2) and
@@ -102,15 +112,7 @@ class InternalError(DatabaseError):
     reaching into the client layer.
     """
 
-    def __init__(self, message: object = "", code: int | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-
-    def __repr__(self) -> str:
-        msg = self.args[0] if self.args else ""
-        if self.code is None:
-            return f"{type(self).__name__}({msg!r})"
-        return f"{type(self).__name__}({msg!r}, code={self.code})"
+    pass
 
 
 class ProgrammingError(DatabaseError):
