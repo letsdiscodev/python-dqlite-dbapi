@@ -182,6 +182,8 @@ class _DBAPIType:
         self._name = _name
 
     def __eq__(self, other: object) -> bool:
+        if isinstance(other, _DBAPIType):
+            return self.values == other.values
         if isinstance(other, str):
             return other.upper() in self.values
         if isinstance(other, ValueType):
@@ -191,6 +193,26 @@ class _DBAPIType:
         return NotImplemented
 
     def __hash__(self) -> int:
+        # Hash to the canonical (smallest) ValueType integer in our
+        # ``values`` so that the PEP 249 ``description[i][1]`` pattern
+        # works inside ``set`` / ``dict`` membership when the canonical
+        # wire type is used as the lookup key:
+        #
+        #     {STRING: convert_text, NUMBER: convert_num}[desc[i][1]]
+        #
+        # The hash-eq invariant is NOT fully satisfiable for types
+        # like ``NUMBER`` that wrap multiple wire ``ValueType`` codes
+        # (INTEGER=1, FLOAT=2, BOOLEAN=11): ``NUMBER == 1`` and
+        # ``NUMBER == 11`` both return True, but the hash can only
+        # match one. We pick the smallest int as a deterministic
+        # canonical representative. ``NUMBER in {FLOAT_CODE}`` still
+        # returns False despite ``NUMBER == FLOAT_CODE`` being True;
+        # that is a documented limitation — the PEP 249 type objects
+        # are designed for equality comparison, not for use as
+        # second-class keys in hash containers.
+        ints = sorted(v for v in self.values if isinstance(v, int) and not isinstance(v, bool))
+        if ints:
+            return hash(ints[0])
         return hash(frozenset(self.values))
 
     def __repr__(self) -> str:
