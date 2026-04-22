@@ -123,6 +123,21 @@ class AsyncCursor:
         if self._closed:
             raise InterfaceError("Cursor is closed")
 
+    def _reset_execute_state(self) -> None:
+        """Clear per-execute state to the "no result set" baseline.
+
+        Mirrors the sync ``Cursor._reset_execute_state`` — see that
+        docstring. These are synchronous attribute writes on one
+        cursor instance; they deliberately happen OUTSIDE ``op_lock``
+        because the lock exists to serialise access to the underlying
+        wire connection, not to the cursor's in-memory fields.
+        ``_lastrowid`` is connection-scoped and MUST NOT be cleared.
+        """
+        self._description = None
+        self._rows = []
+        self._row_index = 0
+        self._rowcount = -1
+
     async def execute(
         self, operation: str, parameters: Sequence[Any] | None = None
     ) -> "AsyncCursor":
@@ -136,6 +151,12 @@ class AsyncCursor:
         # Fast-path guard outside the lock so we fail quickly on an
         # already-closed cursor without taking the lock.
         self._check_closed()
+        # Clear state after the closed guard and before taking the
+        # lock: matches stdlib sqlite3 semantics so a mid-execute
+        # failure (including CancelledError) leaves the cursor in the
+        # "no result set" baseline rather than reporting the prior
+        # query's description.
+        self._reset_execute_state()
 
         is_query = _is_row_returning(operation)
         params = _convert_params(parameters)

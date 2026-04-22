@@ -390,6 +390,21 @@ class Cursor:
         if self._closed:
             raise InterfaceError("Cursor is closed")
 
+    def _reset_execute_state(self) -> None:
+        """Clear per-execute state to the "no result set" baseline.
+
+        Matches stdlib ``sqlite3.Cursor.execute``, which resets
+        ``description`` to ``None`` *before* preparing the statement so
+        that a mid-execute failure cannot leave the cursor reporting
+        the prior query's result shape. ``_lastrowid`` is
+        connection-scoped per SQLite semantics (see the ``lastrowid``
+        property docstring) and MUST NOT be cleared here.
+        """
+        self._description = None
+        self._rows = []
+        self._row_index = 0
+        self._rowcount = -1
+
     def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> "Cursor":
         """Execute a database operation (query or command).
 
@@ -398,6 +413,13 @@ class Cursor:
         del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
+        # Clear after the guards but before the wire call so a caller
+        # who executes on a closed cursor still sees the sharp
+        # ``InterfaceError("Cursor is closed")`` without a state-clobber
+        # side effect; a caller whose call raises mid-execute sees a
+        # cursor in the "no result set" baseline, not one reporting the
+        # previous query's description / rows.
+        self._reset_execute_state()
 
         self._connection._run_sync(self._execute_async(operation, parameters))
         return self
