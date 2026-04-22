@@ -83,3 +83,44 @@ class TestRunSyncTimeout:
             "Bounded cancel-wait should DEBUG-log unexpected errors so "
             "programmer bugs in cleanup paths are observable, not silent."
         )
+
+    def test_run_sync_preserves_coroutine_return_type(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pin the TypeVar narrowing: ``_run_sync(coro)`` must declare
+        the same return type as ``coro`` so type-checkers can verify
+        downstream uses of the result. A regression widening the
+        signature back to ``Any`` silently erases this guarantee and
+        would not fail a runtime test, so ``typing.assert_type`` (a
+        no-op at runtime, evaluated at type-check time) documents the
+        contract. Mirrors the sibling pin on ``_call_client``.
+        """
+        from typing import assert_type
+
+        from dqlitedbapi import connection as conn_module
+
+        conn = Connection("localhost:9001", timeout=5.0)
+
+        class _ReadyFuture:
+            def cancel(self) -> bool:
+                return True
+
+            def result(self, timeout: float | None = None) -> int:
+                return 7
+
+        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _ReadyFuture:  # type: ignore[no-untyped-def]
+            coro.close()
+            return _ReadyFuture()
+
+        monkeypatch.setattr(
+            conn_module.asyncio,
+            "run_coroutine_threadsafe",
+            _fake_run_coroutine_threadsafe,
+        )
+
+        async def returns_int() -> int:
+            return 7
+
+        result = conn._run_sync(returns_int())
+        assert_type(result, int)
+        assert result == 7

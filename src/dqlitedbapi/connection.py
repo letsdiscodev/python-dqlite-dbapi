@@ -8,6 +8,7 @@ import math
 import threading
 import warnings
 import weakref
+from collections.abc import Coroutine
 from types import TracebackType
 from typing import Any
 
@@ -287,13 +288,16 @@ class Connection:
                 )
         return self._loop
 
-    def _run_sync(self, coro: Any) -> Any:
+    def _run_sync[T](self, coro: Coroutine[Any, Any, T]) -> T:
         """Run an async coroutine from sync code.
 
         Submits the coroutine to the dedicated background event loop
         and blocks until the result is available. The operation lock
         ensures only one operation runs at a time, preventing wire
-        protocol corruption from concurrent access.
+        protocol corruption from concurrent access. The coroutine's
+        return type ``T`` is preserved so callers retain inferred
+        result types (mirrors the sibling generic in
+        ``DqliteConnection._run_protocol``).
 
         On sync-side timeout we cancel the future AND invalidate the
         underlying connection. The coroutine may have already written
