@@ -122,14 +122,29 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # detection reaches the original via ``__cause__`` (set by the
         # ``from e``), so no information is lost.
         raise OperationalError(str(e), code=None) from e
+    except _client_exc.ClusterPolicyError as e:
+        # Deterministic: configured policy rejected the leader. The
+        # client layer explicitly excludes this from retry (see
+        # ``cluster.connect`` ``excluded_exceptions``). Mapping to
+        # ``OperationalError`` would let SA's ``is_disconnect`` match
+        # on "Failed to connect" and spin the pool in a retry loop
+        # against a permanent config error. ``ProgrammingError`` is
+        # PEP 249's category for caller-side configuration mistakes.
+        raise ProgrammingError(f"Cluster policy rejected leader: {e}") from e
     except _client_exc.ClusterError as e:
-        # ClusterError carries no SQLite code today — pass code=None
-        # explicitly to match the sibling OperationalError and
-        # DqliteConnectionError handlers above. Downstream disconnect
-        # detection reaches the original via ``__cause__``.
+        # Non-policy ClusterError — transient, code=None.
         raise OperationalError(str(e), code=None) from e
     except _client_exc.ProtocolError as e:
-        raise InterfaceError(str(e)) from e
+        # Wire decode / stream error — the socket is desynced, even if
+        # TCP is alive. PEP 249 ``OperationalError`` ("problems with
+        # the database's operation, e.g. connection lost") fits the
+        # semantic better than ``InterfaceError`` ("driver misuse"),
+        # and — paired with ``"Wire decode failed"`` /
+        # ``"Wire stream error"`` in the SA dialect's
+        # ``_dqlite_disconnect_messages`` list — routes the failure
+        # through the disconnect-classifier's substring branch so the
+        # pool slot invalidates on the first round-trip.
+        raise OperationalError(str(e), code=None) from e
     except _client_exc.DataError as e:
         # client.DataError carries no server code today (encode-side
         # error surface), but plumb code=None explicitly so the

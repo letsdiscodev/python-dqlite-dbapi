@@ -95,6 +95,13 @@ async def _build_and_connect(
         # (SQLITE_IOERR_NOT_LEADER / _LEADERSHIP_LOST) on the connect
         # path via the code-based branch, matching the query path.
         raise OperationalError(f"Failed to connect: {e.message}", code=e.code) from e
+    except _client_exc.ClusterPolicyError as e:
+        # Deterministic configuration mismatch. Route through
+        # ProgrammingError so SA's is_disconnect classifier does NOT
+        # match (substring list targets OperationalError only) and
+        # the pool does not enter a retry loop against a permanent
+        # policy rejection.
+        raise ProgrammingError(f"Cluster policy rejected leader: {e}") from e
     except Exception as e:
         raise OperationalError(f"Failed to connect: {e}") from e
     return conn

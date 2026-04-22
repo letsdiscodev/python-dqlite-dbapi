@@ -49,9 +49,13 @@ class TestExceptionWrapping:
         with pytest.raises(dbapi_exc.OperationalError, match="no route"):
             c.execute("SELECT 1")
 
-    def test_client_protocol_error_becomes_interface_error(self) -> None:
+    def test_client_protocol_error_becomes_operational_error(self) -> None:
+        # Wire desync (ProtocolError / DecodeError / StreamError) maps
+        # to PEP 249 OperationalError so SA's is_disconnect classifier
+        # routes it via the substring branch and invalidates the pool
+        # slot on the first round-trip.
         c = _cursor_with_async_conn_raising(client_exc.ProtocolError("bad frame"))
-        with pytest.raises(dbapi_exc.InterfaceError, match="bad frame"):
+        with pytest.raises(dbapi_exc.OperationalError, match="bad frame"):
             c.execute("SELECT 1")
 
     def test_client_data_error_becomes_data_error(self) -> None:

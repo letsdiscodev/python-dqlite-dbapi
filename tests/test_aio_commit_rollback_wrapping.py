@@ -47,7 +47,7 @@ _WRAPPING_CASES = [
     ),
     pytest.param(
         _client_exc.ProtocolError("bad frame"),
-        _dbapi_exc.InterfaceError,
+        _dbapi_exc.OperationalError,
         id="protocol-error",
     ),
     pytest.param(
