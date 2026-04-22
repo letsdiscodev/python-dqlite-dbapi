@@ -1,4 +1,8 @@
-"""dbapi OperationalError / IntegrityError must surface ``.code`` via repr.
+"""dbapi coded-error classes must surface ``.code`` via repr.
+
+Covers ``OperationalError``, ``IntegrityError``, and ``InternalError``
+— the three dbapi classes that accept an optional SQLite extended
+error ``code`` kwarg.
 
 Sentry, Rollbar, and ``logger.error("%r", exc)`` call ``repr(exc)``,
 which drops any attribute not in ``args``. The ``code`` kwarg is
@@ -9,7 +13,7 @@ reaching into ``.code`` manually.
 
 from __future__ import annotations
 
-from dqlitedbapi.exceptions import IntegrityError, OperationalError
+from dqlitedbapi.exceptions import IntegrityError, InternalError, OperationalError
 
 
 def test_operational_error_repr_includes_code() -> None:
@@ -32,9 +36,20 @@ def test_integrity_error_repr_without_code() -> None:
     assert repr(exc) == "IntegrityError('constraint')"
 
 
+def test_internal_error_repr_includes_code() -> None:
+    exc = InternalError("sqlite internal", code=2)
+    assert repr(exc) == "InternalError('sqlite internal', code=2)"
+
+
+def test_internal_error_repr_without_code() -> None:
+    exc = InternalError("plain")
+    assert repr(exc) == "InternalError('plain')"
+
+
 def test_str_unchanged() -> None:
     """str(exc) continues to return only the message, preserving
     downstream assertions that match on the string form.
     """
     assert str(OperationalError("plain", code=5)) == "plain"
     assert str(IntegrityError("x", code=2067)) == "x"
+    assert str(InternalError("y", code=2)) == "y"
