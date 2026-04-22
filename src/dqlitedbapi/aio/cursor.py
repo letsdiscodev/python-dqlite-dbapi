@@ -324,14 +324,21 @@ class AsyncCursor:
         self._closed = True
         self._rows = []
         self._description = None
+        # Scrub the remaining state fields so every post-close reader
+        # sees a consistent "no operation performed" surface. Symmetric
+        # with ``Cursor.close()``.
+        self._rowcount = -1
+        self._lastrowid = None
 
     def setinputsizes(self, sizes: Sequence[int | None]) -> None:
         """Set input sizes (no-op for dqlite)."""
-        pass
+        # PEP 249 §6.1.2 — closed-cursor operations raise.
+        self._check_closed()
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite)."""
-        pass
+        # PEP 249 §6.1.2 — closed-cursor operations raise.
+        self._check_closed()
 
     def callproc(
         self, procname: str, parameters: Sequence[Any] | None = None
@@ -344,10 +351,14 @@ class AsyncCursor:
         and from the SQLAlchemy adapter (``sqlalchemy-dqlite``), which
         both expose these as plain methods.
         """
+        # PEP 249 §6.1.2 — closed-cursor ops raise.
+        self._check_closed()
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> bool | None:
         """PEP 249 optional extension — not supported."""
+        # PEP 249 §6.1.2 — closed-cursor ops raise.
+        self._check_closed()
         # PEP 249 §6.1.1 names ``nextset`` among the cursor methods
         # that clear ``Connection.messages``; clear before raising so
         # the contract holds even on the not-supported path.
@@ -359,6 +370,8 @@ class AsyncCursor:
 
     def scroll(self, value: int, mode: str = "relative") -> None:
         """PEP 249 optional extension — not supported."""
+        # PEP 249 §6.1.2 — closed-cursor ops raise.
+        self._check_closed()
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def __repr__(self) -> str:
