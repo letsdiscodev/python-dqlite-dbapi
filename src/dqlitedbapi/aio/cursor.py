@@ -34,7 +34,7 @@ class AsyncCursor:
         self._closed = False
         self._lastrowid: int | None = None
         # PEP 249 optional extension; see Cursor.messages.
-        self.messages: list[tuple[type, Any]] = []
+        self.messages: list[tuple[type[Exception], Exception | str]] = []
 
     @property
     def connection(self) -> "AsyncConnection":

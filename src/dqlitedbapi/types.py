@@ -37,12 +37,12 @@ _Description = list[_DescriptionTuple] | None
 
 
 # Type constructors
-def Date(year: int, month: int, day: int) -> datetime.date:  # noqa: N802
+def Date(year: int, month: int, day: int) -> datetime.date:
     """Construct a date value."""
     return datetime.date(year, month, day)
 
 
-def Time(  # noqa: N802
+def Time(
     hour: int,
     minute: int,
     second: int,
@@ -59,7 +59,7 @@ def Time(  # noqa: N802
     return datetime.time(hour, minute, second, microsecond, tzinfo=tzinfo)
 
 
-def Timestamp(  # noqa: N802
+def Timestamp(
     year: int,
     month: int,
     day: int,
@@ -85,7 +85,7 @@ def _validate_ticks(ticks: float) -> None:
         raise DataError(f"Invalid timestamp ticks: {ticks}")
 
 
-def DateFromTicks(ticks: float) -> datetime.date:  # noqa: N802
+def DateFromTicks(ticks: float) -> datetime.date:
     """Construct a date from a Unix timestamp.
 
     Returns a naive date interpreted as the host's **local** time zone,
@@ -106,7 +106,7 @@ def DateFromTicks(ticks: float) -> datetime.date:  # noqa: N802
         raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
 
-def TimeFromTicks(ticks: float) -> datetime.time:  # noqa: N802
+def TimeFromTicks(ticks: float) -> datetime.time:
     """Construct a time from a Unix timestamp.
 
     Returns a naive time interpreted as the host's **local** time zone,
@@ -125,7 +125,7 @@ def TimeFromTicks(ticks: float) -> datetime.time:  # noqa: N802
         raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
 
-def TimestampFromTicks(ticks: float) -> datetime.datetime:  # noqa: N802
+def TimestampFromTicks(ticks: float) -> datetime.datetime:
     """Construct a timestamp from a Unix timestamp.
 
     Returns a naive datetime interpreted as the host's **local** time

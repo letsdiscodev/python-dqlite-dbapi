@@ -3,10 +3,8 @@
 import asyncio
 import contextlib
 import logging
-import math
 import weakref
 from types import TracebackType
-from typing import Any
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
@@ -17,6 +15,7 @@ from dqlitedbapi.connection import (
     _build_and_connect,
     _is_no_transaction_error,
     _validate_close_timeout,
+    _validate_timeout,
 )
 from dqlitedbapi.cursor import _call_client
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
@@ -81,8 +80,7 @@ class AsyncConnection:
                 during ``close()``. Forwarded to the underlying
                 DqliteConnection. Default 0.5 s is sized for LAN.
         """
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+        _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
         self._address = address
         self._database = database
@@ -110,7 +108,7 @@ class AsyncConnection:
         # alive once the caller has moved on.
         self._loop_ref: weakref.ref[asyncio.AbstractEventLoop] | None = None
         # PEP 249 optional extension; see Connection.messages.
-        self.messages: list[tuple[type, Any]] = []
+        self.messages: list[tuple[type[Exception], Exception | str]] = []
 
     def _ensure_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
         """Lazy-create the asyncio locks on the currently-running loop.
@@ -310,7 +308,7 @@ class AsyncConnection:
         else:
             try:
                 await self.rollback()
-            except Exception:  # noqa: BLE001 — body's exception wins
+            except Exception:
                 # The body already raised; we cannot re-raise, but a
                 # silent suppress leaves no breadcrumb for an operator
                 # debugging a dangling server-side transaction

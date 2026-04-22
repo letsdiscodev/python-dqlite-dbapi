@@ -224,8 +224,7 @@ class Connection:
                 sized for LAN; callers with higher-latency links or
                 strict shutdown SLAs can override.
         """
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+        _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
         self._address = address
         self._database = database
@@ -246,7 +245,7 @@ class Connection:
         self._creator_thread = threading.get_ident()
         # PEP 249 optional extension. No driver path currently appends
         # here; callers can rely on the attribute existing.
-        self.messages: list[tuple[type, Any]] = []
+        self.messages: list[tuple[type[Exception], Exception | str]] = []
         # 1-element list (mutable, captured by the finalizer) that
         # close() flips to True. Using a list avoids the finalizer
         # closing over ``self`` and preventing GC.

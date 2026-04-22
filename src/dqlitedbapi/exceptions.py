@@ -14,7 +14,7 @@ __all__ = [
 ]
 
 
-class Warning(Exception):  # noqa: A001
+class Warning(Exception):
     """Exception raised for important warnings."""
 
     pass

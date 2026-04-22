@@ -341,7 +341,7 @@ class Cursor:
         # PEP 249 optional extension. Currently no driver path appends
         # to this list; it's here so consumers can rely on the
         # attribute existing and being mutable.
-        self.messages: list[tuple[type, Any]] = []
+        self.messages: list[tuple[type[Exception], Exception | str]] = []
 
     @property
     def connection(self) -> "Connection":
