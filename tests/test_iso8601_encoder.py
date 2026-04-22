@@ -179,6 +179,88 @@ class TestIso8601FromTime:
         assert decoded.utcoffset() == original.utcoffset()
 
 
+class _AbstractTz(datetime.tzinfo):
+    """tzinfo that carries a name but declines to produce an offset.
+
+    Python's stdlib contract explicitly allows ``utcoffset()`` to return
+    ``None`` — real-world tzinfo subclasses sometimes do so during
+    initialisation before their zone tables are loaded, or when the
+    tzinfo is "abstract" by design. Both ``_iso8601_from_datetime`` and
+    ``_iso8601_from_time`` carry a ``if offset is None: return base``
+    early-return to handle that case; these tests pin the fallback-to-
+    naive-format contract so a future cleanup cannot silently
+    reinstate an ``assert offset is not None`` (see done/ISSUE-108 for
+    the paired dead-assert removal).
+    """
+
+    def utcoffset(self, dt: datetime.datetime | None) -> datetime.timedelta | None:
+        return None
+
+    def dst(self, dt: datetime.datetime | None) -> datetime.timedelta | None:
+        return None
+
+    def tzname(self, dt: datetime.datetime | None) -> str:
+        return "ABSTRACT"
+
+
+class TestIso8601EncoderBrokenTzinfo:
+    """Pin the ``utcoffset() is None`` fallback branch on both encoders.
+
+    Sibling coverage: naive / aware-with-positive-offset / aware-with-
+    negative-offset / aware-with-sub-minute-offset / microseconds are
+    all already pinned above. The missing case is an aware value whose
+    tzinfo declines to produce an offset — the encoder must degrade to
+    the naive format, not crash.
+    """
+
+    def test_datetime_broken_tzinfo_returns_naive_format(self) -> None:
+        value = datetime.datetime(2024, 5, 1, 12, 30, 45, tzinfo=_AbstractTz())
+        assert _iso8601_from_datetime(value) == "2024-05-01 12:30:45"
+
+    def test_datetime_broken_tzinfo_preserves_microseconds(self) -> None:
+        # Pins the ordering of the microsecond append and the
+        # offset-fallback branch. A regression that swapped the two
+        # would fail here but not in the bare-naive test above.
+        value = datetime.datetime(2024, 5, 1, 12, 30, 45, 123456, tzinfo=_AbstractTz())
+        assert _iso8601_from_datetime(value) == "2024-05-01 12:30:45.123456"
+
+    def test_datetime_broken_tzinfo_round_trips_as_naive(self) -> None:
+        # Ties the "abstract tzinfo degrades to naive" encoder contract
+        # to the decode side: feed the encoded text back through the
+        # decoder and confirm the result has no tzinfo. A future
+        # regression that emitted "+00:00" for broken tzinfo would
+        # decode back to an aware UTC datetime and fail this pin.
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        original = datetime.datetime(2024, 5, 1, 12, 30, 45, 123456, tzinfo=_AbstractTz())
+        encoded = _iso8601_from_datetime(original)
+        decoded = _datetime_from_iso8601(encoded)
+        assert decoded is not None
+        assert decoded.tzinfo is None
+        assert decoded == datetime.datetime(2024, 5, 1, 12, 30, 45, 123456)
+
+    def test_time_broken_tzinfo_returns_naive_format(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        value = datetime.time(12, 30, 45, tzinfo=_AbstractTz())
+        assert _iso8601_from_time(value) == "12:30:45"
+
+    def test_time_broken_tzinfo_preserves_microseconds(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        value = datetime.time(12, 30, 45, 123456, tzinfo=_AbstractTz())
+        assert _iso8601_from_time(value) == "12:30:45.123456"
+
+    def test_time_broken_tzinfo_round_trips_through_fromisoformat(self) -> None:
+        from dqlitedbapi.types import _iso8601_from_time
+
+        original = datetime.time(12, 30, 45, 123456, tzinfo=_AbstractTz())
+        encoded = _iso8601_from_time(original)
+        decoded = datetime.time.fromisoformat(encoded)
+        assert decoded.tzinfo is None
+        assert decoded == datetime.time(12, 30, 45, 123456)
+
+
 class TestConvertBindParamTime:
     """``_convert_bind_param`` routes ``datetime.time`` to the new
     ISO 8601 encoder (symmetric with the existing datetime/date
