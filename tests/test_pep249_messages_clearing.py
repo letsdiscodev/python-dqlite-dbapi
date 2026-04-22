@@ -27,6 +27,9 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 def _build_cursor() -> Cursor:
     conn = MagicMock(spec=Connection)
     conn._check_thread = MagicMock()
+    # Attach ``messages`` explicitly; ``spec=Connection`` doesn't pick
+    # up the instance attribute set in ``__init__``.
+    conn.messages = []
     # Swallow the coroutine argument without scheduling it — the test
     # only cares about the clearing side-effect, not the underlying
     # execute.
@@ -88,6 +91,7 @@ def test_cursor_fetchall_clears_messages() -> None:
 def _build_async_cursor() -> AsyncCursor:
     conn = MagicMock(spec=AsyncConnection)
     conn._ensure_locks = MagicMock(return_value=(MagicMock(), MagicMock()))
+    conn.messages = []
     cursor = AsyncCursor.__new__(AsyncCursor)
     cursor._connection = conn
     cursor._description = [("col", 3, None, None, None, None, None)]

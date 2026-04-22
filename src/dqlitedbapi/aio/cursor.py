@@ -252,6 +252,11 @@ class AsyncCursor:
         del self.messages[:]
         self._check_closed()
         self._check_result_set()
+        # PEP 249 §6.1.1 — Connection.messages is cleared by the
+        # cursor fetch methods. Defensive against test mocks.
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
 
         if self._row_index >= len(self._rows):
             return None
@@ -269,6 +274,11 @@ class AsyncCursor:
         del self.messages[:]
         self._check_closed()
         self._check_result_set()
+        # PEP 249 §6.1.1 — Connection.messages is cleared by the
+        # cursor fetch methods. Defensive against test mocks.
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
 
         if size is None:
             size = self._arraysize
@@ -294,6 +304,11 @@ class AsyncCursor:
         del self.messages[:]
         self._check_closed()
         self._check_result_set()
+        # PEP 249 §6.1.1 — Connection.messages is cleared by the
+        # cursor fetch methods. Defensive against test mocks.
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
 
         result = self._rows[self._row_index :]
         self._row_index = len(self._rows)
@@ -333,6 +348,13 @@ class AsyncCursor:
 
     def nextset(self) -> bool | None:
         """PEP 249 optional extension — not supported."""
+        # PEP 249 §6.1.1 names ``nextset`` among the cursor methods
+        # that clear ``Connection.messages``; clear before raising so
+        # the contract holds even on the not-supported path.
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
         raise NotSupportedError("dqlite does not support multiple result sets")
 
     def scroll(self, value: int, mode: str = "relative") -> None:
