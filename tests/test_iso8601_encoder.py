@@ -215,3 +215,70 @@ class TestConvertBindParamTime:
         assert _convert_bind_param("hello") == "hello"
         assert _convert_bind_param(b"bytes") == b"bytes"
         assert _convert_bind_param(None) is None
+
+
+class TestIso8601DecoderTrailingZ:
+    """Pin the decoder's trailing-Z handling. Python 3.11+ accepts a
+    bare ``Z`` natively in ``datetime.fromisoformat``; the decoder
+    previously substituted ``"Z"`` → ``"+00:00"`` unconditionally,
+    which mangled malformed inputs like ``"junkZ"`` → ``"junk+00:00"``
+    before reaching ``fromisoformat`` and obscured operator
+    diagnostics. The substitution is now removed; these tests pin
+    that the decoder still handles well-formed Z suffixes correctly
+    AND that malformed inputs surface in the ``DataError`` message
+    verbatim (no pre-substitution mangling).
+    """
+
+    def test_well_formed_z_suffix_decodes_to_utc(self) -> None:
+        import pytest
+
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        # The well-formed cases must still produce a UTC-aware datetime.
+        for text in (
+            "2024-01-02T03:04:05Z",
+            "2024-01-02T03:04:05.123Z",
+            "2024-01-02 03:04:05Z",
+        ):
+            out = _datetime_from_iso8601(text)
+            assert out is not None, text
+            assert out.tzinfo is not None, text
+            offset = out.utcoffset()
+            assert offset is not None and offset.total_seconds() == 0, text
+
+        del pytest
+
+    def test_malformed_z_input_dataerror_echoes_original_text(self) -> None:
+        """The DataError message must contain the original wire text
+        verbatim — not a post-substitution intermediate. An operator
+        debugging "all UNIXTIME from server X is bad" needs to see
+        what the server actually sent.
+        """
+        import pytest
+
+        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        for wire_text in (
+            "Z",
+            "junkZ",
+            "  Z",
+            "2024-01-02XYZ",
+        ):
+            with pytest.raises(DataError) as ei:
+                _datetime_from_iso8601(wire_text)
+            assert wire_text in str(ei.value), (
+                f"DataError message must echo original wire text {wire_text!r}; got {ei.value!s}"
+            )
+
+    def test_lowercase_z_is_rejected(self) -> None:
+        """``fromisoformat`` rejects lowercase ``z``. Pin this so any
+        future Python-version drift surfaces visibly.
+        """
+        import pytest
+
+        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        with pytest.raises(DataError):
+            _datetime_from_iso8601("2024-01-02T03:04:05z")

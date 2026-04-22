@@ -308,6 +308,8 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
     PEP 249 NULL semantics.
 
     Naive input round-trips as naive; aware input preserves the offset.
+    Python 3.11+ ``datetime.fromisoformat`` accepts a trailing ``Z``
+    natively; no pre-substitution is needed.
 
     **``date`` widens to ``datetime`` on round-trip.** A ``datetime.date``
     passed to PEP 249 ``Date()`` serializes via ``isoformat()`` as
@@ -326,13 +328,12 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
     """
     if not text:
         return None
-    s = text[:-1] + "+00:00" if text.endswith("Z") else text
     try:
-        return datetime.datetime.fromisoformat(s)
+        return datetime.datetime.fromisoformat(text)
     except ValueError:
         pass
     try:
-        d = datetime.date.fromisoformat(s)
+        d = datetime.date.fromisoformat(text)
     except ValueError as exc:
         raise DataError(f"Cannot parse ISO 8601 datetime from server: {text!r}") from exc
     return datetime.datetime(d.year, d.month, d.day)
