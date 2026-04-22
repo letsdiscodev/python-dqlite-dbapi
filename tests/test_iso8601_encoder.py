@@ -9,6 +9,8 @@ surfaces quickly.
 
 import datetime
 
+import pytest
+
 from dqlitedbapi.types import _iso8601_from_datetime
 
 
@@ -282,3 +284,77 @@ class TestIso8601DecoderTrailingZ:
 
         with pytest.raises(DataError):
             _datetime_from_iso8601("2024-01-02T03:04:05z")
+
+
+class TestIso8601YearBoundaryRoundTrip:
+    """Pin ISO 8601 round-trip at Python's ``MINYEAR`` (1) and
+    ``MAXYEAR`` (9999).
+
+    The datetime branch of the encoder builds the year prefix
+    explicitly (``f"{value.year:04d}"``); the date branch delegates to
+    ``value.isoformat()`` and inherits CPython's documented zero-pad.
+    A future "simplify" pass on either branch could silently break
+    cluster-shared cells written by a Go/C peer at the year
+    boundaries (Go's ``time.RFC3339Nano`` zero-pads unconditionally).
+
+    Also pins decoder rejection at year > 9999 — Go has no MAXYEAR
+    cap, so a peer could deliver a value outside Python's range; the
+    decoder must wrap the resulting ``ValueError`` as ``DataError``
+    with the original wire text.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            datetime.datetime(datetime.MINYEAR, 1, 1, 0, 0, 0),
+            datetime.datetime(datetime.MINYEAR, 1, 1, 0, 0, 0, tzinfo=datetime.UTC),
+            datetime.datetime(datetime.MAXYEAR, 12, 31, 23, 59, 59, 999999),
+            datetime.datetime(datetime.MAXYEAR, 12, 31, 23, 59, 59, 999999, tzinfo=datetime.UTC),
+            datetime.date(datetime.MINYEAR, 1, 1),
+            datetime.date(datetime.MAXYEAR, 12, 31),
+        ],
+    )
+    def test_year_boundary_round_trip(self, value: datetime.datetime | datetime.date) -> None:
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        encoded = _iso8601_from_datetime(value)
+        decoded = _datetime_from_iso8601(encoded)
+        # ``_datetime_from_iso8601`` widens ``date`` to ``datetime``
+        # on round-trip (documented behaviour matching pysqlite).
+        if isinstance(value, datetime.datetime):
+            assert decoded == value, (
+                f"year-boundary round-trip lost: original={value!r}, "
+                f"encoded={encoded!r}, decoded={decoded!r}"
+            )
+        else:
+            assert decoded == datetime.datetime(value.year, value.month, value.day), (
+                f"date-branch year-boundary round-trip lost: original={value!r}, "
+                f"encoded={encoded!r}, decoded={decoded!r}"
+            )
+
+    def test_date_branch_year_zero_padded_to_four_digits(self) -> None:
+        """The date branch delegates to ``value.isoformat()`` so the
+        zero-pad guarantee is inherited from CPython. A regression
+        that produces ``"1-01-01"`` would round-trip locally only
+        until a Go/C peer fails to parse it.
+        """
+        encoded = _iso8601_from_datetime(datetime.date(1, 1, 1))
+        assert encoded == "0001-01-01", (
+            f"date branch must zero-pad year to 4 digits even at year=1; got {encoded!r}"
+        )
+
+    def test_decoder_rejects_year_above_python_maxyear(self) -> None:
+        """Go has no MAXYEAR cap; a non-Python cluster peer could
+        deliver a year > 9999. The decoder must wrap the resulting
+        ``ValueError`` as ``DataError`` with the original wire text.
+        """
+        import pytest
+
+        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        with pytest.raises(DataError) as ei:
+            _datetime_from_iso8601("10000-01-01T00:00:00")
+        assert "10000-01-01T00:00:00" in str(ei.value), (
+            f"DataError must echo original wire text; got {ei.value!s}"
+        )
