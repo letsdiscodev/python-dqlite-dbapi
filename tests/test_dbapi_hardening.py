@@ -344,10 +344,71 @@ class TestIsRowReturning:
             "DELETE FROM t",
             "CREATE TABLE t (x INT)",
             "VACUUM",
+            # Comment-only / malformed-comment input must not be
+            # classified as row-returning — the helper either strips
+            # to an empty string (single-line comment with no newline)
+            # or leaves the input unchanged (unterminated block
+            # comment), neither of which matches a row-returning
+            # prefix.
+            "-- just a comment to end of file",
+            "/* unterminated block with SELECT inside",
+            "/* header */-- trailing single-line only",
         ],
     )
     def test_detects_non_row_returning(self, sql: str) -> None:
         assert not _is_row_returning(sql)
+
+
+class TestStripLeadingComments:
+    """Pin the pure-function helper that feeds ``_is_row_returning``.
+
+    The two edge-case return paths — single-line ``--`` comment with
+    no trailing newline (returns ``""``) and unterminated ``/* …``
+    block (returns the input unchanged) — are only indirectly covered
+    through ``_is_row_returning`` today. Pinning them at the helper
+    level prevents a future regex-based rewrite from silently
+    changing the contract without an integration run that exercises
+    malformed SQL.
+    """
+
+    # Private helper pinned directly because ``_is_row_returning`` only
+    # exercises the terminated-comment branches.
+    @pytest.mark.parametrize(
+        ("sql", "expected"),
+        [
+            # Pass-through regression anchors.
+            ("SELECT 1", "SELECT 1"),
+            ("  SELECT 1  ", "SELECT 1"),
+            # Terminated single-line and block comments.
+            ("-- header\nSELECT 1", "SELECT 1"),
+            ("/* header */SELECT 1", "SELECT 1"),
+            ("   \n  -- c\n  SELECT 1", "SELECT 1"),
+            # Mixed: terminated SL then block, stripped down to SELECT.
+            ("-- a\n/* b */SELECT 1", "SELECT 1"),
+            # Edge 1: single-line comment with no trailing newline.
+            # Helper returns "" (empty string).
+            ("-- just a comment", ""),
+            ("  -- leading ws and trailing comment only", ""),
+            # Edge 2: unterminated block comment — returns unchanged
+            # string (the SELECT token inside is part of the block, not
+            # a statement the helper can surface).
+            ("/* oops no close", "/* oops no close"),
+            ("  /* also unterminated with leading ws", "/* also unterminated with leading ws"),
+            (
+                "/* unterminated with SELECT inside",
+                "/* unterminated with SELECT inside",
+            ),
+            # Edge 3: mixed — terminated SL then unterminated block.
+            ("-- ok\n/* then unterminated", "/* then unterminated"),
+            # Edge 4: mixed — terminated block then trailing SL
+            # comment to EOF. The SL branch returns "".
+            ("/* header */-- trailing only", ""),
+        ],
+    )
+    def test_strip_leading_comments(self, sql: str, expected: str) -> None:
+        from dqlitedbapi.cursor import _strip_leading_comments
+
+        assert _strip_leading_comments(sql) == expected
 
 
 class TestOperationalErrorCode:
