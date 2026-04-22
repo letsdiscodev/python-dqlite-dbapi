@@ -185,5 +185,18 @@ async def aconnect(
         trust_server_heartbeat=trust_server_heartbeat,
         close_timeout=close_timeout,
     )
-    await conn.connect()
+    try:
+        await conn.connect()
+    except BaseException:
+        # Clean up a partially-constructed AsyncConnection so loop-
+        # bound locks, transport, and the reader task don't leak. The
+        # SA dialect (DqliteDialect_aio.connect) uses the same
+        # pattern. Catch BaseException to cover CancelledError from
+        # an outer asyncio.timeout; suppress only Exception during
+        # the close so the original cancel / error propagates.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            await conn.close()
+        raise
     return conn
