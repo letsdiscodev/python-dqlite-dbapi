@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import dqliteclient.exceptions as _client_exc
 from dqlitedbapi.exceptions import (
@@ -257,6 +257,23 @@ def _strip_leading_comments(sql: str) -> str:
 _ROW_RETURNING_PREFIXES = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
 
 
+class _ExecuteManyCursor(Protocol):
+    """Structural shape of :class:`Cursor` / :class:`AsyncCursor` as
+    consumed by :class:`_ExecuteManyAccumulator`.
+
+    The two cursor classes are not related by inheritance (separate
+    sync / async trees) and a true Union would require a circular
+    import. PEP 544 structural typing captures the four attributes the
+    accumulator actually reads + writes, so mypy catches typos that
+    were previously hidden under ``cursor: Any``.
+    """
+
+    _rowcount: int
+    _description: _Description
+    _rows: list[tuple[Any, ...]]
+    _row_index: int
+
+
 class _ExecuteManyAccumulator:
     """Shared state for the RETURNING-aware ``executemany`` loop.
 
@@ -276,13 +293,8 @@ class _ExecuteManyAccumulator:
         self.rows: list[tuple[Any, ...]] = []
         self.description: _Description = None
 
-    def push(self, cursor: Any) -> None:
-        """Record one iteration's output into the accumulator.
-
-        Accepts either :class:`Cursor` or :class:`AsyncCursor`; both
-        expose the same ``_rowcount`` / ``_description`` / ``_rows``
-        attributes.
-        """
+    def push(self, cursor: _ExecuteManyCursor) -> None:
+        """Record one iteration's output into the accumulator."""
         if cursor._rowcount >= 0:
             self.total_affected += cursor._rowcount
         if cursor._description is not None:
@@ -290,7 +302,7 @@ class _ExecuteManyAccumulator:
                 self.description = cursor._description
             self.rows.extend(cursor._rows)
 
-    def apply(self, cursor: Any) -> None:
+    def apply(self, cursor: _ExecuteManyCursor) -> None:
         """Materialise the accumulator's state onto the cursor.
 
         ``description is None`` means none of the iterations produced a

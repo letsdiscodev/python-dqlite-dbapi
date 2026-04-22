@@ -31,7 +31,13 @@ from dqlitedbapi.types import (
     TimestampFromTicks,
 )
 
-# PEP 249 module-level attributes (required by SQLAlchemy dialect initialization)
+# SQLAlchemy dialect discovery reads ``dbapi.apilevel`` to confirm a
+# PEP 249 shape; we expose the string for that handshake only. The
+# module does NOT implement PEP 249 — cursor methods return
+# coroutines. Cross-driver code that wants a synchronous PEP 249
+# surface must import ``dqlitedbapi`` (the sync sibling), not
+# ``dqlitedbapi.aio``. ``aiosqlite`` and ``asyncpg`` deliberately do
+# not set ``apilevel`` for the same reason.
 apilevel = "2.0"
 # PEP 249 value 1: threads may share the module.
 #

@@ -266,8 +266,28 @@ def _format_utc_offset(offset: datetime.timedelta) -> str:
     the round-trip through a TEXT column exact. Common whole-minute
     offsets stay in the narrower ``±HH:MM`` form byte-identical with
     the pre-sub-minute encoder output.
+
+    Rejects two broken-tzinfo inputs (CPython's own ``timezone()``
+    constructor rejects the same conditions — these paths are only
+    reachable through hand-rolled tzinfo subclasses that bypass the
+    stdlib's input validation):
+
+    - ``|offset| >= 24h`` — would emit an out-of-range ``±HH:MM:SS``
+      token that ``datetime.fromisoformat`` / peer decoders reject.
+    - Sub-second precision — ``int(offset.total_seconds())`` truncates
+      toward zero, so a negative fractional offset flips sign and
+      zeros magnitude. Round to whole-second and require the result
+      match the input.
     """
-    total_seconds = int(offset.total_seconds())
+    total_us = round(offset.total_seconds() * 1_000_000)
+    if abs(total_us) >= 24 * 3600 * 1_000_000:
+        raise DataError(f"tzinfo offset out of range: {offset!r} (|offset| must be < 24h)")
+    if total_us % 1_000_000 != 0:
+        raise DataError(
+            f"tzinfo offset has sub-second precision: {offset!r} "
+            "(dqlite wire encoding supports whole-second resolution only)"
+        )
+    total_seconds = total_us // 1_000_000
     sign = "+" if total_seconds >= 0 else "-"
     hours, rem = divmod(abs(total_seconds), 3600)
     minutes, seconds = divmod(rem, 60)
@@ -283,6 +303,16 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
     with what Go and the C client produce. Accepts both naive and
     timezone-aware datetimes — naive values round-trip as naive (matching
     pysqlite semantics), aware values preserve the offset.
+
+    Known limitations:
+
+    - ``datetime.fold`` is **not** encoded. ISO 8601 has no fold
+      notation, so a round-trip of ``datetime(..., fold=1, tzinfo=...)``
+      at the DST "fall back" hour silently produces ``fold=0`` on
+      decode. Applications that straddle DST transitions should store
+      UTC instants (or a UTC-relative marker column) rather than
+      wall-clock datetimes. This matches stdlib ``sqlite3``'s datetime
+      adapter; any change here would diverge from that reference.
     """
     if isinstance(value, datetime.datetime):
         base = f"{value.year:04d}" + value.strftime("-%m-%d %H:%M:%S")
