@@ -39,11 +39,17 @@ _SQLITE_CONSTRAINT = 19
 # not valid anymore".
 _SQLITE_INTERNAL = 2
 
-# PEP 249 ``DataError`` — "problems with the processed data" — maps to
-# SQLite's data-category primary codes:
-#   SQLITE_TOOBIG   = 18  (value exceeds size limit)
-#   SQLITE_MISMATCH = 20  (datatype mismatch — relevant on STRICT tables)
+# SQLITE_TOOBIG (18) — "value exceeds size limit" — is the canonical
+# PEP 249 ``DataError`` case ("problems with the processed data").
 _SQLITE_TOOBIG = 18
+
+# SQLITE_MISMATCH (20) — datatype mismatch on STRICT tables. CPython
+# stdlib ``sqlite3`` (``Modules/_sqlite/util.c::_pysqlite_seterror``)
+# groups this with ``SQLITE_CONSTRAINT`` under ``IntegrityError``;
+# ``aiosqlite`` inherits. Both ``DataError`` and ``IntegrityError``
+# are defensible PEP 249 readings for STRICT-table datatype mismatch,
+# but callers porting between stdlib and dqlite expect the stdlib
+# grouping — so align to it.
 _SQLITE_MISMATCH = 20
 
 # SQLITE_RANGE (25) — "bind index out of range" — is a caller-side
@@ -61,7 +67,7 @@ _CODE_TO_EXCEPTION: dict[
     _SQLITE_CONSTRAINT: IntegrityError,
     _SQLITE_INTERNAL: InternalError,
     _SQLITE_TOOBIG: DataError,
-    _SQLITE_MISMATCH: DataError,
+    _SQLITE_MISMATCH: IntegrityError,
     _SQLITE_RANGE: ProgrammingError,
 }
 

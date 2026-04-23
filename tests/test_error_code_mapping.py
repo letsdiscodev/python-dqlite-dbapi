@@ -44,7 +44,9 @@ _MATRIX = [
     (8, OperationalError),  # SQLITE_READONLY
     # Data-category codes map to PEP 249 DataError.
     (18, DataError),  # SQLITE_TOOBIG
-    (20, DataError),  # SQLITE_MISMATCH
+    # SQLITE_MISMATCH — stdlib sqlite3 groups this with SQLITE_CONSTRAINT
+    # under IntegrityError (see cursor.py for rationale).
+    (20, IntegrityError),  # SQLITE_MISMATCH
     # SQLITE_RANGE — bind-index out of range — is caller-side bad
     # parameter, closest to PEP 249 ProgrammingError.
     (25, ProgrammingError),  # SQLITE_RANGE
