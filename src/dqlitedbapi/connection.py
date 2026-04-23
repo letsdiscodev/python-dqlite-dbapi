@@ -41,7 +41,15 @@ def _validate_timeout(timeout: float) -> None:
     sync-returning pun), and ``dqlitedbapi.aio.aconnect``. The exact
     error phrasing is verbatim because several existing tests match on
     the prefix ``"timeout must be a positive finite number"``.
+
+    ``bool`` is rejected up front: ``isinstance(True, float)`` is False
+    but ``isinstance(True, int)`` is True and ``math.isfinite(True)``
+    returns True, so a caller passing ``timeout=True`` would silently
+    get a 1-second budget. Match the sibling validator
+    ``_validate_positive_int_or_none`` in the client layer.
     """
+    if isinstance(timeout, bool):
+        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout!r} (bool)")
     if not math.isfinite(timeout) or timeout <= 0:
         raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
 
@@ -52,8 +60,13 @@ def _validate_close_timeout(close_timeout: float) -> None:
     The client layer raises ``ValueError`` for the same predicate; the
     dbapi layer wraps with ``ProgrammingError`` so PEP 249 error
     classification holds at the dbapi boundary (parallel to
-    ``_validate_timeout``).
+    ``_validate_timeout``). Rejects ``bool`` for the same reason as the
+    sibling ``_validate_timeout``.
     """
+    if isinstance(close_timeout, bool):
+        raise ProgrammingError(
+            f"close_timeout must be a positive finite number, got {close_timeout!r} (bool)"
+        )
     if not math.isfinite(close_timeout) or close_timeout <= 0:
         raise ProgrammingError(
             f"close_timeout must be a positive finite number, got {close_timeout}"

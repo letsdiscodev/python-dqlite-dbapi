@@ -50,3 +50,26 @@ def test_error_phrasing_includes_value() -> None:
     with pytest.raises(ProgrammingError) as excinfo:
         dqlitedbapi.connect("localhost:9001", timeout=-3.5)
     assert "-3.5" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("bad", [True, False])
+def test_sync_connect_rejects_bool_timeout(bad: bool) -> None:
+    """bool subclasses int, so ``math.isfinite(True)`` is True and
+    ``True > 0`` is True — without an explicit isinstance guard,
+    ``timeout=True`` silently gives a 1-second budget.
+    """
+    with pytest.raises(ProgrammingError, match="bool"):
+        dqlitedbapi.connect("localhost:9001", timeout=bad)
+
+
+@pytest.mark.parametrize("bad", [True, False])
+def test_sync_connect_rejects_bool_close_timeout(bad: bool) -> None:
+    with pytest.raises(ProgrammingError, match="bool"):
+        dqlitedbapi.connect("localhost:9001", close_timeout=bad)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [True, False])
+async def test_aio_aconnect_rejects_bool_timeout(bad: bool) -> None:
+    with pytest.raises(ProgrammingError, match="bool"):
+        await dqlitedbapi.aio.aconnect("localhost:9001", timeout=bad)
