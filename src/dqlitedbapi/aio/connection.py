@@ -123,6 +123,17 @@ class AsyncConnection:
         is also loop-bound, so transparently rebinding is not safe;
         fail fast with a clear message instead.
         """
+        # A concurrent ``close()`` may have just nulled the lock
+        # references; lazily recreating them here would bind fresh
+        # primitives to the current loop on a connection that is
+        # conceptually dead. The caller's next step is
+        # ``_ensure_connection`` which would raise the same
+        # ``InterfaceError`` anyway — but the fresh locks / loop_ref
+        # survive the raise and a second ``close()`` early-returns
+        # without re-nulling them, leaking three asyncio primitives
+        # per race. Fail fast here so no primitives are created.
+        if self._closed:
+            raise InterfaceError("Connection is closed")
         loop = asyncio.get_running_loop()
         if self._connect_lock is None:
             self._loop_ref = weakref.ref(loop)
@@ -218,7 +229,13 @@ class AsyncConnection:
             self._op_lock = None
             self._loop_ref = None
             return
-        _, op_lock = self._ensure_locks()
+        # Use the already-bound op_lock directly; calling
+        # ``_ensure_locks`` now raises because ``_closed`` is True.
+        # If _async_conn is set, the locks were created on a prior
+        # ``_ensure_locks`` call — otherwise the short-circuit above
+        # at ``_async_conn is None`` returned.
+        assert self._op_lock is not None
+        op_lock = self._op_lock
         async with op_lock:
             if self._async_conn is not None:
                 await self._async_conn.close()
