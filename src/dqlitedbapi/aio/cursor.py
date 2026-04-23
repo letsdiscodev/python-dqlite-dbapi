@@ -340,14 +340,27 @@ class AsyncCursor:
         self._lastrowid = None
 
     def setinputsizes(self, sizes: Sequence[int | None]) -> None:
-        """Set input sizes (no-op for dqlite)."""
+        """Set input sizes (no-op for dqlite).
+
+        PEP 249 §6.1.1 names ``setinputsizes`` among the methods that
+        clear the ``messages`` list; we do so even though the method
+        itself does no work.
+        """
         # PEP 249 §6.1.2 — closed-cursor operations raise.
         self._check_closed()
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
-        """Set output size (no-op for dqlite)."""
+        """Set output size (no-op for dqlite). See ``setinputsizes``."""
         # PEP 249 §6.1.2 — closed-cursor operations raise.
         self._check_closed()
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
 
     def callproc(
         self, procname: str, parameters: Sequence[Any] | None = None
