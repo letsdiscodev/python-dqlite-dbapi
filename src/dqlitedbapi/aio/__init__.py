@@ -3,7 +3,6 @@
 from dqlitedbapi import __version__
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
-from dqlitedbapi.connection import _validate_timeout
 from dqlitedbapi.exceptions import (
     DatabaseError,
     DataError,
@@ -134,7 +133,10 @@ def connect(
     Returns:
         An AsyncConnection object
     """
-    _validate_timeout(timeout)
+    # Validation happens in ``AsyncConnection.__init__`` (both
+    # ``timeout`` and ``close_timeout``); re-calling
+    # ``_validate_timeout`` here was redundant and asymmetric.
+    # See ISSUE-574.
     return AsyncConnection(
         address,
         database=database,
@@ -180,7 +182,10 @@ async def aconnect(
     Returns:
         A connected AsyncConnection object
     """
-    _validate_timeout(timeout)
+    # Validation happens in ``AsyncConnection.__init__`` (both
+    # ``timeout`` and ``close_timeout``); re-calling
+    # ``_validate_timeout`` here was redundant and asymmetric.
+    # See ISSUE-574.
     conn = AsyncConnection(
         address,
         database=database,
