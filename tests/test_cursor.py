@@ -4,7 +4,7 @@ import pytest
 
 from dqlitedbapi import Connection
 from dqlitedbapi.cursor import Cursor
-from dqlitedbapi.exceptions import InterfaceError
+from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
 
 class TestCursor:
@@ -77,19 +77,19 @@ class TestCursor:
     def test_fetchone_without_execute_raises(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        with pytest.raises(InterfaceError, match="No result set"):
+        with pytest.raises(ProgrammingError, match="no results to fetch"):
             cursor.fetchone()
 
     def test_fetchall_without_execute_raises(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        with pytest.raises(InterfaceError, match="No result set"):
+        with pytest.raises(ProgrammingError, match="no results to fetch"):
             cursor.fetchall()
 
     def test_fetchmany_without_execute_raises(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        with pytest.raises(InterfaceError, match="No result set"):
+        with pytest.raises(ProgrammingError, match="no results to fetch"):
             cursor.fetchmany(5)
 
     def test_context_manager(self) -> None:

@@ -27,7 +27,7 @@ import pytest
 
 import dqlitedbapi
 import dqlitedbapi.aio
-from dqlitedbapi.exceptions import InterfaceError, OperationalError
+from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
 
 
 def _build_sync_connection_with_mock_protocol() -> tuple[dqlitedbapi.Connection, MagicMock]:
@@ -146,9 +146,9 @@ class TestSyncCursorStateResetOnFailure:
 
             assert cur.description is None
             assert cur.rowcount == -1
-            with pytest.raises(InterfaceError, match="No result set"):
+            with pytest.raises(ProgrammingError, match="no results to fetch"):
                 cur.fetchall()
-            with pytest.raises(InterfaceError, match="No result set"):
+            with pytest.raises(ProgrammingError, match="no results to fetch"):
                 cur.fetchone()
         finally:
             conn.close()
@@ -245,9 +245,9 @@ class TestAsyncCursorStateResetOnFailure:
 
             assert cur.description is None
             assert cur.rowcount == -1
-            with pytest.raises(InterfaceError, match="No result set"):
+            with pytest.raises(ProgrammingError, match="no results to fetch"):
                 await cur.fetchall()
-            with pytest.raises(InterfaceError, match="No result set"):
+            with pytest.raises(ProgrammingError, match="no results to fetch"):
                 await cur.fetchone()
         finally:
             await aconn.close()

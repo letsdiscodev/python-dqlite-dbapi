@@ -60,5 +60,5 @@ class TestFetchmanyEdges:
         conn = MagicMock()
         c = Cursor(conn)
         # No execute called → description is None.
-        with pytest.raises(Exception, match="No result set"):
+        with pytest.raises(Exception, match="no results to fetch"):
             c.fetchone()

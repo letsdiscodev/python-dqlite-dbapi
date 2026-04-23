@@ -242,7 +242,7 @@ class AsyncCursor:
 
     def _check_result_set(self) -> None:
         if self._description is None:
-            raise InterfaceError("No result set: execute a query before fetching")
+            raise ProgrammingError("no results to fetch; execute a query first")
 
     async def fetchone(self) -> tuple[Any, ...] | None:
         """Fetch the next row of a query result set.
