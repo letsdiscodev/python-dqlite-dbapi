@@ -451,6 +451,23 @@ def _is_row_returning(sql: str) -> bool:
     return " RETURNING " in normalized or normalized.endswith(" RETURNING")
 
 
+def _is_dml_with_returning(sql: str) -> bool:
+    """True if ``sql`` is DML (INSERT / UPDATE / DELETE / REPLACE) whose
+    result set is driven by a RETURNING clause.
+
+    Used by ``executemany`` to admit the legitimate row-returning
+    case (INSERT ... RETURNING) while still rejecting pure queries —
+    stdlib ``sqlite3.Cursor.executemany`` rejects any row-producing
+    statement, but RETURNING on DML is a well-established SQLite
+    feature and the driver supports it through the accumulator.
+    """
+    cleaned = _strip_sql_noise(sql)
+    normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
+    if not normalized.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE")):
+        return False
+    return " RETURNING " in normalized or normalized.endswith(" RETURNING")
+
+
 class Cursor:
     """PEP 249 compliant database cursor."""
 
@@ -677,6 +694,15 @@ class Cursor:
         del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
+        # Reject pure queries up front so the caller's frame sees the
+        # ProgrammingError rather than having it surface deep inside
+        # the async helper. stdlib sqlite3.Cursor.executemany does the
+        # same; DML-with-RETURNING stays admitted.
+        if _is_row_returning(operation) and not _is_dml_with_returning(operation):
+            raise ProgrammingError(
+                "executemany() can only execute DML statements; "
+                "use execute() for SELECT / VALUES / PRAGMA / EXPLAIN / WITH."
+            )
 
         self._connection._run_sync(self._executemany_async(operation, seq_of_parameters))
         return self
@@ -697,6 +723,9 @@ class Cursor:
         Without the accumulation, ``_execute_async`` would overwrite
         ``_rows`` on each iteration and only the rows from the last
         parameter set would survive.
+
+        Pure queries (SELECT / VALUES / PRAGMA) are rejected in the
+        sync ``executemany`` wrapper before this helper is scheduled.
         """
         # Single source of truth for per-execute reset; see
         # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so

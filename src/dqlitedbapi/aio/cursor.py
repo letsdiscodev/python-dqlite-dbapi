@@ -9,6 +9,7 @@ from dqlitedbapi.cursor import (
     _convert_params,
     _convert_row,
     _ExecuteManyAccumulator,
+    _is_dml_with_returning,
     _is_row_returning,
 )
 from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
@@ -253,9 +254,19 @@ class AsyncCursor:
         For statements with a RETURNING clause, rows produced by each
         iteration are accumulated into ``_rows`` so a subsequent
         ``fetchall`` yields every returned row across parameter sets.
+
+        Pure queries (SELECT / VALUES / PRAGMA) are rejected before the
+        loop runs — stdlib ``sqlite3.Cursor.executemany`` does the same.
+        INSERT / UPDATE / DELETE / REPLACE (with or without RETURNING)
+        remain admitted.
         """
         del self.messages[:]
         self._check_closed()
+        if _is_row_returning(operation) and not _is_dml_with_returning(operation):
+            raise ProgrammingError(
+                "executemany() can only execute DML statements; "
+                "use execute() for SELECT / VALUES / PRAGMA / EXPLAIN / WITH."
+            )
 
         # Single source of truth for per-execute reset; see
         # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so

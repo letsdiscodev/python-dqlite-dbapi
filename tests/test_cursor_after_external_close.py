@@ -40,7 +40,7 @@ class TestCursorAfterExternalConnectionClose:
             cursor.execute("SELECT 1")
 
         with pytest.raises(InterfaceError):
-            cursor.executemany("SELECT ?", [(1,), (2,)])
+            cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
         # cursor.close() remains idempotent even after the connection is gone.
         cursor.close()
@@ -58,6 +58,6 @@ class TestCursorAfterExternalConnectionClose:
                 await cursor.execute("SELECT 1")
 
             with pytest.raises(InterfaceError):
-                await cursor.executemany("SELECT ?", [(1,), (2,)])
+                await cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
         asyncio.run(_run())
