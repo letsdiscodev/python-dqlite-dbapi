@@ -73,16 +73,40 @@ def Timestamp(
     return datetime.datetime(year, month, day, hour, minute, second, microsecond, tzinfo=tzinfo)
 
 
-def _validate_ticks(ticks: float) -> None:
-    """Reject NaN/inf before handing to datetime.fromtimestamp.
+def _validate_ticks(ticks: float) -> float:
+    """Normalize ``ticks`` to a finite float or raise ``DataError``.
 
     ``fromtimestamp`` raises different stdlib exceptions depending on
     the failure mode (``ValueError`` for NaN on some platforms,
-    ``OverflowError`` / ``OSError`` for out-of-range). Guard up front so
-    the caller always sees a single DB-API ``DataError``.
+    ``OverflowError`` / ``OSError`` for out-of-range, ``TypeError`` for
+    unsupported argument types like ``Decimal``). Normalize every
+    failure mode up front so the caller always sees a single DB-API
+    ``DataError``.
+
+    ``bool`` is an ``int`` subclass, but coercing ``True`` / ``False``
+    to 1.0 / 0.0 silently produces a Unix-epoch timestamp — a caller-
+    bug trap. Mirror ``arraysize.setter`` and reject explicitly.
+    Strings are rejected even though ``float("1.5")`` succeeds: PEP
+    249's ``*FromTicks`` API takes a numeric tick value, and accepting
+    a string would silently encourage a buggy caller who passed an
+    unconverted wire value.
+
+    Returns the coerced ``float`` so callers can pass a value
+    ``datetime.fromtimestamp`` accepts (it rejects ``Decimal``).
     """
-    if isinstance(ticks, float) and not math.isfinite(ticks):
-        raise DataError(f"Invalid timestamp ticks: {ticks}")
+    # Mirror ``arraysize.setter`` (cursor.py): bool is an int subclass,
+    # but silent coercion to 0/1 is a footgun.
+    if isinstance(ticks, bool):
+        raise DataError(f"Invalid timestamp ticks: {ticks!r} (bool)")
+    if isinstance(ticks, str):
+        raise DataError(f"Invalid timestamp ticks: {ticks!r} (str)")
+    try:
+        coerced = float(ticks)
+    except (TypeError, ValueError) as exc:
+        raise DataError(f"Invalid timestamp ticks: {ticks!r} ({exc})") from exc
+    if not math.isfinite(coerced):
+        raise DataError(f"Invalid timestamp ticks: {coerced}")
+    return coerced
 
 
 def DateFromTicks(ticks: float) -> datetime.date:
@@ -99,9 +123,9 @@ def DateFromTicks(ticks: float) -> datetime.date:
     and reading it back will shift by the host's UTC offset. Use
     ISO8601 (TEXT) columns for faithful round-trip of naive values.
     """
-    _validate_ticks(ticks)
+    coerced = _validate_ticks(ticks)
     try:
-        return datetime.date.fromtimestamp(ticks)
+        return datetime.date.fromtimestamp(coerced)
     except (OverflowError, OSError, ValueError) as e:
         raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
@@ -118,9 +142,9 @@ def TimeFromTicks(ticks: float) -> datetime.time:
     See ``DateFromTicks`` for the tz asymmetry with the UNIXTIME
     decoder on readback.
     """
-    _validate_ticks(ticks)
+    coerced = _validate_ticks(ticks)
     try:
-        return datetime.datetime.fromtimestamp(ticks).time()
+        return datetime.datetime.fromtimestamp(coerced).time()
     except (OverflowError, OSError, ValueError) as e:
         raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
@@ -137,9 +161,9 @@ def TimestampFromTicks(ticks: float) -> datetime.datetime:
     See ``DateFromTicks`` for the tz asymmetry with the UNIXTIME
     decoder on readback.
     """
-    _validate_ticks(ticks)
+    coerced = _validate_ticks(ticks)
     try:
-        return datetime.datetime.fromtimestamp(ticks)
+        return datetime.datetime.fromtimestamp(coerced)
     except (OverflowError, OSError, ValueError) as e:
         raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
