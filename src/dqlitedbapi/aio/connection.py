@@ -6,7 +6,6 @@ import logging
 import weakref
 from types import TracebackType
 
-import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
@@ -238,7 +237,7 @@ class AsyncConnection:
                 # Parity with ``Connection._commit_async``; ``_call_client``
                 # maps raw client errors onto PEP 249 ``Error`` subclasses.
                 await _call_client(self._async_conn.execute("COMMIT"))
-            except (OperationalError, _client_exc.OperationalError) as e:
+            except OperationalError as e:
                 if not _is_no_transaction_error(e):
                     raise
 
@@ -257,7 +256,7 @@ class AsyncConnection:
             try:
                 # Parity with ``Connection._rollback_async``; see ``commit``.
                 await _call_client(self._async_conn.execute("ROLLBACK"))
-            except (OperationalError, _client_exc.OperationalError) as e:
+            except OperationalError as e:
                 if not _is_no_transaction_error(e):
                     raise
 
