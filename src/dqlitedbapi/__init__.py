@@ -1,6 +1,6 @@
 """PEP 249 compliant interface for dqlite."""
 
-from dqlitedbapi.connection import Connection, _validate_timeout
+from dqlitedbapi.connection import Connection
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import (
     DatabaseError,
@@ -135,7 +135,10 @@ def connect(
     Returns:
         A Connection object
     """
-    _validate_timeout(timeout)
+    # Validation happens in ``Connection.__init__`` (both ``timeout``
+    # and ``close_timeout``); re-calling ``_validate_timeout`` here
+    # was redundant and leaked the private symbol onto
+    # ``dqlitedbapi.dir()``. See ISSUE-573 / ISSUE-574.
     return Connection(
         address,
         database=database,
