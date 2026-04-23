@@ -363,13 +363,23 @@ def _iso8601_from_time(value: datetime.time) -> str:
     return base + _format_utc_offset(offset)
 
 
-def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
-    """Parse an ISO 8601 string into ``datetime.datetime``.
+def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | None:
+    """Parse an ISO 8601 string into ``datetime.datetime`` / ``.time``.
 
     Returns ``None`` for the empty string — pre-null-patch dqlite servers
     sometimes emit empty text for NULL datetime cells, and the modern
     server still tolerates empty ISO8601 values. Returning None matches
     PEP 249 NULL semantics.
+
+    Tries, in order:
+
+    1. ``datetime.datetime.fromisoformat`` — ``YYYY-MM-DD HH:MM:SS[…]``
+    2. ``datetime.time.fromisoformat`` — ``HH:MM:SS[.ffffff][±HH:MM]``,
+       matching the ``_iso8601_from_time`` bind-path encoder so a
+       ``datetime.time`` bound via the driver round-trips as
+       ``datetime.time`` on readback rather than raising ``DataError``.
+    3. ``datetime.date.fromisoformat`` — ``YYYY-MM-DD`` (widened to
+       ``datetime.datetime`` on return; see below).
 
     Naive input round-trips as naive; aware input preserves the offset.
     Python 3.11+ ``datetime.fromisoformat`` accepts a trailing ``Z``
@@ -386,6 +396,9 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
     use the SQLAlchemy ``_DqliteDate`` type that does the narrowing at
     the ORM layer.
 
+    ``datetime.time`` does NOT widen — ``HH:MM:SS`` has no date
+    component so widening would require an arbitrary sentinel date.
+
     A malformed string from the server (bug, corruption, or MitM) would
     otherwise escape as a raw ``ValueError``; wrap as ``DataError`` to
     satisfy PEP 249's "all DB errors funnel through Error" contract.
@@ -394,6 +407,10 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | None:
         return None
     try:
         return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    try:
+        return datetime.time.fromisoformat(text)
     except ValueError:
         pass
     try:
