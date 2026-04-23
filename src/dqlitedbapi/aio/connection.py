@@ -265,11 +265,31 @@ class AsyncConnection:
         """Return a new AsyncCursor object.
 
         This is intentionally sync — SQLAlchemy calls cursor() from
-        sync context within its greenlet-based async adapter.
+        sync context within its greenlet-based async adapter. Loop
+        binding is validated best-effort: if a different loop is
+        running than the one this connection was first used on, raise
+        ``ProgrammingError`` up front rather than letting the first
+        await inside ``_ensure_locks`` surface the same error with a
+        less specific diagnostic. No running loop (SA greenlet glue)
+        is a valid case — skip the check.
         """
         del self.messages[:]
         if self._closed:
             raise InterfaceError("Connection is closed")
+        if self._loop_ref is not None:
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop — SA greenlet glue calls cursor()
+                # from sync context. Skip the check.
+                pass
+            else:
+                bound = self._loop_ref()
+                if bound is not None and bound is not current_loop:
+                    raise ProgrammingError(
+                        "AsyncConnection.cursor() called from a different "
+                        "event loop; AsyncConnection instances are loop-bound."
+                    )
         return AsyncCursor(self)
 
     def __repr__(self) -> str:

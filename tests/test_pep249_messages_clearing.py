@@ -231,6 +231,9 @@ def test_async_connection_rollback_clears_messages() -> None:
 def test_async_connection_cursor_clears_messages() -> None:
     conn = MagicMock(spec=AsyncConnection)
     conn._closed = False
+    # ``cursor()`` reads ``_loop_ref`` for the best-effort loop-binding
+    # check; spec'd mock needs it set explicitly.
+    conn._loop_ref = None
     conn.messages = [(DbApiWarning, "stale")]
     AsyncConnection.cursor(conn)
     assert conn.messages == []
