@@ -90,6 +90,45 @@ class TestCallClientInterfaceErrorMapping:
             assert not isinstance(exc, OperationalError)
 
 
+class TestCallClientClusterPolicyErrorMapping:
+    """``ClusterPolicyError`` routes to ``InterfaceError`` with a
+    distinguishing ``"Cluster policy rejection;"`` prefix. The SA
+    dialect's ``is_disconnect`` narrows ``InterfaceError`` matching to
+    "connection is closed" / "cursor is closed" so the pool invalidates
+    the permanent-reject slot without scheduling a retry against the
+    policy wall.
+    """
+
+    def test_becomes_interface_error(self) -> None:
+        async def raiser() -> None:
+            raise _client_exc.ClusterPolicyError("leader not in allow-list")
+
+        with pytest.raises(InterfaceError) as exc_info:
+            asyncio.run(_call_client(raiser()))
+        assert "Cluster policy rejection;" in str(exc_info.value)
+        assert "leader not in allow-list" in str(exc_info.value)
+
+    def test_chains_original_via_cause(self) -> None:
+        async def raiser() -> None:
+            raise _client_exc.ClusterPolicyError("policy")
+
+        with pytest.raises(InterfaceError) as exc_info:
+            asyncio.run(_call_client(raiser()))
+        assert isinstance(exc_info.value.__cause__, _client_exc.ClusterPolicyError)
+
+    def test_is_not_operational_error(self) -> None:
+        """Must not land in ``OperationalError`` — routing there would
+        let SA's substring list match "Failed to connect" variants and
+        re-enter the retry loop against a permanent rejection."""
+
+        async def raiser() -> None:
+            raise _client_exc.ClusterPolicyError("policy")
+
+        with pytest.raises(InterfaceError) as exc_info:
+            asyncio.run(_call_client(raiser()))
+        assert not isinstance(exc_info.value, OperationalError)
+
+
 class TestCallClientReturnType:
     """``_call_client`` is a thin exception-mapping wrapper — the
     coroutine's success value must pass through unchanged and with its

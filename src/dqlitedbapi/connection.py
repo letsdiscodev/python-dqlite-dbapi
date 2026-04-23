@@ -97,11 +97,14 @@ async def _build_and_connect(
         raise OperationalError(f"Failed to connect: {e.message}", code=e.code) from e
     except _client_exc.ClusterPolicyError as e:
         # Deterministic configuration mismatch. Route through
-        # ProgrammingError so SA's is_disconnect classifier does NOT
-        # match (substring list targets OperationalError only) and
-        # the pool does not enter a retry loop against a permanent
-        # policy rejection.
-        raise ProgrammingError(f"Cluster policy rejected leader: {e}") from e
+        # ``InterfaceError`` with a distinguishing ``"Cluster policy
+        # rejection;"`` prefix so callers can branch on the message
+        # without importing client-layer types. SA's ``is_disconnect``
+        # narrows ``InterfaceError`` matching to "connection is
+        # closed" / "cursor is closed", so the pool does NOT enter a
+        # retry loop against the permanent policy rejection — matches
+        # the ``_call_client`` query-path wrap.
+        raise InterfaceError(f"Cluster policy rejection; {e}") from e
     except Exception as e:
         raise OperationalError(f"Failed to connect: {e}") from e
     return conn

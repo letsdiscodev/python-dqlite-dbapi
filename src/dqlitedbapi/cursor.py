@@ -125,12 +125,18 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
     except _client_exc.ClusterPolicyError as e:
         # Deterministic: configured policy rejected the leader. The
         # client layer explicitly excludes this from retry (see
-        # ``cluster.connect`` ``excluded_exceptions``). Mapping to
-        # ``OperationalError`` would let SA's ``is_disconnect`` match
-        # on "Failed to connect" and spin the pool in a retry loop
-        # against a permanent config error. ``ProgrammingError`` is
-        # PEP 249's category for caller-side configuration mistakes.
-        raise ProgrammingError(f"Cluster policy rejected leader: {e}") from e
+        # ``cluster.connect`` ``excluded_exceptions``). PEP 249's
+        # ``InterfaceError`` ("driver interface cannot process this
+        # operation") fits better than ``ProgrammingError`` here —
+        # policy rejection is a driver-interface / configuration
+        # mismatch, not caller-supplied SQL. The distinguishing prefix
+        # ``"Cluster policy rejection;"`` lets callers branch on the
+        # message without importing client-layer types, and the SA
+        # dialect's ``is_disconnect`` narrows ``InterfaceError`` to
+        # "connection is closed" / "cursor is closed" — so the pool
+        # invalidates the permanent-reject slot without scheduling a
+        # retry against the policy wall.
+        raise InterfaceError(f"Cluster policy rejection; {e}") from e
     except _client_exc.ClusterError as e:
         # Non-policy ClusterError — transient, code=None.
         raise OperationalError(str(e), code=None) from e
