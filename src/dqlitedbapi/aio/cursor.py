@@ -234,8 +234,18 @@ class AsyncCursor:
         self._row_index = 0
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         for params in seq_of_parameters:
+            # Re-check before each iteration so a concurrent close()
+            # landing between iterations surfaces as "Cursor is
+            # closed" rather than being observed only on the next
+            # iteration's nested execute entry (or not at all for a
+            # single-iteration remainder).
+            self._check_closed()
             await self.execute(operation, params)
+            self._check_closed()
             acc.push(self)
+        # Final guard before apply; pairs with the ``_closed`` check
+        # inside ``_ExecuteManyAccumulator.apply``.
+        self._check_closed()
         acc.apply(self)
         return self
 
