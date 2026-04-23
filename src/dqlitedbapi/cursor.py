@@ -298,12 +298,18 @@ class _ExecuteManyAccumulator:
     accumulator and then apply it to the cursor.
     """
 
-    __slots__ = ("total_affected", "rows", "description")
+    __slots__ = ("_max_rows", "description", "rows", "total_affected")
 
-    def __init__(self) -> None:
+    def __init__(self, max_rows: int | None = None) -> None:
         self.total_affected = 0
         self.rows: list[tuple[Any, ...]] = []
         self.description: _Description = None
+        # Cumulative row cap across all executemany iterations. The
+        # wire-layer ``max_total_rows`` governor caps a single round-
+        # trip only; without this cumulative check, a 10M-element
+        # parameter sequence for ``INSERT ... RETURNING`` accumulates
+        # unbounded in memory.
+        self._max_rows = max_rows
 
     def push(self, cursor: _ExecuteManyCursor) -> None:
         """Record one iteration's output into the accumulator."""
@@ -313,6 +319,11 @@ class _ExecuteManyAccumulator:
             if self.description is None:
                 self.description = cursor._description
             self.rows.extend(cursor._rows)
+            if self._max_rows is not None and len(self.rows) > self._max_rows:
+                raise DataError(
+                    f"executemany accumulated {len(self.rows)} RETURNING rows; "
+                    f"exceeds max_total_rows={self._max_rows}"
+                )
 
     def apply(self, cursor: _ExecuteManyCursor) -> None:
         """Materialise the accumulator's state onto the cursor.
@@ -564,7 +575,7 @@ class Cursor:
         self._description = None
         self._rows = []
         self._row_index = 0
-        acc = _ExecuteManyAccumulator()
+        acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         for params in seq_of_parameters:
             await self._execute_async(operation, params)
             acc.push(self)

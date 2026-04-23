@@ -232,7 +232,7 @@ class AsyncCursor:
         self._description = None
         self._rows = []
         self._row_index = 0
-        acc = _ExecuteManyAccumulator()
+        acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         for params in seq_of_parameters:
             await self.execute(operation, params)
             acc.push(self)
