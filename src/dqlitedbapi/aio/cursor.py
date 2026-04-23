@@ -86,12 +86,17 @@ class AsyncCursor:
 
     @property
     def lastrowid(self) -> int | None:
-        """ROWID of the most recent successful INSERT on the connection.
+        """ROWID of this cursor's most-recent successful INSERT.
 
-        Returns ``None`` before the first statement runs on this cursor.
-        Per SQLite semantics the value reflects the *connection*'s last
-        INSERT — it is not cleared by UPDATE / DELETE / DDL, nor is it
-        scoped to this cursor. Matches :attr:`sqlite3.Cursor.lastrowid`.
+        Returns ``None`` before the first INSERT runs on this cursor
+        and after ``close()`` scrubs the cursor's state.
+
+        Unlike ``sqlite3.Cursor.lastrowid``, the value is scoped to the
+        cursor, not the underlying AsyncConnection: a sibling cursor on
+        the same connection will not observe this cursor's last INSERT.
+        The scrub on ``close()`` is consistent with that scope — ROLLBACK
+        / UPDATE / DELETE / DDL do NOT clear it (mirroring stdlib), but
+        closing the cursor does.
 
         **Not updated for ``INSERT ... RETURNING``** (or any row-returning
         statement). dqlite's wire protocol does not return
@@ -144,7 +149,8 @@ class AsyncCursor:
         cursor instance; they deliberately happen OUTSIDE ``op_lock``
         because the lock exists to serialise access to the underlying
         wire connection, not to the cursor's in-memory fields.
-        ``_lastrowid`` is connection-scoped and MUST NOT be cleared.
+        ``_lastrowid`` is cursor-scoped but survives across execute —
+        only ``close()`` scrubs it (see the ``lastrowid`` property).
         """
         self._description = None
         self._rows = []
