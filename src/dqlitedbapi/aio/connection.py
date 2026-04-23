@@ -291,6 +291,16 @@ class AsyncConnection:
                     )
         return AsyncCursor(self)
 
+    @property
+    def address(self) -> str:
+        """Node address this connection was opened against.
+
+        Read-only. Exposed so diagnostic layers (SQLAlchemy adapter,
+        pool metrics, structured logs) can label events with the peer
+        address without reaching into the private ``_address`` field.
+        """
+        return self._address
+
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
         return f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
