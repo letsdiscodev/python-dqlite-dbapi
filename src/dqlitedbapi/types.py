@@ -169,6 +169,15 @@ class _DBAPIType:
     """Base type for DB-API type objects. Compares equal to matching
     uppercase SQL type names (str) and wire-level ``ValueType`` codes
     (int).
+
+    Deliberately **unhashable**: use these objects only with ``==``
+    against ``description[i][1]`` — do not use them as dict keys or
+    ``set`` members. ``NUMBER`` / ``DATETIME`` wrap multiple wire codes
+    (e.g. INTEGER + FLOAT + BOOLEAN), so a hash satisfying the Python
+    hash-eq invariant does not exist: any canonical-representative hash
+    would make ``{NUMBER: x}[FLOAT_CODE]`` raise ``KeyError`` despite
+    ``NUMBER == FLOAT_CODE`` being True. Refusing to hash turns that
+    silent miss into a noisy ``TypeError``.
     """
 
     def __init__(self, *values: str | int | ValueType, _name: str = "") -> None:
@@ -192,28 +201,7 @@ class _DBAPIType:
             return other in self.values
         return NotImplemented
 
-    def __hash__(self) -> int:
-        # Hash to the canonical (smallest) ValueType integer in our
-        # ``values`` so that the PEP 249 ``description[i][1]`` pattern
-        # works inside ``set`` / ``dict`` membership when the canonical
-        # wire type is used as the lookup key:
-        #
-        #     {STRING: convert_text, NUMBER: convert_num}[desc[i][1]]
-        #
-        # The hash-eq invariant is NOT fully satisfiable for types
-        # like ``NUMBER`` that wrap multiple wire ``ValueType`` codes
-        # (INTEGER=1, FLOAT=2, BOOLEAN=11): ``NUMBER == 1`` and
-        # ``NUMBER == 11`` both return True, but the hash can only
-        # match one. We pick the smallest int as a deterministic
-        # canonical representative. ``NUMBER in {FLOAT_CODE}`` still
-        # returns False despite ``NUMBER == FLOAT_CODE`` being True;
-        # that is a documented limitation — the PEP 249 type objects
-        # are designed for equality comparison, not for use as
-        # second-class keys in hash containers.
-        ints = sorted(v for v in self.values if isinstance(v, int) and not isinstance(v, bool))
-        if ints:
-            return hash(ints[0])
-        return hash(frozenset(self.values))
+    __hash__ = None  # type: ignore[assignment]
 
     def __repr__(self) -> str:
         return self._name or f"_DBAPIType({sorted(self.values, key=str)!r})"

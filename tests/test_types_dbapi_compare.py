@@ -65,12 +65,16 @@ class TestRowidType:
 
 
 class TestHashability:
-    def test_types_still_hashable_after_int_mix(self) -> None:
-        # Mixed str/int contents mustn't break dict-key or set-member use.
-        types_set = {STRING, BINARY, NUMBER, DATETIME, ROWID}
-        assert len(types_set) == 5
-        d = {STRING: "s", NUMBER: "n"}
-        assert d[STRING] == "s"
+    def test_types_are_unhashable(self) -> None:
+        # The PEP 249 type objects are deliberately unhashable; see
+        # ``_DBAPIType.__hash__ = None``. A canonical-representative
+        # hash would silently violate the Python hash-eq invariant for
+        # multi-ValueType aggregates like NUMBER.
+        import pytest
+
+        for obj in (STRING, BINARY, NUMBER, DATETIME, ROWID):
+            with pytest.raises(TypeError, match="unhashable"):
+                hash(obj)
 
 
 # Maintenance note: if a future ValueType is intentionally exempt
@@ -174,15 +178,15 @@ class TestDBAPITypeEqFallthrough:
         assert type_obj != value
         assert value != type_obj
 
-    def test_hash_stable_and_dict_key_usable(self) -> None:
-        # A refactor that broke ``__eq__`` also risks breaking the
-        # ``__hash__`` / ``__eq__`` contract — dict keying and set
-        # membership depend on both being consistent. Pin the most
-        # load-bearing invariants: equal hashes for equal objects and
-        # round-trippable dict-key lookup.
-        assert hash(STRING) == hash(STRING)
-        assert hash(NUMBER) == hash(NUMBER)
-        d = {STRING: "s", NUMBER: "n", BINARY: "b"}
-        assert d[STRING] == "s"
-        assert d[NUMBER] == "n"
-        assert d[BINARY] == "b"
+    def test_types_are_unhashable(self) -> None:
+        # ``_DBAPIType`` intentionally refuses to hash; NUMBER / DATETIME
+        # wrap multiple wire codes, so any canonical-representative hash
+        # would make ``NUMBER == FLOAT_CODE`` True while
+        # ``{NUMBER: x}[FLOAT_CODE]`` raises KeyError. The unhashable
+        # contract converts that silent miss into a ``TypeError``.
+        import pytest
+
+        with pytest.raises(TypeError, match="unhashable"):
+            hash(STRING)
+        with pytest.raises(TypeError, match="unhashable"):
+            hash(NUMBER)

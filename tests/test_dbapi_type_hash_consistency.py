@@ -1,52 +1,42 @@
-"""``_DBAPIType.__hash__`` must be consistent with ``__eq__`` for the
-canonical ValueType integer — enough to make the PEP 249
-``description[i][1]`` dict-dispatch pattern work:
+"""``_DBAPIType`` objects are deliberately unhashable.
 
-    {STRING: convert_text, NUMBER: convert_num, BINARY: convert_blob}[desc[i][1]]
+PEP 249 type objects (``STRING``, ``BINARY``, ``NUMBER``, ``DATETIME``,
+``ROWID``) wrap a set of accepted values that can include multiple
+wire-level ``ValueType`` codes. Any hash function that hashed to a
+single canonical int would silently violate the Python hash-eq
+invariant: ``NUMBER == FLOAT_CODE`` would be True while
+``hash(NUMBER) != hash(FLOAT_CODE)``, so ``{NUMBER: x}[FLOAT_CODE]``
+would raise ``KeyError`` despite equality holding.
 
-The hash-eq invariant is NOT fully satisfiable for multi-ValueType
-aggregates like ``NUMBER`` (INTEGER + FLOAT + BOOLEAN); those
-residual mismatches are a documented limitation.
+The objects raise ``TypeError: unhashable type`` on any attempt to
+hash them, which is noisier and therefore safer than a silent
+dispatch miss. Callers should use linear equality (``desc[i][1] ==
+NUMBER``) against the module-level type objects, not use them as dict
+keys or ``set`` members.
 """
 
 from __future__ import annotations
 
+import pytest
+
 from dqlitedbapi.types import BINARY, DATETIME, NUMBER, ROWID, STRING
-from dqlitewire.constants import ValueType
 
 
-class TestCanonicalHashEqConsistency:
-    def test_string_in_set_of_canonical_valuetype(self) -> None:
-        assert STRING in {int(ValueType.TEXT)}
+class TestDbapiTypesUnhashable:
+    """PEP 249 type objects must refuse hashing."""
 
-    def test_binary_in_set_of_canonical_valuetype(self) -> None:
-        assert BINARY in {int(ValueType.BLOB)}
+    @pytest.mark.parametrize("obj", [STRING, BINARY, NUMBER, DATETIME, ROWID])
+    def test_not_hashable(self, obj: object) -> None:
+        with pytest.raises(TypeError, match="unhashable"):
+            hash(obj)
 
-    def test_number_in_set_of_integer_canonical(self) -> None:
-        # Canonical representative for NUMBER is ValueType.INTEGER (int 1),
-        # the smallest wire code in its set.
-        assert NUMBER in {int(ValueType.INTEGER)}
+    def test_cannot_be_set_members(self) -> None:
+        with pytest.raises(TypeError, match="unhashable"):
+            set([NUMBER, STRING])  # noqa: C405 -- literal triggers B018
 
-    def test_rowid_in_set_of_integer(self) -> None:
-        assert ROWID in {int(ValueType.INTEGER)}
-
-    def test_datetime_in_set_of_unixtime_canonical(self) -> None:
-        # Canonical representative for DATETIME is ValueType.UNIXTIME
-        # (int 9) — the smallest wire code in its set (UNIXTIME=9,
-        # ISO8601=10).
-        assert DATETIME in {int(ValueType.UNIXTIME)}
-
-    def test_description_dispatch_pattern(self) -> None:
-        """The PEP 249 dict-dispatch pattern must work for canonical wire types."""
-        converters = {
-            STRING: "text_converter",
-            NUMBER: "num_converter",
-            BINARY: "blob_converter",
-        }
-        # description[i][1] is an int (ValueType enum value) per dqlitedbapi.
-        assert converters[int(ValueType.TEXT)] == "text_converter"
-        assert converters[int(ValueType.INTEGER)] == "num_converter"
-        assert converters[int(ValueType.BLOB)] == "blob_converter"
+    def test_cannot_be_dict_keys(self) -> None:
+        with pytest.raises(TypeError, match="unhashable"):
+            dict([(NUMBER, "x")])  # noqa: C406 -- literal triggers B018
 
 
 class TestDbapiTypesDistinct:
