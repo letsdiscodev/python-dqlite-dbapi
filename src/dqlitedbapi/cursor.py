@@ -284,6 +284,7 @@ class _ExecuteManyCursor(Protocol):
     _description: _Description
     _rows: list[tuple[Any, ...]]
     _row_index: int
+    _closed: bool
 
 
 class _ExecuteManyAccumulator:
@@ -332,7 +333,17 @@ class _ExecuteManyAccumulator:
         result set (plain DML without RETURNING); leave ``_description``
         / ``_rows`` as reset. Inherit the first-seen description
         otherwise.
+
+        No-op if the cursor has been closed concurrently — the async
+        ``close()`` contract scrubs ``_rows``/``_description``/
+        ``_rowcount``, and re-populating those fields here would
+        visibly un-close the result set for any attribute-level
+        caller. Sync flavour is immune via the outer threading lock;
+        this guard pins the async flavour. See also ISSUE-564 for the
+        companion per-iteration guard in async ``executemany``.
         """
+        if cursor._closed:
+            return
         cursor._rowcount = self.total_affected
         if self.description is not None:
             cursor._description = self.description
