@@ -8,7 +8,7 @@ the body's exception still wins on rollback failure (attached as
 instead of disappearing.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -25,12 +25,24 @@ def _make_conn_with_failing_commit() -> Connection:
     return conn
 
 
+def _eager_enter_connect() -> object:
+    # ``Connection.__enter__`` eagerly calls ``connect()`` (matching
+    # ``AsyncConnection.__aenter__``). These tests pre-set the mocked
+    # ``_async_conn`` directly, so the unit-test flow wants a no-op
+    # connect rather than a real TCP dial.
+    return patch.object(Connection, "connect")
+
+
 class TestExitPropagatesCommitFailure:
     def test_clean_exit_commit_failure_propagates(self) -> None:
         """No body exception → commit failure surfaces, not swallowed."""
         conn = _make_conn_with_failing_commit()
         try:
-            with pytest.raises(OperationalError, match="disk full"), conn:
+            with (
+                _eager_enter_connect(),
+                pytest.raises(OperationalError, match="disk full"),
+                conn,
+            ):
                 pass  # clean body → __exit__ calls commit, which raises
         finally:
             conn.close()
@@ -43,7 +55,11 @@ class TestExitPropagatesCommitFailure:
         conn = _make_conn_with_failing_commit()
         body_error = ValueError("user bug")
         try:
-            with pytest.raises(ValueError, match="user bug"), conn:
+            with (
+                _eager_enter_connect(),
+                pytest.raises(ValueError, match="user bug"),
+                conn,
+            ):
                 raise body_error
         finally:
             conn.close()
@@ -51,13 +67,15 @@ class TestExitPropagatesCommitFailure:
 
 class TestExitOnUnusedConnection:
     def test_unused_connection_exit_is_silent(self) -> None:
-        """If the connection was never used, __exit__ is a no-op; no
-        commit/rollback is attempted and the connection is not closed
-        (stdlib sqlite3 parity — it remains reusable)."""
+        """If ``connect()`` succeeds but no query ran, ``__exit__`` is
+        a no-op: no commit/rollback is attempted and the connection
+        is not closed (stdlib sqlite3 parity — it remains reusable).
+        ``__enter__`` eagerly connects so we mock that; the point of
+        this case is the post-enter / pre-query shape."""
         conn = Connection("localhost:9001", timeout=2.0)
         assert conn._async_conn is None
         # Clean exit, no body exception, no TCP connection ever made.
-        with conn:
+        with _eager_enter_connect(), conn:
             pass
         assert not conn._closed
         conn.close()

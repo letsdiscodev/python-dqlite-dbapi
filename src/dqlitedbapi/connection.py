@@ -551,6 +551,18 @@ class Connection:
         return f"<Connection address={self._address!r} database={self._database!r} {state}>"
 
     def __enter__(self) -> "Connection":
+        # Eager connect to match ``AsyncConnection.__aenter__`` — both
+        # context managers should fail at the ``with`` line when the
+        # cluster is unreachable, not inside the body's first operation.
+        try:
+            self.connect()
+        except BaseException:
+            # Python does not call ``__exit__`` when ``__enter__`` raises,
+            # so clean up partial state ourselves. ``close()`` is
+            # idempotent and tolerates the never-connected case.
+            with contextlib.suppress(Exception):
+                self.close()
+            raise
         return self
 
     def __exit__(
