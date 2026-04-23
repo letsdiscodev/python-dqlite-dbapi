@@ -765,10 +765,18 @@ class Cursor:
         Idempotent: a second call is a no-op. PEP 249 mandates that
         operations on a closed cursor raise an Error, but the close
         itself is permitted to be repeated.
+
+        Does NOT enforce the Connection's thread-affinity check. Close
+        is a cleanup primitive: it writes only to this cursor's own
+        in-memory fields and does not touch the wire. If the enclosing
+        ``with cursor() as c:`` body moves threads (``to_thread``, an
+        executor callback), ``__exit__`` is still allowed to close the
+        cursor without masking the body's original exception under a
+        thread-check ``ProgrammingError``. Matches stdlib
+        ``sqlite3.Cursor.close`` — close is always safe to call.
         """
         if self._closed:
             return
-        self._connection._check_thread()
         self._closed = True
         self._rows = []
         self._description = None
