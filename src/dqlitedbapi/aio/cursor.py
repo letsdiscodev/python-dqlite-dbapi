@@ -161,6 +161,75 @@ class AsyncCursor:
         self._row_index = 0
         self._rowcount = -1
 
+    async def _execute_unlocked(
+        self, operation: str, parameters: Sequence[Any] | None = None
+    ) -> None:
+        """Body of a single ``execute`` call — caller already holds ``op_lock``.
+
+        Factored out so ``executemany`` can hold the lock once across
+        every iteration rather than dropping and re-taking it per
+        parameter set (the per-iteration drop used to let a concurrent
+        task on the same connection slip arbitrary statements between
+        iterations — including COMMIT / ROLLBACK / DDL). Caller is
+        responsible for:
+
+        - clearing ``messages``,
+        - holding ``op_lock``,
+        - pre- and post-check ``_check_closed()``,
+        - resetting execute state when this is the first iteration.
+        """
+        is_query = _is_row_returning(operation)
+        params = _convert_params(parameters)
+        self._check_closed()
+        conn = await self._connection._ensure_connection()
+        # ``_ensure_connection`` awaits, so close() can still race
+        # against this window. Re-check once more before touching
+        # the wire.
+        self._check_closed()
+        if is_query:
+            columns, column_types, row_types, rows = await _call_client(
+                conn.query_raw_typed(operation, params)
+            )
+            if not columns:
+                # PRAGMA write-form dispatches through the row-
+                # returning branch but produces no columns; match
+                # stdlib sqlite3's ``description is None`` contract
+                # for non-result statements. See the sync
+                # ``_execute_async`` companion for rationale.
+                self._description = None
+            else:
+                self._description = tuple(
+                    (
+                        name,
+                        column_types[i] if i < len(column_types) else None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    for i, name in enumerate(columns)
+                )
+            # Per-row dispatch; see the sync ``_execute_async``
+            # companion for the rationale.
+            self._rows = [
+                _convert_row(row, row_types[i] if i < len(row_types) else column_types)
+                for i, row in enumerate(rows)
+            ]
+            self._row_index = 0
+            self._rowcount = len(rows)
+        else:
+            last_id, affected = await _call_client(conn.execute(operation, params))
+            self._lastrowid = last_id
+            self._rowcount = affected
+            self._description = None
+            self._rows = []
+            # Parity with the SELECT branch and with executemany:
+            # every execute must leave the cursor at row 0 of its
+            # (possibly empty) result set so a subsequent SELECT
+            # iterator starts from a clean state.
+            self._row_index = 0
+
     async def execute(
         self, operation: str, parameters: Sequence[Any] | None = None
     ) -> "AsyncCursor":
@@ -181,8 +250,6 @@ class AsyncCursor:
         # query's description.
         self._reset_execute_state()
 
-        is_query = _is_row_returning(operation)
-        params = _convert_params(parameters)
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:
             # Re-check after acquiring the lock so that a concurrent
@@ -194,54 +261,7 @@ class AsyncCursor:
             # rather than the sharper "Cursor is closed" / "Connection
             # is closed" that the caller expects.
             self._check_closed()
-            conn = await self._connection._ensure_connection()
-            # ``_ensure_connection`` awaits, so close() can still race
-            # against this window. Re-check once more before touching
-            # the wire.
-            self._check_closed()
-            if is_query:
-                columns, column_types, row_types, rows = await _call_client(
-                    conn.query_raw_typed(operation, params)
-                )
-                if not columns:
-                    # PRAGMA write-form dispatches through the row-
-                    # returning branch but produces no columns; match
-                    # stdlib sqlite3's ``description is None`` contract
-                    # for non-result statements. See the sync
-                    # ``_execute_async`` companion for rationale.
-                    self._description = None
-                else:
-                    self._description = tuple(
-                        (
-                            name,
-                            column_types[i] if i < len(column_types) else None,
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                        for i, name in enumerate(columns)
-                    )
-                # Per-row dispatch; see the sync ``_execute_async``
-                # companion for the rationale.
-                self._rows = [
-                    _convert_row(row, row_types[i] if i < len(row_types) else column_types)
-                    for i, row in enumerate(rows)
-                ]
-                self._row_index = 0
-                self._rowcount = len(rows)
-            else:
-                last_id, affected = await _call_client(conn.execute(operation, params))
-                self._lastrowid = last_id
-                self._rowcount = affected
-                self._description = None
-                self._rows = []
-                # Parity with the SELECT branch and with executemany:
-                # every execute must leave the cursor at row 0 of its
-                # (possibly empty) result set so a subsequent SELECT
-                # iterator starts from a clean state.
-                self._row_index = 0
+            await self._execute_unlocked(operation, parameters)
 
         return self
 
@@ -277,20 +297,32 @@ class AsyncCursor:
         # ``rowcount`` shape as empty ``execute``.
         self._reset_execute_state()
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
-        for params in seq_of_parameters:
-            # Re-check before each iteration so a concurrent close()
-            # landing between iterations surfaces as "Cursor is
-            # closed" rather than being observed only on the next
-            # iteration's nested execute entry (or not at all for a
-            # single-iteration remainder).
+        # Hold ``op_lock`` once for the entire loop. Previously each
+        # iteration called ``self.execute(...)`` which re-acquired the
+        # lock, so a concurrent task on the same connection could slip
+        # arbitrary statements — including ``COMMIT`` / ``ROLLBACK`` /
+        # DDL — between iterations of a RETURNING / insertmanyvalues
+        # batch. The sync path is already atomic because ``_run_sync``
+        # holds ``_op_lock`` for the outer coroutine; this restores
+        # parity.
+        _, op_lock = self._connection._ensure_locks()
+        async with op_lock:
             self._check_closed()
-            await self.execute(operation, params)
+            for params in seq_of_parameters:
+                # Re-check before each iteration so a concurrent
+                # ``cursor.close()`` landing between iterations
+                # surfaces as "Cursor is closed" rather than being
+                # observed only on the next iteration's nested execute
+                # entry (or not at all for a single-iteration
+                # remainder).
+                self._check_closed()
+                await self._execute_unlocked(operation, params)
+                self._check_closed()
+                acc.push(self)
+            # Final guard before apply; pairs with the ``_closed``
+            # check inside ``_ExecuteManyAccumulator.apply``.
             self._check_closed()
-            acc.push(self)
-        # Final guard before apply; pairs with the ``_closed`` check
-        # inside ``_ExecuteManyAccumulator.apply``.
-        self._check_closed()
-        acc.apply(self)
+            acc.apply(self)
         return self
 
     def _check_result_set(self) -> None:

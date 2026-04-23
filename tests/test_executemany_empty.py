@@ -19,7 +19,13 @@ def _cursor_with_prior_select() -> Cursor:
 
 
 def _async_cursor_with_prior_select() -> AsyncCursor:
+    import asyncio
+
     conn = MagicMock()
+    # ``AsyncCursor.executemany`` acquires ``op_lock`` across the whole
+    # iteration; the mocked connection must hand back a real asyncio.Lock
+    # so ``async with op_lock:`` works even on the empty-iteration path.
+    conn._ensure_locks.return_value = (asyncio.Lock(), asyncio.Lock())
     c = AsyncCursor(conn)
     c._description = [("id", None, None, None, None, None, None)]
     c._rows = deque([(1,), (2,)])
