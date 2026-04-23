@@ -585,18 +585,29 @@ class Cursor:
             columns, column_types, row_types, rows = await _call_client(
                 conn.query_raw_typed(operation, params)
             )
-            self._description = tuple(
-                (
-                    name,
-                    column_types[i] if i < len(column_types) else None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+            if not columns:
+                # ``_is_row_returning`` classifies ``PRAGMA`` as row-
+                # returning, which is correct for the read form
+                # (``PRAGMA foreign_keys``) but wrong for the write form
+                # (``PRAGMA foreign_keys = ON``) which produces no
+                # columns. Stdlib ``sqlite3`` sets ``description = None``
+                # for non-result statements; match that so callers who
+                # branch on ``description is None`` to detect
+                # non-queries behave consistently.
+                self._description = None
+            else:
+                self._description = tuple(
+                    (
+                        name,
+                        column_types[i] if i < len(column_types) else None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    for i, name in enumerate(columns)
                 )
-                for i, name in enumerate(columns)
-            )
             # Per-row dispatch: SQLite's dynamic typing means two rows in
             # the same column can carry different wire types. Use
             # ``row_types[i]`` rather than ``column_types`` so a row

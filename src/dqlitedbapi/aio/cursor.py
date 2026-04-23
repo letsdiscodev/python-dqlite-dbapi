@@ -193,18 +193,26 @@ class AsyncCursor:
                 columns, column_types, row_types, rows = await _call_client(
                     conn.query_raw_typed(operation, params)
                 )
-                self._description = tuple(
-                    (
-                        name,
-                        column_types[i] if i < len(column_types) else None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
+                if not columns:
+                    # PRAGMA write-form dispatches through the row-
+                    # returning branch but produces no columns; match
+                    # stdlib sqlite3's ``description is None`` contract
+                    # for non-result statements. See the sync
+                    # ``_execute_async`` companion for rationale.
+                    self._description = None
+                else:
+                    self._description = tuple(
+                        (
+                            name,
+                            column_types[i] if i < len(column_types) else None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for i, name in enumerate(columns)
                     )
-                    for i, name in enumerate(columns)
-                )
                 # Per-row dispatch; see the sync ``_execute_async``
                 # companion for the rationale.
                 self._rows = [
