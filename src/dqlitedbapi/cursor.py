@@ -321,7 +321,7 @@ class _ExecuteManyAccumulator:
         # "zero iterations ran" (empty seq_of_parameters) from "every
         # iteration was a no-op DML" so the resulting ``rowcount`` stays
         # at the post-``_reset_execute_state`` baseline of -1 in the
-        # former case, matching empty-``execute`` shape. See ISSUE-569.
+        # former case, matching empty-``execute`` shape.
         self._pushed = 0
         # Cumulative row cap across all executemany iterations. The
         # wire-layer ``max_total_rows`` governor caps a single round-
@@ -378,16 +378,17 @@ class _ExecuteManyAccumulator:
         ``_rowcount``, and re-populating those fields here would
         visibly un-close the result set for any attribute-level
         caller. Sync flavour is immune via the outer threading lock;
-        this guard pins the async flavour. See also ISSUE-564 for the
-        companion per-iteration guard in async ``executemany``.
+        this guard pins the async flavour. The per-iteration guard in
+        async ``executemany`` catches the racy close between iterations;
+        this guard catches a close that lands after the loop exits
+        but before ``apply()`` writes state back.
         """
         if cursor._closed:
             return
         if self._pushed == 0:
             # Empty ``seq_of_parameters``: leave the post-
             # ``_reset_execute_state`` baseline in place (``rowcount =
-            # -1``) so the shape matches empty ``execute``. See
-            # ISSUE-569.
+            # -1``) so the shape matches empty ``execute``.
             return
         cursor._rowcount = self.total_affected
         if self.description is not None:

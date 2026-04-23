@@ -136,7 +136,6 @@ def connect(
     # Validation happens in ``AsyncConnection.__init__`` (both
     # ``timeout`` and ``close_timeout``); re-calling
     # ``_validate_timeout`` here was redundant and asymmetric.
-    # See ISSUE-574.
     return AsyncConnection(
         address,
         database=database,
@@ -185,7 +184,6 @@ async def aconnect(
     # Validation happens in ``AsyncConnection.__init__`` (both
     # ``timeout`` and ``close_timeout``); re-calling
     # ``_validate_timeout`` here was redundant and asymmetric.
-    # See ISSUE-574.
     conn = AsyncConnection(
         address,
         database=database,

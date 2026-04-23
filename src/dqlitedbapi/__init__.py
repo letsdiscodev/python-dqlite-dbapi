@@ -138,7 +138,7 @@ def connect(
     # Validation happens in ``Connection.__init__`` (both ``timeout``
     # and ``close_timeout``); re-calling ``_validate_timeout`` here
     # was redundant and leaked the private symbol onto
-    # ``dqlitedbapi.dir()``. See ISSUE-573 / ISSUE-574.
+    # ``dqlitedbapi.dir()``.
     return Connection(
         address,
         database=database,
