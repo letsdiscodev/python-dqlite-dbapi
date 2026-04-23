@@ -1,7 +1,7 @@
 """executemany([]) doesn't leak stale SELECT state."""
 
 from collections import deque
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,6 +27,10 @@ def _async_cursor_with_prior_select() -> AsyncCursor:
     return c
 
 
+async def _noop(*_a: object, **_kw: object) -> None:
+    return None
+
+
 class TestExecutemanyEmpty:
     @pytest.mark.asyncio
     async def test_empty_executemany_clears_description(self) -> None:
@@ -34,11 +38,10 @@ class TestExecutemanyEmpty:
         prior SELECT result."""
         c = _cursor_with_prior_select()
 
-        async def _noop(*_a: object, **_kw: object) -> None:
-            return None
-
-        c._execute_async = _noop  # type: ignore[method-assign]
-        await c._executemany_async("INSERT INTO t VALUES (?)", [])
+        # ``Cursor`` uses ``__slots__`` so per-instance method override
+        # is not possible; patch the class attribute for the test scope.
+        with patch.object(Cursor, "_execute_async", new=_noop):
+            await c._executemany_async("INSERT INTO t VALUES (?)", [])
 
         assert c.description is None
         assert c._rows == []
@@ -59,10 +62,8 @@ class TestExecutemanyEmpty:
         """
         c = _async_cursor_with_prior_select()
 
-        async def _noop(*_a: object, **_kw: object) -> None:
-            return None
-
-        c._execute_async = _noop  # type: ignore[method-assign]
+        # An empty ``seq_of_parameters`` never enters the loop so no
+        # monkey-patch of ``execute`` is required.
         await c.executemany("INSERT INTO t VALUES (?)", [])
 
         assert c.description is None

@@ -414,6 +414,23 @@ def _is_row_returning(sql: str) -> bool:
 class Cursor:
     """PEP 249 compliant database cursor."""
 
+    # Stable attribute set — allocated one per ``Connection.cursor()``
+    # call, so dropping the per-instance ``__dict__`` is a measurable
+    # win at SA-engine scale. Mirrors ``_ExecuteManyAccumulator``'s
+    # existing slots pattern. Subclasses without their own
+    # ``__slots__`` retain a ``__dict__`` (stdlib ``datetime`` pattern).
+    __slots__ = (
+        "_arraysize",
+        "_closed",
+        "_connection",
+        "_description",
+        "_lastrowid",
+        "_row_index",
+        "_rowcount",
+        "_rows",
+        "messages",
+    )
+
     def __init__(self, connection: "Connection") -> None:
         self._connection = connection
         self._description: _Description = None

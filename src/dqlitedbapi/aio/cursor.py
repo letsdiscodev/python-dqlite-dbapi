@@ -24,6 +24,20 @@ __all__ = ["AsyncCursor"]
 class AsyncCursor:
     """Async database cursor."""
 
+    # Mirrors ``Cursor.__slots__`` in the sync tree: stable attribute
+    # set, allocated one per ``AsyncConnection.cursor()`` call.
+    __slots__ = (
+        "_arraysize",
+        "_closed",
+        "_connection",
+        "_description",
+        "_lastrowid",
+        "_row_index",
+        "_rowcount",
+        "_rows",
+        "messages",
+    )
+
     def __init__(self, connection: "AsyncConnection") -> None:
         self._connection = connection
         self._description: _Description = None
