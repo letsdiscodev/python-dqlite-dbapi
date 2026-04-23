@@ -116,7 +116,11 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     swallowed.
     """
     code = getattr(exc, "code", None)
-    if code is not None and code not in _NO_TX_CODES:
+    # Mask to the SQLite primary result code (low byte of the extended
+    # code); mirrors ``_classify_operational`` in cursor.py. Without the
+    # mask, any extended variant of SQLITE_ERROR / SQLITE_MISUSE whose
+    # low byte is 1 or 21 would slip past the whitelist and be surfaced.
+    if code is not None and (code & 0xFF) not in _NO_TX_CODES:
         return False
     return _NO_TX_SUBSTRING in str(exc).lower()
 
