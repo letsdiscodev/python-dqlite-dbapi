@@ -665,11 +665,13 @@ class Cursor:
 
     def setinputsizes(self, sizes: Sequence[int | None]) -> None:
         """Set input sizes (no-op for dqlite)."""
+        self._connection._check_thread()
         # PEP 249 §6.1.2 — operations on a closed cursor raise.
         self._check_closed()
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite)."""
+        self._connection._check_thread()
         # PEP 249 §6.1.2 — operations on a closed cursor raise.
         self._check_closed()
 
@@ -680,6 +682,7 @@ class Cursor:
 
         dqlite (and SQLite) have no stored-procedure concept.
         """
+        self._connection._check_thread()
         # PEP 249 §6.1.2 — closed-cursor ops raise. Order: check
         # closed-state first so the diagnostic reflects the root cause.
         self._check_closed()
@@ -690,6 +693,7 @@ class Cursor:
 
         dqlite's wire protocol does not return multiple result sets.
         """
+        self._connection._check_thread()
         # PEP 249 §6.1.2 — closed-cursor operations raise.
         self._check_closed()
         # PEP 249 §6.1.1 names ``nextset`` among the cursor methods
@@ -707,6 +711,7 @@ class Cursor:
         The dqlite cursor is forward-only; rows are buffered from a
         streamed wire response.
         """
+        self._connection._check_thread()
         self._check_closed()
         raise NotSupportedError("dqlite cursors are not scrollable")
 

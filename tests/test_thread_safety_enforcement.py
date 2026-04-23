@@ -119,6 +119,101 @@ class TestThreadIdentityCheck:
 
         assert isinstance(error, ProgrammingError)
 
+    def test_setinputsizes_from_wrong_thread_raises(self) -> None:
+        """setinputsizes() from a different thread must raise ProgrammingError."""
+        conn = Connection("localhost:9001")
+        cursor = conn.cursor()
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                cursor.setinputsizes([None])
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
+    def test_setoutputsize_from_wrong_thread_raises(self) -> None:
+        """setoutputsize() from a different thread must raise ProgrammingError."""
+        conn = Connection("localhost:9001")
+        cursor = conn.cursor()
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                cursor.setoutputsize(1)
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
+    def test_callproc_from_wrong_thread_raises(self) -> None:
+        """callproc() from a different thread must raise ProgrammingError."""
+        conn = Connection("localhost:9001")
+        cursor = conn.cursor()
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                cursor.callproc("p")
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
+    def test_nextset_from_wrong_thread_raises(self) -> None:
+        """nextset() from a different thread must raise ProgrammingError."""
+        conn = Connection("localhost:9001")
+        cursor = conn.cursor()
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                cursor.nextset()
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
+    def test_scroll_from_wrong_thread_raises(self) -> None:
+        """scroll() from a different thread must raise ProgrammingError."""
+        conn = Connection("localhost:9001")
+        cursor = conn.cursor()
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                cursor.scroll(0)
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
 
 class TestCloseHardening:
     """Test that close() is idempotent and handles edge cases."""
