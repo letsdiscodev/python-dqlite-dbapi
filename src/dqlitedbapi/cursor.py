@@ -157,6 +157,18 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # above. Surface as InterfaceError rather than leaking to the
         # caller as a non-DBAPI exception.
         raise InterfaceError(f"unrecognized client error ({type(e).__name__}): {e}") from e
+    except (TypeError, ValueError) as e:
+        # PEP 249 §7 mandates ``DataError`` for "problems with the
+        # processed data". The wire encoder in ``dqlitewire.types``
+        # raises ``TypeError`` / ``ValueError`` when a bind parameter is
+        # not one of the accepted primitives (bool/int/float/str/bytes/
+        # None). Without this wrap, those exceptions leak past ``except
+        # dqlitedbapi.Error`` boundaries. ``_convert_bind_param`` handles
+        # datetime / date / time up front; everything else — Decimal,
+        # UUID, Path, Enum, arbitrary user classes — reaches the wire
+        # encoder and lands here. Callers who want to support those
+        # types should register an adapter (stdlib sqlite3 convention).
+        raise DataError(f"cannot bind parameter: {e}") from e
 
 
 if TYPE_CHECKING:
