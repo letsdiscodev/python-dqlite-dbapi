@@ -319,18 +319,38 @@ class _ExecuteManyAccumulator:
         self._max_rows = max_rows
 
     def push(self, cursor: _ExecuteManyCursor) -> None:
-        """Record one iteration's output into the accumulator."""
-        if cursor._rowcount >= 0:
-            self.total_affected += cursor._rowcount
+        """Record one iteration's output into the accumulator.
+
+        Branches on the row-returning signal (``_description is not
+        None``) so "rows returned" and "rows affected" stay decoupled
+        from the shared ``_rowcount`` overload. Today's semantics have
+        the execute path set ``_rowcount = len(rows)`` on the
+        RETURNING branch — summing ``_rowcount`` and summing
+        ``len(rows)`` happen to produce identical results, but a future
+        change that makes ``_rowcount`` actually mean "rows affected"
+        (distinct from ``len(rows)`` for e.g. ``INSERT ... ON
+        CONFLICT ... RETURNING`` where rowcount may include skipped
+        rows) would silently double-count without this split.
+        """
         if cursor._description is not None:
+            # Row-returning iteration: total_affected is the count of
+            # rows emitted, which today matches ``len(cursor._rows)``.
+            # Using ``len()`` makes the invariant explicit and survives
+            # any future decoupling of rowcount semantics on the
+            # RETURNING path.
             if self.description is None:
                 self.description = cursor._description
             self.rows.extend(cursor._rows)
+            self.total_affected += len(cursor._rows)
             if self._max_rows is not None and len(self.rows) > self._max_rows:
                 raise DataError(
                     f"executemany accumulated {len(self.rows)} RETURNING rows; "
                     f"exceeds max_total_rows={self._max_rows}"
                 )
+        elif cursor._rowcount >= 0:
+            # Plain DML iteration: ``_rowcount`` is the server's
+            # sqlite3_changes() for this parameter set.
+            self.total_affected += cursor._rowcount
 
     def apply(self, cursor: _ExecuteManyCursor) -> None:
         """Materialise the accumulator's state onto the cursor.
