@@ -33,7 +33,7 @@ __all__ = [
 # Live here so sync/async cursors and the sqlalchemy adapter share one
 # shape instead of repeating the inline tuple at every site.
 _DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
-_Description = list[_DescriptionTuple] | None
+_Description = tuple[_DescriptionTuple, ...] | None
 
 
 # Type constructors

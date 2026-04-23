@@ -120,69 +120,54 @@ class TestCursor:
         cursor.setoutputsize(100, 0)
 
 
-class TestCursorDescriptionFreshCopy:
-    """Pin the `Cursor.description` fresh-copy-per-access contract.
+class TestCursorDescriptionIdentity:
+    """Pin the `Cursor.description` same-object-per-access contract.
 
-    The property returns `list(self._description)` so that a caller
-    mutating the returned list (e.g. `.clear()`, `.append(...)`) cannot
-    corrupt the cursor's internal state. PEP 249 does not prescribe
-    immutability, so the contract is a project convention; these tests
-    freeze it against an accidental regression to
-    `return self._description` (which would re-alias the internal list).
+    The property returns ``self._description`` unchanged (matching
+    stdlib ``sqlite3.Cursor.description``). Storage is a tuple of
+    7-tuples — structurally immutable, so a defensive copy is not
+    needed to keep the cursor's internal state safe from caller
+    mutation. A regression that reintroduced a ``list(...)`` wrap
+    would fail these tests.
     """
 
     def _make_cursor_with_description(self) -> Cursor:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        cursor._description = [
+        cursor._description = (
             ("a", 4, None, None, None, None, None),
             ("b", 4, None, None, None, None, None),
-        ]
+        )
         return cursor
 
-    def test_description_returns_fresh_list_per_call(self) -> None:
+    def test_description_returns_same_object_per_call(self) -> None:
         cursor = self._make_cursor_with_description()
         desc1 = cursor.description
         desc2 = cursor.description
         assert desc1 is not None
         assert desc2 is not None
-        # Fresh list each call — distinct objects, same contents.
-        assert desc1 is not desc2
-        assert desc1 == desc2
+        # Same tuple object each call — matches stdlib sqlite3.
+        assert desc1 is desc2
 
-    def test_description_returned_list_is_not_the_internal_list(self) -> None:
+    def test_description_is_the_internal_tuple(self) -> None:
         cursor = self._make_cursor_with_description()
         desc = cursor.description
-        # The returned list must not be aliased to the cursor's internal
-        # _description list. A regression that dropped the `list(...)`
-        # wrap would fail this.
-        assert desc is not cursor._description
+        assert desc is cursor._description
 
-    def test_description_mutation_does_not_affect_internal_state(self) -> None:
+    def test_description_is_tuple(self) -> None:
         cursor = self._make_cursor_with_description()
         desc = cursor.description
-        assert desc is not None
-        desc.clear()
-        # Second access returns a full-length list again — the first
-        # caller's .clear() did not corrupt internal state.
-        desc2 = cursor.description
-        assert desc2 is not None
-        assert len(desc2) == 2
+        assert isinstance(desc, tuple)
 
-    def test_description_empty_list_is_fresh_copy(self) -> None:
-        # Non-None-but-empty _description must still return a fresh
-        # empty list per call, not the same object. A regression like
-        # `return self._description or []` would re-alias on the
-        # non-empty path and silently break this on the first mutation.
+    def test_description_empty_tuple_is_same_object(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        cursor._description = []
+        cursor._description = ()
         desc1 = cursor.description
         desc2 = cursor.description
-        assert desc1 == []
-        assert desc2 == []
-        assert desc1 is not desc2
-        assert desc1 is not cursor._description
+        assert desc1 == ()
+        assert desc2 == ()
+        assert desc1 is desc2
 
 
 class TestOptionalCursorMethodsRaise:

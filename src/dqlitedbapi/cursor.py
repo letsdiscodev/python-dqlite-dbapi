@@ -367,20 +367,19 @@ class Cursor:
     def description(self) -> _Description:
         """Column descriptions for the last query.
 
-        Returns a list of 7-tuples:
+        Returns a tuple of 7-tuples:
         (name, type_code, display_size, internal_size, precision, scale, null_ok)
 
         ``type_code`` is the wire-level ``ValueType`` integer from the first
         result frame (e.g. 10 for ISO8601, 9 for UNIXTIME). The other fields
         are None — dqlite doesn't expose them.
 
-        Returns a fresh shallow copy each call so that a caller
-        mutating the list (e.g. ``cursor.description.clear()``) can't
-        corrupt the cursor's internal state.
+        Returns the same tuple object on each access (matching stdlib
+        ``sqlite3.Cursor.description``). A tuple is structurally
+        immutable so no defensive copy is needed to keep the cursor's
+        internal state safe from caller mutation.
         """
-        if self._description is None:
-            return None
-        return list(self._description)
+        return self._description
 
     @property
     def rowcount(self) -> int:
@@ -490,7 +489,7 @@ class Cursor:
             columns, column_types, row_types, rows = await _call_client(
                 conn.query_raw_typed(operation, params)
             )
-            self._description = [
+            self._description = tuple(
                 (
                     name,
                     column_types[i] if i < len(column_types) else None,
@@ -501,7 +500,7 @@ class Cursor:
                     None,
                 )
                 for i, name in enumerate(columns)
-            ]
+            )
             # Per-row dispatch: SQLite's dynamic typing means two rows in
             # the same column can carry different wire types. Use
             # ``row_types[i]`` rather than ``column_types`` so a row
