@@ -41,10 +41,23 @@ apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"  # Question mark style: WHERE name=?
 
-# SQLite compatibility attributes (for SQLAlchemy)
-# dqlite uses SQLite 3.x internally
+# SQLite compatibility attributes (for SQLAlchemy).
+#
+# Hard-coded at module import because PEP 249 / SQLAlchemy require
+# these to be synchronously available before any connection is
+# opened — dialect bootstrap cannot wait for a handshake. The value
+# MUST NOT advertise more than the SQLite version bundled in dqlite
+# upstream: the SA SQLite dialect gates feature code paths on this
+# tuple (RETURNING ≥ 3.35, STRICT ≥ 3.37, etc.), and advertising a
+# version the server does not actually ship produces SQL the server
+# rejects on the first query.
+#
+# Pinned by ``tests/integration/test_sqlite_version_pin.py``, which
+# runs ``SELECT sqlite_version()`` against the live cluster and fails
+# if this constant is ahead of what the server reports. The async
+# sibling constant in ``aio/__init__.py`` must track this one.
 sqlite_version_info = (3, 35, 0)
-sqlite_version = "3.35.0"
+sqlite_version = ".".join(str(v) for v in sqlite_version_info)
 
 __all__ = [
     # Module attributes

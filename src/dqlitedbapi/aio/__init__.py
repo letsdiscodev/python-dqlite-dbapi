@@ -47,9 +47,14 @@ apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"  # Question mark style: WHERE name=?
 
-# SQLite compatibility attributes (for SQLAlchemy)
+# SQLite compatibility attributes (for SQLAlchemy).
+#
+# Mirror of the sync sibling in ``dqlitedbapi/__init__.py``; see that
+# module for the rationale. The two constants must stay in lockstep —
+# pinned by ``tests/integration/test_sqlite_version_pin.py``, which
+# also asserts neither advertises more than the server actually bundles.
 sqlite_version_info = (3, 35, 0)
-sqlite_version = "3.35.0"
+sqlite_version = ".".join(str(v) for v in sqlite_version_info)
 
 __all__ = [
     # Module attributes
