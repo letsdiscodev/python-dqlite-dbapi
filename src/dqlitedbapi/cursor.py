@@ -1,5 +1,6 @@
 """PEP 249 Cursor implementation for dqlite."""
 
+import re
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Protocol
@@ -280,6 +281,37 @@ def _strip_leading_comments(sql: str) -> str:
 
 _ROW_RETURNING_PREFIXES = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
 
+# SQL noise that the RETURNING-keyword scan must skip past: single-quoted
+# string literals (with '' escapes), double-quoted identifiers (with ""
+# escapes), bracket-quoted identifiers (MSSQL / Access style, which SQLite
+# also accepts), ``-- line comments``, and ``/* block comments */``.
+# Without this stripper a value like ``INSERT INTO t VALUES('some
+# RETURNING thing')`` or an identifier like ``SET "returning" = 1`` got
+# misclassified as row-returning, the statement was dispatched through
+# QUERY_SQL, and ``_rowcount`` / ``_lastrowid`` reported zero / None.
+_SQL_NOISE_RE = re.compile(
+    r"""
+    '(?:[^']|'')*'          # single-quoted string literal
+    | "(?:[^"]|"")*"        # double-quoted identifier
+    | \[[^\]]*\]            # bracket-quoted identifier
+    | --[^\n]*              # line comment
+    | /\*.*?\*/             # block comment
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+
+def _strip_sql_noise(sql: str) -> str:
+    """Replace string literals / identifiers / comments with a space.
+
+    Preserves keyword boundaries so the downstream ``" RETURNING "``
+    scan still sees a spaced match in the cleaned text. The space
+    substitution is important: collapsing to empty would fuse adjacent
+    tokens into identifiers that could themselves trigger false
+    positives.
+    """
+    return _SQL_NOISE_RE.sub(" ", sql)
+
 
 class _ExecuteManyCursor(Protocol):
     """Structural shape of :class:`Cursor` / :class:`AsyncCursor` as
@@ -412,7 +444,8 @@ def _is_row_returning(sql: str) -> bool:
     misclassified as a query. This is a known limitation of a
     prefix-only check — a full SQL parser is out of scope.
     """
-    normalized = _strip_leading_comments(sql).upper().lstrip("(")
+    cleaned = _strip_sql_noise(sql)
+    normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
     if normalized.startswith(_ROW_RETURNING_PREFIXES):
         return True
     return " RETURNING " in normalized or normalized.endswith(" RETURNING")
