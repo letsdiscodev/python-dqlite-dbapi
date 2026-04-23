@@ -157,8 +157,15 @@ def _cleanup_loop_thread(
     """
     if closed_flag[0] is False:
         # User never called close() → leak warning (matches stdlib
-        # sqlite3). Don't crash at interpreter shutdown.
-        with contextlib.suppress(Exception):
+        # sqlite3). Do NOT wrap in ``contextlib.suppress(Exception)``:
+        # strict test environments (``pytest -W error::ResourceWarning``)
+        # rely on the warning turning into a raise, and the broad
+        # suppressor used to silently swallow that raise along with
+        # any other exception the warnings machinery might surface.
+        # Narrow suppression to ``RuntimeError`` for the specific
+        # interpreter-shutdown race where the warnings module's own
+        # finalization is mid-teardown.
+        with contextlib.suppress(RuntimeError):
             warnings.warn(
                 f"Connection(address={address!r}) was garbage-collected "
                 f"without close(); cleaning up event-loop thread. Call "
