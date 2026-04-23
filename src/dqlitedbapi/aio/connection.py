@@ -108,6 +108,11 @@ class AsyncConnection:
         self._loop_ref: weakref.ref[asyncio.AbstractEventLoop] | None = None
         # PEP 249 optional extension; see Connection.messages.
         self.messages: list[tuple[type[Exception], Exception | str]] = []
+        # Track outstanding cursors weakly so close() can scrub their
+        # state (stdlib sqlite3 cascades). Buffered fetches on a
+        # cursor whose AsyncConnection was externally closed used to
+        # silently answer from stale in-memory rows.
+        self._cursors: weakref.WeakSet[AsyncCursor] = weakref.WeakSet()
 
     def _ensure_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
         """Lazy-create the asyncio locks on the currently-running loop.
@@ -191,6 +196,18 @@ class AsyncConnection:
         # closed state as soon as it acquires. Then drain the current
         # in-flight op (if any) under the lock.
         self._closed = True
+        # Cascade to tracked cursors before the teardown drains the
+        # wire so buffered fetches stop answering from stale rows.
+        # Writes go directly to the cursor's private attributes; the
+        # async Cursor's own close() path re-enters op_lock, which
+        # would deadlock against the _op_lock acquire below.
+        for cur in list(self._cursors):
+            cur._closed = True
+            cur._rows = []
+            cur._description = None
+            cur._rowcount = -1
+            cur._lastrowid = None
+        self._cursors.clear()
         if self._async_conn is None:
             # Null the lazy locks so a subsequent fixture or
             # SQLAlchemy-glue reuse of the object in a different event
@@ -289,7 +306,9 @@ class AsyncConnection:
                         "AsyncConnection.cursor() called from a different "
                         "event loop; AsyncConnection instances are loop-bound."
                     )
-        return AsyncCursor(self)
+        cur = AsyncCursor(self)
+        self._cursors.add(cur)
+        return cur
 
     @property
     def address(self) -> str:

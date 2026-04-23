@@ -182,10 +182,16 @@ def test_async_cursor_fetchall_clears_messages() -> None:
 
 
 def test_connection_cursor_clears_messages() -> None:
+    import weakref
+
     conn = MagicMock(spec=Connection)
     conn._check_thread = MagicMock()
     conn._closed = False
     conn.messages = [(DbApiWarning, "stale")]
+    # Connection.cursor() now registers the new cursor in self._cursors
+    # so Connection.close() can cascade; provide a real WeakSet on the
+    # mock so the add() succeeds.
+    conn._cursors = weakref.WeakSet()
     Connection.cursor(conn)
     assert conn.messages == []
 
@@ -229,11 +235,16 @@ def test_async_connection_rollback_clears_messages() -> None:
 
 
 def test_async_connection_cursor_clears_messages() -> None:
+    import weakref
+
     conn = MagicMock(spec=AsyncConnection)
     conn._closed = False
     # ``cursor()`` reads ``_loop_ref`` for the best-effort loop-binding
     # check; spec'd mock needs it set explicitly.
     conn._loop_ref = None
     conn.messages = [(DbApiWarning, "stale")]
+    # AsyncConnection.cursor() registers the new cursor in a WeakSet
+    # so close() can cascade; give the mock a real one.
+    conn._cursors = weakref.WeakSet()
     AsyncConnection.cursor(conn)
     assert conn.messages == []

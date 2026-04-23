@@ -476,7 +476,11 @@ class Cursor:
     # win at SA-engine scale. Mirrors ``_ExecuteManyAccumulator``'s
     # existing slots pattern. Subclasses without their own
     # ``__slots__`` retain a ``__dict__`` (stdlib ``datetime`` pattern).
+    # ``__weakref__`` is needed so ``Connection._cursors`` (a WeakSet)
+    # can hold a reference to the cursor; slotted classes need it
+    # declared explicitly.
     __slots__ = (
+        "__weakref__",
         "_arraysize",
         "_closed",
         "_connection",

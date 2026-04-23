@@ -278,6 +278,11 @@ class Connection:
         # closing over ``self`` and preventing GC.
         self._closed_flag: list[bool] = [False]
         self._finalizer: weakref.finalize[Any, Any] | None = None
+        # Track outstanding cursors weakly so Connection.close() can
+        # scrub their state (stdlib sqlite3 cascades; buffered fetches
+        # on a cursor whose Connection was externally closed used to
+        # silently succeed against stale in-memory rows).
+        self._cursors: weakref.WeakSet[Cursor] = weakref.WeakSet()
 
     def _check_thread(self) -> None:
         """Raise ProgrammingError if called from a different thread than the creator."""
@@ -438,6 +443,19 @@ class Connection:
         # Flip the flag the finalizer reads so it knows this was an
         # explicit close (no ResourceWarning).
         self._closed_flag[0] = True
+        # Cascade to tracked cursors so buffered fetches on them
+        # stop silently answering from stale in-memory rows. stdlib
+        # sqlite3.Connection.close() does the same. Writes go
+        # directly to the cursor's private attributes so we bypass
+        # the Cursor.close() path (which would re-dispatch through
+        # Cursor.messages).
+        for cur in list(self._cursors):
+            cur._closed = True
+            cur._rows = []
+            cur._description = None
+            cur._rowcount = -1
+            cur._lastrowid = None
+        self._cursors.clear()
         # Detach the finalizer — it's about to do nothing useful, and
         # keeping it registered would double-stop the loop.
         if self._finalizer is not None:
@@ -534,7 +552,9 @@ class Connection:
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
-        return Cursor(self)
+        cur = Cursor(self)
+        self._cursors.add(cur)
+        return cur
 
     @property
     def address(self) -> str:

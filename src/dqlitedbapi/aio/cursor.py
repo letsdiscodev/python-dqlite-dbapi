@@ -27,7 +27,10 @@ class AsyncCursor:
 
     # Mirrors ``Cursor.__slots__`` in the sync tree: stable attribute
     # set, allocated one per ``AsyncConnection.cursor()`` call.
+    # ``__weakref__`` lets ``AsyncConnection._cursors`` (a WeakSet)
+    # hold a reference for the close-cascade.
     __slots__ = (
+        "__weakref__",
         "_arraysize",
         "_closed",
         "_connection",
