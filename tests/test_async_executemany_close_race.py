@@ -61,6 +61,9 @@ class TestAccumulatorApplySkipsClosed:
         acc.rows = [(1,), (2,)]
         acc.description = desc
         acc.total_affected = 2
+        # Mark that push() ran — otherwise apply() skips the write to
+        # preserve the empty-seq baseline (see ISSUE-569).
+        acc._pushed = 1
         cur = _OpenStubCursor()
         acc.apply(cur)
         assert cur._rowcount == 2

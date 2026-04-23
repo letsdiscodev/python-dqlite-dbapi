@@ -229,9 +229,11 @@ class AsyncCursor:
         del self.messages[:]
         self._check_closed()
 
-        self._description = None
-        self._rows = []
-        self._row_index = 0
+        # Single source of truth for per-execute reset; see
+        # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
+        # an empty ``seq_of_parameters`` ends with the same
+        # ``rowcount`` shape as empty ``execute``.
+        self._reset_execute_state()
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         for params in seq_of_parameters:
             # Re-check before each iteration so a concurrent close()

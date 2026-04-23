@@ -305,12 +305,18 @@ class _ExecuteManyAccumulator:
     accumulator and then apply it to the cursor.
     """
 
-    __slots__ = ("_max_rows", "description", "rows", "total_affected")
+    __slots__ = ("_max_rows", "_pushed", "description", "rows", "total_affected")
 
     def __init__(self, max_rows: int | None = None) -> None:
         self.total_affected = 0
         self.rows: list[tuple[Any, ...]] = []
         self.description: _Description = None
+        # Count of ``push()`` calls: ``apply()`` uses this to distinguish
+        # "zero iterations ran" (empty seq_of_parameters) from "every
+        # iteration was a no-op DML" so the resulting ``rowcount`` stays
+        # at the post-``_reset_execute_state`` baseline of -1 in the
+        # former case, matching empty-``execute`` shape. See ISSUE-569.
+        self._pushed = 0
         # Cumulative row cap across all executemany iterations. The
         # wire-layer ``max_total_rows`` governor caps a single round-
         # trip only; without this cumulative check, a 10M-element
@@ -332,6 +338,7 @@ class _ExecuteManyAccumulator:
         CONFLICT ... RETURNING`` where rowcount may include skipped
         rows) would silently double-count without this split.
         """
+        self._pushed += 1
         if cursor._description is not None:
             # Row-returning iteration: total_affected is the count of
             # rows emitted, which today matches ``len(cursor._rows)``.
@@ -369,6 +376,12 @@ class _ExecuteManyAccumulator:
         companion per-iteration guard in async ``executemany``.
         """
         if cursor._closed:
+            return
+        if self._pushed == 0:
+            # Empty ``seq_of_parameters``: leave the post-
+            # ``_reset_execute_state`` baseline in place (``rowcount =
+            # -1``) so the shape matches empty ``execute``. See
+            # ISSUE-569.
             return
         cursor._rowcount = self.total_affected
         if self.description is not None:
@@ -609,9 +622,11 @@ class Cursor:
         ``_rows`` on each iteration and only the rows from the last
         parameter set would survive.
         """
-        self._description = None
-        self._rows = []
-        self._row_index = 0
+        # Single source of truth for per-execute reset; see
+        # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
+        # an empty ``seq_of_parameters`` ends with the same
+        # ``rowcount`` shape as empty ``execute``.
+        self._reset_execute_state()
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         for params in seq_of_parameters:
             await self._execute_async(operation, params)

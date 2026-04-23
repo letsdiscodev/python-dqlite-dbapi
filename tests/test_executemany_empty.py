@@ -42,7 +42,11 @@ class TestExecutemanyEmpty:
 
         assert c.description is None
         assert c._rows == []
-        assert c.rowcount == 0
+        # ``_reset_execute_state`` zeroes rowcount to -1 so empty
+        # executemany matches the shape of empty execute (PEP 249
+        # tolerates either, but same-driver drift between the two
+        # surfaces was the original defect — see ISSUE-569).
+        assert c.rowcount == -1
 
     @pytest.mark.asyncio
     async def test_async_cursor_executemany_empty_via_public_surface(self) -> None:
@@ -63,4 +67,5 @@ class TestExecutemanyEmpty:
 
         assert c.description is None
         assert list(c._rows) == []
-        assert c.rowcount == 0
+        # Matches the sync sibling above (ISSUE-569 pin).
+        assert c.rowcount == -1
