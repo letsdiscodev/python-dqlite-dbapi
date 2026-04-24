@@ -59,6 +59,8 @@ paramstyle = "qmark"  # Question mark style: WHERE name=?
 sqlite_version_info = (3, 35, 0)
 sqlite_version = ".".join(str(v) for v in sqlite_version_info)
 
+__version__ = "0.1.3"
+
 __all__ = [
     # Module attributes
     "__version__",
@@ -98,8 +100,6 @@ __all__ = [
     "DATETIME",
     "ROWID",
 ]
-
-__version__ = "0.1.3"
 
 
 def connect(
