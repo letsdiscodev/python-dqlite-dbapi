@@ -418,9 +418,15 @@ class _ExecuteManyAccumulator:
         if cursor._closed:
             return
         if self._pushed == 0:
-            # Empty ``seq_of_parameters``: leave the post-
-            # ``_reset_execute_state`` baseline in place (``rowcount =
-            # -1``) so the shape matches empty ``execute``.
+            # Empty ``seq_of_parameters``: zero iterations → zero rows
+            # affected. stdlib ``sqlite3.Cursor.executemany([])`` and
+            # psycopg2 both set ``rowcount = 0`` (not ``-1``) in this
+            # case. PEP 249 permits ``-1`` as "undetermined," but zero
+            # iterations has a deterministic zero answer — match the
+            # stdlib / psycopg2 contract so callers doing
+            # ``if cur.rowcount > 0: ...`` after an empty batch see
+            # the expected no-rows-affected signal.
+            cursor._rowcount = 0
             return
         cursor._rowcount = self.total_affected
         if self.description is not None:

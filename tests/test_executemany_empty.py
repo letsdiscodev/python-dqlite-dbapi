@@ -51,11 +51,12 @@ class TestExecutemanyEmpty:
 
         assert c.description is None
         assert c._rows == []
-        # ``_reset_execute_state`` zeroes rowcount to -1 so empty
-        # executemany matches the shape of empty execute (PEP 249
-        # tolerates either, but same-driver drift between the two
-        # surfaces was the original defect — see ISSUE-569).
-        assert c.rowcount == -1
+        # stdlib sqlite3 / psycopg2 report 0 for empty executemany;
+        # zero iterations → zero rows affected is deterministic. PEP
+        # 249 also permits -1 ("undetermined") but matching the
+        # stdlib / psycopg2 contract avoids surprising callers doing
+        # ``if cur.rowcount > 0: ...`` checks.
+        assert c.rowcount == 0
 
     @pytest.mark.asyncio
     async def test_async_cursor_executemany_empty_via_public_surface(self) -> None:
@@ -74,5 +75,5 @@ class TestExecutemanyEmpty:
 
         assert c.description is None
         assert list(c._rows) == []
-        # Matches the sync sibling above (ISSUE-569 pin).
-        assert c.rowcount == -1
+        # Matches the sync sibling above: stdlib-parity 0, not -1.
+        assert c.rowcount == 0
