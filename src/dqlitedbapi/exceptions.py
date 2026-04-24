@@ -14,8 +14,20 @@ __all__ = [
 ]
 
 
-class Warning(Exception):
-    """Exception raised for important warnings."""
+class Warning(Exception):  # noqa: N818  - PEP 249 mandated class name
+    """PEP 249 Warning class.
+
+    Exported for compatibility with generic cross-driver code and
+    for symmetry with ``Connection.messages`` / ``Cursor.messages``
+    (both PEP 249 extension surfaces). The driver does not currently
+    raise ``Warning`` — the dqlite wire protocol does not surface the
+    SQLite-level warning conditions (data truncation on BLOB / TEXT
+    bind, implicit type conversion during bind, etc.) that stdlib
+    ``sqlite3`` would report. The parallel ``Connection.messages``
+    attribute is therefore always empty in practice. If a concrete
+    warning condition surfaces later, populate ``messages`` and use
+    this class as the tuple's first element.
+    """
 
     pass
 
