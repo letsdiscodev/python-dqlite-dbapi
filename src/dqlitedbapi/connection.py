@@ -531,6 +531,18 @@ class Connection:
         silently succeeds in the same case, and callers should not
         have to tell the difference between an empty transaction and
         a successfully committed one.
+
+        Operational caveat: on a leader flip mid-transaction, COMMIT
+        can raise ``OperationalError`` with a code in
+        ``dqlitewire.LEADER_ERROR_CODES``. The write MAY or MAY NOT
+        have been persisted — Raft may already have replicated the
+        commit log entry before the flip, or the flip may have
+        occurred before the entry was appended. Callers cannot tell
+        from the exception alone. Use idempotent DML
+        (``INSERT OR REPLACE``, UPDATE on a unique key) or an
+        out-of-band state-check before retrying to avoid duplicate
+        writes. The same caveat applies to ``__exit__``'s clean-exit
+        commit.
         """
         del self.messages[:]
         self._check_thread()

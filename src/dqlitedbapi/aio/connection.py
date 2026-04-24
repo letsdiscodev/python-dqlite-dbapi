@@ -277,6 +277,12 @@ class AsyncConnection:
         Silent no-op if the connection has never been used (preserves
         the existing "no spurious connect" contract) or if the server
         reports "no transaction is active" (matches stdlib sqlite3).
+
+        Operational caveat: on a leader flip mid-transaction, COMMIT
+        can raise ``OperationalError`` with a leader-change code. The
+        write may or may not have been persisted — callers should use
+        idempotent DML or out-of-band state-checks before retrying.
+        Same caveat applies to ``__aexit__``'s clean-exit commit.
         """
         del self.messages[:]
         if self._closed:
