@@ -28,8 +28,15 @@ class _ScriptedClient:
         self._rows = rows
 
     def query_raw_typed(self, sql: str, params):  # type: ignore[no-untyped-def]
+        from dqlitewire.constants import ValueType
+
+        # One ValueType per column (mirrors what the wire decoder
+        # produces). Leave row_types empty since the rows here are
+        # already typed in a way the per-row dispatch can handle
+        # from ``column_types`` alone.
+        column_types = [ValueType.INTEGER]
         row_types = [[] for _ in self._rows]
-        return _AwaitableObj(obj=(["x"], [], row_types, self._rows))
+        return _AwaitableObj(obj=(["x"], column_types, row_types, self._rows))
 
     def execute(self, sql: str, params):  # type: ignore[no-untyped-def]
         return _AwaitableObj(obj=(0, 0))

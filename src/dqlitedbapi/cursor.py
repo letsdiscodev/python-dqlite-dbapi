@@ -682,16 +682,35 @@ class Cursor:
                 # non-queries behave consistently.
                 self._description = None
             else:
-                self._description = tuple(
-                    (
-                        name,
-                        column_types[i] if i < len(column_types) else None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
+                # PEP 249 §6.1.2 says ``type_code`` "must compare equal
+                # to one of Type Objects." ``None`` never compares equal
+                # to ``STRING`` / ``NUMBER`` / ``BINARY`` / ``DATETIME`` /
+                # ``ROWID`` (the comparison protocol returns
+                # ``NotImplemented`` → False), so a fallback of ``None``
+                # silently produced PEP-249-illegal descriptions when
+                # the wire layer returned fewer type codes than columns.
+                #
+                # Empty-result legitimate case: ``RowsResponse`` derives
+                # ``column_types`` from the first row's type header, so
+                # a zero-row result set returns ``column_types == []``.
+                # PEP 249 permits ``type_code=None`` when the type is
+                # not determinable; emit it in that specific case only.
+                # For the real anomaly (rows present but short
+                # ``column_types``), raise ``DataError`` so the wire
+                # bug surfaces loudly.
+                if len(column_types) == 0 and len(rows) == 0:
+                    type_codes: list[Any] = [None] * len(columns)
+                elif len(column_types) != len(columns):
+                    from dqlitedbapi.exceptions import DataError
+
+                    raise DataError(
+                        f"Wire response has {len(columns)} columns but "
+                        f"{len(column_types)} type codes"
                     )
+                else:
+                    type_codes = list(column_types)
+                self._description = tuple(
+                    (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)
                 )
             # Per-row dispatch: SQLite's dynamic typing means two rows in

@@ -12,6 +12,9 @@ import pytest
 
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
+from dqlitewire.constants import ValueType
+
+INTEGER = ValueType.INTEGER
 
 
 class _AwaitableObj:
@@ -46,8 +49,8 @@ async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
     conn = MagicMock()
     scripted = _ScriptedClient(
         [
-            (["x"], [], [[], [], []], [[1], [2], [3]]),
-            (["x"], [], [[], []], [[4], [5]]),
+            (["x"], [INTEGER], [[], [], []], [[1], [2], [3]]),
+            (["x"], [INTEGER], [[], []], [[4], [5]]),
         ]
     )
 
@@ -81,8 +84,8 @@ async def test_async_cursor_iterator_resets_on_reexecute() -> None:
 
     scripted = _ScriptedClient(
         [
-            (["x"], [], [[], [], []], [[1], [2], [3]]),
-            (["x"], [], [[], []], [[4], [5]]),
+            (["x"], [INTEGER], [[], [], []], [[1], [2], [3]]),
+            (["x"], [INTEGER], [[], []], [[4], [5]]),
         ]
     )
 

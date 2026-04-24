@@ -199,16 +199,25 @@ class AsyncCursor:
                 # ``_execute_async`` companion for rationale.
                 self._description = None
             else:
-                self._description = tuple(
-                    (
-                        name,
-                        column_types[i] if i < len(column_types) else None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
+                # PEP 249 §6.1.2 ``type_code`` must compare equal to a
+                # Type Object. See the sync ``_execute_async`` for the
+                # full rationale. Empty result set → column_types is
+                # legitimately empty (type_code=None is the only
+                # permitted representation). Non-empty but short →
+                # ``DataError`` so the anomaly surfaces loudly.
+                if len(column_types) == 0 and len(rows) == 0:
+                    type_codes: list[Any] = [None] * len(columns)
+                elif len(column_types) != len(columns):
+                    from dqlitedbapi.exceptions import DataError
+
+                    raise DataError(
+                        f"Wire response has {len(columns)} columns but "
+                        f"{len(column_types)} type codes"
                     )
+                else:
+                    type_codes = list(column_types)
+                self._description = tuple(
+                    (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)
                 )
             # Per-row dispatch; see the sync ``_execute_async``
