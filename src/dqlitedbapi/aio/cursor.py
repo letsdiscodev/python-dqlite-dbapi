@@ -426,6 +426,12 @@ class AsyncCursor:
         """
         # PEP 249 §6.1.2 — closed-cursor operations raise.
         self._check_closed()
+        # Surface a loop-binding mismatch up front so callers see the
+        # same ``ProgrammingError`` they'd get from ``execute`` /
+        # ``fetchone``. Without this, a sync no-op on a cursor bound
+        # to loop A but called from loop B silently succeeds and
+        # masks the misuse until the next awaited op.
+        self._connection._ensure_locks()
         del self.messages[:]
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:
@@ -435,6 +441,8 @@ class AsyncCursor:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         # PEP 249 §6.1.2 — closed-cursor operations raise.
         self._check_closed()
+        # Loop-binding check; see ``setinputsizes`` for rationale.
+        self._connection._ensure_locks()
         del self.messages[:]
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:

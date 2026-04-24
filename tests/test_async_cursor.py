@@ -136,12 +136,16 @@ class TestAsyncCursor:
         results = [row async for row in cursor]
         assert results == [(1, "a"), (2, "b"), (3, "c")]
 
-    def test_setinputsizes_noop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_setinputsizes_noop(self) -> None:
+        # Runs inside a loop because ``setinputsizes`` now routes through
+        # ``_ensure_locks()`` (loop-binding check).
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         cursor.setinputsizes([None, None])
 
-    def test_setoutputsize_noop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_setoutputsize_noop(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         cursor.setoutputsize(100, 0)
