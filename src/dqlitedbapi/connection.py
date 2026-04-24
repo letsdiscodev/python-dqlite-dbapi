@@ -368,6 +368,27 @@ class Connection:
                 # ensuring all writes by the event loop thread are visible here.
                 return future.result(timeout=self._timeout)
             except TimeoutError as e:
+                # Race check BEFORE calling ``cancel()`` /
+                # ``_invalidate``: the coroutine may have completed
+                # successfully between ``result(timeout=...)`` raising
+                # TimeoutError and our cancel attempt landing. In that
+                # case the operation actually persisted — raising
+                # OperationalError now would cause the caller's retry
+                # logic to re-run the op and, for non-idempotent
+                # statements, duplicate the write. Honour the
+                # successful completion instead.
+                if future.done() and not future.cancelled():
+                    try:
+                        return future.result(timeout=0)
+                    except BaseException:
+                        # Coroutine completed with an exception of its
+                        # own; fall through to the timeout path and
+                        # raise OperationalError. The original exception
+                        # is still discoverable via future state but
+                        # surfacing it here would change the legacy
+                        # "on sync-timeout, you get OperationalError"
+                        # contract.
+                        pass
                 future.cancel()
                 # Poison the underlying connection. The coroutine may have
                 # half-written a request; the wire is in unknown state.

@@ -50,6 +50,16 @@ class TestRunSyncTimeout:
             def cancel(self) -> bool:
                 return True
 
+            def done(self) -> bool:
+                # Race check (ISSUE-674) — pretend the coroutine is
+                # still running, so the cancel-success branch is
+                # skipped and the original cancel-then-bounded-wait
+                # path executes.
+                return False
+
+            def cancelled(self) -> bool:
+                return False
+
             def result(self, timeout: float | None = None) -> None:
                 self._calls += 1
                 if self._calls == 1:
@@ -124,3 +134,66 @@ class TestRunSyncTimeout:
         result = conn._run_sync(returns_int())
         assert_type(result, int)
         assert result == 7
+
+
+class TestRunSyncCancelSuccessRace:
+    def test_run_sync_returns_value_when_cancel_loses_race(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``future.result(timeout=...)`` raises ``TimeoutError`` when
+        the bounded wait expired, but the coroutine may have completed
+        successfully on the loop thread between the timeout and our
+        cancel attempt. ``_run_sync`` must observe ``future.done()`` /
+        ``future.cancelled()`` BEFORE invalidating the connection and
+        return the successful result. Otherwise the caller's retry
+        logic re-runs a non-idempotent statement, doubling the write.
+        """
+        import concurrent.futures as cf
+        from typing import Any
+
+        from dqlitedbapi import connection as conn_module
+
+        conn = Connection("localhost:9001", timeout=0.05)
+
+        class _LateSuccessFuture:
+            """Future whose ``result(timeout=...)`` first raises
+            TimeoutError (modelling ``_run_sync``'s bounded wait
+            expiring) and then reports the coroutine as
+            successfully completed."""
+
+            def __init__(self) -> None:
+                self._calls = 0
+
+            def cancel(self) -> bool:
+                return False  # cancel lost the race
+
+            def done(self) -> bool:
+                return True
+
+            def cancelled(self) -> bool:
+                return False
+
+            def result(self, timeout: float | None = None) -> int:
+                self._calls += 1
+                if self._calls == 1:
+                    raise cf.TimeoutError()
+                return 1234  # successful completion the cancel raced with
+
+        stub = _LateSuccessFuture()
+
+        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _LateSuccessFuture:  # type: ignore[no-untyped-def]
+            coro.close()
+            return stub
+
+        monkeypatch.setattr(
+            conn_module.asyncio,
+            "run_coroutine_threadsafe",
+            _fake_run_coroutine_threadsafe,
+        )
+
+        async def _never_runs() -> None:
+            await asyncio.sleep(999)
+
+        # Must NOT raise OperationalError; must return the late success.
+        result = conn._run_sync(_never_runs())
+        assert result == 1234
