@@ -890,6 +890,14 @@ class Cursor:
         # PEP 249 §6.1.2 — closed-cursor ops raise. Order: check
         # closed-state first so the diagnostic reflects the root cause.
         self._check_closed()
+        # PEP 249 §6.1.1 names ``callproc`` among the cursor methods
+        # that clear ``Connection.messages`` / ``Cursor.messages``.
+        # Clear before raising so the contract holds even on the
+        # not-supported path. Mirrors ``nextset`` below.
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> bool | None:
@@ -917,6 +925,15 @@ class Cursor:
         """
         self._connection._check_thread()
         self._check_closed()
+        # PEP 249 §6.1.1 lists ``nextset`` but not ``scroll`` in the
+        # explicit-clear set; we clear here too for sibling consistency
+        # with ``nextset`` / ``callproc`` / ``setinputsizes`` /
+        # ``setoutputsize``. Cheap and removes a latent foot-gun for
+        # future code that starts populating ``messages``.
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def __repr__(self) -> str:

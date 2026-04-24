@@ -451,6 +451,14 @@ class AsyncCursor:
         """
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
+        # PEP 249 §6.1.1 names ``callproc`` among the cursor methods
+        # that clear ``Connection.messages`` / ``Cursor.messages``.
+        # Clear before raising so the contract holds even on the
+        # not-supported path. Mirrors ``nextset``.
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> bool | None:
@@ -470,6 +478,15 @@ class AsyncCursor:
         """PEP 249 optional extension — not supported."""
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
+        # Sibling consistency with ``nextset`` / ``callproc`` /
+        # ``setinputsizes`` / ``setoutputsize``: clear ``messages`` on
+        # the not-supported path so a future code path that populates
+        # ``messages`` cannot leave stale entries visible after the
+        # caller observed the rejection.
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def __repr__(self) -> str:
