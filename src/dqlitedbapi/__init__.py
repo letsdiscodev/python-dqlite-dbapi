@@ -1,5 +1,16 @@
 """PEP 249 compliant interface for dqlite."""
 
+# Free-threaded Python (python3.13t / PEP 703) is not supported.
+# The guard lives in ``dqlitewire.__init__`` (this package's transitive
+# dependency via ``dqliteclient``), where it raises ``ImportError`` at
+# import time. The ``_closed_flag`` pattern used by ``Connection``'s
+# weakref finalizer relies on the GIL's C-level atomicity for
+# list-element stores; relying on the wire-layer guard is
+# intentional. Do NOT add a guard here that would bypass the wire
+# package's opt-in env var — a user who set
+# ``DQLITEWIRE_ALLOW_FREE_THREADED=1`` is signalling they accept
+# the single-owner discipline across all layers.
+
 from dqlitedbapi.connection import Connection
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import (
