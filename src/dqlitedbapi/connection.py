@@ -488,6 +488,23 @@ class Connection:
             finally:
                 self._async_conn = None
 
+    @property
+    def in_transaction(self) -> bool:
+        """Whether the connection currently has an open transaction.
+
+        Mirrors stdlib ``sqlite3.Connection.in_transaction``. Callers
+        use this in shutdown paths to decide whether to commit or
+        rollback. Never-connected or closed connections return False
+        — by definition they cannot hold an open transaction. Delegates
+        to the underlying client-layer :class:`DqliteConnection`.
+        """
+        self._check_thread()
+        if self._async_conn is None:
+            return False
+        # Client-layer attribute; ``bool(...)`` guards against a mock
+        # adapter that returned a non-bool truthy value.
+        return bool(getattr(self._async_conn, "in_transaction", False))
+
     def commit(self) -> None:
         """Commit any pending transaction.
 

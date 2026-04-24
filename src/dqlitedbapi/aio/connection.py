@@ -247,6 +247,18 @@ class AsyncConnection:
         self._op_lock = None
         self._loop_ref = None
 
+    @property
+    def in_transaction(self) -> bool:
+        """Whether the connection currently has an open transaction.
+
+        Mirrors stdlib ``sqlite3.Connection.in_transaction`` (and its
+        sync sibling :attr:`dqlitedbapi.Connection.in_transaction`).
+        Never-connected or closed connections return False.
+        """
+        if self._async_conn is None:
+            return False
+        return bool(getattr(self._async_conn, "in_transaction", False))
+
     async def commit(self) -> None:
         """Commit any pending transaction.
 
