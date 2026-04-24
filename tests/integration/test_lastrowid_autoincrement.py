@@ -35,7 +35,9 @@ class TestLastrowidAutoincrement:
         try:
             cur.execute("DROP TABLE IF EXISTS t_rowid_sync")
             cur.execute("CREATE TABLE t_rowid_sync (id INTEGER PRIMARY KEY, v TEXT)")
-            assert cur.lastrowid == 0  # pre-insert state
+            # stdlib-parity: DDL does not update ``lastrowid``. Pre-insert
+            # the field is ``None`` (its initial value).
+            assert cur.lastrowid is None
 
             cur.execute("INSERT INTO t_rowid_sync (v) VALUES (?)", ("alpha",))
             first = cur.lastrowid
@@ -46,6 +48,9 @@ class TestLastrowidAutoincrement:
             assert second == first + 1
 
             cur.execute("DROP TABLE t_rowid_sync")
+            # DDL does not affect lastrowid — it still points at the
+            # last successful INSERT.
+            assert cur.lastrowid == second
         finally:
             cur.close()
 
@@ -70,7 +75,8 @@ class TestAsyncLastrowidAutoincrement:
             cur = aconn.cursor()
             await cur.execute("DROP TABLE IF EXISTS t_rowid_async")
             await cur.execute("CREATE TABLE t_rowid_async (id INTEGER PRIMARY KEY, v TEXT)")
-            assert cur.lastrowid == 0
+            # stdlib-parity: DDL does not update ``lastrowid``.
+            assert cur.lastrowid is None
 
             await cur.execute("INSERT INTO t_rowid_async (v) VALUES (?)", ("alpha",))
             first = cur.lastrowid

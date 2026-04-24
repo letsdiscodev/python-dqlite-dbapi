@@ -474,6 +474,23 @@ def _is_dml_with_returning(sql: str) -> bool:
     return " RETURNING " in normalized or normalized.endswith(" RETURNING")
 
 
+def _is_insert_or_replace(sql: str) -> bool:
+    """True if ``sql`` is an INSERT (including ``INSERT OR REPLACE`` /
+    ``INSERT OR IGNORE``) or a bare REPLACE statement.
+
+    stdlib ``sqlite3.Cursor.lastrowid`` is documented to update only
+    on successful INSERT / REPLACE; UPDATE / DELETE / DDL leave the
+    previous INSERT's rowid in place. The dqlite wire layer returns
+    ``last_insert_id`` on every Exec response — typically 0 for
+    non-INSERT paths — so unconditionally writing it into
+    ``_lastrowid`` would zero out the sticky value that callers rely
+    on. Gate the write on this prefix check to match stdlib.
+    """
+    cleaned = _strip_sql_noise(sql)
+    normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
+    return normalized.startswith(("INSERT", "REPLACE"))
+
+
 class Cursor:
     """PEP 249 compliant database cursor."""
 
@@ -689,7 +706,13 @@ class Cursor:
             self._rowcount = len(rows)
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))
-            self._lastrowid = last_id
+            # stdlib-parity: lastrowid only updates on INSERT / REPLACE.
+            # UPDATE / DELETE / DDL leave the previous INSERT's rowid
+            # in place — the wire returns 0 / stale values on those
+            # paths and unconditionally writing would zero the sticky
+            # value. See ``_is_insert_or_replace`` for rationale.
+            if _is_insert_or_replace(operation):
+                self._lastrowid = last_id
             self._rowcount = affected
             self._description = None
             self._rows = []

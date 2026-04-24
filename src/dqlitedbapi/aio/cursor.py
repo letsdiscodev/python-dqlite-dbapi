@@ -10,6 +10,7 @@ from dqlitedbapi.cursor import (
     _convert_row,
     _ExecuteManyAccumulator,
     _is_dml_with_returning,
+    _is_insert_or_replace,
     _is_row_returning,
 )
 from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
@@ -220,7 +221,11 @@ class AsyncCursor:
             self._rowcount = len(rows)
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))
-            self._lastrowid = last_id
+            # stdlib-parity: lastrowid only updates on INSERT / REPLACE.
+            # See ``_is_insert_or_replace`` in the sync cursor for
+            # rationale — sync and async share the same contract.
+            if _is_insert_or_replace(operation):
+                self._lastrowid = last_id
             self._rowcount = affected
             self._description = None
             self._rows = []
