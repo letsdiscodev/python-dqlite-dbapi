@@ -7,6 +7,7 @@ import weakref
 from types import TracebackType
 
 from dqliteclient import DqliteConnection
+from dqliteclient.connection import _parse_address as _client_parse_address
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
@@ -81,6 +82,17 @@ class AsyncConnection:
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
+        # Eager address parse, matching the sync Connection and the
+        # underlying DqliteConnection. A typoed DSN surfaces at
+        # construction, not at first-use.
+        if not isinstance(address, str):
+            raise InterfaceError(
+                f"address must be a 'host:port' string, got {type(address).__name__}"
+            )
+        try:
+            _client_parse_address(address)
+        except ValueError as e:
+            raise InterfaceError(f"Invalid address: {e}") from e
         self._address = address
         self._database = database
         self._timeout = timeout

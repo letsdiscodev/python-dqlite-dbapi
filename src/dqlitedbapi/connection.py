@@ -14,6 +14,7 @@ from typing import Any
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
+from dqliteclient.connection import _parse_address as _client_parse_address
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client
@@ -253,6 +254,21 @@ class Connection:
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
+        # Eager address parse so a typoed DSN surfaces as
+        # ``InterfaceError`` at the operator's config-load site rather
+        # than at first-use — the sibling ``DqliteConnection``
+        # already parses here; mirror that contract at the dbapi
+        # layer. Map the client's ``ValueError`` / ``TypeError`` to
+        # PEP 249's ``InterfaceError`` ("problems with the database
+        # interface rather than the database itself").
+        if not isinstance(address, str):
+            raise InterfaceError(
+                f"address must be a 'host:port' string, got {type(address).__name__}"
+            )
+        try:
+            _client_parse_address(address)
+        except ValueError as e:
+            raise InterfaceError(f"Invalid address: {e}") from e
         self._address = address
         self._database = database
         self._timeout = timeout
