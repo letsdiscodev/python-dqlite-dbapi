@@ -414,6 +414,8 @@ class AsyncCursor:
         # with ``Cursor.close()``.
         self._rowcount = -1
         self._lastrowid = None
+        # Mirror the sync cursor's scrub contract.
+        self._row_index = 0
 
     def setinputsizes(self, sizes: Sequence[int | None]) -> None:
         """Set input sizes (no-op for dqlite).

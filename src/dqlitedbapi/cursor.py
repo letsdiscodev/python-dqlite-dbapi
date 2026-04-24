@@ -853,6 +853,11 @@ class Cursor:
         # which close() clears.
         self._rowcount = -1
         self._lastrowid = None
+        # Reset ``_row_index`` too. The closed-state gate prevents any
+        # accessor from reading it in practice, but leaving it at the
+        # last-fetched offset contradicts the "consistent no-op
+        # surface" the other scrubbed fields commit to.
+        self._row_index = 0
 
     def setinputsizes(self, sizes: Sequence[int | None]) -> None:
         """Set input sizes (no-op for dqlite).
