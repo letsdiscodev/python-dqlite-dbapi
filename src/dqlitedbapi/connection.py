@@ -19,6 +19,7 @@ from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
+from dqlitewire.constants import primary_sqlite_code
 
 __all__ = ["Connection"]
 
@@ -137,7 +138,7 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     # code); mirrors ``_classify_operational`` in cursor.py. Without the
     # mask, any extended variant of SQLITE_ERROR / SQLITE_MISUSE whose
     # low byte is 1 or 21 would slip past the whitelist and be surfaced.
-    if code is not None and (code & 0xFF) not in _NO_TX_CODES:
+    if code is not None and primary_sqlite_code(code) not in _NO_TX_CODES:
         return False
     return _NO_TX_SUBSTRING in str(exc).lower()
 

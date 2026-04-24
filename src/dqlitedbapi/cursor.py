@@ -21,7 +21,7 @@ from dqlitedbapi.types import (
     _datetime_from_unixtime,
     _Description,
 )
-from dqlitewire.constants import ValueType
+from dqlitewire.constants import ValueType, primary_sqlite_code
 
 __all__ = ["Cursor"]
 
@@ -85,7 +85,7 @@ def _classify_operational(
     """
     if code is None:
         return OperationalError
-    return _CODE_TO_EXCEPTION.get(code & 0xFF, OperationalError)
+    return _CODE_TO_EXCEPTION.get(primary_sqlite_code(code), OperationalError)
 
 
 async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
