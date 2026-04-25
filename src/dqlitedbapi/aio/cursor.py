@@ -300,6 +300,18 @@ class AsyncCursor:
         del self.messages[:]
         self._check_closed()
         if _is_row_returning(operation) and not _is_dml_with_returning(operation):
+            head_upper = operation.lstrip().upper()
+            if head_upper.startswith("PRAGMA"):
+                # See sync sibling: PRAGMA has per-call semantics and
+                # is never meaningfully batchable; surface the
+                # PRAGMA-specific guidance so the caller does not
+                # wonder whether a different PRAGMA would be
+                # acceptable.
+                raise ProgrammingError(
+                    "executemany() does not accept PRAGMA; PRAGMAs have "
+                    "per-call semantics and are not batchable. Use "
+                    "execute() for each PRAGMA."
+                )
             raise ProgrammingError(
                 "executemany() can only execute DML statements; "
                 "use execute() for SELECT / VALUES / PRAGMA / EXPLAIN / WITH."

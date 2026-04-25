@@ -35,13 +35,25 @@ class TestSyncExecutemanyRejectsPureQueries:
             "SELECT ?",
             "SELECT id FROM t WHERE id = ?",
             "VALUES (?)",
-            "PRAGMA foreign_keys",
             "WITH t(x) AS (VALUES (?)) SELECT * FROM t",
         ],
     )
     def test_rejects_pure_query(self, sql: str) -> None:
         cur = _make_sync_cursor()
         with pytest.raises(ProgrammingError, match="DML"):
+            cur.executemany(sql, [(1,), (2,)])
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "PRAGMA foreign_keys",
+            "PRAGMA foreign_keys = 1",
+            "  pragma user_version",
+        ],
+    )
+    def test_rejects_pragma_with_specific_message(self, sql: str) -> None:
+        cur = _make_sync_cursor()
+        with pytest.raises(ProgrammingError, match="PRAGMAs have per-call semantics"):
             cur.executemany(sql, [(1,), (2,)])
 
     @pytest.mark.parametrize(
@@ -73,6 +85,19 @@ class TestAsyncExecutemanyRejectsPureQueries:
             cur = AsyncCursor(conn)
             with pytest.raises(ProgrammingError, match="DML"):
                 await cur.executemany("SELECT ?", [(1,), (2,)])
+            await conn.close()
+
+        asyncio.run(_run())
+
+    def test_rejects_pragma_with_specific_message(self) -> None:
+        from dqlitedbapi.aio.connection import AsyncConnection
+        from dqlitedbapi.aio.cursor import AsyncCursor
+
+        async def _run() -> None:
+            conn = AsyncConnection("localhost:19001")
+            cur = AsyncCursor(conn)
+            with pytest.raises(ProgrammingError, match="PRAGMAs have per-call semantics"):
+                await cur.executemany("PRAGMA foreign_keys", [(1,), (2,)])
             await conn.close()
 
         asyncio.run(_run())

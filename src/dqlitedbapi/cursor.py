@@ -826,6 +826,19 @@ class Cursor:
         # the async helper. stdlib sqlite3.Cursor.executemany does the
         # same; DML-with-RETURNING stays admitted.
         if _is_row_returning(operation) and not _is_dml_with_returning(operation):
+            head_upper = operation.lstrip().upper()
+            if head_upper.startswith("PRAGMA"):
+                # Specific guidance for PRAGMA: it has per-call
+                # side-effect semantics and is never meaningfully
+                # batchable, even when the syntactic shape would fit
+                # an executemany loop. The grouped message above
+                # would leave the user wondering whether a different
+                # PRAGMA would be acceptable.
+                raise ProgrammingError(
+                    "executemany() does not accept PRAGMA; PRAGMAs have "
+                    "per-call semantics and are not batchable. Use "
+                    "execute() for each PRAGMA."
+                )
             raise ProgrammingError(
                 "executemany() can only execute DML statements; "
                 "use execute() for SELECT / VALUES / PRAGMA / EXPLAIN / WITH."
