@@ -212,7 +212,7 @@ def _cleanup_loop_thread(
         try:
             if not loop.is_closed():
                 loop.call_soon_threadsafe(loop.stop)
-        except RuntimeError:
+        except RuntimeError:  # pragma: no cover - race: loop closed mid-call
             # Loop was closed between is_closed() and the threadsafe
             # call.
             pass
@@ -414,7 +414,9 @@ class Connection:
                 # logic to re-run the op and, for non-idempotent
                 # statements, duplicate the write. Honour the
                 # successful completion instead.
-                if future.done() and not future.cancelled():
+                if (
+                    future.done() and not future.cancelled()
+                ):  # pragma: no cover - race: future completes mid-timeout
                     try:
                         return future.result(timeout=0)
                     except BaseException:
@@ -432,7 +434,9 @@ class Connection:
                 # Fire-and-forget on the loop thread (don't await).
                 if self._async_conn is not None:
                     # RuntimeError if the loop is already shutting down.
-                    with contextlib.suppress(RuntimeError):
+                    with contextlib.suppress(
+                        RuntimeError
+                    ):  # pragma: no cover - race: loop closing mid-schedule
                         loop.call_soon_threadsafe(
                             self._async_conn._invalidate,
                             OperationalError(f"sync timeout after {self._timeout}s"),
@@ -479,7 +483,7 @@ class Connection:
             self._connect_lock = asyncio.Lock()
 
         async with self._connect_lock:
-            if self._async_conn is not None:
+            if self._async_conn is not None:  # pragma: no cover - race: peer built conn mid-lock
                 return self._async_conn
 
             self._async_conn = await _build_and_connect(

@@ -417,7 +417,9 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
         d = datetime.date.fromisoformat(text)
     except ValueError as exc:
         raise DataError(f"Cannot parse ISO 8601 datetime from server: {text!r}") from exc
-    return datetime.datetime(d.year, d.month, d.day)
+    # pragma: no cover - dead on Python 3.11+ (datetime.fromisoformat
+    # now accepts bare YYYY-MM-DD, so this date-fallback never fires).
+    return datetime.datetime(d.year, d.month, d.day)  # pragma: no cover
 
 
 def _datetime_from_unixtime(value: int) -> datetime.datetime:
