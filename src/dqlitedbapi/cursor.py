@@ -457,21 +457,96 @@ def _is_row_returning(sql: str) -> bool:
     return " RETURNING " in normalized or normalized.endswith(" RETURNING")
 
 
-def _is_dml_with_returning(sql: str) -> bool:
-    """True if ``sql`` is DML (INSERT / UPDATE / DELETE / REPLACE) whose
-    result set is driven by a RETURNING clause.
+def _strip_leading_with_clause(normalized: str) -> str:
+    """Strip a leading ``WITH cte AS (...)`` clause (and any recursive
+    or comma-chained variants) from ``normalized`` so the remainder
+    starts with the actual top-level keyword.
 
-    Used by ``executemany`` to admit the legitimate row-returning
-    case (INSERT ... RETURNING) while still rejecting pure queries —
-    stdlib ``sqlite3.Cursor.executemany`` rejects any row-producing
-    statement, but RETURNING on DML is a well-established SQLite
-    feature and the driver supports it through the accumulator.
+    ``normalized`` must already have been processed by
+    ``_strip_sql_noise`` (string literals neutralised) and
+    ``_strip_leading_comments`` and uppercased so the paren counter
+    is reliable and the keywords match without case folding.
+
+    Returns the substring beginning at the first non-CTE keyword, or
+    the original string if the leading ``WITH`` cannot be parsed
+    (defensive — fall back to the prefix check, do not raise).
+    """
+    if not normalized.startswith("WITH"):
+        return normalized
+    # Skip "WITH" and an optional "RECURSIVE".
+    pos = len("WITH")
+    while pos < len(normalized) and normalized[pos].isspace():
+        pos += 1
+    if normalized[pos:].startswith("RECURSIVE"):
+        pos += len("RECURSIVE")
+        while pos < len(normalized) and normalized[pos].isspace():
+            pos += 1
+    # Each CTE is ``name AS (body)`` or ``name (cols) AS (body)``.
+    # Find the ``AS (`` that opens the body — there may be a
+    # parenthesised column list before it. Balance parens so we don't
+    # mistake the column-list closing ``)`` for the body's.
+    while True:
+        # Skip the CTE name (and any optional MATERIALIZED keyword
+        # between the name and AS, plus a parenthesised column list).
+        as_idx = normalized.find(" AS ", pos)
+        as_idx_paren = normalized.find(" AS(", pos)
+        if as_idx == -1 or (as_idx_paren != -1 and as_idx_paren < as_idx):
+            as_idx = as_idx_paren
+        if as_idx == -1:
+            return normalized  # malformed; fall back
+        # Position the body-paren scanner just after AS.
+        body_paren = normalized.find("(", as_idx + 3)
+        if body_paren == -1:
+            return normalized
+        depth = 1
+        i = body_paren + 1
+        while i < len(normalized) and depth > 0:
+            if normalized[i] == "(":
+                depth += 1
+            elif normalized[i] == ")":
+                depth -= 1
+            i += 1
+        if depth != 0:
+            return normalized  # unbalanced; fall back
+        # ``i`` is just past the closing ``)`` of the body. The CTE
+        # may be followed by ``, name AS (...)`` or by the top-level
+        # statement.
+        pos = i
+        while pos < len(normalized) and normalized[pos].isspace():
+            pos += 1
+        if pos < len(normalized) and normalized[pos] == ",":
+            pos += 1
+            while pos < len(normalized) and normalized[pos].isspace():
+                pos += 1
+            continue
+        return normalized[pos:]
+
+
+def _is_dml_with_returning(sql: str) -> bool:
+    """True if ``sql`` is admissible to ``executemany``: DML, possibly
+    behind a CTE prefix, possibly with a RETURNING clause.
+
+    Used by ``executemany`` to admit:
+
+    * pure DML behind a CTE prefix (``WITH cte AS (...) INSERT ...``),
+      where ``_is_row_returning`` would otherwise reject the statement
+      because of the leading ``WITH`` keyword; and
+    * DML with RETURNING (``INSERT ... RETURNING``), the legitimate
+      row-returning DML case.
+
+    Pure SELECT / VALUES / PRAGMA / EXPLAIN — including their
+    CTE-prefixed forms — remain rejected: stdlib
+    ``sqlite3.Cursor.executemany`` rejects any non-DML statement.
+
+    The historical name (``_is_dml_with_returning``) is preserved for
+    grep-friendliness; "with returning" reads as a feature flag,
+    "with a leading CTE" as a structural prefix, and the function
+    accepts both.
     """
     cleaned = _strip_sql_noise(sql)
     normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
-    if not normalized.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE")):
-        return False
-    return " RETURNING " in normalized or normalized.endswith(" RETURNING")
+    body = _strip_leading_with_clause(normalized)
+    return body.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
 
 
 def _is_insert_or_replace(sql: str) -> bool:
