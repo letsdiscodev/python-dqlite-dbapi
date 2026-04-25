@@ -322,17 +322,29 @@ class AsyncCursor:
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:
             self._check_closed()
-            for params in seq_of_parameters:
-                # Re-check before each iteration so a concurrent
-                # ``cursor.close()`` landing between iterations
-                # surfaces as "Cursor is closed" rather than being
-                # observed only on the next iteration's nested execute
-                # entry (or not at all for a single-iteration
-                # remainder).
-                self._check_closed()
-                await self._execute_unlocked(operation, params)
-                self._check_closed()
-                acc.push(self)
+            try:
+                for params in seq_of_parameters:
+                    # Re-check before each iteration so a concurrent
+                    # ``cursor.close()`` landing between iterations
+                    # surfaces as "Cursor is closed" rather than being
+                    # observed only on the next iteration's nested execute
+                    # entry (or not at all for a single-iteration
+                    # remainder).
+                    self._check_closed()
+                    await self._execute_unlocked(operation, params)
+                    self._check_closed()
+                    acc.push(self)
+            except BaseException:
+                # Mid-batch failure leaves _rowcount at the last
+                # iteration's value (misleading), so reset to
+                # PEP 249's "undetermined" sentinel and clear the
+                # other state fields. Mirrors the sync sibling.
+                self._rowcount = -1
+                self._rows = []
+                self._description = None
+                self._lastrowid = None
+                self._row_index = 0
+                raise
             # Final guard before apply; pairs with the ``_closed``
             # check inside ``_ExecuteManyAccumulator.apply``.
             self._check_closed()

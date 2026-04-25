@@ -785,9 +785,23 @@ class Cursor:
         # ``rowcount`` shape as empty ``execute``.
         self._reset_execute_state()
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
-        for params in seq_of_parameters:
-            await self._execute_async(operation, params)
-            acc.push(self)
+        try:
+            for params in seq_of_parameters:
+                await self._execute_async(operation, params)
+                acc.push(self)
+        except BaseException:
+            # Mid-batch failure leaves _rowcount at the last
+            # iteration's value (which is misleading) and _rows /
+            # _description in an inconsistent state. PEP 249 permits
+            # rowcount=-1 ("undetermined"); use that signal so callers
+            # cannot mistake the last iteration's rowcount for the
+            # cumulative count of successfully-applied iterations.
+            self._rowcount = -1
+            self._rows = []
+            self._description = None
+            self._lastrowid = None
+            self._row_index = 0
+            raise
         acc.apply(self)
 
     def _check_result_set(self) -> None:
