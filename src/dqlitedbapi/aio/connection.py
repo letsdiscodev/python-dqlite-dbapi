@@ -230,6 +230,10 @@ class AsyncConnection:
             cur._description = None
             cur._rowcount = -1
             cur._lastrowid = None
+            # Mirror AsyncCursor.close()'s consistent "no operation
+            # performed" surface — the row index must be reset
+            # alongside the buffer.
+            cur._row_index = 0
         self._cursors.clear()
         if self._async_conn is None:
             # Null the lazy locks so a subsequent fixture or

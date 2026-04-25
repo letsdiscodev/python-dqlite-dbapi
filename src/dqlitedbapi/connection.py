@@ -499,6 +499,11 @@ class Connection:
             cur._description = None
             cur._rowcount = -1
             cur._lastrowid = None
+            # Mirror Cursor.close()'s consistent "no operation
+            # performed" surface — the row index must be reset
+            # alongside the buffer or a future rownumber accessor
+            # change could expose stale post-close state.
+            cur._row_index = 0
         self._cursors.clear()
         # Detach the finalizer — it's about to do nothing useful, and
         # keeping it registered would double-stop the loop.
