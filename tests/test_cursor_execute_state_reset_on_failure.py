@@ -223,6 +223,48 @@ class TestSyncCursorStateResetOnFailure:
         finally:
             conn.close()
 
+    def test_closed_cursor_executemany_raises_with_dml(self) -> None:
+        """Sibling to test_closed_cursor_execute_raises_before_clearing
+        for executemany. The closed-cursor guard runs before any work
+        on the executemany call too — pin the contract symmetrically
+        so a refactor that loses the guard on one method while keeping
+        it on the other is caught."""
+        conn, proto = _build_sync_connection_with_mock_protocol()
+        try:
+            proto.query_raw_typed.return_value = (
+                ["a"],
+                [3],
+                [[3]],
+                [(99,)],
+            )
+            cur = conn.cursor()
+            cur.execute("SELECT a FROM t")
+            cur.close()
+
+            with pytest.raises(InterfaceError, match="Cursor is closed"):
+                cur.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
+        finally:
+            conn.close()
+
+    def test_closed_cursor_executemany_raises_before_row_returning_rejection(
+        self,
+    ) -> None:
+        """The closed-cursor guard MUST run before the row-returning
+        rejection. A SELECT-shaped statement on an OPEN cursor would
+        raise ``ProgrammingError`` ("can only execute DML statements");
+        on a CLOSED cursor, the closed-check must win and surface
+        ``InterfaceError("Cursor is closed")``. Pin the ordering so a
+        refactor that swaps the two checks is caught."""
+        conn, _proto = _build_sync_connection_with_mock_protocol()
+        try:
+            cur = conn.cursor()
+            cur.close()
+
+            with pytest.raises(InterfaceError, match="Cursor is closed"):
+                cur.executemany("SELECT ?", [(1,)])
+        finally:
+            conn.close()
+
 
 class TestAsyncCursorStateResetOnFailure:
     async def test_select_then_failed_select_clears_description(self) -> None:
@@ -325,5 +367,43 @@ class TestAsyncCursorStateResetOnFailure:
 
             assert cur.description is None
             assert cur.rowcount == -1
+        finally:
+            await aconn.close()
+
+    async def test_closed_cursor_executemany_raises_with_dml(self) -> None:
+        """Async sibling of TestSyncCursorStateResetOnFailure.
+        test_closed_cursor_executemany_raises_with_dml — pin the same
+        closed-cursor guard contract on the async path."""
+        aconn, proto = _build_async_connection_with_mock_protocol()
+        try:
+            proto.query_raw_typed.return_value = (
+                ["a"],
+                [3],
+                [[3]],
+                [(99,)],
+            )
+            cur = aconn.cursor()
+            await cur.execute("SELECT a FROM t")
+            await cur.close()
+
+            with pytest.raises(InterfaceError, match="Cursor is closed"):
+                await cur.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
+        finally:
+            await aconn.close()
+
+    async def test_closed_cursor_executemany_raises_before_row_returning_rejection(
+        self,
+    ) -> None:
+        """Async sibling of the sync ordering pin: closed-check MUST
+        run before the row-returning rejection on the async path
+        too. SELECT-shaped statement on a closed cursor surfaces
+        InterfaceError, not ProgrammingError."""
+        aconn, _proto = _build_async_connection_with_mock_protocol()
+        try:
+            cur = aconn.cursor()
+            await cur.close()
+
+            with pytest.raises(InterfaceError, match="Cursor is closed"):
+                await cur.executemany("SELECT ?", [(1,)])
         finally:
             await aconn.close()
