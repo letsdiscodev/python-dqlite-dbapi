@@ -239,6 +239,12 @@ class Connection:
     wrapped in an explicit ``BEGIN`` — this differs from PEP 249 §6's
     implicit-transaction model and from stdlib ``sqlite3``. See the
     README's "Transactions" section.
+
+    The autocommit-by-default model also applies to ``executemany``:
+    without a surrounding ``BEGIN`` / ``COMMIT``, a mid-batch cancel
+    leaves the iterations that already completed persisted. See
+    ``Cursor.executemany`` / ``AsyncCursor.executemany`` for the
+    cancellation-atomicity contract.
     """
 
     # PEP 249 optional extension ("Attributes from Module Exceptions"):

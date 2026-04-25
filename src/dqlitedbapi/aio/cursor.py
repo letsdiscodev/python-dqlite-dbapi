@@ -296,6 +296,18 @@ class AsyncCursor:
         loop runs — stdlib ``sqlite3.Cursor.executemany`` does the same.
         INSERT / UPDATE / DELETE / REPLACE (with or without RETURNING)
         remain admitted.
+
+        Cancellation atomicity: this driver runs in autocommit-by-default
+        mode. Without a surrounding ``BEGIN`` ... ``COMMIT`` (or a
+        client-layer ``transaction()`` ctxmgr / SA-engine
+        transaction), each iteration commits server-side independently.
+        If the surrounding task is cancelled mid-batch (``asyncio.timeout``,
+        ``asyncio.shield`` expiry, etc.), the iterations that already
+        completed remain persisted; partial-batch persistence is the
+        consequence of running outside a transaction. To make the
+        batch atomic, wrap the call in an explicit ``BEGIN`` /
+        ``COMMIT``. See the ``Connection`` class docstring for the
+        autocommit-by-default rationale.
         """
         del self.messages[:]
         self._check_closed()

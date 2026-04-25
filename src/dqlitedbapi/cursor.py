@@ -817,7 +817,17 @@ class Cursor:
             self._row_index = 0
 
     def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]) -> "Cursor":
-        """Execute a database operation multiple times."""
+        """Execute a database operation multiple times.
+
+        Cancellation atomicity: this driver runs in autocommit-by-default
+        mode. Without a surrounding ``BEGIN`` / ``COMMIT``, each
+        iteration commits server-side independently. If the call is
+        interrupted mid-batch (sync timeout, ``KeyboardInterrupt``,
+        etc.), iterations that already completed remain persisted.
+        Wrap in an explicit transaction to make the batch atomic. See
+        the ``Connection`` class docstring for the autocommit-by-
+        default rationale.
+        """
         del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
