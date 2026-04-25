@@ -39,7 +39,12 @@ logger = logging.getLogger(__name__)
 # a message string that contains the magic substring. The substring
 # remains as a secondary filter because SQLite has many uses of code=1.
 _NO_TX_CODES = frozenset({1})
-_NO_TX_SUBSTRING = "no transaction is active"
+# Substrings that mark a benign "no transaction was active" reply.
+# Mirror the client-layer ``_is_no_tx_rollback_error`` recogniser so a
+# wording drift in the server (or in the embedded SQLite version) that
+# drops one of these clauses does not produce a silent layer
+# divergence — the client suppressing while the dbapi raises.
+_NO_TX_SUBSTRINGS = ("no transaction is active", "cannot rollback")
 
 
 def _validate_timeout(timeout: float) -> None:
@@ -157,7 +162,8 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     # low byte is 1 or 21 would slip past the whitelist and be surfaced.
     if primary_sqlite_code(code) not in _NO_TX_CODES:
         return False
-    return _NO_TX_SUBSTRING in str(exc).lower()
+    lowered = str(exc).lower()
+    return any(s in lowered for s in _NO_TX_SUBSTRINGS)
 
 
 def _cleanup_loop_thread(

@@ -61,3 +61,22 @@ class TestIsNoTransactionError:
     def test_matching_code_but_wrong_message_rejected(self) -> None:
         exc = OperationalError("disk I/O error", code=1)
         assert _is_no_transaction_error(exc) is False
+
+    def test_cannot_rollback_substring_matches(self) -> None:
+        # The client-layer sibling helper ``_is_no_tx_rollback_error``
+        # accepts both ``"no transaction is active"`` and
+        # ``"cannot rollback"`` substrings. Mirror the dbapi recogniser
+        # so a future server wording that drops the trailing
+        # ``"no transaction is active"`` clause does not produce a
+        # silent layer divergence (dbapi raising while client treats
+        # it as benign).
+        exc = OperationalError("cannot rollback", code=1)
+        assert _is_no_transaction_error(exc) is True
+
+    def test_cannot_rollback_with_unrelated_code_rejected(self) -> None:
+        # Code-gate (primary code 1) is the real defence — the
+        # substring is secondary. A constraint-failed message that
+        # happens to contain the magic substring must NOT be
+        # swallowed.
+        exc = OperationalError("cannot rollback - constraint failed", code=19)
+        assert _is_no_transaction_error(exc) is False
