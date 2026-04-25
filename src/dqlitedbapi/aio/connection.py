@@ -267,9 +267,15 @@ class AsyncConnection:
         sync sibling :attr:`dqlitedbapi.Connection.in_transaction`).
         Never-connected or closed connections return False.
         """
-        if self._async_conn is None:
+        # Snapshot the reference once: ``close()`` running concurrently
+        # may null ``_async_conn`` between a None-check and an attribute
+        # read. The local binding is immutable for the duration of the
+        # property body, eliminating that window. ``bool(...)`` keeps the
+        # mock-adapter safety from the stdlib-parity introduction.
+        conn = self._async_conn
+        if conn is None or self._closed:
             return False
-        return bool(getattr(self._async_conn, "in_transaction", False))
+        return bool(conn.in_transaction)
 
     async def commit(self) -> None:
         """Commit any pending transaction.

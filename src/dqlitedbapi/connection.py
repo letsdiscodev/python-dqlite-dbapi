@@ -537,11 +537,14 @@ class Connection:
         to the underlying client-layer :class:`DqliteConnection`.
         """
         self._check_thread()
-        if self._async_conn is None:
+        # Snapshot the reference once so a concurrent close() that nulls
+        # ``_async_conn`` cannot land between the None-check and the
+        # attribute read. ``bool(...)`` keeps the mock-adapter safety
+        # from the stdlib-parity introduction.
+        conn = self._async_conn
+        if conn is None or self._closed:
             return False
-        # Client-layer attribute; ``bool(...)`` guards against a mock
-        # adapter that returned a non-bool truthy value.
-        return bool(getattr(self._async_conn, "in_transaction", False))
+        return bool(conn.in_transaction)
 
     def commit(self) -> None:
         """Commit any pending transaction.
