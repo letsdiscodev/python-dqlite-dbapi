@@ -294,9 +294,11 @@ class TestIsNoTransactionError:
         err = ClientOpError(1, "cannot commit - no transaction is active")
         assert _is_no_transaction_error(err)
 
-        # code=21 (SQLITE_MISUSE) + substring → true
+        # code=21 (SQLITE_MISUSE) is NOT in the whitelist — the dqlite
+        # server never returns it on the COMMIT/ROLLBACK path. A real
+        # misuse must surface as a real error, not a silent no-op.
         err = ClientOpError(21, "misuse: no transaction is active")
-        assert _is_no_transaction_error(err)
+        assert not _is_no_transaction_error(err)
 
     def test_disk_full_with_matching_substring_is_not_silenced(self) -> None:
         from dqliteclient.exceptions import OperationalError as ClientOpError

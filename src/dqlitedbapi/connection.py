@@ -25,14 +25,20 @@ __all__ = ["Connection"]
 
 logger = logging.getLogger(__name__)
 
-# SQLite result codes for "you tried to COMMIT/ROLLBACK but there's no
-# transaction active." SQLite returns ``SQLITE_ERROR`` (1) most of the
-# time; some code paths return ``SQLITE_MISUSE`` (21). Check the
-# numeric code first so a malicious or impostor server cannot silence
-# unrelated errors just by crafting a message string that contains the
-# magic substring. The substring remains as a secondary
-# filter because SQLite has many uses of code=1.
-_NO_TX_CODES = frozenset({1, 21})
+# SQLite result code for "you tried to COMMIT/ROLLBACK but there's no
+# transaction active." The dqlite C server's gateway path
+# (``dqlite-upstream/src/gateway.c``) propagates the SQLite engine's
+# ``sqlite3_errcode``, which for stray COMMIT/ROLLBACK is
+# ``SQLITE_ERROR`` (1) only — ``SQLITE_MISUSE`` (21) is used for an
+# unrelated VFS file-control path (``vfs.c::vfsFileControlPersistWal``)
+# but never for transaction-state misuse on the wire. Pinned by the
+# integration test ``test_no_transaction_error_wording.py``. We
+# deliberately do NOT include 21 in the whitelist so a real misuse
+# error always surfaces. Check the numeric code first so a malicious
+# or impostor server cannot silence unrelated errors just by crafting
+# a message string that contains the magic substring. The substring
+# remains as a secondary filter because SQLite has many uses of code=1.
+_NO_TX_CODES = frozenset({1})
 _NO_TX_SUBSTRING = "no transaction is active"
 
 

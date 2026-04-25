@@ -16,10 +16,15 @@ class TestIsNoTransactionError:
         exc = OperationalError("cannot commit - no transaction is active", code=1)
         assert _is_no_transaction_error(exc) is True
 
-    def test_primary_misuse_code_matches(self) -> None:
-        # SQLITE_MISUSE = 21
+    def test_misuse_code_does_not_match(self) -> None:
+        # SQLITE_MISUSE = 21 — never used by the dqlite server for
+        # transaction-state errors (verified upstream:
+        # ``dqlite-upstream/src/vfs.c::vfsFileControlPersistWal`` is the
+        # only MISUSE site, and it's an unrelated VFS file-control
+        # path). A real misuse must surface as a real error, not a
+        # silent commit/rollback no-op.
         exc = OperationalError("cannot rollback - no transaction is active", code=21)
-        assert _is_no_transaction_error(exc) is True
+        assert _is_no_transaction_error(exc) is False
 
     def test_extended_snapshot_code_matches(self) -> None:
         # SQLITE_ERROR_SNAPSHOT = 769 = 3 << 8 | 1
