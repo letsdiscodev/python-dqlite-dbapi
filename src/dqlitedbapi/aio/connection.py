@@ -294,10 +294,15 @@ class AsyncConnection:
         idempotent DML or out-of-band state-checks before retrying.
         Same caveat applies to ``__aexit__``'s clean-exit commit.
         """
+        # PEP 249 §6.1.1: ``Connection.messages`` is cleared "prior to
+        # executing the call" on every standard connection method —
+        # including the closed-path raise below. Sync sibling clears
+        # unconditionally as the very first statement; mirror that here
+        # so the contract holds regardless of which branch we take.
+        del self.messages[:]
         if self._closed:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
-            del self.messages[:]
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
@@ -323,10 +328,11 @@ class AsyncConnection:
 
     async def rollback(self) -> None:
         """Roll back any pending transaction. Same no-op rules as commit."""
+        # PEP 249 §6.1.1 messages-clear contract; see commit() above.
+        del self.messages[:]
         if self._closed:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
-            del self.messages[:]
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
