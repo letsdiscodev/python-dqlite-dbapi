@@ -889,6 +889,11 @@ class Cursor:
         thread-check ``ProgrammingError``. Matches stdlib
         ``sqlite3.Cursor.close`` — close is always safe to call.
         """
+        # PEP 249 §6.1.2: ``Cursor.messages`` is cleared "prior to
+        # executing the call" on every standard cursor method. Every
+        # other method on this class clears it as the first statement;
+        # close() must too.
+        del self.messages[:]
         if self._closed:
             return
         self._closed = True

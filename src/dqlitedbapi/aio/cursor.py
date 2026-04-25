@@ -418,6 +418,8 @@ class AsyncCursor:
 
         Idempotent: a second call is a no-op.
         """
+        # PEP 249 §6.1.2 messages-clear contract; see Cursor.close.
+        del self.messages[:]
         if self._closed:
             return
         self._closed = True
