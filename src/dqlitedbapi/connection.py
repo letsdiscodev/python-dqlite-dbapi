@@ -138,13 +138,24 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     the English wording. A disk-full / constraint / IO error whose
     message happens to include the magic substring will not be
     swallowed.
+
+    A ``code`` of ``None`` (the dbapi wraps DqliteConnectionError /
+    ClusterError / ProtocolError / DataError with ``code=None``) must
+    NOT match: those classes are precisely the errors we want to
+    surface, never silently swallow. The integration test
+    ``test_no_transaction_error_wording.py`` proves the server emits
+    code=1 for the genuine reply, so the whitelist is exhaustive on
+    its own — the message-text fallback is only valid alongside a
+    real SQLite code.
     """
     code = getattr(exc, "code", None)
+    if code is None:
+        return False
     # Mask to the SQLite primary result code (low byte of the extended
     # code); mirrors ``_classify_operational`` in cursor.py. Without the
     # mask, any extended variant of SQLITE_ERROR / SQLITE_MISUSE whose
     # low byte is 1 or 21 would slip past the whitelist and be surfaced.
-    if code is not None and primary_sqlite_code(code) not in _NO_TX_CODES:
+    if primary_sqlite_code(code) not in _NO_TX_CODES:
         return False
     return _NO_TX_SUBSTRING in str(exc).lower()
 

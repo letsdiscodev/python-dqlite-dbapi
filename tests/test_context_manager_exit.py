@@ -90,8 +90,11 @@ class TestCommitNoTransactionSwallowed:
     def test_commit_swallows_no_tx_error(self) -> None:
         conn = Connection("localhost:9001", timeout=2.0)
         mock_async_conn = AsyncMock()
+        # The server emits SQLITE_ERROR (primary code 1) for the
+        # genuine no-transaction reply; the dbapi only swallows when
+        # both the code and the wording match.
         mock_async_conn.execute = AsyncMock(
-            side_effect=OperationalError("cannot commit - no transaction is active")
+            side_effect=OperationalError("cannot commit - no transaction is active", code=1)
         )
         conn._async_conn = mock_async_conn
         try:

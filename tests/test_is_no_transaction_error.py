@@ -42,9 +42,21 @@ class TestIsNoTransactionError:
         exc = OperationalError("no transaction is active but actually constraint", code=19)
         assert _is_no_transaction_error(exc) is False
 
-    def test_code_none_falls_through_to_substring(self) -> None:
+    def test_code_none_does_not_match_even_with_substring(self) -> None:
+        """A code-None OperationalError must NOT swallow even when the
+        message contains the magic substring.
+
+        The dbapi's ``_call_client`` wraps DqliteConnectionError /
+        ClusterError / ProtocolError / DataError with code=None.
+        Those classes are precisely the errors we want to surface
+        (leader-flip disconnects, cluster failures), never silently
+        swallow. The integration test ``test_no_transaction_error_wording``
+        proves the genuine server reply always carries code=1, so the
+        whitelist is exhaustive on its own — the substring fallback is
+        only valid alongside a real SQLite code.
+        """
         exc = OperationalError("no transaction is active")
-        assert _is_no_transaction_error(exc) is True
+        assert _is_no_transaction_error(exc) is False
 
     def test_matching_code_but_wrong_message_rejected(self) -> None:
         exc = OperationalError("disk I/O error", code=1)
