@@ -80,3 +80,17 @@ class TestIsNoTransactionError:
         # swallowed.
         exc = OperationalError("cannot rollback - constraint failed", code=19)
         assert _is_no_transaction_error(exc) is False
+
+    def test_no_such_savepoint_not_swallowed_unquoted(self) -> None:
+        # SQLite's "no such savepoint: <name>" error has primary code
+        # 1 but its wording does NOT contain "no transaction is active"
+        # or "cannot rollback". The substring guard must therefore
+        # reject — RELEASE / ROLLBACK TO of an unknown savepoint must
+        # surface to the caller, never be silently swallowed by
+        # commit() / rollback().
+        exc = OperationalError("no such savepoint: sp1", code=1)
+        assert _is_no_transaction_error(exc) is False
+
+    def test_no_such_savepoint_not_swallowed_quoted(self) -> None:
+        exc = OperationalError('no such savepoint: "MyPoint"', code=1)
+        assert _is_no_transaction_error(exc) is False
