@@ -36,6 +36,11 @@ class AsyncConnection:
     Safe for concurrent tasks on the SAME loop: the internal
     ``_op_lock`` serialises in-flight operations so commit/execute/
     rollback cannot interleave.
+
+    Transactions: each statement auto-commits at the server unless
+    wrapped in an explicit ``BEGIN`` — this differs from PEP 249 §6's
+    implicit-transaction model and from stdlib ``sqlite3``. See the
+    README's "Transactions" section.
     """
 
     # PEP 249 optional extension ("Attributes from Module Exceptions"):
@@ -287,6 +292,10 @@ class AsyncConnection:
         Silent no-op if the connection has never been used (preserves
         the existing "no spurious connect" contract) or if the server
         reports "no transaction is active" (matches stdlib sqlite3).
+        The latter is the *common* case on this driver — every
+        statement auto-commits at the server unless an explicit
+        ``BEGIN`` was issued (see class docstring / README
+        "Transactions").
 
         Operational caveat: on a leader flip mid-transaction, COMMIT
         can raise ``OperationalError`` with a leader-change code. The
@@ -327,7 +336,12 @@ class AsyncConnection:
                     raise
 
     async def rollback(self) -> None:
-        """Roll back any pending transaction. Same no-op rules as commit."""
+        """Roll back any pending transaction.
+
+        Same no-op rules as :meth:`commit`, including the autocommit-
+        by-default contract: "no active transaction" is the common
+        case unless the caller issued an explicit ``BEGIN``.
+        """
         # PEP 249 §6.1.1 messages-clear contract; see commit() above.
         del self.messages[:]
         if self._closed:

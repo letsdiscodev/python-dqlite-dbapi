@@ -46,9 +46,22 @@ asyncio.run(main())
 
 `dqlite-dbapi` does **not** issue implicit `BEGIN` before DML — each
 statement runs in the underlying SQLite engine's autocommit mode unless
-the caller has explicitly opened a transaction. Every write still goes
-through Raft consensus and every read is serializable; **isolation is
-always SERIALIZABLE**, but transaction *grouping* is opt-in.
+the caller has explicitly opened a transaction. This deviates from
+PEP 249 §6's prescribed implicit-transaction model and from stdlib
+`sqlite3` / `psycopg`, both of which auto-BEGIN on the first DML; users
+porting from those drivers will see different behaviour and must add
+explicit `BEGIN` calls (see below) to recover atomic multi-statement
+semantics. The dqlite C and Go reference clients have the same opt-in
+contract; this driver matches them rather than stdlib.
+
+If you use SQLAlchemy via `sqlalchemy-dqlite`, the dialect emits
+`BEGIN` for every `engine.begin()` / `connection.begin()` block — no
+explicit `BEGIN` needed; the autocommit-by-default gap below applies
+only to direct dbapi users.
+
+Every write still goes through Raft consensus and every read is
+serializable; **isolation is always SERIALIZABLE**, but transaction
+*grouping* is opt-in.
 
 To group statements into a transaction, issue an explicit `BEGIN`
 through a cursor (or use `dqliteclient`'s `transaction()` async
@@ -93,7 +106,8 @@ Connection-level `commit()` / `rollback()` semantics:
 - **Multi-statement SQL is rejected.** `cursor.execute("SELECT 1;
   SELECT 2;")` raises `OperationalError` with "nonempty statement tail".
   Split into separate `execute()` calls.
-- **No autocommit mode** — see above.
+- **Autocommit-by-default at the server.** Opposite of stdlib
+  `sqlite3`'s implicit-transaction model — see Transactions above.
 - **SERIALIZABLE isolation only.** Every statement is ordered by Raft;
   weaker isolation levels aren't exposed.
 

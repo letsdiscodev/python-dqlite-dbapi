@@ -227,7 +227,13 @@ def _cleanup_loop_thread(
 
 
 class Connection:
-    """PEP 249 compliant database connection."""
+    """PEP 249 compliant database connection.
+
+    Transactions: each statement auto-commits at the server unless
+    wrapped in an explicit ``BEGIN`` — this differs from PEP 249 §6's
+    implicit-transaction model and from stdlib ``sqlite3``. See the
+    README's "Transactions" section.
+    """
 
     # PEP 249 optional extension ("Attributes from Module Exceptions"):
     # expose the module-level exception classes as class attributes so
@@ -588,10 +594,14 @@ class Connection:
         If the connection has never been used, this is a silent no-op
         (matches stdlib ``sqlite3`` and the existing "no spurious
         connect" contract). If the server reports "no transaction is
-        active," that too is swallowed — stdlib ``sqlite3.commit()``
-        silently succeeds in the same case, and callers should not
-        have to tell the difference between an empty transaction and
-        a successfully committed one.
+        active," that too is swallowed — and on this driver "no
+        transaction is active" is the *common* case, because every
+        statement auto-commits at the server unless an explicit
+        ``BEGIN`` was issued (see class docstring / README
+        "Transactions"). stdlib ``sqlite3.commit()`` silently succeeds
+        in the same case, and callers should not have to tell the
+        difference between an empty transaction and a successfully
+        committed one.
 
         Operational caveat: on a leader flip mid-transaction, COMMIT
         can raise ``OperationalError`` with a code in
@@ -630,7 +640,10 @@ class Connection:
         """Roll back any pending transaction.
 
         Same silent-success contract as :meth:`commit` for "no active
-        transaction" and for never-used connections.
+        transaction" and for never-used connections. As with
+        :meth:`commit`, "no active transaction" is the *common* case
+        on this driver — see the class docstring for the autocommit-
+        by-default contract.
         """
         del self.messages[:]
         self._check_thread()
