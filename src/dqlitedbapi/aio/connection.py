@@ -290,10 +290,10 @@ class AsyncConnection:
         idempotent DML or out-of-band state-checks before retrying.
         Same caveat applies to ``__aexit__``'s clean-exit commit.
         """
-        del self.messages[:]
         if self._closed:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
+            del self.messages[:]
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
@@ -303,6 +303,12 @@ class AsyncConnection:
             # ``self._async_conn.execute`` on ``None``.
             if self._closed or self._async_conn is None:
                 raise InterfaceError("Connection is closed")
+            # Clear ``messages`` under the lock so the PEP 249
+            # contract "messages cleared by every method call" is
+            # atomic with the operation. Clearing pre-lock leaves
+            # a window where a sibling task could append between
+            # this clear and the COMMIT.
+            del self.messages[:]
             try:
                 # Parity with ``Connection._commit_async``; ``_call_client``
                 # maps raw client errors onto PEP 249 ``Error`` subclasses.
@@ -313,16 +319,19 @@ class AsyncConnection:
 
     async def rollback(self) -> None:
         """Roll back any pending transaction. Same no-op rules as commit."""
-        del self.messages[:]
         if self._closed:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
+            del self.messages[:]
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
             # Re-check under the lock for the same race as commit().
             if self._closed or self._async_conn is None:
                 raise InterfaceError("Connection is closed")
+            # Clear ``messages`` under the lock so the PEP 249 contract
+            # is atomic with the operation; see ``commit`` rationale.
+            del self.messages[:]
             try:
                 # Parity with ``Connection._rollback_async``; see ``commit``.
                 await _call_client(self._async_conn.execute("ROLLBACK"))
