@@ -174,42 +174,56 @@ def _cleanup_loop_thread(
     rather than a direct reference to self to decide whether to emit
     a ``ResourceWarning``.
     """
-    if closed_flag[0] is False:
-        # User never called close() → leak warning (matches stdlib
-        # sqlite3). Do NOT wrap in ``contextlib.suppress(Exception)``:
-        # strict test environments (``pytest -W error::ResourceWarning``)
-        # rely on the warning turning into a raise, and the broad
-        # suppressor used to silently swallow that raise along with
-        # any other exception the warnings machinery might surface.
-        # Narrow suppression to ``RuntimeError`` for the specific
-        # interpreter-shutdown race where the warnings module's own
-        # finalization is mid-teardown.
+    # Wrap the entire body in try/finally so the loop/thread teardown
+    # ALWAYS runs, regardless of whether the warning emission raises.
+    # Under ``pytest -W error::ResourceWarning`` the
+    # ``warnings.warn(..., ResourceWarning, ...)`` call below converts
+    # to a raised ``ResourceWarning`` (subclass of ``Warning`` /
+    # ``Exception``, NOT ``RuntimeError``). Without the finally, the
+    # raise propagated out of the finalizer past the narrow
+    # ``contextlib.suppress(RuntimeError)``, the cleanup steps below
+    # never ran, and the daemon event-loop thread lingered with an
+    # open socket — ironically *amplifying* the leak the warning was
+    # supposed to surface.
+    try:
+        if closed_flag[0] is False:
+            # User never called close() → leak warning (matches stdlib
+            # sqlite3). The narrow ``RuntimeError`` suppression here is
+            # for the specific interpreter-shutdown race where the
+            # warnings module's own finalization is mid-teardown; any
+            # other exception (including ResourceWarning being
+            # converted to a raise under -W error) is allowed to
+            # propagate through the surrounding finally so the
+            # finalizer's reporter (sys.unraisablehook) still surfaces
+            # it while the cleanup completes.
+            with contextlib.suppress(RuntimeError):
+                warnings.warn(
+                    f"Connection(address={address!r}) was garbage-collected "
+                    f"without close(); cleaning up event-loop thread. Call "
+                    f"Connection.close() explicitly to avoid this warning.",
+                    ResourceWarning,
+                    stacklevel=2,
+                )
+    finally:
+        # Narrow suppression to the specific exceptions loop/thread
+        # teardown can legitimately raise during finalization. Wider
+        # ``except Exception: pass`` would hide programmer bugs like a
+        # missing attribute reference introduced during a refactor.
+        try:
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(loop.stop)
+        except RuntimeError:
+            # Loop was closed between is_closed() and the threadsafe
+            # call.
+            pass
         with contextlib.suppress(RuntimeError):
-            warnings.warn(
-                f"Connection(address={address!r}) was garbage-collected "
-                f"without close(); cleaning up event-loop thread. Call "
-                f"Connection.close() explicitly to avoid this warning.",
-                ResourceWarning,
-                stacklevel=2,
-            )
-    # Narrow suppression to the specific exceptions loop/thread teardown
-    # can legitimately raise during finalization. Wider
-    # ``except Exception: pass`` would hide programmer bugs like a
-    # missing attribute reference introduced during a refactor.
-    try:
-        if not loop.is_closed():
-            loop.call_soon_threadsafe(loop.stop)
-    except RuntimeError:
-        # Loop was closed between is_closed() and the threadsafe call.
-        pass
-    with contextlib.suppress(RuntimeError):
-        thread.join(timeout=5)
-    try:
-        if not loop.is_closed():
-            loop.close()
-    except RuntimeError:
-        # Raised if the loop was somehow restarted mid-finalization.
-        pass
+            thread.join(timeout=5)
+        try:
+            if not loop.is_closed():
+                loop.close()
+        except RuntimeError:
+            # Raised if the loop was somehow restarted mid-finalization.
+            pass
 
 
 class Connection:
