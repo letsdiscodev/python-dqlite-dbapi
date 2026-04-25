@@ -14,7 +14,7 @@ import pytest
 
 from dqliteclient.exceptions import DqliteConnectionError
 from dqlitedbapi import Connection
-from dqlitedbapi.exceptions import Error
+from dqlitedbapi.exceptions import Error, OperationalError
 
 
 def _make_connection_with_invalidated_async() -> Connection:
@@ -46,5 +46,33 @@ def test_rollback_on_invalidated_connection_raises_dbapi_error() -> None:
     try:
         with pytest.raises(Error):
             conn.rollback()
+    finally:
+        conn._closed = True
+
+
+def test_commit_on_invalidated_connection_raises_operational_error_with_cause() -> None:
+    """Pin the exact PEP 249 class (``OperationalError``, not ``InterfaceError``)
+    and the ``__cause__`` chain back to ``DqliteConnectionError``. SQLAlchemy's
+    ``is_disconnect`` classifier branches on the surfaced class; a refactor
+    of ``_call_client``'s ``DqliteConnectionError`` arm to raise a different
+    PEP 249 class would silently break disconnect classification."""
+    conn = _make_connection_with_invalidated_async()
+    try:
+        with pytest.raises(OperationalError) as ei:
+            conn.commit()
+        assert isinstance(ei.value.__cause__, DqliteConnectionError)
+        # Class lives in dqlitedbapi, not in dqliteclient — the wrap occurred.
+        assert ei.value.__class__.__module__.startswith("dqlitedbapi")
+    finally:
+        conn._closed = True
+
+
+def test_rollback_on_invalidated_connection_raises_operational_error_with_cause() -> None:
+    conn = _make_connection_with_invalidated_async()
+    try:
+        with pytest.raises(OperationalError) as ei:
+            conn.rollback()
+        assert isinstance(ei.value.__cause__, DqliteConnectionError)
+        assert ei.value.__class__.__module__.startswith("dqlitedbapi")
     finally:
         conn._closed = True
