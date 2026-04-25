@@ -362,6 +362,12 @@ class AsyncCursor:
         """
         del self.messages[:]
         self._check_closed()
+        # Surface a loop-binding mismatch up front so a caller awaiting
+        # a fetch from a different loop than the one the connection
+        # was bound to gets a clear ``ProgrammingError`` rather than a
+        # silent success on buffered rows. Mirrors the up-front check
+        # already done by ``setinputsizes`` / ``setoutputsize``.
+        self._connection._ensure_locks()
         self._check_result_set()
         # PEP 249 §6.1.1 — Connection.messages is cleared by the
         # cursor fetch methods. Defensive against test mocks.
@@ -384,6 +390,8 @@ class AsyncCursor:
         """
         del self.messages[:]
         self._check_closed()
+        # Loop-binding check; see ``fetchone`` rationale.
+        self._connection._ensure_locks()
         self._check_result_set()
         # PEP 249 §6.1.1 — Connection.messages is cleared by the
         # cursor fetch methods. Defensive against test mocks.
@@ -414,6 +422,8 @@ class AsyncCursor:
         """
         del self.messages[:]
         self._check_closed()
+        # Loop-binding check; see ``fetchone`` rationale.
+        self._connection._ensure_locks()
         self._check_result_set()
         # PEP 249 §6.1.1 — Connection.messages is cleared by the
         # cursor fetch methods. Defensive against test mocks.
@@ -532,6 +542,12 @@ class AsyncCursor:
         return f"<AsyncCursor rowcount={self._rowcount} {state}>"
 
     def __aiter__(self) -> "AsyncCursor":
+        # Synchronous loop-binding check: surface a loop-mismatch at
+        # the ``async for cursor:`` site rather than one await deeper
+        # inside ``__anext__``'s ``fetchone``. The fetch* methods
+        # carry the same up-front check; mirror it here so ``async
+        # for`` doesn't silently start iterating on the wrong loop.
+        self._connection._ensure_locks()
         return self
 
     async def __anext__(self) -> tuple[Any, ...]:
