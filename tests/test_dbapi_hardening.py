@@ -431,17 +431,15 @@ class TestStripLeadingComments:
             # Helper returns "" (empty string).
             ("-- just a comment", ""),
             ("  -- leading ws and trailing comment only", ""),
-            # Edge 2: unterminated block comment — returns unchanged
-            # string (the SELECT token inside is part of the block, not
-            # a statement the helper can surface).
-            ("/* oops no close", "/* oops no close"),
-            ("  /* also unterminated with leading ws", "/* also unterminated with leading ws"),
-            (
-                "/* unterminated with SELECT inside",
-                "/* unterminated with SELECT inside",
-            ),
+            # Edge 2: unterminated block comment — collapses to empty
+            # (mirrors the unterminated ``--`` branch's "consumes
+            # everything" semantics; SQLite parse-rejects the input,
+            # so signaling "no usable verb" is correct).
+            ("/* oops no close", ""),
+            ("  /* also unterminated with leading ws", ""),
+            ("/* unterminated with SELECT inside", ""),
             # Edge 3: mixed — terminated SL then unterminated block.
-            ("-- ok\n/* then unterminated", "/* then unterminated"),
+            ("-- ok\n/* then unterminated", ""),
             # Edge 4: mixed — terminated block then trailing SL
             # comment to EOF. The SL branch returns "".
             ("/* header */-- trailing only", ""),

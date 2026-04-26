@@ -54,6 +54,14 @@ from dqlitedbapi.cursor import _strip_leading_comments as dbapi_strip
         "/* */-- ",
         # Unterminated block comment (defensive — both should agree).
         "/* never closed",
+        "/* unterminated\nspans lines",
+        # Unterminated `--` (mirror): consumes everything.
+        "-- comment without newline",
+        # CR-only line endings: SQLite's tokenizer requires \n to end
+        # ``--`` comments. Both helpers MUST agree (CR is NOT a line
+        # terminator) for parity with SQLite.
+        "-- x\rfoo",
+        "-- x\r\nfoo",  # CRLF: \n still ends the comment
     ],
 )
 def test_strip_leading_comments_parity(sql: str) -> None:
@@ -62,3 +70,27 @@ def test_strip_leading_comments_parity(sql: str) -> None:
         f"client and dbapi _strip_leading_comments diverged for {sql!r}: "
         f"client={client_strip(sql)!r} dbapi={dbapi_strip(sql)!r}"
     )
+
+
+def test_unterminated_block_comment_returns_empty() -> None:
+    """An unterminated ``/*`` consumes everything, mirroring the
+    ``--`` branch's behavior. Pin so a future regression that
+    returned the input verbatim would break this test.
+
+    Unterminated comments are SQLite parse errors; the helper's job
+    in that case is to surface "no usable verb" — empty-string return
+    is the canonical signal across the helpers' callers."""
+    for impl in (client_strip, dbapi_strip):
+        assert impl("/* never closed") == ""
+        assert impl("/* unterminated\nspans lines") == ""
+        assert impl("/* close */ /* unterminated") == ""
+
+
+def test_cr_only_does_not_terminate_line_comment() -> None:
+    """SQLite's tokenizer terminates ``--`` only on ``\\n``. Pin
+    agreement: ``-- x\\rfoo`` consumes everything (CR is part of the
+    comment, no terminator)."""
+    for impl in (client_strip, dbapi_strip):
+        assert impl("-- x\rfoo") == ""
+        # CRLF: the \n DOES end the comment normally.
+        assert impl("-- x\r\nfoo") == "foo"

@@ -314,7 +314,10 @@ def _strip_leading_comments(sql: str) -> str:
         elif s.startswith("/*"):
             end = s.find("*/")
             if end == -1:
-                return s
+                # Symmetric with the unterminated-``--`` branch above:
+                # collapse to "" so downstream "no verb" handling kicks
+                # in. Mirrors the client-layer copy.
+                return ""
             s = s[end + 2 :].strip()
         else:
             break
