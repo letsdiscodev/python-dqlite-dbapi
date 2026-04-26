@@ -173,7 +173,7 @@ def test_keyboard_interrupt_during_op_lock_acquire_invalidates_when_prior_op_in_
             if args:
                 invalidate_calls.append(args[0])  # type: ignore[arg-type]
 
-        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr]
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr,method-assign]
         # Simulate the prior-op-still-in-flight precondition.
         conn._async_conn._in_use = True  # type: ignore[union-attr]
 
@@ -215,7 +215,7 @@ def test_keyboard_interrupt_during_op_lock_acquire_no_op_when_idle() -> None:
             if args:
                 invalidate_calls.append(args[0])  # type: ignore[arg-type]
 
-        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr]
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr,method-assign]
         # Idle precondition: no prior op in flight.
         conn._async_conn._in_use = False  # type: ignore[union-attr]
 
@@ -248,7 +248,7 @@ def test_system_exit_during_op_lock_acquire_invalidates_when_prior_op_in_flight(
             if args:
                 invalidate_calls.append(args[0])  # type: ignore[arg-type]
 
-        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr]
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr,method-assign]
         conn._async_conn._in_use = True  # type: ignore[union-attr]
 
         fake_lock = MagicMock()
