@@ -83,7 +83,13 @@ class TestSyncCommitLeaderFlipPropagates:
 
     def test_exit_clean_commit_leader_flip_propagates(self, code: int) -> None:
         """``__exit__`` with no exception calls ``commit``; leader-flip
-        must propagate up through the context manager, not be swallowed."""
+        must propagate up through the context manager, not be swallowed.
+        Tracker-state cleanup is verified at the client layer in
+        ``python-dqlite-client/tests/test_run_protocol_auto_rollback_codes.py``
+        (for the auto-rollback set) and via ``_invalidate`` (for the
+        leader-class set); the mock harness here only exercises the
+        propagation contract.
+        """
         conn = _make_sync_with_inner()
         try:
             conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
@@ -118,7 +124,9 @@ class TestAsyncCommitLeaderFlipPropagates:
 
     async def test_aexit_clean_commit_leader_flip_propagates(self, code: int) -> None:
         """``__aexit__`` with no exception calls ``commit``; leader-flip
-        must propagate up through the context manager."""
+        must propagate up through the context manager. Tracker-state
+        cleanup is verified at the client layer (see the sync sibling
+        comment for the cross-reference)."""
         conn = _make_async_with_inner()
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
             code, "leadership lost"
