@@ -234,6 +234,32 @@ class TestSyncClosedChecks:
         with pytest.raises(InterfaceError, match="Connection is closed"):
             conn.rollback()
 
+    def test_commit_async_raises_interface_error_when_async_conn_none(self) -> None:
+        """Defence-in-depth: even if ``_async_conn`` is somehow None
+        without ``_closed`` being True (e.g. a future race or an
+        unexpected attribute reset), ``_commit_async`` must raise
+        ``InterfaceError`` rather than ``AttributeError``. The previous
+        ``assert self._async_conn is not None`` was stripped under
+        ``python -O`` and would surface as a confusing AttributeError.
+        """
+        import asyncio
+
+        conn = connect("localhost:19001", timeout=2.0)
+        conn._async_conn = None  # simulate the defensive case
+        with pytest.raises(InterfaceError, match="closed"):
+            asyncio.run(conn._commit_async())
+        conn.close()
+
+    def test_rollback_async_raises_interface_error_when_async_conn_none(self) -> None:
+        """Symmetric to the commit-side defensive test above."""
+        import asyncio
+
+        conn = connect("localhost:19001", timeout=2.0)
+        conn._async_conn = None  # simulate the defensive case
+        with pytest.raises(InterfaceError, match="closed"):
+            asyncio.run(conn._rollback_async())
+        conn.close()
+
 
 class TestSyncAddressProperty:
     def test_address_returns_configured(self) -> None:

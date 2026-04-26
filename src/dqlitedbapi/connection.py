@@ -651,7 +651,8 @@ class Connection:
 
     async def _commit_async(self) -> None:
         """Async implementation of commit."""
-        assert self._async_conn is not None
+        if self._async_conn is None:
+            raise InterfaceError("Connection is closed")
         try:
             # Route through ``_call_client`` so client-layer errors
             # (including ``DqliteConnectionError`` for an externally
@@ -681,7 +682,8 @@ class Connection:
 
     async def _rollback_async(self) -> None:
         """Async implementation of rollback."""
-        assert self._async_conn is not None
+        if self._async_conn is None:
+            raise InterfaceError("Connection is closed")
         try:
             # See ``_commit_async``: route through ``_call_client`` so
             # client-layer failures surface as PEP 249 ``Error``
