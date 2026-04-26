@@ -316,7 +316,8 @@ class AsyncCursor:
         # Reject transaction-control verbs and pure queries up front
         # (mirror of the sync sibling).
         head_normalised = _strip_leading_comments(operation).lstrip().upper()
-        first_verb = head_normalised.split(maxsplit=1)[0] if head_normalised else ""
+        # See sync sibling for ``rstrip(";")`` rationale.
+        first_verb = head_normalised.split(maxsplit=1)[0].rstrip(";") if head_normalised else ""
         if first_verb in _EXECUTEMANY_REJECT_VERBS:
             raise ProgrammingError(
                 f"executemany() not supported for {first_verb}; "

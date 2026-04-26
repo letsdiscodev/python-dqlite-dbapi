@@ -22,6 +22,12 @@ from dqlitedbapi.exceptions import ProgrammingError
 
 _REJECT_VERBS = ["SAVEPOINT sp", "RELEASE sp", "ROLLBACK", "BEGIN", "COMMIT", "END"]
 
+# Verbs glued directly to a trailing semicolon (canonicalised by
+# rstrip(";") in the reject-list check). Tests pin the no-operand
+# verbs only — operand-bearing verbs like SAVEPOINT split cleanly at
+# the space.
+_REJECT_VERBS_SEMICOLON_GLUED = ["BEGIN;", "COMMIT;", "ROLLBACK;", "END;"]
+
 
 @pytest.mark.parametrize("statement", _REJECT_VERBS)
 def test_sync_executemany_rejects_transaction_verb(statement: str) -> None:
@@ -85,3 +91,38 @@ def test_sync_executemany_admits_dml_unchanged() -> None:
     cursor.messages = []
     # Should not raise.
     cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
+
+
+@pytest.mark.parametrize("statement", _REJECT_VERBS_SEMICOLON_GLUED)
+def test_sync_executemany_rejects_transaction_verb_glued_to_semicolon(
+    statement: str,
+) -> None:
+    """``BEGIN;``, ``COMMIT;``, ``ROLLBACK;``, ``END;`` must be rejected
+    even when no whitespace separates the verb from the semicolon. The
+    reject-list check canonicalises via ``rstrip(";")`` before the
+    membership test."""
+    conn = Connection("localhost:9001")
+    cursor = Cursor(conn)
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for"):
+        cursor.executemany(statement, [(1,)])
+
+
+@pytest.mark.parametrize("statement", _REJECT_VERBS_SEMICOLON_GLUED)
+@pytest.mark.asyncio
+async def test_async_executemany_rejects_transaction_verb_glued_to_semicolon(
+    statement: str,
+) -> None:
+    conn = AsyncConnection("localhost:9001")
+    cursor = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for"):
+        await cursor.executemany(statement, [(1,)])
+
+
+def test_sync_executemany_rejects_begin_glued_to_following_statement() -> None:
+    """``executemany("BEGIN; INSERT ...", [...])`` was previously
+    silently admitted — first_verb was "BEGIN;" which is not in the
+    reject set. Pin the rstrip(";") canonicalisation."""
+    conn = Connection("localhost:9001")
+    cursor = Cursor(conn)
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for BEGIN"):
+        cursor.executemany("BEGIN; INSERT INTO t VALUES (?)", [(1,)])

@@ -888,7 +888,12 @@ class Cursor:
         # having it surface deep inside the async helper. stdlib
         # sqlite3.Cursor.executemany does the same.
         head_normalised = _strip_leading_comments(operation).lstrip().upper()
-        first_verb = head_normalised.split(maxsplit=1)[0] if head_normalised else ""
+        # ``rstrip(";")`` canonicalises a verb glued to a trailing
+        # semicolon (``"BEGIN;"``, ``"COMMIT;"``) into the bare verb so
+        # the membership check in ``_EXECUTEMANY_REJECT_VERBS`` fires.
+        # Without it, ``executemany("BEGIN; INSERT ...", ...)`` was
+        # silently admitted and re-ran the bare statement N times.
+        first_verb = head_normalised.split(maxsplit=1)[0].rstrip(";") if head_normalised else ""
         if first_verb in _EXECUTEMANY_REJECT_VERBS:
             raise ProgrammingError(
                 f"executemany() not supported for {first_verb}; "
