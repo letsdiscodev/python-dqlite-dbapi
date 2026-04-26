@@ -94,3 +94,49 @@ class TestIsNoTransactionError:
     def test_no_such_savepoint_not_swallowed_quoted(self) -> None:
         exc = OperationalError('no such savepoint: "MyPoint"', code=1)
         assert _is_no_transaction_error(exc) is False
+
+
+class TestIsNoTransactionErrorEdgeCases:
+    """Pin the case-insensitive / whitespace / both-substring matrix.
+    The recogniser does ``str(exc).lower()`` then ``any(s in lowered
+    for s in _NO_TX_SUBSTRINGS)``, so each axis below should match,
+    but no test pinned that contract before — a future refactor that
+    drops the ``.lower()`` or substring-list semantics could regress
+    silently."""
+
+    def test_uppercase_message_matches(self) -> None:
+        exc = OperationalError("NO TRANSACTION IS ACTIVE", code=1)
+        assert _is_no_transaction_error(exc) is True
+
+    def test_mixed_case_message_matches(self) -> None:
+        exc = OperationalError("No Transaction Is Active", code=1)
+        assert _is_no_transaction_error(exc) is True
+
+    def test_leading_and_trailing_whitespace_matches(self) -> None:
+        exc = OperationalError("  no transaction is active  ", code=1)
+        assert _is_no_transaction_error(exc) is True
+
+    def test_tab_and_newline_whitespace_matches(self) -> None:
+        exc = OperationalError("\tno transaction is active\n", code=1)
+        assert _is_no_transaction_error(exc) is True
+
+    def test_both_substrings_concatenated_match(self) -> None:
+        # The canonical server wording: "cannot rollback - no transaction is active".
+        exc = OperationalError("cannot rollback - no transaction is active", code=1)
+        assert _is_no_transaction_error(exc) is True
+
+    def test_empty_message_with_correct_code_does_not_match(self) -> None:
+        # Empty message: code-gate alone is not enough; the substring
+        # check must still fire.
+        exc = OperationalError("", code=1)
+        assert _is_no_transaction_error(exc) is False
+
+    def test_substring_inside_unrelated_message_currently_matches(self) -> None:
+        # Documents the current substring-positional behaviour. A
+        # message that happens to embed the substring inside an
+        # unrelated phrase will be treated as no-tx. False-positive
+        # risk is bounded by the primary-code gate (only code 1 reaches
+        # the substring check). Pin the current behaviour so a future
+        # change is deliberate.
+        exc = OperationalError("error: cannot find table 'no transaction is active'", code=1)
+        assert _is_no_transaction_error(exc) is True
