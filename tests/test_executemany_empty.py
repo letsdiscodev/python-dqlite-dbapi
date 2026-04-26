@@ -77,3 +77,44 @@ class TestExecutemanyEmpty:
         assert list(c._rows) == []
         # Matches the sync sibling above: stdlib-parity 0, not -1.
         assert c.rowcount == 0
+
+
+class TestExecutemanyEmptyIterableShape:
+    """``executemany`` accepts ``Iterable[Sequence[Any]]``. The
+    empty-list test above pins ``[]``, but an empty iterator (e.g.,
+    ``iter([])``) and an empty generator are structurally distinct
+    and exercise the accumulator's no-yield branch separately. A
+    future refactor that special-cased lists could regress the
+    iterator path silently — pin both shapes here."""
+
+    @pytest.mark.asyncio
+    async def test_sync_cursor_executemany_empty_iter(self) -> None:
+        c = _cursor_with_prior_select()
+        await c._executemany_async("INSERT INTO t VALUES (?)", iter([]))
+        assert c.description is None
+        assert c._rows == []
+        assert c.rowcount == 0
+
+    @pytest.mark.asyncio
+    async def test_sync_cursor_executemany_empty_generator(self) -> None:
+        c = _cursor_with_prior_select()
+        await c._executemany_async("INSERT INTO t VALUES (?)", (x for x in []))
+        assert c.description is None
+        assert c._rows == []
+        assert c.rowcount == 0
+
+    @pytest.mark.asyncio
+    async def test_async_cursor_executemany_empty_iter(self) -> None:
+        c = _async_cursor_with_prior_select()
+        await c.executemany("INSERT INTO t VALUES (?)", iter([]))
+        assert c.description is None
+        assert list(c._rows) == []
+        assert c.rowcount == 0
+
+    @pytest.mark.asyncio
+    async def test_async_cursor_executemany_empty_generator(self) -> None:
+        c = _async_cursor_with_prior_select()
+        await c.executemany("INSERT INTO t VALUES (?)", (x for x in []))
+        assert c.description is None
+        assert list(c._rows) == []
+        assert c.rowcount == 0
