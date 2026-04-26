@@ -13,13 +13,13 @@ from dqlitewire.constants import ValueType
 # modules via the already-tightened import surface.
 __all__ = [
     "BINARY",
-    "Binary",
     "DATETIME",
-    "Date",
-    "DateFromTicks",
     "NUMBER",
     "ROWID",
     "STRING",
+    "Binary",
+    "Date",
+    "DateFromTicks",
     "Time",
     "TimeFromTicks",
     "Timestamp",
