@@ -14,6 +14,7 @@ from dqlitedbapi.cursor import (
     _is_insert_or_replace,
     _is_row_returning,
     _strip_leading_comments,
+    _to_signed_int64,
 )
 from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
 from dqlitedbapi.types import _Description
@@ -236,8 +237,8 @@ class AsyncCursor:
             # See ``_is_insert_or_replace`` in the sync cursor for
             # rationale — sync and async share the same contract.
             if _is_insert_or_replace(operation):
-                self._lastrowid = last_id
-            self._rowcount = affected
+                self._lastrowid = _to_signed_int64(last_id)
+            self._rowcount = _to_signed_int64(affected)
             self._description = None
             self._rows = []
             # Parity with the SELECT branch and with executemany:

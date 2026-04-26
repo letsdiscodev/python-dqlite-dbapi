@@ -601,6 +601,31 @@ def _is_dml_with_returning(sql: str) -> bool:
     return body.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
 
 
+_INT64_OVERFLOW_THRESHOLD = 1 << 63
+_UINT64_RANGE = 1 << 64
+
+
+def _to_signed_int64(value: int) -> int:
+    """Re-cast a wire ``uint64`` value to signed ``int64``.
+
+    The dqlite wire codec exposes ``ResultResponse.last_insert_id``
+    and ``rows_affected`` as unsigned 64-bit integers; the C server
+    casts SQLite's signed ``sqlite3_int64`` through ``(uint64_t)``
+    before sending. Negative SQLite rowids (legal on
+    ``INTEGER PRIMARY KEY`` tables) and the rare negative
+    ``rows_affected`` therefore arrive as values above ``2**63``.
+
+    stdlib ``sqlite3.Cursor.lastrowid`` and SA's ``Integer`` type
+    both expect signed ``int64``; the Go reference connector mirrors
+    that contract via ``int64(r.result.LastInsertID)``. Without this
+    cast a negative rowid surfaces as a 19-digit positive integer
+    that breaks downstream ``WHERE rowid = ?`` lookups silently.
+    """
+    if value >= _INT64_OVERFLOW_THRESHOLD:
+        return value - _UINT64_RANGE
+    return value
+
+
 def _is_insert_or_replace(sql: str) -> bool:
     """True if ``sql`` is an INSERT (including ``INSERT OR REPLACE`` /
     ``INSERT OR IGNORE``) or a bare REPLACE statement.
@@ -858,8 +883,8 @@ class Cursor:
             # paths and unconditionally writing would zero the sticky
             # value. See ``_is_insert_or_replace`` for rationale.
             if _is_insert_or_replace(operation):
-                self._lastrowid = last_id
-            self._rowcount = affected
+                self._lastrowid = _to_signed_int64(last_id)
+            self._rowcount = _to_signed_int64(affected)
             self._description = None
             self._rows = []
             # Parity with the SELECT branch and with executemany: every
