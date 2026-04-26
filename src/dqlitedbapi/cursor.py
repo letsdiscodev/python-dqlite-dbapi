@@ -194,11 +194,11 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # TCP is alive. PEP 249 ``OperationalError`` ("problems with
         # the database's operation, e.g. connection lost") fits the
         # semantic better than ``InterfaceError`` ("driver misuse"),
-        # and — paired with ``"Wire decode failed"`` /
-        # ``"Wire stream error"`` in the SA dialect's
-        # ``_dqlite_disconnect_messages`` list — routes the failure
-        # through the disconnect-classifier's substring branch so the
-        # pool slot invalidates on the first round-trip.
+        # and — paired with the ``"wire decode failed"`` substring in
+        # the SA dialect's ``_dqlite_disconnect_messages`` list —
+        # routes the failure through the disconnect-classifier's
+        # substring branch so the pool slot invalidates on the first
+        # round-trip.
         raise OperationalError(str(e), code=None) from e
     except _client_exc.DataError as e:
         # client.DataError carries no server code today (encode-side
