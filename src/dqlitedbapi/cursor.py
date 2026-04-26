@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import dqliteclient.exceptions as _client_exc
 from dqlitedbapi.exceptions import (
+    DatabaseError,
     DataError,
     IntegrityError,
     InterfaceError,
@@ -59,23 +60,59 @@ _SQLITE_MISMATCH = 20
 # ``DataError``.
 _SQLITE_RANGE = 25
 
+# SQLITE_NOMEM (7) — server-side allocation failure. CPython stdlib
+# ``sqlite3`` raises ``MemoryError`` (system-level, bypasses PEP 249);
+# we route through ``InternalError`` so callers stay inside the
+# PEP 249 hierarchy and ``except dbapi.Error:`` continues to catch.
+_SQLITE_NOMEM = 7
+
+# SQLITE_CORRUPT (11), SQLITE_FORMAT (24), SQLITE_NOTADB (26) — the
+# server-side database file is malformed / wrong format / not a
+# SQLite database. CPython routes all three to ``DatabaseError``
+# (the umbrella PEP 249 class). Callers porting between stdlib and
+# dqlite use ``except DatabaseError:`` to handle these uniformly.
+_SQLITE_CORRUPT = 11
+_SQLITE_FORMAT = 24
+_SQLITE_NOTADB = 26
+
+# SQLITE_PROTOCOL (15) — file-locking protocol error inside SQLite's
+# WAL machinery. CPython routes to ``OperationalError``; we already
+# default unmapped codes to OperationalError so this entry is
+# documentary — it pins the contract so a future audit shows the
+# code was considered.
+_SQLITE_PROTOCOL = 15
+
 # Registry of primary-code → PEP 249 class. Keep the default
 # (OperationalError) outside the dict so adding a code is one line.
 _CODE_TO_EXCEPTION: dict[
     int,
-    type[OperationalError | IntegrityError | InternalError | DataError | ProgrammingError],
+    type[
+        OperationalError
+        | IntegrityError
+        | InternalError
+        | DataError
+        | ProgrammingError
+        | DatabaseError
+    ],
 ] = {
     _SQLITE_CONSTRAINT: IntegrityError,
     _SQLITE_INTERNAL: InternalError,
     _SQLITE_TOOBIG: DataError,
     _SQLITE_MISMATCH: IntegrityError,
     _SQLITE_RANGE: ProgrammingError,
+    _SQLITE_NOMEM: InternalError,
+    _SQLITE_CORRUPT: DatabaseError,
+    _SQLITE_FORMAT: DatabaseError,
+    _SQLITE_NOTADB: DatabaseError,
+    _SQLITE_PROTOCOL: OperationalError,
 }
 
 
 def _classify_operational(
     code: int | None,
-) -> type[OperationalError | IntegrityError | InternalError | DataError | ProgrammingError]:
+) -> type[
+    OperationalError | IntegrityError | InternalError | DataError | ProgrammingError | DatabaseError
+]:
     """Pick a PEP 249 exception class from a SQLite error code.
 
     Returns OperationalError for unknown / unmapped codes so the

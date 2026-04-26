@@ -45,26 +45,16 @@ class InterfaceError(Error):
 
 
 class DatabaseError(Error):
-    """Error related to the database."""
+    """Error related to the database.
 
-    pass
-
-
-class _DatabaseErrorWithCode(DatabaseError):
-    """Internal base for DatabaseError subclasses that carry a SQLite
-    extended error ``code`` attribute.
-
-    Private by design — not part of the public PEP 249 hierarchy, not
-    re-exported via ``__all__``. Present purely to eliminate three
-    byte-identical copies of ``__init__`` and ``__repr__`` across
-    :class:`OperationalError`, :class:`IntegrityError`, and
-    :class:`InternalError`.
-
-    ``__repr__`` reads ``type(self).__name__``, so each concrete
-    subclass surfaces its own name — Sentry/Rollbar and
-    ``logger.error("%r", exc)`` show the right class and the
-    ``code=…`` attribute (which the default ``Exception.__repr__``
-    would drop because it is not in ``args``).
+    Optionally carries the SQLite extended error ``code`` and the
+    full server text on ``raw_message``. Most callers see the
+    code-bearing subclasses (OperationalError, IntegrityError,
+    InternalError, DataError, ProgrammingError) instead, but a few
+    SQLite primary codes (e.g. CORRUPT, NOTADB, FORMAT) route
+    directly to DatabaseError per PEP 249's ``"errors related to
+    the database"`` umbrella, and those still surface a code so
+    callers can branch on it without walking ``__cause__``.
     """
 
     code: int | None
@@ -79,13 +69,6 @@ class _DatabaseErrorWithCode(DatabaseError):
     ) -> None:
         super().__init__(message)
         self.code = code
-        # ``raw_message`` carries the full server text when the
-        # client-layer ``OperationalError`` truncated ``message`` for
-        # safe display. Defaults to the (possibly already-truncated)
-        # ``message`` so callers that don't pass the kwarg get a
-        # sensible value. The full text remains reachable via the
-        # ``__cause__`` chain regardless; this attribute is the
-        # documented one-step accessor.
         self.raw_message = str(message) if raw_message is None else raw_message
 
     def __repr__(self) -> str:
@@ -93,6 +76,23 @@ class _DatabaseErrorWithCode(DatabaseError):
         if self.code is None:
             return f"{type(self).__name__}({msg!r})"
         return f"{type(self).__name__}({msg!r}, code={self.code})"
+
+
+class _DatabaseErrorWithCode(DatabaseError):
+    """Internal marker base for code-bearing DatabaseError subclasses.
+
+    Private by design — not part of the public PEP 249 hierarchy, not
+    re-exported via ``__all__``. The ``__init__`` and ``__repr__`` live
+    on :class:`DatabaseError` itself now (so that primary codes which
+    PEP 249 routes directly to ``DatabaseError`` — CORRUPT, NOTADB,
+    FORMAT — also carry a ``code``); this marker class remains for
+    backward compatibility and to keep
+    :class:`OperationalError` / :class:`IntegrityError` /
+    :class:`InternalError` / :class:`ProgrammingError` /
+    :class:`DataError` grouped under one private base.
+    """
+
+    pass
 
 
 class OperationalError(_DatabaseErrorWithCode):
