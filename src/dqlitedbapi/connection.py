@@ -626,9 +626,18 @@ class Connection:
 
     def close(self) -> None:
         """Close the connection."""
-        self._check_thread()
+        # PEP 249 §6.1: close() must be idempotent ("further attempts
+        # at .close() have no effect"). Check the closed flag BEFORE
+        # the thread guard so a re-close from a finalizer / atexit /
+        # ThreadPoolExecutor cleanup running on a non-creator thread
+        # is a no-op rather than raising ProgrammingError. The first
+        # close still must run on the creator thread (it tears down
+        # the loop thread and primitives that are GIL-but-not-thread-
+        # safe), so the thread check stays — just AFTER the closed
+        # short-circuit. Mirrors the cursor-side resolution.
         if self._closed:
             return
+        self._check_thread()
         self._closed = True
         # Flip the flag the finalizer reads so it knows this was an
         # explicit close (no ResourceWarning).

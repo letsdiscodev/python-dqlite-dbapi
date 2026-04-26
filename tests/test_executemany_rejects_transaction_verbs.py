@@ -126,3 +126,39 @@ def test_sync_executemany_rejects_begin_glued_to_following_statement() -> None:
     cursor = Cursor(conn)
     with pytest.raises(ProgrammingError, match="executemany.*not supported for BEGIN"):
         cursor.executemany("BEGIN; INSERT INTO t VALUES (?)", [(1,)])
+
+
+_LEADING_SEMICOLON_VERBS = [
+    ";BEGIN",
+    ";SAVEPOINT sp",
+    ";COMMIT",
+    ";ROLLBACK",
+    ";END",
+    ";RELEASE sp",
+    "  ;BEGIN",  # whitespace before leading ;
+    ";;BEGIN",  # multiple leading ;
+    "; ; BEGIN",  # interleaved ; and whitespace
+]
+
+
+@pytest.mark.parametrize("statement", _LEADING_SEMICOLON_VERBS)
+def test_sync_executemany_rejects_leading_semicolon_verb(statement: str) -> None:
+    """``executemany(";BEGIN ...", ...)`` and friends must also be
+    rejected — the round-2 ``rstrip(";")`` fix only canonicalised the
+    trailing-semicolon side. The leading-semicolon side requires
+    stripping leading ``;`` + interleaved whitespace before the verb
+    extraction. Otherwise ``head_normalised.split(maxsplit=1)[0]``
+    yields ``";BEGIN"`` which is not in the reject set."""
+    conn = Connection("localhost:9001")
+    cursor = Cursor(conn)
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for"):
+        cursor.executemany(statement, [(1,)])
+
+
+@pytest.mark.parametrize("statement", _LEADING_SEMICOLON_VERBS)
+@pytest.mark.asyncio
+async def test_async_executemany_rejects_leading_semicolon_verb(statement: str) -> None:
+    conn = AsyncConnection("localhost:9001")
+    cursor = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for"):
+        await cursor.executemany(statement, [(1,)])

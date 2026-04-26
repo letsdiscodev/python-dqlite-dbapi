@@ -887,12 +887,18 @@ class Cursor:
         # the caller's frame sees the ProgrammingError rather than
         # having it surface deep inside the async helper. stdlib
         # sqlite3.Cursor.executemany does the same.
+        # Strip leading semicolons + interleaved whitespace BEFORE the
+        # verb extraction so ``";BEGIN ..."`` (semicolon-prefixed) and
+        # ``"; ; BEGIN ..."`` (semicolon-whitespace-semicolon) cannot
+        # bypass the reject-list. The trailing ``rstrip(";")`` then
+        # canonicalises a verb glued to a trailing semicolon
+        # (``"BEGIN;"``, ``"COMMIT;"``) into the bare verb. Without
+        # both ends, ``executemany(";BEGIN INSERT ...", ...)`` or
+        # ``executemany("BEGIN; INSERT ...", ...)`` was silently
+        # admitted and re-ran the bare statement N times.
         head_normalised = _strip_leading_comments(operation).lstrip().upper()
-        # ``rstrip(";")`` canonicalises a verb glued to a trailing
-        # semicolon (``"BEGIN;"``, ``"COMMIT;"``) into the bare verb so
-        # the membership check in ``_EXECUTEMANY_REJECT_VERBS`` fires.
-        # Without it, ``executemany("BEGIN; INSERT ...", ...)`` was
-        # silently admitted and re-ran the bare statement N times.
+        while head_normalised.startswith(";"):
+            head_normalised = head_normalised[1:].lstrip()
         first_verb = head_normalised.split(maxsplit=1)[0].rstrip(";") if head_normalised else ""
         if first_verb in _EXECUTEMANY_REJECT_VERBS:
             raise ProgrammingError(

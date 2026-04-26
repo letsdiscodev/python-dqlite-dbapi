@@ -315,8 +315,11 @@ class AsyncCursor:
         self._check_closed()
         # Reject transaction-control verbs and pure queries up front
         # (mirror of the sync sibling).
+        # See sync sibling for the leading ``;``-stripping loop and the
+        # trailing ``rstrip(";")`` rationale.
         head_normalised = _strip_leading_comments(operation).lstrip().upper()
-        # See sync sibling for ``rstrip(";")`` rationale.
+        while head_normalised.startswith(";"):
+            head_normalised = head_normalised[1:].lstrip()
         first_verb = head_normalised.split(maxsplit=1)[0].rstrip(";") if head_normalised else ""
         if first_verb in _EXECUTEMANY_REJECT_VERBS:
             raise ProgrammingError(
