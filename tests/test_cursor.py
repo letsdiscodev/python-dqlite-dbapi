@@ -98,6 +98,17 @@ class TestCursor:
             assert not cursor._closed
         assert cursor._closed
 
+    def test_context_manager_propagates_body_exception(self) -> None:
+        """PEP 343 contract: __exit__ returning falsy must NOT suppress
+        the body exception. Cursor.__exit__ delegates to close() which
+        returns None, so a body exception must propagate AND the cursor
+        must still be closed afterwards."""
+        conn = Connection("localhost:9001")
+        cursor = Cursor(conn)
+        with pytest.raises(ValueError, match="body raised"), cursor:
+            raise ValueError("body raised")
+        assert cursor._closed
+
     def test_iterator(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)

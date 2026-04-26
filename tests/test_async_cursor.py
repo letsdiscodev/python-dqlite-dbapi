@@ -127,6 +127,17 @@ class TestAsyncCursor:
         assert cursor._closed
 
     @pytest.mark.asyncio
+    async def test_context_manager_propagates_body_exception(self) -> None:
+        """PEP 343 contract: __aexit__ returning falsy must NOT suppress
+        the body exception. Mirror of the sync sibling pin."""
+        conn = AsyncConnection("localhost:9001")
+        cursor = AsyncCursor(conn)
+        with pytest.raises(ValueError, match="body raised"):  # noqa: SIM117
+            async with cursor:
+                raise ValueError("body raised")
+        assert cursor._closed
+
+    @pytest.mark.asyncio
     async def test_async_iterator(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
