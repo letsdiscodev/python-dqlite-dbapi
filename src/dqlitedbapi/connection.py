@@ -647,19 +647,23 @@ class Connection:
         # sqlite3.Connection.close() does the same. Writes go
         # directly to the cursor's private attributes so we bypass
         # the Cursor.close() path (which would re-dispatch through
-        # Cursor.messages).
-        for cur in list(self._cursors):
-            cur._closed = True
-            cur._rows = []
-            cur._description = None
-            cur._rowcount = -1
-            cur._lastrowid = None
-            # Mirror Cursor.close()'s consistent "no operation
-            # performed" surface — the row index must be reset
-            # alongside the buffer or a future rownumber accessor
-            # change could expose stale post-close state.
-            cur._row_index = 0
-        self._cursors.clear()
+        # Cursor.messages). Wrap in try/finally so a KI/SystemExit
+        # landing mid-loop does not leave ``self._cursors`` populated
+        # with stale references — see async sibling for rationale.
+        try:
+            for cur in list(self._cursors):
+                cur._closed = True
+                cur._rows = []
+                cur._description = None
+                cur._rowcount = -1
+                cur._lastrowid = None
+                # Mirror Cursor.close()'s consistent "no operation
+                # performed" surface — the row index must be reset
+                # alongside the buffer or a future rownumber accessor
+                # change could expose stale post-close state.
+                cur._row_index = 0
+        finally:
+            self._cursors.clear()
         # Detach the finalizer — it's about to do nothing useful, and
         # keeping it registered would double-stop the loop.
         if self._finalizer is not None:

@@ -240,17 +240,26 @@ class AsyncConnection:
         # change adding a lock acquire to ``AsyncCursor.close`` that
         # would otherwise deadlock against the ``_op_lock`` acquire
         # below.
-        for cur in list(self._cursors):
-            cur._closed = True
-            cur._rows = []
-            cur._description = None
-            cur._rowcount = -1
-            cur._lastrowid = None
-            # Mirror AsyncCursor.close()'s consistent "no operation
-            # performed" surface — the row index must be reset
-            # alongside the buffer.
-            cur._row_index = 0
-        self._cursors.clear()
+        # Wrap in try/finally so a KI/SystemExit landing mid-loop does
+        # not leave ``self._cursors`` populated with stale references.
+        # Per-cursor ``_closed = True`` is the LOAD-BEARING write; even
+        # if a later field-write is skipped on signal-arrival, the
+        # cursor's own ``_check_closed()`` gates all reads — so a
+        # cursor with ``_closed=True`` but stale ``_rows`` will reject
+        # fetch attempts cleanly.
+        try:
+            for cur in list(self._cursors):
+                cur._closed = True
+                cur._rows = []
+                cur._description = None
+                cur._rowcount = -1
+                cur._lastrowid = None
+                # Mirror AsyncCursor.close()'s consistent "no operation
+                # performed" surface — the row index must be reset
+                # alongside the buffer.
+                cur._row_index = 0
+        finally:
+            self._cursors.clear()
         if self._async_conn is None:
             # Null the lazy locks so a subsequent fixture or
             # SQLAlchemy-glue reuse of the object in a different event
