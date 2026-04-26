@@ -268,16 +268,35 @@ class AsyncConnection:
         # at ``_async_conn is None`` returned.
         assert self._op_lock is not None
         op_lock = self._op_lock
-        async with op_lock:
+        try:
+            async with op_lock:
+                if self._async_conn is not None:
+                    await self._async_conn.close()
+                    self._async_conn = None
+        finally:
+            # If a CancelledError lands during ``async with op_lock``'s
+            # acquire — between the cursor cascade above and entering
+            # the lock body — the underlying ``_async_conn.close()``
+            # never runs, but ``_closed=True`` (set above) makes a
+            # retry close() return immediately. The socket leaks
+            # until process exit.
+            #
+            # Best-effort underlying close in the finally: shielded
+            # against the cancel re-delivery, idempotent against the
+            # successful path (the underlying close has its own
+            # short-circuits via ``_pool_released`` / ``_in_use``).
+            # Then the lock-cleanup runs unconditionally.
             if self._async_conn is not None:
-                await self._async_conn.close()
+                with contextlib.suppress(BaseException):
+                    await asyncio.shield(self._async_conn.close())
                 self._async_conn = None
-        # Reset the locks *after* closing so any task that was parked on
-        # ``op_lock`` observes the "_closed -> raise InterfaceError"
-        # re-check before it touches the now-None primitive.
-        self._connect_lock = None
-        self._op_lock = None
-        self._loop_ref = None
+            # Reset the locks *after* closing so any task that was
+            # parked on ``op_lock`` observes the
+            # "_closed -> raise InterfaceError" re-check before it
+            # touches the now-None primitive.
+            self._connect_lock = None
+            self._op_lock = None
+            self._loop_ref = None
 
     @property
     def in_transaction(self) -> bool:
