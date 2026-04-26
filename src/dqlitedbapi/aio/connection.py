@@ -232,9 +232,14 @@ class AsyncConnection:
         self._closed = True
         # Cascade to tracked cursors before the teardown drains the
         # wire so buffered fetches stop answering from stale rows.
-        # Writes go directly to the cursor's private attributes; the
-        # async Cursor's own close() path re-enters op_lock, which
-        # would deadlock against the _op_lock acquire below.
+        # Writes go directly to the cursor's private attributes —
+        # ``AsyncCursor.close`` is ``async def`` so a ``cur.close()``
+        # call from this synchronous loop would produce an un-awaited
+        # coroutine. The direct-write path keeps the cascade
+        # trivially synchronous and also defends against a future
+        # change adding a lock acquire to ``AsyncCursor.close`` that
+        # would otherwise deadlock against the ``_op_lock`` acquire
+        # below.
         for cur in list(self._cursors):
             cur._closed = True
             cur._rows = []
