@@ -154,3 +154,117 @@ def test_run_sync_after_keyboard_interrupt_keeps_connection_usable_or_raises_cle
             )
     finally:
         conn._closed = True
+
+
+def test_keyboard_interrupt_during_op_lock_acquire_invalidates_when_prior_op_in_flight() -> None:
+    """``threading.Lock.acquire(timeout=...)`` is interruptible by SIGINT
+    on CPython. A KI raised by the signal handler escapes ``acquire``
+    BEFORE the in-block KI cleanup arm runs. If a prior in-flight call
+    is wedged on the loop thread (``_in_use=True``), the connection is
+    stuck for life unless we schedule an invalidation defensively.
+
+    Pin the gated path: prior op in-flight → invalidation scheduled.
+    """
+    conn = _make_with_loop_thread()
+    try:
+        invalidate_calls: list[Exception] = []
+
+        def capture_invalidate(*args: object, **kwargs: object) -> None:
+            if args:
+                invalidate_calls.append(args[0])  # type: ignore[arg-type]
+
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr]
+        # Simulate the prior-op-still-in-flight precondition.
+        conn._async_conn._in_use = True  # type: ignore[union-attr]
+
+        # Lock objects are immutable C types — patch the instance
+        # attribute directly with a fake lock whose .acquire raises.
+        fake_lock = MagicMock()
+        fake_lock.acquire.side_effect = KeyboardInterrupt
+        conn._op_lock = fake_lock
+
+        with pytest.raises(KeyboardInterrupt):
+            conn.commit()
+
+        # Wait for the call_soon_threadsafe-scheduled invalidate to run.
+        import time
+
+        for _ in range(50):
+            if invalidate_calls:
+                break
+            time.sleep(0.01)
+        assert invalidate_calls, "expected _invalidate to be scheduled"
+        assert isinstance(invalidate_calls[0], InterfaceError)
+        assert "op-lock acquire" in str(invalidate_calls[0]).lower()
+        # The acquire failed; the fake lock's release was never called
+        # (which would raise on a mock). Pin: release was NOT called.
+        fake_lock.release.assert_not_called()
+    finally:
+        conn._closed = True
+
+
+def test_keyboard_interrupt_during_op_lock_acquire_no_op_when_idle() -> None:
+    """Negative pin: KI during a quiet acquire (no prior op wedged)
+    must NOT schedule a gratuitous invalidation. Re-raise the KI
+    cleanly; leave the connection usable for the next call."""
+    conn = _make_with_loop_thread()
+    try:
+        invalidate_calls: list[Exception] = []
+
+        def capture_invalidate(*args: object, **kwargs: object) -> None:
+            if args:
+                invalidate_calls.append(args[0])  # type: ignore[arg-type]
+
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr]
+        # Idle precondition: no prior op in flight.
+        conn._async_conn._in_use = False  # type: ignore[union-attr]
+
+        # Lock objects are immutable C types — patch the instance
+        # attribute directly with a fake lock whose .acquire raises.
+        fake_lock = MagicMock()
+        fake_lock.acquire.side_effect = KeyboardInterrupt
+        conn._op_lock = fake_lock
+
+        with pytest.raises(KeyboardInterrupt):
+            conn.commit()
+
+        import time
+
+        for _ in range(20):
+            time.sleep(0.01)
+        assert invalidate_calls == [], "expected NO _invalidate when prior op was not in flight"
+    finally:
+        conn._closed = True
+
+
+def test_system_exit_during_op_lock_acquire_invalidates_when_prior_op_in_flight() -> None:
+    """SystemExit takes the same path as KeyboardInterrupt — both are
+    BaseException subclasses raised by signal handlers."""
+    conn = _make_with_loop_thread()
+    try:
+        invalidate_calls: list[Exception] = []
+
+        def capture_invalidate(*args: object, **kwargs: object) -> None:
+            if args:
+                invalidate_calls.append(args[0])  # type: ignore[arg-type]
+
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr]
+        conn._async_conn._in_use = True  # type: ignore[union-attr]
+
+        fake_lock = MagicMock()
+        fake_lock.acquire.side_effect = SystemExit
+        conn._op_lock = fake_lock
+
+        with pytest.raises(SystemExit):
+            conn.commit()
+
+        import time
+
+        for _ in range(50):
+            if invalidate_calls:
+                break
+            time.sleep(0.01)
+        assert invalidate_calls, "expected _invalidate to be scheduled"
+        assert isinstance(invalidate_calls[0], InterfaceError)
+    finally:
+        conn._closed = True

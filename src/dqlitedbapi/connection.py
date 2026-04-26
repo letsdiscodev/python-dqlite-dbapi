@@ -439,7 +439,33 @@ class Connection:
         the same bound — long-running ops cannot trap a sibling
         thread's call indefinitely.
         """
-        if not self._op_lock.acquire(timeout=self._timeout):
+        # ``threading.Lock.acquire(timeout=...)`` is interruptible by
+        # SIGINT on CPython — a ``KeyboardInterrupt`` (or ``SystemExit``)
+        # raised by the signal handler escapes ``acquire`` BEFORE the
+        # ``try`` block below is entered, so the in-block KI cleanup
+        # arm is skipped. If a prior in-flight call is still running on
+        # the loop thread, it owns ``_in_use=True`` and the connection
+        # is wedged for the life of the dbapi instance. Schedule a
+        # defensive ``_invalidate`` so the next call reconnects with a
+        # clean slate. Gate on ``_async_conn._in_use`` so a KI raised
+        # during a quiet acquire (no prior op) does not invalidate
+        # gratuitously.
+        try:
+            acquired = self._op_lock.acquire(timeout=self._timeout)
+        except (KeyboardInterrupt, SystemExit):
+            # The coroutine was never scheduled on the loop, so close
+            # it explicitly to suppress "coroutine was never awaited"
+            # ResourceWarnings (and free its frame).
+            coro.close()
+            if self._async_conn is not None and self._loop is not None and self._async_conn._in_use:
+                with contextlib.suppress(RuntimeError):
+                    self._loop.call_soon_threadsafe(
+                        self._async_conn._invalidate,
+                        InterfaceError("operation interrupted during op-lock acquire"),
+                    )
+            raise
+        if not acquired:
+            coro.close()
             raise InterfaceError(
                 "another operation is in progress on this connection "
                 f"(could not acquire operation lock within {self._timeout}s — "
