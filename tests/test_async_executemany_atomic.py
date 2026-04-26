@@ -26,7 +26,7 @@ async def test_executemany_blocks_concurrent_execute_until_loop_ends() -> None:
     async def _ensure_connection() -> object:
         return object()
 
-    conn._ensure_connection = _ensure_connection  # type: ignore[method-assign]
+    conn._ensure_connection = _ensure_connection  # type: ignore[assignment]
 
     order: list[str] = []
 

@@ -18,7 +18,7 @@ def _make_cursor() -> Cursor:
     conn._check_thread = MagicMock()
     cur = Cursor(conn)
     cur._rows = [("a",), ("b",)]
-    cur._description = [("c", 3, None, None, None, None, None)]
+    cur._description = [("c", 3, None, None, None, None, None)]  # type: ignore[assignment]
     cur._arraysize = 1
     return cur
 

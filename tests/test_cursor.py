@@ -113,7 +113,7 @@ class TestCursor:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
         cursor._rows = [(1, "a"), (2, "b"), (3, "c")]
-        cursor._description = [("id", None, None, None, None, None, None)]
+        cursor._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
 
         results = list(cursor)
         assert results == [(1, "a"), (2, "b"), (3, "c")]

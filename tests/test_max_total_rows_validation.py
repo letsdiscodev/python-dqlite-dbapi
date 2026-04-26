@@ -17,7 +17,7 @@ class TestConnectionValidation:
 
     def test_bool_rejected(self) -> None:
         with pytest.raises(TypeError):
-            Connection("localhost:19001", max_total_rows=True)  # type: ignore[arg-type]
+            Connection("localhost:19001", max_total_rows=True)
 
     def test_string_rejected(self) -> None:
         with pytest.raises(TypeError):
@@ -39,7 +39,7 @@ class TestAsyncConnectionValidation:
 
     def test_bool_rejected(self) -> None:
         with pytest.raises(TypeError):
-            AsyncConnection("localhost:19001", max_total_rows=True)  # type: ignore[arg-type]
+            AsyncConnection("localhost:19001", max_total_rows=True)
 
     def test_none_allowed(self) -> None:
         conn = AsyncConnection("localhost:19001", max_total_rows=None)

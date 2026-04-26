@@ -20,7 +20,7 @@ def _make_mock_connection() -> tuple[MagicMock, AsyncMock]:
     mock_conn._get_async_connection = get_async_conn
 
     def run_sync(coro: object) -> object:
-        return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
+        return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)  # type: ignore[arg-type]
 
     mock_conn._run_sync = run_sync
 

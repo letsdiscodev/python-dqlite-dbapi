@@ -33,9 +33,9 @@ def _connection_with_failing_rollback(rollback_exc: BaseException) -> AsyncConne
     conn._op_lock = None
     conn._loop_ref = None
     conn.messages = []
-    conn.commit = AsyncMock()  # type: ignore[method-assign]
-    conn.rollback = AsyncMock(side_effect=rollback_exc)  # type: ignore[method-assign]
-    conn.close = AsyncMock()  # type: ignore[method-assign]
+    conn.commit = AsyncMock()
+    conn.rollback = AsyncMock(side_effect=rollback_exc)
+    conn.close = AsyncMock()
     return conn
 
 

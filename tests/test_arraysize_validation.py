@@ -66,7 +66,7 @@ class TestArraysizeValidation:
     def test_bool_rejected_sync(self) -> None:
         c = self._sync_cursor()
         with pytest.raises(ProgrammingError, match="bool"):
-            c.arraysize = True  # type: ignore[assignment]
+            c.arraysize = True
 
     def test_none_rejected_async(self) -> None:
         c = self._async_cursor()
@@ -86,4 +86,4 @@ class TestArraysizeValidation:
     def test_bool_rejected_async(self) -> None:
         c = self._async_cursor()
         with pytest.raises(ProgrammingError, match="bool"):
-            c.arraysize = True  # type: ignore[assignment]
+            c.arraysize = True

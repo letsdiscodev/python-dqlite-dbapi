@@ -11,7 +11,7 @@ import pytest
 from dqlitedbapi import Connection, NotSupportedError
 
 
-class _FakeMessages(list):
+class _FakeMessages(list):  # type: ignore[type-arg]
     pass
 
 

@@ -20,7 +20,7 @@ class _Awaitable:
     def __init__(self, obj: object) -> None:
         self.obj = obj
 
-    def __await__(self):  # type: ignore[no-untyped-def]
+    def __await__(self):
         yield from ()
         return self.obj
 
@@ -30,7 +30,7 @@ class _ShortTypeCodesClient:
     than columns. No production path produces this, but fuzz / broken
     peer / future protocol change could."""
 
-    def query_raw_typed(self, sql: str, params):  # type: ignore[no-untyped-def]
+    def query_raw_typed(self, sql: str, params):
         # columns = 2, column_types = 0 — mismatched.
         return _Awaitable(obj=(["a", "b"], [], [[], []], [[1, 2], [3, 4]]))
 
@@ -39,7 +39,7 @@ class _ShortTypeCodesClient:
 async def test_sync_execute_raises_dataerror_on_short_column_types() -> None:
     conn = MagicMock()
 
-    async def get_client():  # type: ignore[no-untyped-def]
+    async def get_client():
         return _ShortTypeCodesClient()
 
     conn._get_async_connection = get_client
@@ -52,7 +52,7 @@ async def test_sync_execute_raises_dataerror_on_short_column_types() -> None:
 async def test_async_execute_raises_dataerror_on_short_column_types() -> None:
     conn = MagicMock()
 
-    async def ensure_connection():  # type: ignore[no-untyped-def]
+    async def ensure_connection():
         return _ShortTypeCodesClient()
 
     conn._ensure_connection = ensure_connection

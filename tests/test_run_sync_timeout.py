@@ -68,13 +68,13 @@ class TestRunSyncTimeout:
 
         stub = _StubFuture()
 
-        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _StubFuture:  # type: ignore[no-untyped-def]
+        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _StubFuture:
             # Consume the coroutine so the interpreter doesn't warn.
             coro.close()
             return stub
 
         monkeypatch.setattr(
-            conn_module.asyncio,
+            conn_module.asyncio,  # type: ignore[attr-defined]
             "run_coroutine_threadsafe",
             _fake_run_coroutine_threadsafe,
         )
@@ -118,12 +118,12 @@ class TestRunSyncTimeout:
             def result(self, timeout: float | None = None) -> int:
                 return 7
 
-        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _ReadyFuture:  # type: ignore[no-untyped-def]
+        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _ReadyFuture:
             coro.close()
             return _ReadyFuture()
 
         monkeypatch.setattr(
-            conn_module.asyncio,
+            conn_module.asyncio,  # type: ignore[attr-defined]
             "run_coroutine_threadsafe",
             _fake_run_coroutine_threadsafe,
         )
@@ -181,12 +181,12 @@ class TestRunSyncCancelSuccessRace:
 
         stub = _LateSuccessFuture()
 
-        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _LateSuccessFuture:  # type: ignore[no-untyped-def]
+        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _LateSuccessFuture:
             coro.close()
             return stub
 
         monkeypatch.setattr(
-            conn_module.asyncio,
+            conn_module.asyncio,  # type: ignore[attr-defined]
             "run_coroutine_threadsafe",
             _fake_run_coroutine_threadsafe,
         )

@@ -31,7 +31,7 @@ def _make_mock_connection_with_error(error: Exception) -> MagicMock:
     def run_sync(coro: object) -> object:
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(coro)
+            return loop.run_until_complete(coro)  # type: ignore[arg-type]
         finally:
             loop.close()
 

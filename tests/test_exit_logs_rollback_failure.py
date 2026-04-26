@@ -27,17 +27,17 @@ def _make_connection_with_stub_rollback(rollback_exc: Exception | None) -> Conne
     """
     conn = Connection.__new__(Connection)
     # Force the "has an async_conn" branch so commit/rollback is reached.
-    conn._async_conn = MagicMock()  # type: ignore[attr-defined]
-    conn._closed = False  # type: ignore[attr-defined]
+    conn._async_conn = MagicMock()
+    conn._closed = False
     conn._address = "mock:0"  # needed for the DEBUG log identity fields
 
     def _rollback() -> None:
         if rollback_exc is not None:
             raise rollback_exc
 
-    conn.rollback = _rollback  # type: ignore[method-assign]
-    conn.commit = MagicMock()  # type: ignore[method-assign]
-    conn.close = MagicMock()  # type: ignore[method-assign]
+    conn.rollback = _rollback
+    conn.commit = MagicMock()
+    conn.close = MagicMock()
     return conn
 
 
@@ -98,7 +98,7 @@ def test_exit_does_not_mask_body_exception_path() -> None:
         import sys
 
         exc_type, exc_val, exc_tb = sys.exc_info()
-        result = conn.__exit__(exc_type, exc_val, exc_tb)
+        result = conn.__exit__(exc_type, exc_val, exc_tb)  # type: ignore[func-returns-value]
     # Anything non-truthy means "don't suppress" — None is the
     # explicit return.
     assert not result

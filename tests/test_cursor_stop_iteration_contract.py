@@ -18,16 +18,16 @@ class _AwaitableObj:
     def __init__(self, obj: object) -> None:
         self.obj = obj
 
-    def __await__(self):  # type: ignore[no-untyped-def]
+    def __await__(self):
         yield from ()
         return self.obj
 
 
 class _ScriptedClient:
-    def __init__(self, rows: list[list]) -> None:
+    def __init__(self, rows: list[list]) -> None:  # type: ignore[type-arg]
         self._rows = rows
 
-    def query_raw_typed(self, sql: str, params):  # type: ignore[no-untyped-def]
+    def query_raw_typed(self, sql: str, params):
         from dqlitewire.constants import ValueType
 
         # One ValueType per column (mirrors what the wire decoder
@@ -35,10 +35,10 @@ class _ScriptedClient:
         # already typed in a way the per-row dispatch can handle
         # from ``column_types`` alone.
         column_types = [ValueType.INTEGER]
-        row_types = [[] for _ in self._rows]
+        row_types = [[] for _ in self._rows]  # type: ignore[var-annotated]
         return _AwaitableObj(obj=(["x"], column_types, row_types, self._rows))
 
-    def execute(self, sql: str, params):  # type: ignore[no-untyped-def]
+    def execute(self, sql: str, params):
         return _AwaitableObj(obj=(0, 0))
 
 
@@ -47,7 +47,7 @@ async def test_sync_cursor_stop_iteration_repeats_after_exhaustion() -> None:
     conn = MagicMock()
     scripted = _ScriptedClient([[1], [2]])
 
-    async def get_client():  # type: ignore[no-untyped-def]
+    async def get_client():
         return scripted
 
     conn._get_async_connection = get_client
@@ -74,7 +74,7 @@ async def test_async_cursor_stop_async_iteration_repeats_after_exhaustion() -> N
     lock = asyncio.Lock()
     scripted = _ScriptedClient([[1], [2]])
 
-    async def fake_ensure_connection():  # type: ignore[no-untyped-def]
+    async def fake_ensure_connection():
         return scripted
 
     conn._ensure_connection = fake_ensure_connection

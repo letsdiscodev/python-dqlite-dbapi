@@ -101,7 +101,7 @@ class TestThreadIdentityCheck:
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
         # Pre-populate cursor so fetch doesn't fail for other reasons
-        cursor._description = [("id", None, None, None, None, None, None)]
+        cursor._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = [(1,)]
 
         error: Exception | None = None

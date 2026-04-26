@@ -36,7 +36,7 @@ async def test_lastrowid_sticky_across_update_and_delete(monkeypatch) -> None:
     async def _fake_get_async() -> _FakeAsyncConn:
         return fake
 
-    conn._get_async_connection = _fake_get_async  # type: ignore[method-assign]
+    conn._get_async_connection = _fake_get_async  # type: ignore[assignment]
 
     # Drive the cursor through the sync public API.
     cur.execute("INSERT INTO t (v) VALUES (?)", ("x",))

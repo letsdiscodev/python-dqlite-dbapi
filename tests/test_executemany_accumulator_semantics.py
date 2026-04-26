@@ -81,7 +81,7 @@ class TestPushRowReturning:
                 _FakeCursor(  # type: ignore[arg-type]
                     rowcount=len(batch),
                     description=desc,
-                    rows=batch,
+                    rows=batch,  # type: ignore[arg-type]
                 )
             )
         assert acc.total_affected == 3

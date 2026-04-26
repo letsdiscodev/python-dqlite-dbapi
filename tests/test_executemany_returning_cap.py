@@ -39,23 +39,23 @@ class TestAccumulatorCap:
         acc = _ExecuteManyAccumulator(max_rows=5)
         desc = _description()
         # First push: 3 rows, still under cap.
-        acc.push(_FakeCursor([(i,) for i in range(3)], desc))
+        acc.push(_FakeCursor([(i,) for i in range(3)], desc))  # type: ignore[arg-type]
         # Second push: 3 more rows → cumulative 6, trips cap.
         with pytest.raises(DataError, match="max_total_rows"):
-            acc.push(_FakeCursor([(i,) for i in range(3)], desc))
+            acc.push(_FakeCursor([(i,) for i in range(3)], desc))  # type: ignore[arg-type]
 
     def test_cap_exact_does_not_raise(self) -> None:
         acc = _ExecuteManyAccumulator(max_rows=5)
         desc = _description()
-        acc.push(_FakeCursor([(i,) for i in range(3)], desc))
-        acc.push(_FakeCursor([(i,) for i in range(2)], desc))
+        acc.push(_FakeCursor([(i,) for i in range(3)], desc))  # type: ignore[arg-type]
+        acc.push(_FakeCursor([(i,) for i in range(2)], desc))  # type: ignore[arg-type]
         assert len(acc.rows) == 5
 
     def test_none_cap_disables_check(self) -> None:
         acc = _ExecuteManyAccumulator(max_rows=None)
         desc = _description()
         for _ in range(100):
-            acc.push(_FakeCursor([(i,) for i in range(100)], desc))
+            acc.push(_FakeCursor([(i,) for i in range(100)], desc))  # type: ignore[arg-type]
         assert len(acc.rows) == 10_000
 
     def test_cap_ignores_pure_dml_rows(self) -> None:
@@ -64,6 +64,6 @@ class TestAccumulatorCap:
         # trip the cap on ``total_affected`` alone.
         acc = _ExecuteManyAccumulator(max_rows=5)
         for _ in range(100):
-            acc.push(_FakeCursor([], None))
+            acc.push(_FakeCursor([], None))  # type: ignore[arg-type]
         assert acc.total_affected == 0  # rowcount is 0 on empty push
         assert len(acc.rows) == 0

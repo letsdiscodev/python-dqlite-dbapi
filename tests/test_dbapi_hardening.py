@@ -52,7 +52,7 @@ class TestRownumberProperty:
             def _check_thread(self) -> None: ...
 
         cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
-        cursor._description = [("x", None, None, None, None, None, None)]
+        cursor._description = [("x", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = [(1,), (2,), (3,)]
 
         assert cursor.rownumber == 0  # before any fetch, cursor points at row 0
@@ -78,7 +78,7 @@ class TestRownumberProperty:
             def _check_thread(self) -> None: ...
 
         cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
-        cursor._description = [("x", None, None, None, None, None, None)]
+        cursor._description = [("x", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = [(i,) for i in range(5)]
         assert cursor.rownumber == 0
 
@@ -94,7 +94,7 @@ class TestRownumberProperty:
             def _check_thread(self) -> None: ...
 
         cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
-        cursor._description = [("x", None, None, None, None, None, None)]
+        cursor._description = [("x", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = [(i,) for i in range(10)]
 
         cursor.fetchmany(3)
@@ -112,7 +112,7 @@ class TestFetchmanyNegativeSize:
             def _check_thread(self) -> None: ...
 
         cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
-        cursor._description = [("x", None, None, None, None, None, None)]
+        cursor._description = [("x", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = [(1,), (2,)]
         with pytest.raises(ProgrammingError, match="non-negative"):
             cursor.fetchmany(-5)
@@ -130,7 +130,7 @@ class TestFetchmanyNegativeSize:
                 return (None, None)
 
         cursor = AsyncCursor(_FakeAsyncConn())  # type: ignore[arg-type]
-        cursor._description = [("x", None, None, None, None, None, None)]
+        cursor._description = [("x", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = [(1,), (2,)]
 
         async def _run() -> None:

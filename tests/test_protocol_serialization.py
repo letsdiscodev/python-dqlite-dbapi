@@ -30,13 +30,13 @@ class TestAsyncProtocolSerialization:
 
         call_log: list[tuple[str, str]] = []  # (operation, phase) pairs
 
-        async def mock_query_raw_typed(sql: str, params: object) -> tuple:
+        async def mock_query_raw_typed(sql: str, params: object) -> tuple:  # type: ignore[type-arg]
             call_log.append((sql, "start"))
             await asyncio.sleep(0.05)  # Simulate network I/O
             call_log.append((sql, "end"))
             return (["id"], [1], [[1]], [[1]])  # names, col_types, row_types, rows
 
-        async def mock_execute(sql: str, params: object) -> tuple:
+        async def mock_execute(sql: str, params: object) -> tuple:  # type: ignore[type-arg]
             call_log.append((sql, "start"))
             await asyncio.sleep(0.05)
             call_log.append((sql, "end"))

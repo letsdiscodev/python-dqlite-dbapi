@@ -98,7 +98,7 @@ class TestLargeData:
             c.execute("INSERT INTO big_blob (data) VALUES (?)", [payload])
             conn.commit()
             c.execute("SELECT data FROM big_blob")
-            (value,) = c.fetchone()
+            (value,) = c.fetchone()  # type: ignore[misc]
             assert value == payload
             c.execute("DROP TABLE big_blob")
 
@@ -119,7 +119,7 @@ class TestLargeData:
             c.execute("INSERT INTO bin_ctor (data) VALUES (?)", [dqlitedbapi.Binary(payload)])
             conn.commit()
             c.execute("SELECT data FROM bin_ctor")
-            (value,) = c.fetchone()
+            (value,) = c.fetchone()  # type: ignore[misc]
             assert value == payload
             c.execute("DROP TABLE bin_ctor")
 
@@ -134,7 +134,7 @@ class TestUnicode:
             c.execute('INSERT INTO "café" ("☕") VALUES (?)', ["hello 🚀 world"])
             conn.commit()
             c.execute('SELECT "☕" FROM "café"')
-            (value,) = c.fetchone()
+            (value,) = c.fetchone()  # type: ignore[misc]
             assert value == "hello 🚀 world"
             assert c.description is not None
             assert c.description[0][0] == "☕"
@@ -151,7 +151,7 @@ class TestUnicode:
             c.execute("INSERT INTO nbmp (s) VALUES (?)", [payload])
             conn.commit()
             c.execute("SELECT s FROM nbmp")
-            (value,) = c.fetchone()
+            (value,) = c.fetchone()  # type: ignore[misc]
             assert value == payload
             c.execute("DROP TABLE nbmp")
 

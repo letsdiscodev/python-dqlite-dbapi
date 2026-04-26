@@ -80,7 +80,7 @@ class TestAsyncCommitWrapping:
     ) -> None:
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = raise_exc
+        conn._async_conn.execute.side_effect = raise_exc  # type: ignore[attr-defined]
 
         with pytest.raises(expect_cls) as exc_info:
             await conn.commit()
@@ -101,7 +101,7 @@ class TestAsyncCommitWrapping:
         """
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = _client_exc.OperationalError(
+        conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
             19, "UNIQUE constraint failed"
         )
         with pytest.raises(_dbapi_exc.IntegrityError) as exc_info:
@@ -116,7 +116,7 @@ class TestAsyncRollbackWrapping:
     ) -> None:
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = raise_exc
+        conn._async_conn.execute.side_effect = raise_exc  # type: ignore[attr-defined]
 
         with pytest.raises(expect_cls) as exc_info:
             await conn.rollback()
@@ -135,7 +135,7 @@ class TestAsyncNoTxSwallowSurvivesWrapping:
     async def test_commit_no_tx_still_silent(self) -> None:
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = _client_exc.OperationalError(
+        conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
             1, "cannot commit - no transaction is active"
         )
         await conn.commit()  # silent no-op
@@ -143,7 +143,7 @@ class TestAsyncNoTxSwallowSurvivesWrapping:
     async def test_rollback_no_tx_still_silent(self) -> None:
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = _client_exc.OperationalError(
+        conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
             1, "cannot rollback - no transaction is active"
         )
         await conn.rollback()  # silent no-op

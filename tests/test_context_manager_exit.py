@@ -39,7 +39,7 @@ class TestExitPropagatesCommitFailure:
         conn = _make_conn_with_failing_commit()
         try:
             with (
-                _eager_enter_connect(),
+                _eager_enter_connect(),  # type: ignore[attr-defined]
                 pytest.raises(OperationalError, match="disk full"),
                 conn,
             ):
@@ -56,7 +56,7 @@ class TestExitPropagatesCommitFailure:
         body_error = ValueError("user bug")
         try:
             with (
-                _eager_enter_connect(),
+                _eager_enter_connect(),  # type: ignore[attr-defined]
                 pytest.raises(ValueError, match="user bug"),
                 conn,
             ):
@@ -75,7 +75,7 @@ class TestExitOnUnusedConnection:
         conn = Connection("localhost:9001", timeout=2.0)
         assert conn._async_conn is None
         # Clean exit, no body exception, no TCP connection ever made.
-        with _eager_enter_connect(), conn:
+        with _eager_enter_connect(), conn:  # type: ignore[attr-defined]
             pass
         assert not conn._closed
         conn.close()

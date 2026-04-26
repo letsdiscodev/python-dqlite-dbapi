@@ -27,7 +27,7 @@ def test_connection_close_cascades_to_cursor_state() -> None:
         cur2 = conn.cursor()
     # Pre-set some state so we can verify the scrub.
     cur1._rows = [(1,)]
-    cur1._description = [("v", 1, None, None, None, None, None)]
+    cur1._description = [("v", 1, None, None, None, None, None)]  # type: ignore[assignment]
     cur1._rowcount = 1
     cur1._lastrowid = 42
     conn.close()
@@ -63,7 +63,7 @@ def test_async_connection_close_cascades_to_cursor_state() -> None:
         cur1 = conn.cursor()
         cur2 = conn.cursor()
         cur1._rows = [(1,)]
-        cur1._description = [("v", 1, None, None, None, None, None)]
+        cur1._description = [("v", 1, None, None, None, None, None)]  # type: ignore[assignment]
         cur1._rowcount = 1
         cur1._lastrowid = 42
         await conn.close()

@@ -67,7 +67,7 @@ class TestCloseScrubsAllState:
         cur = _make_cursor()
         cur._rowcount = 5
         cur._lastrowid = 42
-        cur._description = [("c", 3, None, None, None, None, None)]
+        cur._description = [("c", 3, None, None, None, None, None)]  # type: ignore[assignment]
         cur._rows = [(1,), (2,)]
         cur.close()
         assert cur.description is None

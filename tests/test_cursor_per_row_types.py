@@ -30,7 +30,7 @@ class _AwaitableObj:
     def __init__(self, obj: object) -> None:
         self.obj = obj
 
-    def __await__(self):  # type: ignore[no-untyped-def]
+    def __await__(self):
         yield from ()
         return self.obj
 
@@ -47,7 +47,7 @@ class _ScriptedClient:
     ) -> None:
         self._result = (columns, column_types, row_types, rows)
 
-    def query_raw_typed(self, sql: str, params):  # type: ignore[no-untyped-def]
+    def query_raw_typed(self, sql: str, params):
         return _AwaitableObj(obj=self._result)
 
 
@@ -74,7 +74,7 @@ async def test_sync_cursor_uses_per_row_types_iso8601_then_text() -> None:
         ],
     )
 
-    async def get_client():  # type: ignore[no-untyped-def]
+    async def get_client():
         return scripted
 
     conn._get_async_connection = get_client
@@ -109,7 +109,7 @@ async def test_sync_cursor_uses_per_row_types_text_then_iso8601() -> None:
         ],
     )
 
-    async def get_client():  # type: ignore[no-untyped-def]
+    async def get_client():
         return scripted
 
     conn._get_async_connection = get_client
@@ -146,7 +146,7 @@ async def test_async_cursor_uses_per_row_types() -> None:
         ],
     )
 
-    async def fake_ensure_connection():  # type: ignore[no-untyped-def]
+    async def fake_ensure_connection():
         return scripted
 
     conn._ensure_connection = fake_ensure_connection
@@ -172,7 +172,7 @@ async def test_empty_rows_still_build_description() -> None:
         rows=[],
     )
 
-    async def get_client():  # type: ignore[no-untyped-def]
+    async def get_client():
         return scripted
 
     conn._get_async_connection = get_client

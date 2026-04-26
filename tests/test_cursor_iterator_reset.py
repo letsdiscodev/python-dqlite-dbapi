@@ -21,7 +21,7 @@ class _AwaitableObj:
     def __init__(self, obj: object) -> None:
         self.obj = obj
 
-    def __await__(self):  # type: ignore[no-untyped-def]
+    def __await__(self):
         yield from ()
         return self.obj
 
@@ -29,16 +29,16 @@ class _AwaitableObj:
 class _ScriptedClient:
     """Replays pre-canned ``query_raw_typed`` responses in order."""
 
-    def __init__(self, scripted: list[tuple[list[str], list, list[list], list[list]]]) -> None:
+    def __init__(self, scripted: list[tuple[list[str], list, list[list], list[list]]]) -> None:  # type: ignore[type-arg]
         self._scripted = scripted
         self._idx = 0
 
-    def query_raw_typed(self, sql: str, params):  # type: ignore[no-untyped-def]
+    def query_raw_typed(self, sql: str, params):
         result = self._scripted[self._idx]
         self._idx += 1
         return _AwaitableObj(obj=result)
 
-    def execute(self, sql: str, params):  # type: ignore[no-untyped-def]
+    def execute(self, sql: str, params):
         return _AwaitableObj(obj=(0, 0))
 
 
@@ -54,7 +54,7 @@ async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
         ]
     )
 
-    async def get_client():  # type: ignore[no-untyped-def]
+    async def get_client():
         return scripted
 
     conn._get_async_connection = get_client
@@ -89,7 +89,7 @@ async def test_async_cursor_iterator_resets_on_reexecute() -> None:
         ]
     )
 
-    async def fake_ensure_connection():  # type: ignore[no-untyped-def]
+    async def fake_ensure_connection():
         return scripted
 
     conn._ensure_connection = fake_ensure_connection
@@ -102,7 +102,7 @@ async def test_async_cursor_iterator_resets_on_reexecute() -> None:
     assert first == (1,)  # _row_index is now 1
 
     await c.execute("SELECT x FROM u")
-    rows: list[tuple] = []
+    rows: list[tuple] = []  # type: ignore[type-arg]
     async for row in c:
         rows.append(row)
     assert rows == [(4,), (5,)]

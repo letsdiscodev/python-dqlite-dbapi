@@ -37,7 +37,7 @@ def _build_cursor() -> Cursor:
 
     cursor = Cursor.__new__(Cursor)
     cursor._connection = conn
-    cursor._description = [("col", 3, None, None, None, None, None)]
+    cursor._description = [("col", 3, None, None, None, None, None)]  # type: ignore[assignment]
     cursor._rowcount = 0
     cursor._arraysize = 1
     cursor._rows = [("value",)]
@@ -94,7 +94,7 @@ def _build_async_cursor() -> AsyncCursor:
     conn.messages = []
     cursor = AsyncCursor.__new__(AsyncCursor)
     cursor._connection = conn
-    cursor._description = [("col", 3, None, None, None, None, None)]
+    cursor._description = [("col", 3, None, None, None, None, None)]  # type: ignore[assignment]
     cursor._rowcount = 0
     cursor._arraysize = 1
     cursor._rows = [("value",)]

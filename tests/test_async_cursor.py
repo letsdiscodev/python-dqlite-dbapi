@@ -105,7 +105,7 @@ class TestAsyncCursor:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         # Simulate a query that returned zero rows
-        cursor._description = [("id", None, None, None, None, None, None)]
+        cursor._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = []
         result = await cursor.fetchone()
         assert result is None
@@ -114,7 +114,7 @@ class TestAsyncCursor:
     async def test_fetchall_no_rows_returns_empty(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        cursor._description = [("id", None, None, None, None, None, None)]
+        cursor._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = []
         result = await cursor.fetchall()
         assert result == []
@@ -142,7 +142,7 @@ class TestAsyncCursor:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         cursor._rows = [(1, "a"), (2, "b"), (3, "c")]
-        cursor._description = [("id", None, None, None, None, None, None)]
+        cursor._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
 
         results = [row async for row in cursor]
         assert results == [(1, "a"), (2, "b"), (3, "c")]
@@ -263,7 +263,7 @@ class TestOptionalAsyncCursorMethodsRaise:
         close_allowed = asyncio.Event()
         ensure_entered = asyncio.Event()
 
-        async def fake_ensure(self_arg):  # type: ignore[no-untyped-def]
+        async def fake_ensure(self_arg):
             ensure_entered.set()
             await close_allowed.wait()
             # Return a sentinel; we expect the re-check of _closed to

@@ -17,9 +17,9 @@ def _seeded_cursor(rows: list[tuple[int, ...]]) -> Cursor:
     conn._get_async_connection = AsyncMock()
     conn._run_sync = MagicMock()
     c = Cursor(conn)
-    c._rows = rows  # type: ignore[assignment]
+    c._rows = rows
     c._row_index = 0
-    c._description = [("id", None, None, None, None, None, None)]
+    c._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
     c._rowcount = len(rows)
     return c
 

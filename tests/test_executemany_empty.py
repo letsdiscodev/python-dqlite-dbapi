@@ -12,7 +12,7 @@ from dqlitedbapi.cursor import Cursor
 def _cursor_with_prior_select() -> Cursor:
     conn = MagicMock()
     c = Cursor(conn)
-    c._description = [("id", None, None, None, None, None, None)]
+    c._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
     c._rows = [(1,), (2,)]
     c._rowcount = 2
     return c
@@ -27,8 +27,8 @@ def _async_cursor_with_prior_select() -> AsyncCursor:
     # so ``async with op_lock:`` works even on the empty-iteration path.
     conn._ensure_locks.return_value = (asyncio.Lock(), asyncio.Lock())
     c = AsyncCursor(conn)
-    c._description = [("id", None, None, None, None, None, None)]
-    c._rows = deque([(1,), (2,)])
+    c._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
+    c._rows = deque([(1,), (2,)])  # type: ignore[assignment]
     c._rowcount = 2
     return c
 
@@ -98,7 +98,7 @@ class TestExecutemanyEmptyIterableShape:
     @pytest.mark.asyncio
     async def test_sync_cursor_executemany_empty_generator(self) -> None:
         c = _cursor_with_prior_select()
-        await c._executemany_async("INSERT INTO t VALUES (?)", (x for x in []))
+        await c._executemany_async("INSERT INTO t VALUES (?)", (x for x in []))  # type: ignore[var-annotated]
         assert c.description is None
         assert c._rows == []
         assert c.rowcount == 0
@@ -114,7 +114,7 @@ class TestExecutemanyEmptyIterableShape:
     @pytest.mark.asyncio
     async def test_async_cursor_executemany_empty_generator(self) -> None:
         c = _async_cursor_with_prior_select()
-        await c.executemany("INSERT INTO t VALUES (?)", (x for x in []))
+        await c.executemany("INSERT INTO t VALUES (?)", (x for x in []))  # type: ignore[var-annotated]
         assert c.description is None
         assert list(c._rows) == []
         assert c.rowcount == 0

@@ -69,12 +69,12 @@ def test_run_sync_keyboard_interrupt_invalidates_underlying_connection() -> None
     conn = _make_with_loop_thread()
     try:
         invalidate_calls: list[Exception] = []
-        original_invalidate = conn._async_conn._invalidate
+        original_invalidate = conn._async_conn._invalidate  # type: ignore[union-attr]
 
         def capture_invalidate(*args: object, **kwargs: object) -> None:
             if args:
                 invalidate_calls.append(args[0])  # type: ignore[arg-type]
-            original_invalidate(*args, **kwargs)
+            original_invalidate(*args, **kwargs)  # type: ignore[arg-type]
 
         conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr]
 
@@ -173,7 +173,7 @@ def test_keyboard_interrupt_during_op_lock_acquire_invalidates_when_prior_op_in_
             if args:
                 invalidate_calls.append(args[0])  # type: ignore[arg-type]
 
-        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr,method-assign]
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[method-assign,union-attr,unused-ignore]
         # Simulate the prior-op-still-in-flight precondition.
         conn._async_conn._in_use = True  # type: ignore[union-attr]
 
@@ -215,7 +215,7 @@ def test_keyboard_interrupt_during_op_lock_acquire_no_op_when_idle() -> None:
             if args:
                 invalidate_calls.append(args[0])  # type: ignore[arg-type]
 
-        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr,method-assign]
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[method-assign,union-attr,unused-ignore]
         # Idle precondition: no prior op in flight.
         conn._async_conn._in_use = False  # type: ignore[union-attr]
 
@@ -248,7 +248,7 @@ def test_system_exit_during_op_lock_acquire_invalidates_when_prior_op_in_flight(
             if args:
                 invalidate_calls.append(args[0])  # type: ignore[arg-type]
 
-        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr,method-assign]
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[method-assign,union-attr,unused-ignore]
         conn._async_conn._in_use = True  # type: ignore[union-attr]
 
         fake_lock = MagicMock()

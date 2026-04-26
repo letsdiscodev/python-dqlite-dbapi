@@ -19,7 +19,7 @@ from dqlitedbapi.aio import AsyncConnection
 @pytest.mark.asyncio
 async def test_async_commit_clears_messages_when_closed() -> None:
     conn = AsyncConnection("localhost:9001")
-    conn.messages.append(("sentinel", Warning("noop")))
+    conn.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
     conn._closed = True
 
     with pytest.raises(InterfaceError):
@@ -31,7 +31,7 @@ async def test_async_commit_clears_messages_when_closed() -> None:
 @pytest.mark.asyncio
 async def test_async_rollback_clears_messages_when_closed() -> None:
     conn = AsyncConnection("localhost:9001")
-    conn.messages.append(("sentinel", Warning("noop")))
+    conn.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
     conn._closed = True
 
     with pytest.raises(InterfaceError):
@@ -43,7 +43,7 @@ async def test_async_rollback_clears_messages_when_closed() -> None:
 @pytest.mark.asyncio
 async def test_async_commit_clears_messages_when_never_connected() -> None:
     conn = AsyncConnection("localhost:9001")
-    conn.messages.append(("sentinel", Warning("noop")))
+    conn.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
     # _async_conn stays None until first use — commit returns silently
     # in this branch, but the messages clear must still happen.
     assert conn._async_conn is None
@@ -54,7 +54,7 @@ async def test_async_commit_clears_messages_when_never_connected() -> None:
 @pytest.mark.asyncio
 async def test_async_rollback_clears_messages_when_never_connected() -> None:
     conn = AsyncConnection("localhost:9001")
-    conn.messages.append(("sentinel", Warning("noop")))
+    conn.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
     assert conn._async_conn is None
     await conn.rollback()
     assert list(conn.messages) == []

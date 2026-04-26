@@ -29,7 +29,7 @@ class TestAsyncCommitNoTxSwallow:
     async def test_commit_swallows_no_transaction_error(self) -> None:
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = _client_exc.OperationalError(
+        conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
             1, "cannot commit - no transaction is active"
         )
         await conn.commit()  # silent no-op
@@ -37,7 +37,7 @@ class TestAsyncCommitNoTxSwallow:
     async def test_rollback_swallows_no_transaction_error(self) -> None:
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = _client_exc.OperationalError(
+        conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
             1, "cannot rollback - no transaction is active"
         )
         await conn.rollback()  # silent no-op
@@ -45,7 +45,7 @@ class TestAsyncCommitNoTxSwallow:
     async def test_commit_re_raises_other_operational_errors(self) -> None:
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = _client_exc.OperationalError(
+        conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
             10, "some unrelated error"
         )
         # The client-layer OperationalError is wrapped into the PEP 249
@@ -59,7 +59,7 @@ class TestAsyncCommitNoTxSwallow:
     async def test_rollback_re_raises_other_operational_errors(self) -> None:
         conn = _prime()
         assert conn._async_conn is not None
-        conn._async_conn.execute.side_effect = _client_exc.OperationalError(
+        conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
             10, "some unrelated error"
         )
         with pytest.raises(_dbapi_exc.OperationalError, match="some unrelated error"):

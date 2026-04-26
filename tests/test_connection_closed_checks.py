@@ -58,7 +58,7 @@ def _prime_async_connection(address: str = "localhost:19001") -> AsyncConnection
     inner = MagicMock()
     inner.close = AsyncMock()
     inner.execute = AsyncMock()
-    conn._async_conn = inner  # type: ignore[assignment]
+    conn._async_conn = inner
     conn._ensure_locks()
     return conn
 
@@ -100,7 +100,7 @@ class TestAsyncCommitRollbackLockRecheckRace:
         race."""
 
         class _FlipLock(asyncio.Lock):
-            async def acquire(self) -> bool:
+            async def acquire(self) -> bool:  # type: ignore[override]
                 result = await super().acquire()
                 target._closed = True
                 return result

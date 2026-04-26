@@ -14,7 +14,7 @@ from dqlitedbapi.aio import AsyncConnection
 def test_sync_cursor_close_clears_messages() -> None:
     conn = connect("localhost:9001")
     cur = conn.cursor()
-    cur.messages.append(("sentinel", Warning("noop")))
+    cur.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
     cur.close()
     assert list(cur.messages) == []
 
@@ -23,7 +23,7 @@ def test_sync_cursor_close_clears_messages() -> None:
 async def test_async_cursor_close_clears_messages() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = conn.cursor()
-    cur.messages.append(("sentinel", Warning("noop")))
+    cur.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
     await cur.close()
     assert list(cur.messages) == []
 
@@ -36,6 +36,6 @@ def test_sync_cursor_close_clears_messages_idempotent_call() -> None:
     conn = connect("localhost:9001")
     cur = conn.cursor()
     cur.close()
-    cur.messages.append(("late", Warning("after close")))
+    cur.messages.append(("late", Warning("after close")))  # type: ignore[arg-type]
     cur.close()
     assert list(cur.messages) == []

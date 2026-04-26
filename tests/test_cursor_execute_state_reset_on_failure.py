@@ -43,7 +43,7 @@ def _build_sync_connection_with_mock_protocol() -> tuple[dqlitedbapi.Connection,
         return mock_proto
 
     # Bypass the real async connection bring-up; inject the mock directly.
-    conn._get_async_connection = _get_proto  # type: ignore[method-assign]
+    conn._get_async_connection = _get_proto
     return conn, mock_proto
 
 
@@ -58,7 +58,7 @@ def _build_async_connection_with_mock_protocol() -> tuple[
     async def _ensure_conn() -> MagicMock:
         return mock_proto
 
-    aconn._ensure_connection = _ensure_conn  # type: ignore[method-assign]
+    aconn._ensure_connection = _ensure_conn
     return aconn, mock_proto
 
 
@@ -80,7 +80,7 @@ class TestResetExecuteStateHelperContract:
             cur = conn.cursor()
             # Seed every field the helper might touch so we can
             # observe which it actually does clear.
-            cur._description = [("a", 3, None, None, None, None, None)]  # type: ignore[list-item]
+            cur._description = [("a", 3, None, None, None, None, None)]  # type: ignore[assignment]
             cur._rows = [(1,), (2,)]
             cur._row_index = 1
             cur._rowcount = 7
@@ -106,7 +106,7 @@ class TestResetExecuteStateHelperContract:
         aconn = dqlitedbapi.aio.AsyncConnection("localhost:9001")
         try:
             cur = aconn.cursor()
-            cur._description = [("a", 3, None, None, None, None, None)]  # type: ignore[list-item]
+            cur._description = [("a", 3, None, None, None, None, None)]  # type: ignore[assignment]
             cur._rows = [(1,), (2,)]
             cur._row_index = 1
             cur._rowcount = 7

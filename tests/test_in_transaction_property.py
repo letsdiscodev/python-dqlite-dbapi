@@ -37,7 +37,7 @@ async def test_async_delegates_to_client_layer() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     mock_client = MagicMock()
     mock_client.in_transaction = True
-    conn._async_conn = mock_client  # type: ignore[assignment]
+    conn._async_conn = mock_client
     assert conn.in_transaction is True
     mock_client.in_transaction = False
     assert conn.in_transaction is False

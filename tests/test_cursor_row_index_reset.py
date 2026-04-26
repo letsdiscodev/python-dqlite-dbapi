@@ -21,7 +21,7 @@ class _AwaitableObj:
     def __init__(self, obj: object) -> None:
         self.obj = obj
 
-    def __await__(self):  # type: ignore[no-untyped-def]
+    def __await__(self):
         yield from ()
         return self.obj
 
@@ -29,17 +29,17 @@ class _AwaitableObj:
 class _FakeClient:
     """Mock of the async client interface the cursor talks to."""
 
-    def execute(self, sql: str, params):  # type: ignore[no-untyped-def]
+    def execute(self, sql: str, params):
         return _AwaitableObj(obj=(42, 1))
 
-    def query_raw_typed(self, sql: str, params):  # type: ignore[no-untyped-def]
+    def query_raw_typed(self, sql: str, params):
         return _AwaitableObj(obj=([], [], []))
 
 
 def _cursor_with_prior_select() -> Cursor:
     conn = MagicMock()
     c = Cursor(conn)
-    c._description = [("id", None, None, None, None, None, None)]
+    c._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
     c._rows = [(1,), (2,), (3,)]
     c._row_index = 2  # Caller had fetched two rows.
     c._rowcount = 3
@@ -54,7 +54,7 @@ async def test_sync_cursor_dml_resets_row_index() -> None:
     ``test_cursor_iterator_reset``)."""
     c = _cursor_with_prior_select()
 
-    async def fake_get_async_connection():  # type: ignore[no-untyped-def]
+    async def fake_get_async_connection():
         return _FakeClient()
 
     c._connection._get_async_connection = fake_get_async_connection
@@ -74,14 +74,14 @@ async def test_async_cursor_dml_resets_row_index() -> None:
     conn._closed = False
     lock = asyncio.Lock()
 
-    async def fake_ensure_connection():  # type: ignore[no-untyped-def]
+    async def fake_ensure_connection():
         return _FakeClient()
 
     conn._ensure_connection = fake_ensure_connection
     conn._ensure_locks = MagicMock(return_value=(lock, lock))
 
     c = AsyncCursor(conn)
-    c._description = [("id", None, None, None, None, None, None)]
+    c._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
     c._rows = [(1,), (2,), (3,)]
     c._row_index = 2
     c._rowcount = 3

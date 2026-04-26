@@ -28,7 +28,7 @@ async def test_close_waits_for_in_flight_execute() -> None:
         order.append("execute:end")
         return (0, 0)
 
-    async def fake_query_raw_typed(_sql: str, _params: object) -> tuple[list, list, list, list]:
+    async def fake_query_raw_typed(_sql: str, _params: object) -> tuple[list, list, list, list]:  # type: ignore[type-arg]
         return ([], [], [], [])
 
     with patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn:
@@ -100,7 +100,7 @@ class TestCommitRollbackCloseRace:
             await close_release.wait()
             await real_close(*args, **kwargs)
 
-        inner.close = slow_close  # type: ignore[assignment]
+        inner.close = slow_close
 
         close_task = asyncio.create_task(conn.close())
         # Yield so close() acquires op_lock.

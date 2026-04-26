@@ -28,19 +28,19 @@ from dqlitedbapi.types import (
 class TestValidateTicksRejectsBool:
     def test_timestamp_from_ticks_rejects_true(self) -> None:
         with pytest.raises(DataError, match="bool"):
-            TimestampFromTicks(True)  # type: ignore[arg-type]
+            TimestampFromTicks(True)
 
     def test_timestamp_from_ticks_rejects_false(self) -> None:
         with pytest.raises(DataError, match="bool"):
-            TimestampFromTicks(False)  # type: ignore[arg-type]
+            TimestampFromTicks(False)
 
     def test_date_from_ticks_rejects_bool(self) -> None:
         with pytest.raises(DataError, match="bool"):
-            DateFromTicks(True)  # type: ignore[arg-type]
+            DateFromTicks(True)
 
     def test_time_from_ticks_rejects_bool(self) -> None:
         with pytest.raises(DataError, match="bool"):
-            TimeFromTicks(True)  # type: ignore[arg-type]
+            TimeFromTicks(True)
 
 
 class TestValidateTicksRejectsDecimalNan:
