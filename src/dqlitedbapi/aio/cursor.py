@@ -446,12 +446,24 @@ class AsyncCursor:
             # negative size hides caller bugs.
             raise ProgrammingError(f"fetchmany size must be non-negative, got {size}")
 
+        # Snapshot ``_row_index`` BEFORE the per-iteration ``fetchone()``
+        # loop. On cancel/exception mid-loop, restore to (snapshot +
+        # delivered count) so rows that were "consumed" (advanced
+        # ``_row_index``) but never made it into the caller's
+        # ``result`` are not silently lost. Without the restore, a
+        # subsequent ``fetchmany()`` would skip those rows.
+        snapshot = self._row_index
         result: list[tuple[Any, ...]] = []
-        for _ in range(size):
-            row = await self.fetchone()
-            if row is None:
-                break
-            result.append(row)
+        try:
+            for _ in range(size):
+                row = await self.fetchone()
+                if row is None:
+                    break
+                result.append(row)
+        except BaseException:
+            # Restore _row_index so a retry sees the un-delivered rows.
+            self._row_index = snapshot + len(result)
+            raise
 
         return result
 

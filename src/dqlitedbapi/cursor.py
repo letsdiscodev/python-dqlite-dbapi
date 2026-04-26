@@ -1027,12 +1027,20 @@ class Cursor:
             # that here.
             raise ProgrammingError(f"fetchmany size must be non-negative, got {size}")
 
+        # Snapshot _row_index before the loop; restore on
+        # cancel/exception so partially-iterated rows are not
+        # silently consumed. See aio/cursor.py for rationale.
+        snapshot = self._row_index
         result: list[tuple[Any, ...]] = []
-        for _ in range(size):
-            row = self.fetchone()
-            if row is None:
-                break
-            result.append(row)
+        try:
+            for _ in range(size):
+                row = self.fetchone()
+                if row is None:
+                    break
+                result.append(row)
+        except BaseException:
+            self._row_index = snapshot + len(result)
+            raise
 
         return result
 
