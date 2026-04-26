@@ -46,6 +46,16 @@ _NO_TX_CODES = frozenset({1})
 # divergence — the client suppressing while the dbapi raises.
 _NO_TX_SUBSTRINGS = ("no transaction is active", "cannot rollback")
 
+# Bound (in seconds) for joining the background event-loop thread on
+# teardown. Worst-case scenario: a coroutine queued on the loop is
+# mid-await on a wire call when shutdown is requested. The loop is
+# asked to stop; the in-flight task resolves to CancelledError; the
+# thread then joins. 5 seconds covers the slow-network worst case
+# while preventing process hang on close. Both the finalizer
+# (``_cleanup_loop_thread``) and ``Connection.close()`` use this
+# bound — keep them in step via the constant.
+_LOOP_THREAD_JOIN_TIMEOUT_SECONDS = 5.0
+
 
 def _validate_timeout(timeout: float) -> None:
     """Raise ProgrammingError if ``timeout`` is not a positive finite number.
@@ -223,7 +233,7 @@ def _cleanup_loop_thread(
             # call.
             pass
         with contextlib.suppress(RuntimeError):
-            thread.join(timeout=5)
+            thread.join(timeout=_LOOP_THREAD_JOIN_TIMEOUT_SECONDS)
         try:
             if not loop.is_closed():
                 loop.close()
@@ -566,7 +576,7 @@ class Connection:
                 if self._loop is not None and not self._loop.is_closed():
                     self._loop.call_soon_threadsafe(self._loop.stop)
                     if self._thread is not None:
-                        self._thread.join(timeout=5)
+                        self._thread.join(timeout=_LOOP_THREAD_JOIN_TIMEOUT_SECONDS)
                     self._loop.close()
                     self._loop = None
                     self._thread = None
