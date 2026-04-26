@@ -498,6 +498,40 @@ class Connection:
                         exc_info=True,
                     )
                 raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
+            except (KeyboardInterrupt, SystemExit):
+                # KeyboardInterrupt / SystemExit raised inside the
+                # caller's thread while it was blocked on Future.result.
+                # The coroutine is still running on the background loop
+                # thread, owns ``DqliteConnection._in_use=True``, and
+                # without intervention every subsequent sync call would
+                # fail with "another operation is in progress" — the
+                # connection is wedged for life.
+                #
+                # Mirror the timeout cleanup: cancel the future, schedule
+                # an _invalidate on the loop thread (so the wire state
+                # is poisoned and the next call reconnects), then bound-
+                # wait for the coroutine to unwind. Re-raise the original
+                # KI/SystemExit (no ``from``) so the signal propagates
+                # to the caller's frame as Python expects.
+                #
+                # Narrowed to ``KeyboardInterrupt | SystemExit`` (not
+                # bare ``BaseException``) because ``Future.result`` on
+                # a coroutine that raises a normal ``Exception``
+                # subclass (every PEP 249 error inherits from
+                # ``Exception``) re-raises that exception on the
+                # calling thread — those must propagate to the caller
+                # via the standard exception path, NOT trigger
+                # invalidation.
+                future.cancel()
+                if self._async_conn is not None:
+                    with contextlib.suppress(RuntimeError):
+                        loop.call_soon_threadsafe(
+                            self._async_conn._invalidate,
+                            InterfaceError("operation interrupted"),
+                        )
+                with contextlib.suppress(BaseException):
+                    future.result(timeout=1.0)
+                raise
 
     async def _get_async_connection(self) -> DqliteConnection:
         """Get or create the underlying async connection."""

@@ -61,6 +61,47 @@ def test_run_sync_propagates_keyboard_interrupt() -> None:
         conn._closed = True
 
 
+def test_run_sync_keyboard_interrupt_invalidates_underlying_connection() -> None:
+    """The new BaseException arm must schedule _invalidate on the loop
+    thread so the wire stream is poisoned and the next sync call sees
+    a clean PEP 249 error instead of "another operation is in progress".
+    """
+    conn = _make_with_loop_thread()
+    try:
+        invalidate_calls: list[Exception] = []
+        original_invalidate = conn._async_conn._invalidate
+
+        def capture_invalidate(*args: object, **kwargs: object) -> None:
+            if args:
+                invalidate_calls.append(args[0])  # type: ignore[arg-type]
+            original_invalidate(*args, **kwargs)
+
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[union-attr]
+
+        with (
+            patch(
+                "concurrent.futures.Future.result",
+                side_effect=KeyboardInterrupt,
+            ),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            conn.commit()
+
+        # Give the call_soon_threadsafe-scheduled invalidate a moment
+        # to run on the loop thread.
+        import time
+
+        for _ in range(50):
+            if invalidate_calls:
+                break
+            time.sleep(0.01)
+        assert invalidate_calls, "expected _invalidate to be scheduled"
+        assert isinstance(invalidate_calls[0], InterfaceError)
+        assert "interrupted" in str(invalidate_calls[0]).lower()
+    finally:
+        conn._closed = True
+
+
 def test_run_sync_propagates_system_exit() -> None:
     conn = _make_with_loop_thread()
     try:
