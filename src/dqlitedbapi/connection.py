@@ -19,6 +19,12 @@ from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client
 from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
+from dqlitewire import (
+    DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
+)
+from dqlitewire import (
+    DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
+)
 from dqlitewire.constants import primary_sqlite_code
 
 __all__ = ["Connection"]
@@ -287,8 +293,8 @@ class Connection:
         *,
         database: str = "default",
         timeout: float = 10.0,
-        max_total_rows: int | None = 10_000_000,
-        max_continuation_frames: int | None = 100_000,
+        max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
+        max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
         trust_server_heartbeat: bool = False,
         close_timeout: float = 0.5,
     ) -> None:

@@ -29,6 +29,12 @@ from dqlitedbapi.types import (
     Timestamp,
     TimestampFromTicks,
 )
+from dqlitewire import (
+    DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
+)
+from dqlitewire import (
+    DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
+)
 
 # SQLAlchemy dialect discovery reads ``dbapi.apilevel`` to confirm a
 # PEP 249 shape; we expose the string for that handshake only. The
@@ -102,8 +108,8 @@ def connect(
     *,
     database: str = "default",
     timeout: float = 10.0,
-    max_total_rows: int | None = 10_000_000,
-    max_continuation_frames: int | None = 100_000,
+    max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
+    max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
     close_timeout: float = 0.5,
 ) -> AsyncConnection:
@@ -152,8 +158,8 @@ async def aconnect(
     *,
     database: str = "default",
     timeout: float = 10.0,
-    max_total_rows: int | None = 10_000_000,
-    max_continuation_frames: int | None = 100_000,
+    max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
+    max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
     close_timeout: float = 0.5,
 ) -> AsyncConnection:

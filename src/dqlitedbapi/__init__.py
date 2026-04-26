@@ -39,6 +39,12 @@ from dqlitedbapi.types import (
     Timestamp,
     TimestampFromTicks,
 )
+from dqlitewire import (
+    DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
+)
+from dqlitewire import (
+    DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
+)
 
 # PEP 249 module-level attributes
 apilevel = "2.0"
@@ -118,8 +124,8 @@ def connect(
     *,
     database: str = "default",
     timeout: float = 10.0,
-    max_total_rows: int | None = 10_000_000,
-    max_continuation_frames: int | None = 100_000,
+    max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
+    max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
     close_timeout: float = 0.5,
 ) -> Connection:
