@@ -14,7 +14,7 @@ __all__ = [
 ]
 
 
-class Warning(Exception):  # noqa: N818  - PEP 249 mandated class name
+class Warning(Exception):  # PEP 249 mandated class name
     """PEP 249 Warning class.
 
     Exported for compatibility with generic cross-driver code and
