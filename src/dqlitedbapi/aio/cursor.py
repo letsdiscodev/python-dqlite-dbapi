@@ -5,6 +5,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from dqlitedbapi.cursor import (
+    _EXECUTEMANY_REJECT_VERBS,
     _call_client,
     _convert_params,
     _convert_row,
@@ -12,6 +13,7 @@ from dqlitedbapi.cursor import (
     _is_dml_with_returning,
     _is_insert_or_replace,
     _is_row_returning,
+    _strip_leading_comments,
 )
 from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
 from dqlitedbapi.types import _Description
@@ -311,6 +313,16 @@ class AsyncCursor:
         """
         del self.messages[:]
         self._check_closed()
+        # Reject transaction-control verbs and pure queries up front
+        # (mirror of the sync sibling).
+        head_normalised = _strip_leading_comments(operation).lstrip().upper()
+        first_verb = head_normalised.split(maxsplit=1)[0] if head_normalised else ""
+        if first_verb in _EXECUTEMANY_REJECT_VERBS:
+            raise ProgrammingError(
+                f"executemany() not supported for {first_verb}; "
+                "use execute() instead — transaction-control statements "
+                "take no parameters and cannot be batched."
+            )
         if _is_row_returning(operation) and not _is_dml_with_returning(operation):
             head_upper = operation.lstrip().upper()
             if head_upper.startswith("PRAGMA"):

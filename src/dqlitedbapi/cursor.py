@@ -281,6 +281,16 @@ def _strip_leading_comments(sql: str) -> str:
 
 _ROW_RETURNING_PREFIXES = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
 
+# Verbs that take no parameters and cannot legitimately drive an
+# ``executemany`` call. Stdlib ``sqlite3.Cursor.executemany`` rejects
+# the same shapes via its statement-type check; admitting them here
+# silently re-runs the bare statement N times against ignored bind
+# params, producing duplicate server-side savepoint frames (and other
+# state divergence) that compound with the duplicate-name LIFO rule.
+_EXECUTEMANY_REJECT_VERBS = frozenset(
+    {"SAVEPOINT", "RELEASE", "ROLLBACK", "BEGIN", "COMMIT", "END"}
+)
+
 # SQL noise that the RETURNING-keyword scan must skip past: single-quoted
 # string literals (with '' escapes), double-quoted identifiers (with ""
 # escapes), bracket-quoted identifiers (MSSQL / Access style, which SQLite
@@ -831,10 +841,18 @@ class Cursor:
         del self.messages[:]
         self._connection._check_thread()
         self._check_closed()
-        # Reject pure queries up front so the caller's frame sees the
-        # ProgrammingError rather than having it surface deep inside
-        # the async helper. stdlib sqlite3.Cursor.executemany does the
-        # same; DML-with-RETURNING stays admitted.
+        # Reject transaction-control verbs and pure queries up front so
+        # the caller's frame sees the ProgrammingError rather than
+        # having it surface deep inside the async helper. stdlib
+        # sqlite3.Cursor.executemany does the same.
+        head_normalised = _strip_leading_comments(operation).lstrip().upper()
+        first_verb = head_normalised.split(maxsplit=1)[0] if head_normalised else ""
+        if first_verb in _EXECUTEMANY_REJECT_VERBS:
+            raise ProgrammingError(
+                f"executemany() not supported for {first_verb}; "
+                "use execute() instead — transaction-control statements "
+                "take no parameters and cannot be batched."
+            )
         if _is_row_returning(operation) and not _is_dml_with_returning(operation):
             head_upper = operation.lstrip().upper()
             if head_upper.startswith("PRAGMA"):
