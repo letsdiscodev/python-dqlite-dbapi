@@ -79,17 +79,29 @@ class DatabaseError(Error):
 
 
 class _DatabaseErrorWithCode(DatabaseError):
-    """Internal marker base for code-bearing DatabaseError subclasses.
+    """Internal marker base for the five PEP 249 ``DatabaseError``
+    subclasses :class:`OperationalError`, :class:`IntegrityError`,
+    :class:`InternalError`, :class:`ProgrammingError`, and
+    :class:`DataError`.
 
     Private by design — not part of the public PEP 249 hierarchy, not
     re-exported via ``__all__``. The ``__init__`` and ``__repr__`` live
-    on :class:`DatabaseError` itself now (so that primary codes which
-    PEP 249 routes directly to ``DatabaseError`` — CORRUPT, NOTADB,
-    FORMAT — also carry a ``code``); this marker class remains for
-    backward compatibility and to keep
-    :class:`OperationalError` / :class:`IntegrityError` /
-    :class:`InternalError` / :class:`ProgrammingError` /
-    :class:`DataError` grouped under one private base.
+    on :class:`DatabaseError` itself, so any ``DatabaseError`` instance
+    can carry ``code`` and ``raw_message`` (some primary SQLite codes —
+    CORRUPT, NOTADB, FORMAT — route directly to bare ``DatabaseError``
+    per :data:`~dqlitedbapi.cursor._CODE_TO_EXCEPTION`).
+
+    **Do not branch on ``isinstance(exc, _DatabaseErrorWithCode)`` to
+    detect code-bearing exceptions.** That predicate is incomplete:
+    bare ``DatabaseError`` instances raised for CORRUPT/NOTADB/FORMAT
+    also carry a code but are not marker subclasses. Use
+    ``getattr(exc, "code", None) is not None`` instead.
+
+    The marker is preserved as a grouping signal for the five canonical
+    code-bearing PEP 249 subclasses (pinned by
+    ``tests/test_exception_coded_mixin.py``); a future refactor that
+    silently promoted/demoted a class out of this group would break
+    that contract.
     """
 
     pass
