@@ -130,7 +130,13 @@ async def _build_and_connect(
         # is_disconnect classifier can recognise leader-change codes
         # (SQLITE_IOERR_NOT_LEADER / _LEADERSHIP_LOST) on the connect
         # path via the code-based branch, matching the query path.
-        raise OperationalError(f"Failed to connect: {e.message}", code=e.code) from e
+        # Plumb raw_message so callers that want the un-truncated
+        # server text don't have to walk __cause__.
+        raise OperationalError(
+            f"Failed to connect: {e.message}",
+            code=e.code,
+            raw_message=f"Failed to connect: {e.raw_message}",
+        ) from e
     except _client_exc.ClusterPolicyError as e:
         # Deterministic configuration mismatch. Route through
         # ``InterfaceError`` with a distinguishing ``"Cluster policy

@@ -68,10 +68,25 @@ class _DatabaseErrorWithCode(DatabaseError):
     """
 
     code: int | None
+    raw_message: str
 
-    def __init__(self, message: object = "", code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: object = "",
+        code: int | None = None,
+        *,
+        raw_message: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        # ``raw_message`` carries the full server text when the
+        # client-layer ``OperationalError`` truncated ``message`` for
+        # safe display. Defaults to the (possibly already-truncated)
+        # ``message`` so callers that don't pass the kwarg get a
+        # sensible value. The full text remains reachable via the
+        # ``__cause__`` chain regardless; this attribute is the
+        # documented one-step accessor.
+        self.raw_message = str(message) if raw_message is None else raw_message
 
     def __repr__(self) -> str:
         msg = self.args[0] if self.args else ""

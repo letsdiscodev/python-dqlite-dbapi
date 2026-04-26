@@ -121,7 +121,12 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # ``__str__`` prefixes ``[code]`` so using ``str(e)`` would put
         # the code in the message text AND as the ``code=`` attribute.
         exc_cls = _classify_operational(e.code)
-        raise exc_cls(e.message, code=e.code) from e
+        # Plumb the full server text through ``raw_message`` so callers
+        # that want the un-truncated diagnostic (operators reading
+        # logs, structured-error tooling) don't have to walk
+        # ``__cause__`` for it. ``message`` stays truncated for safe
+        # default ``str(exc)``.
+        raise exc_cls(e.message, code=e.code, raw_message=e.raw_message) from e
     except _client_exc.DqliteConnectionError as e:
         # DqliteConnectionError carries no SQLite code today — pass
         # code=None explicitly so the signature matches the sibling
