@@ -464,15 +464,21 @@ class Connection:
                         InterfaceError("operation interrupted during op-lock acquire"),
                     )
             raise
-        if not acquired:
-            coro.close()
-            raise InterfaceError(
-                "another operation is in progress on this connection "
-                f"(could not acquire operation lock within {self._timeout}s — "
-                "may indicate re-entry from a signal handler or concurrent "
-                "use from another thread)"
-            )
+        # Release the lock from a single finally that covers the
+        # window between ``acquired = ...`` returning True and the
+        # inner ``try:`` body — a KI/SystemExit raised by a signal
+        # handler in that gap would otherwise leak the lock
+        # permanently (subsequent ``_run_sync`` calls deadlock until
+        # ``acquire(timeout=...)`` fires).
         try:
+            if not acquired:
+                coro.close()
+                raise InterfaceError(
+                    "another operation is in progress on this connection "
+                    f"(could not acquire operation lock within {self._timeout}s — "
+                    "may indicate re-entry from a signal handler or concurrent "
+                    "use from another thread)"
+                )
             loop = self._ensure_loop()
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             try:
@@ -580,7 +586,13 @@ class Connection:
                     future.result(timeout=1.0)
                 raise
         finally:
-            self._op_lock.release()
+            # Only release if we actually acquired. ``acquired`` is
+            # always defined here because the surrounding ``try`` was
+            # entered after the acquire — even if the acquire raised
+            # KI, that path raised before reaching this try and the
+            # finally does not run.
+            if acquired:
+                self._op_lock.release()
 
     async def _get_async_connection(self) -> DqliteConnection:
         """Get or create the underlying async connection."""
