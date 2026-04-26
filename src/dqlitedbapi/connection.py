@@ -424,8 +424,23 @@ class Connection:
         partial bytes to the socket before observing the cancel;
         invalidation poisons the wire stream so the next operation
         reconnects instead of reusing a torn protocol state.
+
+        Lock acquisition is bounded by ``self._timeout`` so a same-
+        thread re-entry from a signal handler (e.g. SIGTERM handler
+        calling ``close()`` while ``execute()`` is mid-await) raises a
+        clean ``InterfaceError`` instead of deadlocking on the
+        non-reentrant ``threading.Lock``. Cross-thread waiters honour
+        the same bound — long-running ops cannot trap a sibling
+        thread's call indefinitely.
         """
-        with self._op_lock:
+        if not self._op_lock.acquire(timeout=self._timeout):
+            raise InterfaceError(
+                "another operation is in progress on this connection "
+                f"(could not acquire operation lock within {self._timeout}s — "
+                "may indicate re-entry from a signal handler or concurrent "
+                "use from another thread)"
+            )
+        try:
             loop = self._ensure_loop()
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             try:
@@ -532,6 +547,8 @@ class Connection:
                 with contextlib.suppress(BaseException):
                     future.result(timeout=1.0)
                 raise
+        finally:
+            self._op_lock.release()
 
     async def _get_async_connection(self) -> DqliteConnection:
         """Get or create the underlying async connection."""
