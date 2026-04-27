@@ -296,8 +296,44 @@ class AsyncConnection:
             # short-circuits via ``_pool_released`` / ``_in_use``).
             # Then the lock-cleanup runs unconditionally.
             if self._async_conn is not None:
-                with contextlib.suppress(BaseException):
+                try:
                     await asyncio.shield(self._async_conn.close())
+                except InterfaceError as exc:
+                    # The underlying connection is still in_use by a
+                    # sibling task (op_lock contract violation). Closing
+                    # under it would tear down the transport while the
+                    # sibling's coroutine still holds a local reference.
+                    # Log the fault and leave ``_async_conn`` set so
+                    # the sibling's eventual completion path can close
+                    # the underlying connection. A retry of close()
+                    # will observe ``_closed=True`` and short-circuit.
+                    logger.warning(
+                        "AsyncConnection.close (id=%s): underlying "
+                        "connection still in use; leaving _async_conn "
+                        "set so sibling task can reap. cause=%r",
+                        id(self),
+                        exc,
+                    )
+                    # Reset locks but preserve _async_conn handle.
+                    self._connect_lock = None
+                    self._op_lock = None
+                    self._loop_ref = None
+                    return
+                except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                    # The shielded close should have absorbed cancel;
+                    # if a fresh signal lands here, allow it to
+                    # propagate after best-effort cleanup state.
+                    self._async_conn = None
+                    self._connect_lock = None
+                    self._op_lock = None
+                    self._loop_ref = None
+                    raise
+                except Exception:
+                    logger.debug(
+                        "AsyncConnection.close (id=%s): underlying close failed",
+                        id(self),
+                        exc_info=True,
+                    )
                 self._async_conn = None
             # Reset the locks *after* closing so any task that was
             # parked on ``op_lock`` observes the
