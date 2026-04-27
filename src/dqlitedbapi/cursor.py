@@ -22,6 +22,9 @@ from dqlitedbapi.types import (
     _datetime_from_unixtime,
     _Description,
 )
+from dqlitewire.constants import SQLITE_CORRUPT as _SQLITE_CORRUPT
+from dqlitewire.constants import SQLITE_FORMAT as _SQLITE_FORMAT
+from dqlitewire.constants import SQLITE_NOTADB as _SQLITE_NOTADB
 from dqlitewire.constants import ValueType, primary_sqlite_code
 
 __all__ = ["Cursor"]
@@ -71,9 +74,10 @@ _SQLITE_NOMEM = 7
 # SQLite database. CPython routes all three to ``DatabaseError``
 # (the umbrella PEP 249 class). Callers porting between stdlib and
 # dqlite use ``except DatabaseError:`` to handle these uniformly.
-_SQLITE_CORRUPT = 11
-_SQLITE_FORMAT = 24
-_SQLITE_NOTADB = 26
+# The constants are imported from ``dqlitewire.constants`` (alongside
+# the other SQLite primaries the wire layer already exports) so the
+# SA dialect, the dbapi, and any future caller all reference the
+# same source of truth.
 
 # SQLITE_PROTOCOL (15) — file-locking protocol error inside SQLite's
 # WAL machinery. CPython routes to ``OperationalError``; we already
