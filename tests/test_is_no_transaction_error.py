@@ -140,3 +140,16 @@ class TestIsNoTransactionErrorEdgeCases:
         # change is deliberate.
         exc = OperationalError("error: cannot find table 'no transaction is active'", code=1)
         assert _is_no_transaction_error(exc) is True
+
+    def test_code_zero_empty_statement_not_swallowed(self) -> None:
+        """Pin: code=0 is NOT in ``_NO_TX_CODES`` — upstream emits
+        ``failure(req, 0, "empty statement")`` from
+        ``gateway.c::handle_prepare_done_cb`` for empty / comment-only
+        SQL, and the wire layer accepts it as a legal FailureResponse.
+        The dbapi must surface that as a normal OperationalError, not
+        silently swallow it at the commit/rollback boundary — a
+        well-meaning future refactor that adds 0 to the whitelist on
+        the intuition that "code=0 means no real error" would mask a
+        legitimate empty-statement diagnostic."""
+        exc = OperationalError("empty statement", code=0)
+        assert _is_no_transaction_error(exc) is False

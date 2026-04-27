@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 # or impostor server cannot silence unrelated errors just by crafting
 # a message string that contains the magic substring. The substring
 # remains as a secondary filter because SQLite has many uses of code=1.
+#
+# We also deliberately do NOT include code=0. Upstream emits
+# ``failure(req, 0, "empty statement")`` from
+# ``gateway.c::handle_prepare_done_cb`` when the SQL parses to no
+# statement (empty / comment-only / whitespace-only). The wire layer
+# accepts ``code=0`` as a legal ``FailureResponse`` (see the wire-side
+# ``code=0`` round-trip pin), and the dbapi must surface that as a
+# normal ``OperationalError`` rather than silently swallow it at the
+# commit/rollback boundary — masking it would hide a real diagnostic
+# from callers who issued an empty COMMIT/ROLLBACK by accident.
 _NO_TX_CODES = frozenset({1})
 # Substrings that mark a benign "no transaction was active" reply.
 # Mirror the client-layer ``_is_no_tx_rollback_error`` recogniser so a
@@ -777,14 +787,14 @@ class Connection:
         # Local short-circuit when no transaction is active. Mirrors
         # stdlib ``sqlite3.Connection.commit`` which uses
         # ``sqlite3_get_autocommit`` to skip the wire round-trip.
-        # ``_has_untracked_savepoint`` covers the case where the
-        # tracker missed the BEGIN (quoted SAVEPOINT autobegin,
-        # multi-statement batch the splitter could not see) — must
-        # still issue a real COMMIT so the server-side autobegun tx
-        # is closed.
-        if not self._async_conn.in_transaction and not getattr(
-            self._async_conn, "_has_untracked_savepoint", False
-        ):
+        # ``in_transaction`` already ORs in the
+        # ``_has_untracked_savepoint`` flag at the client layer, so the
+        # property covers the autobegun-via-quoted-SAVEPOINT case
+        # without the dbapi having to peek at the private attribute.
+        # ``getattr`` keeps mock tolerance: stripped-down test stubs
+        # without the property short-circuit (no wire round-trip) the
+        # same way a fresh connection would.
+        if not getattr(self._async_conn, "in_transaction", False):
             return
         self._run_sync(self._commit_async())
 
@@ -819,9 +829,7 @@ class Connection:
             return
         # See commit() — same local short-circuit applies. Saves a
         # wire round-trip on the autocommit-by-default common case.
-        if not self._async_conn.in_transaction and not getattr(
-            self._async_conn, "_has_untracked_savepoint", False
-        ):
+        if not getattr(self._async_conn, "in_transaction", False):
             return
         self._run_sync(self._rollback_async())
 

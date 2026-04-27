@@ -404,11 +404,10 @@ class AsyncConnection:
         if self._async_conn is None:
             return
         # Local short-circuit when no transaction is active; see the
-        # sync sibling for the rationale and the
-        # ``_has_untracked_savepoint`` carve-out.
-        if not self._async_conn.in_transaction and not getattr(
-            self._async_conn, "_has_untracked_savepoint", False
-        ):
+        # sync sibling for the rationale. ``in_transaction`` already
+        # ORs in the untracked-savepoint flag at the client layer so
+        # the property is the single authoritative read.
+        if not getattr(self._async_conn, "in_transaction", False):
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
@@ -446,9 +445,7 @@ class AsyncConnection:
         if self._async_conn is None:
             return
         # See commit() — same local short-circuit applies.
-        if not self._async_conn.in_transaction and not getattr(
-            self._async_conn, "_has_untracked_savepoint", False
-        ):
+        if not getattr(self._async_conn, "in_transaction", False):
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
