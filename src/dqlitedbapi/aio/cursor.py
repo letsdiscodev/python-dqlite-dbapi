@@ -318,9 +318,19 @@ class AsyncCursor:
         # (mirror of the sync sibling).
         # See sync sibling for the leading ``;``-stripping loop and the
         # trailing ``rstrip(";")`` rationale.
-        head_normalised = _strip_leading_comments(operation).lstrip().upper()
-        while head_normalised.startswith(";"):
-            head_normalised = head_normalised[1:].lstrip()
+        # Loop comment-strip + ;-strip together so a leading ``;``
+        # followed by a comment does not bypass the reject-list. See
+        # the sync sibling for full rationale.
+        head_normalised = operation
+        while True:
+            stripped = _strip_leading_comments(head_normalised).lstrip()
+            if stripped.startswith(";"):
+                head_normalised = stripped[1:]
+                continue
+            if stripped == head_normalised:
+                break
+            head_normalised = stripped
+        head_normalised = head_normalised.upper()
         first_verb = head_normalised.split(maxsplit=1)[0].rstrip(";") if head_normalised else ""
         if first_verb in _EXECUTEMANY_REJECT_VERBS:
             raise ProgrammingError(

@@ -162,3 +162,38 @@ async def test_async_executemany_rejects_leading_semicolon_verb(statement: str) 
     cursor = AsyncCursor(conn)
     with pytest.raises(ProgrammingError, match="executemany.*not supported for"):
         await cursor.executemany(statement, [(1,)])
+
+
+_SEMICOLON_THEN_COMMENT_VERBS = [
+    "; /* x */ SAVEPOINT foo",
+    ";; /* x */ BEGIN",
+    "-- a\n; SAVEPOINT foo",
+    "; -- a\nSAVEPOINT foo",
+    "/* x */ ; BEGIN",
+    "-- a\n; -- b\n; SAVEPOINT foo",
+]
+
+
+@pytest.mark.parametrize("statement", _SEMICOLON_THEN_COMMENT_VERBS)
+def test_sync_executemany_rejects_semicolon_then_comment_verb(statement: str) -> None:
+    """``executemany("; /* x */ SAVEPOINT foo", ...)`` and friends must
+    be rejected — the original single-pass comment-strip-then-
+    semicolon-loop missed comments that sat AFTER a leading ``;``,
+    leaving ``first_verb = "/*"`` which is not in the reject set.
+    Loop comment-strip + ;-strip together so the verb extraction sees
+    past every interleaving."""
+    conn = Connection("localhost:9001")
+    cursor = Cursor(conn)
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for"):
+        cursor.executemany(statement, [(1,)])
+
+
+@pytest.mark.parametrize("statement", _SEMICOLON_THEN_COMMENT_VERBS)
+@pytest.mark.asyncio
+async def test_async_executemany_rejects_semicolon_then_comment_verb(
+    statement: str,
+) -> None:
+    conn = AsyncConnection("localhost:9001")
+    cursor = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for"):
+        await cursor.executemany(statement, [(1,)])

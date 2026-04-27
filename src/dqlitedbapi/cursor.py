@@ -924,9 +924,23 @@ class Cursor:
         # both ends, ``executemany(";BEGIN INSERT ...", ...)`` or
         # ``executemany("BEGIN; INSERT ...", ...)`` was silently
         # admitted and re-ran the bare statement N times.
-        head_normalised = _strip_leading_comments(operation).lstrip().upper()
-        while head_normalised.startswith(";"):
-            head_normalised = head_normalised[1:].lstrip()
+        # Loop comment-strip + ;-strip together so a leading ``;``
+        # followed by a comment (``"; /* x */ SAVEPOINT foo"``) does
+        # not bypass the reject-list — the original single-pass
+        # comment-strip-then-semicolon-loop missed comments that sat
+        # AFTER a leading ``;``. Each iteration consumes either a
+        # comment or a ``;`` (or both) and re-strips before checking
+        # the verb.
+        head_normalised = operation
+        while True:
+            stripped = _strip_leading_comments(head_normalised).lstrip()
+            if stripped.startswith(";"):
+                head_normalised = stripped[1:]
+                continue
+            if stripped == head_normalised:
+                break
+            head_normalised = stripped
+        head_normalised = head_normalised.upper()
         first_verb = head_normalised.split(maxsplit=1)[0].rstrip(";") if head_normalised else ""
         if first_verb in _EXECUTEMANY_REJECT_VERBS:
             raise ProgrammingError(
