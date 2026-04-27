@@ -495,20 +495,23 @@ class Connection:
                 # logic to re-run the op and, for non-idempotent
                 # statements, duplicate the write. Honour the
                 # successful completion instead.
+                recovered_error: BaseException | None = None
                 if (
                     future.done() and not future.cancelled()
                 ):  # pragma: no cover - race: future completes mid-timeout
                     try:
                         return future.result(timeout=0)
-                    except BaseException:
+                    except BaseException as recovered:
                         # Coroutine completed with an exception of its
-                        # own; fall through to the timeout path and
-                        # raise OperationalError. The original exception
-                        # is still discoverable via future state but
-                        # surfacing it here would change the legacy
-                        # "on sync-timeout, you get OperationalError"
-                        # contract.
-                        pass
+                        # own (e.g. SQLITE_BUSY, leader flip mid-flight).
+                        # Capture for chaining: the legacy "on sync-
+                        # timeout, you get OperationalError" contract is
+                        # preserved (we still raise OperationalError
+                        # below), but the recovered exception is attached
+                        # via __cause__ so the user can see the actual
+                        # failure instead of an opaque "timed out"
+                        # diagnostic.
+                        recovered_error = recovered
                 future.cancel()
                 # Poison the underlying connection. The coroutine may have
                 # half-written a request; the wire is in unknown state.
@@ -550,6 +553,16 @@ class Connection:
                         "sync timeout: unexpected error during bounded cancel-wait",
                         exc_info=True,
                     )
+                if recovered_error is not None:
+                    # Surface the recovered exception via __cause__
+                    # while preserving the OperationalError("timed out")
+                    # type contract. SA's is_disconnect cause-walk and
+                    # any caller printing exc_info will see the real
+                    # cause instead of the timeout placeholder.
+                    raise OperationalError(
+                        f"Operation timed out after {self._timeout} seconds "
+                        f"(coroutine completed with error: {recovered_error!r})"
+                    ) from recovered_error
                 raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
             except (KeyboardInterrupt, SystemExit):
                 # KeyboardInterrupt / SystemExit raised inside the
