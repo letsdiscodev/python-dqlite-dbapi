@@ -33,6 +33,14 @@ def _build_fake_inner(code: int, message: str) -> Any:
 @pytest.mark.parametrize(
     ("code", "should_swallow"),
     [
+        # ``code=0`` is upstream's ``failure(req, 0, "empty statement")``
+        # for empty / comment-only SQL — the wire layer accepts it as a
+        # legal FailureResponse and the dbapi MUST surface it cleanly,
+        # not silently swallow at the commit/rollback boundary. Pinned
+        # at the unit layer in ``test_is_no_transaction_error`` and
+        # again here at the wrapper boundary so the cross-layer
+        # contract holds end-to-end.
+        (0, False),
         (1, True),  # SQLITE_ERROR primary
         (769, True),  # extended SQLITE_ERROR variant
         (513, True),  # extended SQLITE_ERROR variant
@@ -43,8 +51,11 @@ def _build_fake_inner(code: int, message: str) -> Any:
 )
 @pytest.mark.asyncio
 async def test_aio_commit_swallow_matrix(code: int, should_swallow: bool) -> None:
+    # Use the empty-statement wording for the code=0 row; existing
+    # rows keep the canonical no-tx wording.
+    message = "empty statement" if code == 0 else "cannot commit - no transaction is active"
     conn = AsyncConnection("localhost:9001")
-    conn._async_conn = _build_fake_inner(code, "cannot commit - no transaction is active")
+    conn._async_conn = _build_fake_inner(code, message)
 
     if should_swallow:
         await conn.commit()
@@ -56,6 +67,7 @@ async def test_aio_commit_swallow_matrix(code: int, should_swallow: bool) -> Non
 @pytest.mark.parametrize(
     ("code", "should_swallow"),
     [
+        (0, False),  # See commit-side rationale.
         (1, True),
         (769, True),
         (513, True),
@@ -66,8 +78,9 @@ async def test_aio_commit_swallow_matrix(code: int, should_swallow: bool) -> Non
 )
 @pytest.mark.asyncio
 async def test_aio_rollback_swallow_matrix(code: int, should_swallow: bool) -> None:
+    message = "empty statement" if code == 0 else "cannot rollback - no transaction is active"
     conn = AsyncConnection("localhost:9001")
-    conn._async_conn = _build_fake_inner(code, "cannot rollback - no transaction is active")
+    conn._async_conn = _build_fake_inner(code, message)
 
     if should_swallow:
         await conn.rollback()
