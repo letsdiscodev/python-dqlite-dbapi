@@ -481,6 +481,22 @@ class AsyncConnection:
         else:
             try:
                 await self.rollback()
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                # Cancel / signal interrupted the rollback. Mirror the
+                # client-layer ``transaction()`` ctxmgr's discipline:
+                # log a breadcrumb so the audit trail is consistent
+                # across layers, then re-raise so the cancel signal
+                # supersedes the body exception.
+                logger.debug(
+                    "AsyncConnection.__aexit__ (address=%s, id=%s): "
+                    "rollback interrupted by cancel/signal after body "
+                    "raised %s",
+                    self._address,
+                    id(self),
+                    exc_type.__name__,
+                    exc_info=True,
+                )
+                raise
             except Exception:
                 # The body already raised; we cannot re-raise, but a
                 # silent suppress leaves no breadcrumb for an operator

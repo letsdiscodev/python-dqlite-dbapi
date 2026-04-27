@@ -869,6 +869,20 @@ class Connection:
             # — matching the async __aexit__ pattern.
             try:
                 self.rollback()
+            except (KeyboardInterrupt, SystemExit):
+                # Signal interrupted the rollback (no asyncio.CancelledError
+                # in sync context). Log the breadcrumb and re-raise so
+                # the signal supersedes the body exception, matching
+                # the async sibling and the client transaction()
+                # ctxmgr's discipline.
+                logger.debug(
+                    "Connection.__exit__ (address=%s, id=%s): "
+                    "rollback interrupted by signal after body raised",
+                    self._address,
+                    id(self),
+                    exc_info=True,
+                )
+                raise
             except Exception:
                 logger.debug(
                     "Connection.__exit__ (address=%s, id=%s): "
