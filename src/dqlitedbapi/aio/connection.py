@@ -300,21 +300,36 @@ class AsyncConnection:
                     await asyncio.shield(self._async_conn.close())
                 except InterfaceError as exc:
                     # The underlying connection is still in_use by a
-                    # sibling task (op_lock contract violation). Closing
-                    # under it would tear down the transport while the
-                    # sibling's coroutine still holds a local reference.
-                    # Log the fault and leave ``_async_conn`` set so
-                    # the sibling's eventual completion path can close
-                    # the underlying connection. A retry of close()
-                    # will observe ``_closed=True`` and short-circuit.
+                    # sibling task (op_lock contract violation: cross-task
+                    # close on a connection mid-operation). The sibling's
+                    # ``_run_protocol`` finally only resets ``_in_use``;
+                    # nothing in that path closes the underlying socket.
+                    # Force-close the writer synchronously so the
+                    # transport is reaped instead of leaked. The sibling
+                    # task's pending read will see EOF and surface a
+                    # transport error, then ``_run_protocol``'s
+                    # CancelledError / DqliteConnectionError handler
+                    # invalidates the conn. The user's contract violation
+                    # surfaces as a transport failure on the in-flight
+                    # operation — the lesser of two evils vs. a silent
+                    # transport leak.
                     logger.warning(
                         "AsyncConnection.close (id=%s): underlying "
-                        "connection still in use; leaving _async_conn "
-                        "set so sibling task can reap. cause=%r",
+                        "connection still in use by a sibling task; "
+                        "force-closing the writer synchronously. The "
+                        "sibling's in-flight operation will raise a "
+                        "transport error. cause=%r",
                         id(self),
                         exc,
                     )
-                    # Reset locks but preserve _async_conn handle.
+                    inner = self._async_conn
+                    proto = getattr(inner, "_protocol", None)
+                    if proto is not None:
+                        writer = getattr(proto, "_writer", None)
+                        if writer is not None:
+                            with contextlib.suppress(Exception):
+                                writer.close()
+                    self._async_conn = None
                     self._connect_lock = None
                     self._op_lock = None
                     self._loop_ref = None
