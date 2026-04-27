@@ -36,13 +36,15 @@ from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
 )
 
-# SQLAlchemy dialect discovery reads ``dbapi.apilevel`` to confirm a
-# PEP 249 shape; we expose the string for that handshake only. The
-# module does NOT implement PEP 249 — cursor methods return
-# coroutines. Cross-driver code that wants a synchronous PEP 249
-# surface must import ``dqlitedbapi`` (the sync sibling), not
-# ``dqlitedbapi.aio``. ``aiosqlite`` and ``asyncpg`` deliberately do
-# not set ``apilevel`` for the same reason.
+# SQLAlchemy's async dialect discovery reads ``dbapi.apilevel`` to
+# confirm a PEP 249 shape; we expose ``"2.0"`` for that handshake.
+# The async surface does NOT fully implement PEP 249 — fetch methods
+# return coroutines, matching the de-facto async-DB-API convention
+# used by aiosqlite and asyncpg. Cross-driver code that wants a
+# synchronous PEP 249 surface must import ``dqlitedbapi`` (the sync
+# sibling), not ``dqlitedbapi.aio``. (aiosqlite and asyncpg do not
+# set ``apilevel`` because they are not consumed via SA's
+# ``import_dbapi`` discovery path; we set it for SA dialect glue.)
 apilevel = "2.0"
 # PEP 249 value 1: threads may share the module.
 #
