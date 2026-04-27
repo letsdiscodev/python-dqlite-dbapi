@@ -352,6 +352,13 @@ class AsyncConnection:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
             return
+        # Local short-circuit when no transaction is active; see the
+        # sync sibling for the rationale and the
+        # ``_has_untracked_savepoint`` carve-out.
+        if not self._async_conn.in_transaction and not getattr(
+            self._async_conn, "_has_untracked_savepoint", False
+        ):
+            return
         _, op_lock = self._ensure_locks()
         async with op_lock:
             # Re-check under the lock: a concurrent close() may have
@@ -386,6 +393,11 @@ class AsyncConnection:
         if self._closed:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
+            return
+        # See commit() — same local short-circuit applies.
+        if not self._async_conn.in_transaction and not getattr(
+            self._async_conn, "_has_untracked_savepoint", False
+        ):
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:

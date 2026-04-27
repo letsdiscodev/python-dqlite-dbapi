@@ -761,6 +761,18 @@ class Connection:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
             return
+        # Local short-circuit when no transaction is active. Mirrors
+        # stdlib ``sqlite3.Connection.commit`` which uses
+        # ``sqlite3_get_autocommit`` to skip the wire round-trip.
+        # ``_has_untracked_savepoint`` covers the case where the
+        # tracker missed the BEGIN (quoted SAVEPOINT autobegin,
+        # multi-statement batch the splitter could not see) — must
+        # still issue a real COMMIT so the server-side autobegun tx
+        # is closed.
+        if not self._async_conn.in_transaction and not getattr(
+            self._async_conn, "_has_untracked_savepoint", False
+        ):
+            return
         self._run_sync(self._commit_async())
 
     async def _commit_async(self) -> None:
@@ -791,6 +803,12 @@ class Connection:
         if self._closed:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
+            return
+        # See commit() — same local short-circuit applies. Saves a
+        # wire round-trip on the autocommit-by-default common case.
+        if not self._async_conn.in_transaction and not getattr(
+            self._async_conn, "_has_untracked_savepoint", False
+        ):
             return
         self._run_sync(self._rollback_async())
 
