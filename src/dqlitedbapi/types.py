@@ -422,6 +422,15 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
     return datetime.datetime(d.year, d.month, d.day)  # pragma: no cover
 
 
+# Maximum UNIXTIME value that ``datetime.fromtimestamp(..., tz=UTC)``
+# accepts on every supported platform (year 9999-12-31T23:59:59Z, the
+# upper boundary of ``datetime.MAX``). Computed as a literal so import
+# does not depend on the host's libc behavior at module-load time —
+# 32-bit Windows would otherwise OverflowError on the
+# ``datetime.MAX.timestamp()`` round-trip.
+_MAX_UNIXTIME_SECONDS = 253402300799  # = datetime(9999,12,31,23,59,59,tz=UTC).timestamp()
+
+
 def _datetime_from_unixtime(value: int) -> datetime.datetime:
     """Decode a UNIXTIME int64 into a UTC-aware ``datetime.datetime``.
 
@@ -434,10 +443,29 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
     column and reading it back shifts by the host's UTC offset; use
     an ISO8601 (TEXT) column for faithful round-trip of naive values.
 
+    Range: ``0 <= value <= _MAX_UNIXTIME_SECONDS``. Negative values
+    (pre-1970) and values past year 9999 are rejected uniformly with
+    ``DataError``. The wire allows int64 (so negatives are
+    spec-compliant), but ``datetime.fromtimestamp`` is platform-
+    inconsistent on negatives — Linux glibc accepts, Windows
+    ``_gmtime64_s`` rejects — so the same byte stream behaves
+    differently depending on host. Forcing a uniform rejection
+    eliminates that surprise. dqlite servers do not emit pre-1970
+    UNIXTIME today.
+
     A corrupt server or MitM-modified bytes could deliver a non-integer
-    or out-of-range value; wrap the resulting stdlib exceptions as
-    ``DataError``.
+    or in-range value that still trips the underlying stdlib; wrap any
+    surviving stdlib exception as ``DataError``.
     """
+    if (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and not (0 <= value <= _MAX_UNIXTIME_SECONDS)
+    ):
+        raise DataError(
+            f"UNIXTIME value {value!r} out of representable range "
+            f"(0..{_MAX_UNIXTIME_SECONDS}); pre-1970 and post-9999 not supported"
+        )
     try:
         return datetime.datetime.fromtimestamp(value, tz=datetime.UTC)
     except (TypeError, OverflowError, OSError, ValueError) as e:

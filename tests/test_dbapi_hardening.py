@@ -281,6 +281,46 @@ class TestDatetimeFromUnixtimeWrapping:
         with pytest.raises(DataError):
             _datetime_from_unixtime((1 << 63) - 1)
 
+    def test_negative_unixtime_raises_uniform_data_error(self) -> None:
+        """Negative UNIXTIME (pre-1970) is platform-inconsistent at
+        ``datetime.fromtimestamp`` (Linux glibc accepts; Windows
+        ``_gmtime64_s`` rejects). The decoder must surface a uniform
+        ``DataError`` regardless of platform so a test passing on
+        Linux does not silently fail on Windows.
+
+        dqlite servers do not emit pre-1970 UNIXTIME today; the bound
+        is permissive defense-in-depth, not a behavior change.
+        """
+        from dqlitedbapi.types import _datetime_from_unixtime
+
+        with pytest.raises(DataError, match="out of representable range"):
+            _datetime_from_unixtime(-1)
+        with pytest.raises(DataError, match="out of representable range"):
+            _datetime_from_unixtime(-(1 << 32))
+
+    def test_post_year_9999_unixtime_raises_uniform_data_error(self) -> None:
+        """UNIXTIME values past year 9999 (datetime.MAX) are equally
+        platform-inconsistent. Surface as ``DataError`` uniformly."""
+        from dqlitedbapi.types import _MAX_UNIXTIME_SECONDS, _datetime_from_unixtime
+
+        with pytest.raises(DataError, match="out of representable range"):
+            _datetime_from_unixtime(_MAX_UNIXTIME_SECONDS + 1)
+
+    def test_zero_unixtime_decodes_to_unix_epoch(self) -> None:
+        """Boundary: 0 → 1970-01-01T00:00:00Z."""
+        from dqlitedbapi.types import _datetime_from_unixtime
+
+        result = _datetime_from_unixtime(0)
+        assert result == datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+
+    def test_modern_unixtime_decodes_correctly(self) -> None:
+        """A real-world value (2 billion s ≈ 2033) round-trips."""
+        from dqlitedbapi.types import _datetime_from_unixtime
+
+        result = _datetime_from_unixtime(2_000_000_000)
+        assert result.tzinfo == datetime.UTC
+        assert result.year == 2033
+
 
 class TestIsNoTransactionError:
     """commit/rollback no-op is gated on SQLite result code first.
