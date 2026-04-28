@@ -83,3 +83,27 @@ class TestCloseScrubsAllState:
         assert cur.description is None
         assert cur.rowcount == -1
         assert cur.lastrowid is None
+
+
+class TestAsyncIterOnClosedCursor:
+    """``async for row in closed_cursor:`` must raise InterfaceError
+    on the FIRST ``__anext__`` rather than silently exit with
+    StopAsyncIteration. Sync mirror is pinned in
+    ``test_pep249_misc_pins.py``."""
+
+    async def test_async_for_on_closed_cursor_raises_interface_error(self) -> None:
+        cur = _make_async_cursor()
+        await cur.close()
+        rows: list[object] = []
+        with pytest.raises(InterfaceError, match="closed"):
+            async for row in cur:
+                rows.append(row)
+        assert rows == []
+
+    async def test_anext_on_closed_cursor_raises_interface_error(self) -> None:
+        """Direct ``__anext__`` invocation surfaces the same
+        InterfaceError, not StopAsyncIteration."""
+        cur = _make_async_cursor()
+        await cur.close()
+        with pytest.raises(InterfaceError, match="closed"):
+            await cur.__anext__()

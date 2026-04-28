@@ -116,3 +116,66 @@ def test_cursor_messages_cleared_on_execute_check() -> None:
         assert cur.messages == []
     finally:
         conn.close()
+
+
+def test_connection_cursor_returns_distinct_instance_each_call() -> None:
+    """PEP 249 §6.1.1: ``Connection.cursor()`` returns a NEW Cursor
+    object per call. A future "optimization" that cached or pooled
+    cursors per connection would silently violate this contract."""
+    conn = Connection("localhost:9001")
+    try:
+        c1 = conn.cursor()
+        c2 = conn.cursor()
+        assert c1 is not c2
+        # And state is per-instance.
+        c1._rowcount = 99
+        assert c2._rowcount == -1
+    finally:
+        conn.close()
+
+
+def test_commit_clears_messages_before_closed_raise() -> None:
+    """PEP 249 §6.1.1 ``messages`` is cleared "prior to executing the
+    call" — including calls that raise immediately. ``commit()`` on a
+    closed connection must clear messages before raising
+    ``InterfaceError``.
+    """
+    conn = Connection("localhost:9001")
+    conn.close()
+    seeded = (UserWarning, UserWarning("stale"))
+    conn.messages.append(seeded)
+    with pytest.raises(InterfaceError, match="closed"):
+        conn.commit()
+    assert conn.messages == []
+
+
+def test_rollback_clears_messages_before_closed_raise() -> None:
+    """Mirror of ``test_commit_clears_messages_before_closed_raise``
+    for ``rollback()``."""
+    conn = Connection("localhost:9001")
+    conn.close()
+    seeded = (UserWarning, UserWarning("stale"))
+    conn.messages.append(seeded)
+    with pytest.raises(InterfaceError, match="closed"):
+        conn.rollback()
+    assert conn.messages == []
+
+
+def test_execute_returns_cursor_for_chaining() -> None:
+    """stdlib ``sqlite3`` and the de-facto Python DB-API convention:
+    ``cursor.execute(...)`` returns the cursor for method chaining
+    (``cur.execute(sql).fetchall()``). Pin the contract so a future
+    refactor that returns ``None`` cannot silently break callers
+    using the chain idiom.
+
+    Use ``executemany`` with an empty seq as the cheapest call that
+    routes through the same return path without requiring a live
+    cluster (the empty-batch short-circuit lives before wire I/O).
+    """
+    conn = Connection("localhost:9001")
+    try:
+        cur = conn.cursor()
+        result = cur.executemany("INSERT INTO t VALUES (?)", [])
+        assert result is cur
+    finally:
+        conn.close()
