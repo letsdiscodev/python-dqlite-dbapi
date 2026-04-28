@@ -76,7 +76,7 @@ paramstyle = "qmark"  # Question mark style: WHERE name=?
 sqlite_version_info = (3, 35, 0)
 sqlite_version = ".".join(str(v) for v in sqlite_version_info)
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     # Module attributes

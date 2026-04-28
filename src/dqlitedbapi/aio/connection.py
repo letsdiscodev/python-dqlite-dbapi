@@ -358,6 +358,45 @@ class AsyncConnection:
             self._op_lock = None
             self._loop_ref = None
 
+    def force_close_transport(self) -> None:
+        """Synchronously tear down the underlying socket transport.
+
+        Last-resort cleanup for finalize paths running outside any
+        event loop (GC sweep with no greenlet, atexit handler with the
+        loop already torn down). Walks the inner client-layer
+        connection's protocol writer and calls
+        ``writer.close()`` directly — the writer's ``close()`` is
+        synchronous and safe to invoke without a running loop.
+
+        Idempotent. Never raises. A missing inner connection / missing
+        protocol / missing writer is silently absorbed (the connection
+        was never opened, or the regular async ``close()`` already ran
+        and nulled the references).
+
+        Used by SQLAlchemy's async adapter when SA's finalize path
+        executes outside a greenlet context — without this hook the
+        adapter would have to walk private attributes of two
+        underlying packages, which broke silently when the chain
+        changed shape.
+        """
+        inner = self._async_conn
+        if inner is None:
+            return
+        proto = getattr(inner, "_protocol", None)
+        if proto is None:
+            return
+        writer = getattr(proto, "_writer", None)
+        if writer is None:
+            return
+        try:
+            writer.close()
+        except Exception:  # noqa: BLE001 - last-resort cleanup
+            logger.debug(
+                "AsyncConnection.force_close_transport (id=%s): writer.close() raised; ignoring",
+                id(self),
+                exc_info=True,
+            )
+
     @property
     def in_transaction(self) -> bool:
         """Whether the connection currently has an open transaction.
