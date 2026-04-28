@@ -252,16 +252,28 @@ def _cleanup_loop_thread(
                 loop.call_soon_threadsafe(loop.stop)
         except RuntimeError:  # pragma: no cover - race: loop closed mid-call
             # Loop was closed between is_closed() and the threadsafe
-            # call.
-            pass
+            # call. Log at debug so the swallow is observable for
+            # operators triaging finalize-time anomalies; the
+            # ``pragma: no cover`` stays because the path is genuinely
+            # racy and not reproducible in tests.
+            logger.debug(
+                "Connection._cleanup_loop_thread: loop.call_soon_threadsafe "
+                "raised RuntimeError (loop likely closed mid-call)",
+                exc_info=True,
+            )
         with contextlib.suppress(RuntimeError):
             thread.join(timeout=_LOOP_THREAD_JOIN_TIMEOUT_SECONDS)
         try:
             if not loop.is_closed():
                 loop.close()
-        except RuntimeError:
+        except RuntimeError:  # pragma: no cover - race: loop restarted mid-finalize
             # Raised if the loop was somehow restarted mid-finalization.
-            pass
+            # Same operator-visibility rationale as above.
+            logger.debug(
+                "Connection._cleanup_loop_thread: loop.close() raised "
+                "RuntimeError (loop likely restarted mid-finalize)",
+                exc_info=True,
+            )
 
 
 class Connection:
