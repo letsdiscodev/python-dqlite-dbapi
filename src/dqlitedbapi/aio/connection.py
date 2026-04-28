@@ -403,12 +403,6 @@ class AsyncConnection:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
             return
-        # Local short-circuit when no transaction is active; see the
-        # sync sibling for the rationale. ``in_transaction`` already
-        # ORs in the untracked-savepoint flag at the client layer so
-        # the property is the single authoritative read.
-        if not getattr(self._async_conn, "in_transaction", False):
-            return
         _, op_lock = self._ensure_locks()
         async with op_lock:
             # Re-check under the lock: a concurrent close() may have
@@ -419,10 +413,20 @@ class AsyncConnection:
                 raise InterfaceError("Connection is closed")
             # Clear ``messages`` under the lock so the PEP 249
             # contract "messages cleared by every method call" is
-            # atomic with the operation. Clearing pre-lock leaves
+            # atomic with the operation. Clearing only pre-lock leaves
             # a window where a sibling task could append between
             # this clear and the COMMIT.
             del self.messages[:]
+            # Read ``in_transaction`` under the lock so the value is
+            # fresh against any sibling task that may have just
+            # committed/rolled back. Reading outside the lock left a
+            # window where a stale ``True`` would route us into a
+            # redundant COMMIT round-trip whose "no transaction" error
+            # is silenced below — correct, but a wasted RTT and a
+            # structural race. ``in_transaction`` already ORs in the
+            # untracked-savepoint flag at the client layer.
+            if not getattr(self._async_conn, "in_transaction", False):
+                return
             try:
                 # Parity with ``Connection._commit_async``; ``_call_client``
                 # maps raw client errors onto PEP 249 ``Error`` subclasses.
@@ -444,17 +448,17 @@ class AsyncConnection:
             raise InterfaceError("Connection is closed")
         if self._async_conn is None:
             return
-        # See commit() — same local short-circuit applies.
-        if not getattr(self._async_conn, "in_transaction", False):
-            return
         _, op_lock = self._ensure_locks()
         async with op_lock:
             # Re-check under the lock for the same race as commit().
             if self._closed or self._async_conn is None:
                 raise InterfaceError("Connection is closed")
-            # Clear ``messages`` under the lock so the PEP 249 contract
-            # is atomic with the operation; see ``commit`` rationale.
+            # Clear ``messages`` under the lock; see ``commit`` rationale.
             del self.messages[:]
+            # Read ``in_transaction`` under the lock; see commit() for
+            # the rationale (avoid stale-True wasted ROLLBACK-RTT).
+            if not getattr(self._async_conn, "in_transaction", False):
+                return
             try:
                 # Parity with ``Connection._rollback_async``; see ``commit``.
                 await _call_client(self._async_conn.execute("ROLLBACK"))
