@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import dqliteclient.exceptions as _client_exc
 from dqlitedbapi.exceptions import (
@@ -35,18 +35,18 @@ __all__ = ["Cursor"]
 # FOREIGN_KEY = 787, etc.) all share ``code & 0xFF == 19``. PEP 249
 # mandates IntegrityError for these, so map them here rather than
 # leaving every caller to inspect the code themselves.
-_SQLITE_CONSTRAINT = 19
+_SQLITE_CONSTRAINT: Final[int] = 19
 
 # SQLite primary error code 2 (SQLITE_INTERNAL). stdlib ``sqlite3``
 # routes this to ``sqlite3.InternalError`` (CPython's
 # ``_pysqlite_seterror``); PEP 249 defines ``InternalError`` for exactly
 # this purpose — "internal errors of the database, e.g. the cursor is
 # not valid anymore".
-_SQLITE_INTERNAL = 2
+_SQLITE_INTERNAL: Final[int] = 2
 
 # SQLITE_TOOBIG (18) — "value exceeds size limit" — is the canonical
 # PEP 249 ``DataError`` case ("problems with the processed data").
-_SQLITE_TOOBIG = 18
+_SQLITE_TOOBIG: Final[int] = 18
 
 # SQLITE_MISMATCH (20) — datatype mismatch on STRICT tables. CPython
 # stdlib ``sqlite3`` (``Modules/_sqlite/util.c::_pysqlite_seterror``)
@@ -55,19 +55,19 @@ _SQLITE_TOOBIG = 18
 # are defensible PEP 249 readings for STRICT-table datatype mismatch,
 # but callers porting between stdlib and dqlite expect the stdlib
 # grouping — so align to it.
-_SQLITE_MISMATCH = 20
+_SQLITE_MISMATCH: Final[int] = 20
 
 # SQLITE_RANGE (25) — "bind index out of range" — is a caller-side
 # parameter-binding error; PEP 249 ``ProgrammingError`` is the right
 # fit ("bad parameter ... wrong number of parameters") rather than
 # ``DataError``.
-_SQLITE_RANGE = 25
+_SQLITE_RANGE: Final[int] = 25
 
 # SQLITE_NOMEM (7) — server-side allocation failure. CPython stdlib
 # ``sqlite3`` raises ``MemoryError`` (system-level, bypasses PEP 249);
 # we route through ``InternalError`` so callers stay inside the
 # PEP 249 hierarchy and ``except dbapi.Error:`` continues to catch.
-_SQLITE_NOMEM = 7
+_SQLITE_NOMEM: Final[int] = 7
 
 # SQLITE_CORRUPT (11), SQLITE_FORMAT (24), SQLITE_NOTADB (26) — the
 # server-side database file is malformed / wrong format / not a
@@ -84,7 +84,7 @@ _SQLITE_NOMEM = 7
 # default unmapped codes to OperationalError so this entry is
 # documentary — it pins the contract so a future audit shows the
 # code was considered.
-_SQLITE_PROTOCOL = 15
+_SQLITE_PROTOCOL: Final[int] = 15
 
 # Registry of primary-code → PEP 249 class. Keep the default
 # (OperationalError) outside the dict so adding a code is one line.
@@ -328,7 +328,7 @@ def _strip_leading_comments(sql: str) -> str:
     return s
 
 
-_ROW_RETURNING_PREFIXES = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
+_ROW_RETURNING_PREFIXES: Final[tuple[str, ...]] = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
 
 # Verbs that take no parameters and cannot legitimately drive an
 # ``executemany`` call. Stdlib ``sqlite3.Cursor.executemany`` rejects
@@ -336,7 +336,7 @@ _ROW_RETURNING_PREFIXES = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
 # silently re-runs the bare statement N times against ignored bind
 # params, producing duplicate server-side savepoint frames (and other
 # state divergence) that compound with the duplicate-name LIFO rule.
-_EXECUTEMANY_REJECT_VERBS = frozenset(
+_EXECUTEMANY_REJECT_VERBS: Final[frozenset[str]] = frozenset(
     {"SAVEPOINT", "RELEASE", "ROLLBACK", "BEGIN", "COMMIT", "END"}
 )
 
@@ -608,8 +608,8 @@ def _is_dml_with_returning(sql: str) -> bool:
     return body.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
 
 
-_INT64_OVERFLOW_THRESHOLD = 1 << 63
-_UINT64_RANGE = 1 << 64
+_INT64_OVERFLOW_THRESHOLD: Final[int] = 1 << 63
+_UINT64_RANGE: Final[int] = 1 << 64
 
 
 def _to_signed_int64(value: int) -> int:

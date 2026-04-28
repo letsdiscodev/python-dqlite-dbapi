@@ -2,7 +2,7 @@
 
 import datetime
 import math
-from typing import Any
+from typing import Any, Final
 
 from dqlitedbapi.exceptions import DataError
 from dqlitewire.constants import ValueType
@@ -428,7 +428,9 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
 # does not depend on the host's libc behavior at module-load time —
 # 32-bit Windows would otherwise OverflowError on the
 # ``datetime.MAX.timestamp()`` round-trip.
-_MAX_UNIXTIME_SECONDS = 253402300799  # = datetime(9999,12,31,23,59,59,tz=UTC).timestamp()
+_MAX_UNIXTIME_SECONDS: Final[int] = (
+    253402300799  # = datetime(9999,12,31,23,59,59,tz=UTC).timestamp()
+)
 
 
 def _datetime_from_unixtime(value: int) -> datetime.datetime:

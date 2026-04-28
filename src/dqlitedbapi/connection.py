@@ -10,7 +10,7 @@ import warnings
 import weakref
 from collections.abc import Coroutine
 from types import TracebackType
-from typing import Any
+from typing import Any, Final
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
@@ -54,13 +54,13 @@ logger = logging.getLogger(__name__)
 # normal ``OperationalError`` rather than silently swallow it at the
 # commit/rollback boundary — masking it would hide a real diagnostic
 # from callers who issued an empty COMMIT/ROLLBACK by accident.
-_NO_TX_CODES = frozenset({1})
+_NO_TX_CODES: Final[frozenset[int]] = frozenset({1})
 # Substrings that mark a benign "no transaction was active" reply.
 # Mirror the client-layer ``_is_no_tx_rollback_error`` recogniser so a
 # wording drift in the server (or in the embedded SQLite version) that
 # drops one of these clauses does not produce a silent layer
 # divergence — the client suppressing while the dbapi raises.
-_NO_TX_SUBSTRINGS = ("no transaction is active", "cannot rollback")
+_NO_TX_SUBSTRINGS: Final[tuple[str, ...]] = ("no transaction is active", "cannot rollback")
 
 # Bound (in seconds) for joining the background event-loop thread on
 # teardown. Worst-case scenario: a coroutine queued on the loop is
@@ -70,7 +70,7 @@ _NO_TX_SUBSTRINGS = ("no transaction is active", "cannot rollback")
 # while preventing process hang on close. Both the finalizer
 # (``_cleanup_loop_thread``) and ``Connection.close()`` use this
 # bound — keep them in step via the constant.
-_LOOP_THREAD_JOIN_TIMEOUT_SECONDS = 5.0
+_LOOP_THREAD_JOIN_TIMEOUT_SECONDS: Final[float] = 5.0
 
 
 def _validate_timeout(timeout: float) -> None:
