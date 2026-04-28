@@ -66,3 +66,33 @@ class TestReturning:
             row = cursor.fetchone()
             assert row == (1, "bob")
             cursor.execute("DROP TABLE upd_ret")
+
+    def test_update_returning_zero_rows(self, cluster_address: str) -> None:
+        """UPDATE ... WHERE no-match RETURNING leaves a clean PEP 249
+        post-execute state: ``rowcount == 0``, ``fetchone() is None``,
+        ``fetchall() == []``. ``description`` may be present (with the
+        RETURNING column metadata) or None depending on what the wire
+        emits — we accept either, but the cursor must be safely
+        re-iterable (``fetchone()`` and ``fetchall()`` agree)."""
+        with connect(cluster_address, database="test_upd_ret_zero") as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE rz (id INTEGER PRIMARY KEY, v INT)")
+            cursor.execute("INSERT INTO rz (id, v) VALUES (1, 100)")
+            cursor.execute("UPDATE rz SET v = ? WHERE id = ? RETURNING id, v", (200, 999))
+            assert cursor.rowcount == 0
+            assert cursor.fetchone() is None
+            assert cursor.fetchall() == []
+            cursor.execute("DROP TABLE rz")
+
+    def test_delete_returning_zero_rows(self, cluster_address: str) -> None:
+        """DELETE ... WHERE no-match RETURNING leaves a clean PEP 249
+        post-execute state. Same pin as ``test_update_returning_zero_rows``
+        but for DELETE."""
+        with connect(cluster_address, database="test_del_ret_zero") as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE rz (id INTEGER PRIMARY KEY)")
+            cursor.execute("DELETE FROM rz WHERE id = 999 RETURNING id")
+            assert cursor.rowcount == 0
+            assert cursor.fetchone() is None
+            assert cursor.fetchall() == []
+            cursor.execute("DROP TABLE rz")
