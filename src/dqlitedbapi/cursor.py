@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol
 
 import dqliteclient.exceptions as _client_exc
 from dqlitedbapi.exceptions import (
@@ -1195,7 +1195,7 @@ class Cursor:
             del conn_messages[:]
         raise NotSupportedError("dqlite does not support stored procedures")
 
-    def nextset(self) -> bool | None:
+    def nextset(self) -> NoReturn:
         """PEP 249 optional extension — not supported.
 
         dqlite's wire protocol does not return multiple result sets.

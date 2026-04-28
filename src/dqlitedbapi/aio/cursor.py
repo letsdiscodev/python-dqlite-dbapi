@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from dqlitedbapi.cursor import (
     _EXECUTEMANY_REJECT_VERBS,
@@ -572,7 +572,7 @@ class AsyncCursor:
             del conn_messages[:]
         raise NotSupportedError("dqlite does not support stored procedures")
 
-    def nextset(self) -> bool | None:
+    def nextset(self) -> NoReturn:
         """PEP 249 optional extension — not supported."""
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
