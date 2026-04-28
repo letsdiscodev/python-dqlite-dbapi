@@ -209,6 +209,103 @@ class TestUnsupportedBindParameterTypes:
             with pytest.raises(DataError):
                 c.execute("SELECT ?", [complex(1, 2)])
 
+    def test_uuid_rejected_as_data_error(self, cluster_address: str) -> None:
+        """UUID is not a wire-recognized type — must surface as DataError.
+        Common in callers porting from psycopg/asyncpg which both
+        accept UUID."""
+        from uuid import UUID
+
+        from dqlitedbapi.exceptions import DataError
+
+        with connect(cluster_address, database="test_bind_types") as conn:
+            c = conn.cursor()
+            with pytest.raises(DataError):
+                c.execute(
+                    "SELECT ?",
+                    [UUID("12345678-1234-5678-1234-567812345678")],
+                )
+
+    def test_path_rejected_as_data_error(self, cluster_address: str) -> None:
+        """``pathlib.Path`` (sometimes used for filename columns) must
+        surface as DataError so a caller is steered to ``str(path)``."""
+        from pathlib import Path
+
+        from dqlitedbapi.exceptions import DataError
+
+        with connect(cluster_address, database="test_bind_types") as conn:
+            c = conn.cursor()
+            with pytest.raises(DataError):
+                c.execute("SELECT ?", [Path("/tmp/foo")])
+
+    def test_array_array_rejected_as_data_error(self, cluster_address: str) -> None:
+        """``array.array`` is bytes-like but not in the accepted
+        BLOB-input set. Must surface as DataError."""
+        from array import array
+
+        from dqlitedbapi.exceptions import DataError
+
+        with connect(cluster_address, database="test_bind_types") as conn:
+            c = conn.cursor()
+            with pytest.raises(DataError):
+                c.execute("SELECT ?", [array("b", b"hello")])
+
+    def test_intenum_round_trips_as_int(self, cluster_address: str) -> None:
+        """``enum.IntEnum`` is an ``int`` subclass; the wire encoder
+        accepts it as INTEGER. Pin observed behavior so a future
+        refactor that tightened the type check (rejecting subclasses)
+        is a deliberate decision, not an accident."""
+        from enum import IntEnum
+
+        class _Color(IntEnum):
+            RED = 1
+
+        with connect(cluster_address, database="test_bind_types") as conn:
+            c = conn.cursor()
+            c.execute("SELECT ?", [_Color.RED])
+            row = c.fetchone()
+            assert row == (1,) or row == (int(_Color.RED),)
+
+
+@pytest.mark.integration
+class TestBindBoundaryDataErrors:
+    """Boundary inputs that must surface at the DBAPI as ``DataError``
+    (not as raw ValueError / EncodeError leaking from the wire layer).
+    The wire encoder enforces caps; the dbapi's ``_call_client``
+    wraps the wire's ValueError into PEP 249 ``DataError``. Pin the
+    end-to-end contract so a future narrowing of the wrap cannot
+    silently let a wire exception leak past the dbapi boundary."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [2**63, -(2**63) - 1, 2**63 + 1, 2**100, -(2**100)],
+    )
+    def test_bind_int_over_int64_raises_data_error(self, cluster_address: str, value: int) -> None:
+        from dqlitedbapi.exceptions import DataError
+
+        with connect(cluster_address, database="test_bind_overflow") as conn:
+            c = conn.cursor()
+            with pytest.raises(DataError):
+                c.execute("SELECT ?", [value])
+
+    @pytest.mark.parametrize("value", [2**63 - 1, -(2**63), 0, 1, -1])
+    def test_bind_int_at_int64_boundary_succeeds(self, cluster_address: str, value: int) -> None:
+        with connect(cluster_address, database="test_bind_overflow") as conn:
+            c = conn.cursor()
+            c.execute("SELECT ?", [value])
+            assert c.fetchone() == (value,)
+
+    def test_bind_blob_over_cap_raises_data_error(self, cluster_address: str) -> None:
+        """A bind value larger than the wire-layer 16 MiB BLOB cap
+        must surface as ``DataError`` — never as a raw EncodeError or
+        a silent truncation."""
+        from dqlitedbapi.exceptions import DataError
+
+        big = b"x" * (16 * 1024 * 1024 + 1)
+        with connect(cluster_address, database="test_bind_overflow") as conn:
+            c = conn.cursor()
+            with pytest.raises(DataError):
+                c.execute("SELECT ?", [big])
+
 
 @pytest.mark.integration
 class TestCursorDescriptionEdgeCases:
