@@ -440,3 +440,50 @@ class TestIso8601YearBoundaryRoundTrip:
         assert "10000-01-01T00:00:00" in str(ei.value), (
             f"DataError must echo original wire text; got {ei.value!s}"
         )
+
+
+class TestIso8601FractionalSecondsVariants:
+    """Pin the matrix of fractional-second representations the decoder
+    accepts. Python's ``datetime.fromisoformat`` is lenient on the
+    input side: 0 / 3 / 6 fractional digits, ``T`` or space separator,
+    and ``Z`` / explicit-offset / no-offset are all valid. The dqlite
+    server emits canonical space-separated 6-digit values, but a peer
+    client (Go, C, custom) might emit a different shape; the decoder
+    must accept all of them.
+
+    A future change to the parser (custom regex, strict validation)
+    would silently break the no-µs case which is the canonical wire
+    form for whole-second wall clocks.
+    """
+
+    @pytest.mark.parametrize(
+        ("encoded", "expected"),
+        [
+            (
+                "2024-01-01 12:34:56",
+                datetime.datetime(2024, 1, 1, 12, 34, 56),
+            ),
+            (
+                "2024-01-01 12:34:56.000000",
+                datetime.datetime(2024, 1, 1, 12, 34, 56),
+            ),
+            (
+                "2024-01-01 12:34:56.123456",
+                datetime.datetime(2024, 1, 1, 12, 34, 56, 123456),
+            ),
+            (
+                "2024-01-01 12:34:56.123",
+                datetime.datetime(2024, 1, 1, 12, 34, 56, 123000),
+            ),
+            (
+                "2024-01-01T12:34:56.5",
+                datetime.datetime(2024, 1, 1, 12, 34, 56, 500000),
+            ),
+        ],
+    )
+    def test_decoder_accepts_fractional_seconds_variants(
+        self, encoded: str, expected: datetime.datetime
+    ) -> None:
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        assert _datetime_from_iso8601(encoded) == expected
