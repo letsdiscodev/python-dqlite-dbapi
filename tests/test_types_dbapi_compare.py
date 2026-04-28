@@ -190,3 +190,74 @@ class TestDBAPITypeEqFallthrough:
             hash(STRING)
         with pytest.raises(TypeError, match="unhashable"):
             hash(NUMBER)
+
+
+class TestDBAPITypeAcceptRejectMatrix:
+    """Pin the explicit accept / reject matrix for each PEP 249 type
+    singleton.
+
+    The case-insensitive name match is intentional and supports
+    operators that mirror SQLite's permissive declared-type strings.
+    What we do NOT want is for typos (``"DATETIEM"``, ``"BLOBS"``) to
+    be silently equal to anything — both halves should be pinned so a
+    future cleanup that tightens the comparator doesn't accidentally
+    break user code that relied on case-insensitive matching."""
+
+    @pytest.mark.parametrize(
+        ("type_obj", "accepts", "rejects"),
+        [
+            (
+                DATETIME,
+                [
+                    "DATETIME",
+                    "datetime",
+                    "DateTime",
+                    "DATE",
+                    "TIME",
+                    "TIMESTAMP",
+                    ValueType.ISO8601,
+                    ValueType.UNIXTIME,
+                    int(ValueType.ISO8601),
+                ],
+                ["", "DATETIEM", "datetimes", "TIMESTAMPS", 99, "INTEGER"],
+            ),
+            (
+                STRING,
+                ["TEXT", "varchar", "CHAR", "CLOB", ValueType.TEXT],
+                ["", "TXT", "STRINGS", 99, "INTEGER"],
+            ),
+            (
+                BINARY,
+                ["BLOB", "blob", "BINARY", "VARBINARY", ValueType.BLOB],
+                ["", "BIN", "BLOBS", 99],
+            ),
+            (
+                NUMBER,
+                [
+                    "INTEGER",
+                    "INT",
+                    "REAL",
+                    "FLOAT",
+                    ValueType.INTEGER,
+                    ValueType.FLOAT,
+                    ValueType.BOOLEAN,
+                ],
+                ["", "NUMERICS", "INTGER", 99],
+            ),
+            (
+                ROWID,
+                ["ROWID", "rowid", "INTEGER PRIMARY KEY", ValueType.INTEGER],
+                ["", "ROWIDS", 99],
+            ),
+        ],
+    )
+    def test_dbapi_type_singleton_accept_reject_matrix(
+        self,
+        type_obj: object,
+        accepts: list[object],
+        rejects: list[object],
+    ) -> None:
+        for v in accepts:
+            assert type_obj == v, f"{type_obj!r} should accept {v!r} but does not"
+        for v in rejects:
+            assert type_obj != v, f"{type_obj!r} should reject {v!r} but accepted it"
