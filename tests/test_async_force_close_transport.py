@@ -10,7 +10,9 @@ shape changed; this hook is the single supported access boundary.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from dqlitedbapi.aio.connection import AsyncConnection
 
@@ -80,3 +82,61 @@ def test_force_close_transport_swallows_writer_close_exception() -> None:
 
     conn.force_close_transport()  # must not raise
     writer.close.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_force_close_transport_concurrent_with_async_close() -> None:
+    """Pin the docstring's concurrent-safety contract: invoking the
+    sync hook while an async ``close()`` is in flight on the same
+    connection must not raise. Both paths converge on
+    ``writer.close()`` (idempotent on asyncio's StreamWriter).
+
+    Setup:
+      * Build an AsyncConnection in the post-_ensure_locks state.
+      * The inner client conn's ``close()`` yields once via
+        ``asyncio.sleep(0)`` so the async path reaches its first
+        await before completing.
+      * Start ``conn.close()`` as a task; let it park.
+      * Invoke ``conn.force_close_transport()`` synchronously from
+        the parent coroutine.
+      * Resume the close_task; assert it finished cleanly.
+    """
+    import asyncio
+
+    conn = AsyncConnection("localhost:9001", database="x")
+    # Reproduce the post-_ensure_locks state without going through a
+    # real connect.
+    import weakref
+
+    loop = asyncio.get_running_loop()
+    conn._loop_ref = weakref.ref(loop)
+    conn._connect_lock = asyncio.Lock()
+    conn._op_lock = asyncio.Lock()
+
+    inner = MagicMock()
+    proto = MagicMock()
+    writer = MagicMock()
+    proto._writer = writer
+    inner._protocol = proto
+    inner.in_transaction = False
+
+    async def slow_close() -> None:
+        await asyncio.sleep(0)
+
+    inner.close = AsyncMock(side_effect=slow_close)
+    conn._async_conn = inner
+
+    # Park the async close inside its first await.
+    close_task = asyncio.create_task(conn.close())
+    await asyncio.sleep(0)
+
+    # Synchronous hook from the same coroutine — must not raise.
+    conn.force_close_transport()
+
+    await close_task
+
+    assert writer.close.call_count >= 1, (
+        "writer.close must be called at least once across the two "
+        "convergent paths; idempotence ensures multiple calls are safe"
+    )
+    assert close_task.done() and close_task.exception() is None
