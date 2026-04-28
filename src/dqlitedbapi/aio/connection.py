@@ -378,6 +378,16 @@ class AsyncConnection:
         adapter would have to walk private attributes of two
         underlying packages, which broke silently when the chain
         changed shape.
+
+        Concurrent-safety: this method may be invoked while an async
+        ``close()`` is in flight on the same connection (different
+        greenlet, different thread, or finalize racing user code).
+        Both will end up calling ``writer.close()``, which is itself
+        idempotent — calling it twice is harmless. The hook does NOT
+        wait for the in-flight async close to finish; if a rollback
+        is mid-flight, it will be cancelled by the transport teardown.
+        Callers that need to wait for the async path to drain should
+        await ``close()`` from the original loop instead.
         """
         inner = self._async_conn
         if inner is None:
