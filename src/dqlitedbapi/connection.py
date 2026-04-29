@@ -773,8 +773,34 @@ class Connection:
             self._finalizer = None
         try:
             if self._loop is not None and not self._loop.is_closed():
-                with contextlib.suppress(Exception):
-                    self._run_sync(self._close_async())
+                # Same-thread re-entry detection: if a signal handler
+                # (SIGTERM / SIGINT) ran ``close()`` on the creator
+                # thread while a prior ``_run_sync`` was still parked
+                # in ``Future.result(timeout=...)``, ``_op_lock`` is
+                # already held by this same thread. The bounded
+                # acquire inside ``_run_sync`` would block for
+                # ``self._timeout`` and time out — correct, but
+                # operator-hostile (a SIGTERM handler that calls
+                # ``close()`` should not pause for the configured
+                # query timeout).
+                #
+                # Skip the bounded acquire entirely on detected same-
+                # thread re-entry. The underlying ``_async_conn``'s
+                # transport reap is best-effort even on the happy
+                # path (the existing ``suppress(Exception)`` wrap
+                # acknowledges this); the loop teardown in the
+                # ``finally`` below still runs unconditionally so the
+                # daemon thread is reaped and the OS socket FDs are
+                # released by the loop's stop-and-close. Close the
+                # un-awaited coroutine explicitly so it does not emit
+                # ``coroutine 'Connection._close_async' was never
+                # awaited`` at gc time.
+                if self._op_lock.locked() and threading.get_ident() == self._creator_thread:
+                    coro = self._close_async()
+                    coro.close()
+                else:
+                    with contextlib.suppress(Exception):
+                        self._run_sync(self._close_async())
         finally:
             with self._loop_lock:
                 if self._loop is not None and not self._loop.is_closed():
