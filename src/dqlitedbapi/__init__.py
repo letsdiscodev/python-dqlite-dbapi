@@ -11,7 +11,12 @@
 # ``DQLITEWIRE_ALLOW_FREE_THREADED=1`` is signalling they accept
 # the single-owner discipline across all layers.
 
-from dqlitedbapi._constants import SQLITE_VERSION, SQLITE_VERSION_INFO
+from dqlitedbapi._constants import (
+    SQLITE_VERSION as _SQLITE_VERSION,
+)
+from dqlitedbapi._constants import (
+    SQLITE_VERSION_INFO as _SQLITE_VERSION_INFO,
+)
 from dqlitedbapi.connection import Connection
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import (
@@ -68,8 +73,8 @@ paramstyle = "qmark"  # Question mark style: WHERE name=?
 # dialect feature paths) and the pin test
 # (``tests/integration/test_sqlite_version_pin.py``) that verifies
 # the value against the live cluster.
-sqlite_version_info = SQLITE_VERSION_INFO
-sqlite_version = SQLITE_VERSION
+sqlite_version_info = _SQLITE_VERSION_INFO
+sqlite_version = _SQLITE_VERSION
 
 __version__ = "0.1.4"
 
