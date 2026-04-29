@@ -197,3 +197,132 @@ class TestRunSyncCancelSuccessRace:
         # Must NOT raise OperationalError; must return the late success.
         result = conn._run_sync(_never_runs())
         assert result == 1234
+
+
+class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
+    """Pin: when the bounded ``Future.result(timeout=...)`` expired
+    but the coroutine actually completed on the loop thread with a
+    server-side exception (e.g. ``IntegrityError``), ``_run_sync``
+    surfaces the recovered exception's class directly — NOT a
+    ``OperationalError("timed out")`` wrap.
+
+    The wrap-in-OperationalError shape used to break caller-side
+    type-based dispatch: ``except IntegrityError:`` would not match,
+    and the retry harness would re-run a non-idempotent autocommit
+    DML, double-writing. The fix re-raises ``recovered_error``
+    directly; the original ``TimeoutError`` is still reachable via
+    ``__context__``.
+    """
+
+    def test_recovered_integrity_error_propagates_directly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import concurrent.futures as cf
+        from typing import Any
+
+        from dqlitedbapi import connection as conn_module
+        from dqlitedbapi.exceptions import IntegrityError
+
+        conn = Connection("localhost:9001", timeout=0.05)
+
+        class _LateIntegrityErrorFuture:
+            """Future whose ``result(timeout=...)`` first raises
+            TimeoutError, then reports the coroutine as completed-
+            with-IntegrityError (e.g. UNIQUE constraint violation
+            that landed at the same instant the sync timer fired)."""
+
+            def __init__(self) -> None:
+                self._calls = 0
+
+            def cancel(self) -> bool:
+                return False
+
+            def done(self) -> bool:
+                return True
+
+            def cancelled(self) -> bool:
+                return False
+
+            def result(self, timeout: float | None = None) -> Any:
+                self._calls += 1
+                if self._calls == 1:
+                    raise cf.TimeoutError()
+                raise IntegrityError(
+                    "UNIQUE constraint failed", code=2067, raw_message="UNIQUE constraint failed"
+                )
+
+        stub = _LateIntegrityErrorFuture()
+
+        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _LateIntegrityErrorFuture:
+            coro.close()
+            return stub
+
+        monkeypatch.setattr(
+            conn_module.asyncio,  # type: ignore[attr-defined]
+            "run_coroutine_threadsafe",
+            _fake_run_coroutine_threadsafe,
+        )
+
+        async def _never_runs() -> None:
+            await asyncio.sleep(999)
+
+        # Faithful exception class wins over contract preservation:
+        # the IntegrityError must propagate, NOT be wrapped in
+        # OperationalError.
+        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+            conn._run_sync(_never_runs())
+
+    def test_recovered_exception_carries_timeout_in_context(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The original ``TimeoutError`` is preserved on the raised
+        exception's ``__context__`` so callers that need the timeout
+        signal for diagnostics can still walk the chain."""
+        import concurrent.futures as cf
+        from typing import Any
+
+        from dqlitedbapi import connection as conn_module
+        from dqlitedbapi.exceptions import IntegrityError
+
+        conn = Connection("localhost:9001", timeout=0.05)
+
+        class _Stub:
+            def __init__(self) -> None:
+                self._calls = 0
+
+            def cancel(self) -> bool:
+                return False
+
+            def done(self) -> bool:
+                return True
+
+            def cancelled(self) -> bool:
+                return False
+
+            def result(self, timeout: float | None = None) -> Any:
+                self._calls += 1
+                if self._calls == 1:
+                    raise cf.TimeoutError()
+                raise IntegrityError("constraint failed", code=2067, raw_message="x")
+
+        stub = _Stub()
+        monkeypatch.setattr(
+            conn_module.asyncio,  # type: ignore[attr-defined]
+            "run_coroutine_threadsafe",
+            lambda coro, loop: (coro.close(), stub)[1],
+        )
+
+        async def _never_runs() -> None:
+            await asyncio.sleep(999)
+
+        try:
+            conn._run_sync(_never_runs())
+        except IntegrityError as e:
+            # Python sets __context__ to the in-flight TimeoutError
+            # automatically when an except clause raises a new
+            # exception.
+            assert isinstance(e.__context__, cf.TimeoutError), (
+                "the original TimeoutError must be reachable via __context__"
+            )
+        else:
+            pytest.fail("expected IntegrityError to be raised")

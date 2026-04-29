@@ -595,15 +595,37 @@ class Connection:
                         exc_info=True,
                     )
                 if recovered_error is not None:
-                    # Surface the recovered exception via __cause__
-                    # while preserving the OperationalError("timed out")
-                    # type contract. SA's is_disconnect cause-walk and
-                    # any caller printing exc_info will see the real
-                    # cause instead of the timeout placeholder.
-                    raise OperationalError(
-                        f"Operation timed out after {self._timeout} seconds "
-                        f"(coroutine completed with error: {recovered_error!r})"
-                    ) from recovered_error
+                    # Operation actually completed on the server (the
+                    # race-recovery branch above caught a real
+                    # exception from ``future.result(timeout=0)``).
+                    # Re-raise it directly instead of wrapping in
+                    # ``OperationalError("timed out")``: the
+                    # type-of-truth is the recovered exception, and a
+                    # wrap here misleads caller-side type-based
+                    # dispatch (``except IntegrityError:`` no longer
+                    # matches a constraint violation; ``except
+                    # OperationalError:`` triggers a redundant retry
+                    # against an autocommit DML that already
+                    # persisted server-side, double-writing).
+                    #
+                    # The original ``TimeoutError`` is still reachable
+                    # via ``__context__`` — Python sets it
+                    # automatically when raising inside an except —
+                    # so callers that need the timeout signal for
+                    # diagnostics can walk the chain. The trade-off
+                    # against the legacy "sync-timeout always
+                    # surfaces as OperationalError" contract is
+                    # deliberate: faithful exception class wins over
+                    # contract preservation.
+                    #
+                    # ``noqa: B904`` — bare ``raise recovered_error``
+                    # is intentional. ``from e`` would force-set
+                    # ``__cause__`` to the TimeoutError, mis-stating
+                    # causality (the server-side error wasn't caused
+                    # by the calling-thread timer); ``from None``
+                    # would suppress the chain entirely, hiding the
+                    # timeout signal that callers may need.
+                    raise recovered_error  # noqa: B904
                 raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
             except (KeyboardInterrupt, SystemExit):
                 # KeyboardInterrupt / SystemExit raised inside the
