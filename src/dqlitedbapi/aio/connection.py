@@ -361,11 +361,14 @@ class AsyncConnection:
                         if writer is not None:
                             with contextlib.suppress(Exception):
                                 writer.close()
-                    self._async_conn = None
-                    self._connect_lock = None
-                    self._op_lock = None
-                    self._loop_ref = None
-                    return
+                    # Fall through (no ``return``) to the unconditional
+                    # ``self._async_conn = None`` and lock-cleanup tail
+                    # below. ``return`` inside a ``finally`` block
+                    # silently discards any propagating CancelledError /
+                    # KeyboardInterrupt / SystemExit from the outer
+                    # ``try``, which breaks TaskGroup parents'
+                    # observation of a child cancellation that landed
+                    # during close.
                 except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                     # The shielded close should have absorbed cancel;
                     # if a fresh signal lands here, allow it to
