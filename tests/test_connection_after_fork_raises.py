@@ -18,6 +18,7 @@ async work, so a connection in an unconnected state is sufficient.
 
 from __future__ import annotations
 
+import contextlib
 import os
 
 import pytest
@@ -70,3 +71,51 @@ def test_dbapi_connection_used_after_fork_raises_interface_error() -> None:
         # Don't call close() — the connection was never connected, and
         # the loop thread (parent's) is still healthy here.
         conn._closed_flag[0] = True
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
+def test_dbapi_connection_close_after_fork_short_circuits() -> None:
+    """``close()`` in the child must not run ``_close_async`` against
+    the parent's defunct loop or send FIN on the inherited socket.
+    Short-circuits to a quiet local-state flip.
+
+    Drive ``_ensure_loop`` first so there's a daemon loop thread in
+    the parent — which does NOT survive fork — to exercise the
+    most dangerous case: close() trying to drive a dead loop.
+    """
+    conn = dqlitedbapi.connect("127.0.0.1:9999")
+    try:
+        # Ensure the parent has a live loop thread so the child
+        # inherits the references but not the actual thread.
+        conn._ensure_loop()
+
+        r, w = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.close(r)
+                try:
+                    conn.close()  # must not deadlock or raise
+                    assert conn._closed
+                    os.write(w, b"OK")
+                except Exception as e:  # noqa: BLE001
+                    os.write(w, f"WRONG:{type(e).__name__}:{e}".encode())
+                finally:
+                    os.close(w)
+            finally:
+                os._exit(0)
+        os.close(w)
+        result = b""
+        while True:
+            chunk = os.read(r, 4096)
+            if not chunk:
+                break
+            result += chunk
+        os.close(r)
+        os.waitpid(pid, 0)
+        assert result == b"OK", f"child reported: {result!r}"
+    finally:
+        # Parent-side cleanup. close() in the parent runs the full
+        # teardown so the daemon thread joins.
+        with contextlib.suppress(Exception):
+            conn.close()

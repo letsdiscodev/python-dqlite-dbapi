@@ -779,6 +779,26 @@ class Connection:
         # short-circuit. Mirrors the cursor-side resolution.
         if self._closed:
             return
+        # Fork-after-init: the inherited connection FDs are shared
+        # with the parent, the inherited daemon loop thread did not
+        # survive fork (only the calling thread crosses), and
+        # ``self._loop`` references a defunct loop. Calling
+        # ``_close_async`` would deadlock or send FIN on sockets the
+        # parent still uses. Flip the closed flags so the child can
+        # GC its references quietly without touching the wire or the
+        # dead loop, and skip the loop teardown. The pid-aware
+        # ``_check_thread`` would also raise here, but close() is
+        # documented as PEP 249 idempotent and silent on already-
+        # closed inputs — quiet no-op preserves that contract for
+        # the GC / atexit path that commonly drives close in a
+        # forked worker.
+        if os.getpid() != self._creator_pid:
+            self._closed = True
+            self._closed_flag[0] = True
+            if self._finalizer is not None:
+                self._finalizer.detach()
+                self._finalizer = None
+            return
         self._check_thread()
         self._closed = True
         # Flip the flag the finalizer reads so it knows this was an
