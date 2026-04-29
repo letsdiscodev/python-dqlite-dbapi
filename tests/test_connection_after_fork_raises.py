@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -71,6 +72,41 @@ def test_dbapi_connection_used_after_fork_raises_interface_error() -> None:
         # Don't call close() — the connection was never connected, and
         # the loop thread (parent's) is still healthy here.
         conn._closed_flag[0] = True
+
+
+def test_dbapi_close_after_fork_scrubs_cursors() -> None:
+    """The fork-short-circuit branch in ``Connection.close()`` must
+    cascade ``_closed = True`` and clear buffered rows on tracked
+    cursors so a forked child's cursor doesn't keep silently
+    answering ``fetchone/fetchmany/fetchall`` from the parent's
+    stale in-memory rows. Mirrors the non-fork branch and the stdlib
+    ``sqlite3.Connection.close()`` cascade contract."""
+    import contextlib as _contextlib
+
+    conn = dqlitedbapi.connect("127.0.0.1:9999")
+    cursor = conn.cursor()
+    cursor._rows = [(1,), (2,)]
+    cursor._description = (("id", None, None, None, None, None, None),)
+    cursor._rowcount = 2
+    cursor._lastrowid = 7
+    cursor._row_index = 0
+
+    fake_parent_pid = conn._creator_pid + 1
+    conn._creator_pid = fake_parent_pid
+
+    try:
+        with patch("dqlitedbapi.connection.os.getpid", return_value=fake_parent_pid + 1):
+            conn.close()
+
+        assert cursor._closed is True
+        assert cursor._rows == []
+        assert cursor._description is None
+        assert cursor._rowcount == -1
+        assert cursor._lastrowid is None
+        assert cursor._row_index == 0
+    finally:
+        with _contextlib.suppress(Exception):
+            conn._closed_flag[0] = True
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")

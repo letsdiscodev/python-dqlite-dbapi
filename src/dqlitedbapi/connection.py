@@ -794,6 +794,22 @@ class Connection:
         if os.getpid() != self._creator_pid:
             self._closed = True
             self._closed_flag[0] = True
+            # Cascade to tracked cursors so buffered fetches on them
+            # stop silently answering from stale in-memory rows in
+            # the child. stdlib sqlite3.Connection.close() does the
+            # same; the non-fork branch below mirrors this loop.
+            # Without it, a cursor inherited across fork retains
+            # _closed=False and the parent's stale rows / description.
+            try:
+                for cur in list(self._cursors):
+                    cur._closed = True
+                    cur._rows = []
+                    cur._description = None
+                    cur._rowcount = -1
+                    cur._lastrowid = None
+                    cur._row_index = 0
+            finally:
+                self._cursors.clear()
             if self._finalizer is not None:
                 self._finalizer.detach()
                 self._finalizer = None
