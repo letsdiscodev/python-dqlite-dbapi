@@ -199,3 +199,31 @@ class TestTypesModuleAll:
         assert "_Description" not in types_mod.__all__
         assert "_DescriptionTuple" not in types_mod.__all__
         assert "_iso8601_from_datetime" not in types_mod.__all__
+
+
+class TestSqliteVersionSourceOfTruth:
+    """Pin: ``sqlite_version_info`` and ``sqlite_version`` are
+    re-exported from a single module-private source
+    (``dqlitedbapi._constants``); sync and async surfaces share the
+    same tuple / string objects. A maintainer who bumped the value
+    in one place but forgot the other would have produced silent
+    divergence; sharing the source makes that drift impossible at
+    the literal level."""
+
+    def test_sync_and_async_share_sqlite_version_info_object(self) -> None:
+        import dqlitedbapi.aio
+
+        # Identity (``is``), not just equality — proves the shared-
+        # source-of-truth refactor is in place.
+        assert dqlitedbapi.sqlite_version_info is dqlitedbapi.aio.sqlite_version_info
+
+    def test_sync_and_async_share_sqlite_version_string(self) -> None:
+        import dqlitedbapi.aio
+
+        assert dqlitedbapi.sqlite_version == dqlitedbapi.aio.sqlite_version
+
+    def test_constants_match_private_source(self) -> None:
+        from dqlitedbapi._constants import SQLITE_VERSION, SQLITE_VERSION_INFO
+
+        assert dqlitedbapi.sqlite_version_info is SQLITE_VERSION_INFO
+        assert dqlitedbapi.sqlite_version == SQLITE_VERSION
