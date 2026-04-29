@@ -30,6 +30,7 @@ from dqlitewire import (
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
 )
+from dqlitewire import NO_TRANSACTION_MESSAGE_SUBSTRINGS
 from dqlitewire.constants import primary_sqlite_code
 
 __all__ = ["Connection"]
@@ -61,11 +62,12 @@ logger = logging.getLogger(__name__)
 # from callers who issued an empty COMMIT/ROLLBACK by accident.
 _NO_TX_CODES: Final[frozenset[int]] = frozenset({1})
 # Substrings that mark a benign "no transaction was active" reply.
-# Mirror the client-layer ``_is_no_tx_rollback_error`` recogniser so a
-# wording drift in the server (or in the embedded SQLite version) that
-# drops one of these clauses does not produce a silent layer
-# divergence — the client suppressing while the dbapi raises.
-_NO_TX_SUBSTRINGS: Final[tuple[str, ...]] = ("no transaction is active", "cannot rollback")
+# Imported from ``dqlitewire`` so the dbapi recogniser and the
+# client-layer ``_is_no_tx_rollback_error`` share one source of
+# truth — a wording drift in the server (or in the embedded SQLite
+# version) that drops one of these clauses cannot produce silent
+# layer divergence (client suppressing while the dbapi raises).
+_NO_TX_SUBSTRINGS: Final[tuple[str, ...]] = NO_TRANSACTION_MESSAGE_SUBSTRINGS
 
 # Bound (in seconds) for joining the background event-loop thread on
 # teardown. Worst-case scenario: a coroutine queued on the loop is
