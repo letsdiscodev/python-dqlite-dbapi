@@ -104,14 +104,6 @@ async def test_force_close_transport_concurrent_with_async_close() -> None:
     import asyncio
 
     conn = AsyncConnection("localhost:9001", database="x")
-    # Reproduce the post-_ensure_locks state without going through a
-    # real connect.
-    import weakref
-
-    loop = asyncio.get_running_loop()
-    conn._loop_ref = weakref.ref(loop)
-    conn._connect_lock = asyncio.Lock()
-    conn._op_lock = asyncio.Lock()
 
     inner = MagicMock()
     proto = MagicMock()
@@ -125,6 +117,11 @@ async def test_force_close_transport_concurrent_with_async_close() -> None:
 
     inner.close = AsyncMock(side_effect=slow_close)
     conn._async_conn = inner
+
+    # Use the production lock-binding path. Any future enhancement to
+    # ``_ensure_locks`` (loop-lifecycle validation, state-machine
+    # flags, etc.) automatically applies to this test.
+    conn._ensure_locks()
 
     # Park the async close inside its first await.
     close_task = asyncio.create_task(conn.close())
