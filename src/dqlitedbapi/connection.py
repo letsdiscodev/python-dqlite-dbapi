@@ -18,7 +18,12 @@ from dqliteclient.connection import _parse_address as _client_parse_address
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client
-from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
+from dqlitedbapi.exceptions import (
+    InterfaceError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 from dqlitewire import (
     DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
 )
@@ -774,6 +779,40 @@ class Connection:
         if conn is None or self._closed:
             return False
         return bool(conn.in_transaction)
+
+    @property
+    def autocommit(self) -> bool:
+        """``True`` — dqlite operates in autocommit-by-default mode.
+
+        Mirrors the surface stdlib ``sqlite3`` added in Python 3.12 and
+        the long-standing ``psycopg.Connection.autocommit`` accessor.
+        Every statement commits at the server unless the caller issued
+        an explicit ``BEGIN``. See class docstring for the contract.
+
+        The bare dbapi exposes ``True`` here because the underlying
+        wire protocol is genuinely autocommit-by-default. The
+        SQLAlchemy adapter (``sqlalchemy-dqlite``) deliberately exposes
+        ``False`` because SA wraps the connection with explicit
+        BEGIN/COMMIT control — both are accurate for their respective
+        layer.
+
+        Setting to ``True`` is a no-op (acknowledges the existing
+        mode); setting to ``False`` raises ``NotSupportedError``
+        because the autocommit mode is fixed by the dqlite server
+        and cannot be toggled at the dbapi level.
+        """
+        return True
+
+    @autocommit.setter
+    def autocommit(self, value: bool) -> None:
+        if value is True:
+            return
+        raise NotSupportedError(
+            "dqlite operates in autocommit-by-default mode; the autocommit "
+            "flag cannot be turned off at the dbapi level. Wrap your "
+            "statements in explicit BEGIN/COMMIT (issued via cursor.execute) "
+            "to control transaction boundaries instead."
+        )
 
     def commit(self) -> None:
         """Commit any pending transaction.

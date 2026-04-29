@@ -18,7 +18,12 @@ from dqlitedbapi.connection import (
     _validate_timeout,
 )
 from dqlitedbapi.cursor import _call_client
-from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
+from dqlitedbapi.exceptions import (
+    InterfaceError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 from dqlitewire import (
     DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
 )
@@ -424,6 +429,38 @@ class AsyncConnection:
         if conn is None or self._closed:
             return False
         return bool(conn.in_transaction)
+
+    @property
+    def autocommit(self) -> bool:
+        """``True`` — dqlite operates in autocommit-by-default mode.
+
+        Mirrors the surface stdlib ``sqlite3`` added in Python 3.12 and
+        the long-standing ``psycopg.Connection.autocommit`` accessor.
+        Every statement commits at the server unless the caller issued
+        an explicit ``BEGIN``.
+
+        The bare async dbapi exposes ``True`` because the underlying
+        wire protocol is genuinely autocommit-by-default. The
+        SQLAlchemy adapter (``sqlalchemy-dqlite``) deliberately exposes
+        ``False`` because SA wraps the connection with explicit
+        BEGIN/COMMIT control — both are accurate for their respective
+        layer.
+
+        Setting to ``True`` is a no-op; setting to ``False`` raises
+        ``NotSupportedError``.
+        """
+        return True
+
+    @autocommit.setter
+    def autocommit(self, value: bool) -> None:
+        if value is True:
+            return
+        raise NotSupportedError(
+            "dqlite operates in autocommit-by-default mode; the autocommit "
+            "flag cannot be turned off at the dbapi level. Wrap your "
+            "statements in explicit BEGIN/COMMIT (issued via cursor.execute) "
+            "to control transaction boundaries instead."
+        )
 
     async def commit(self) -> None:
         """Commit any pending transaction.
