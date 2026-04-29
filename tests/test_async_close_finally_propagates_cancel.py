@@ -26,6 +26,8 @@ def _prime_connection_with_in_use_inner() -> AsyncConnection:
     """Build an AsyncConnection whose underlying client raises
     InterfaceError on close (simulating the in-use sibling-task
     scenario the close finally is designed to recover from)."""
+    import os as _os
+
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
     conn._async_conn = None  # set per-test
@@ -35,6 +37,7 @@ def _prime_connection_with_in_use_inner() -> AsyncConnection:
     conn._cursors = weakref.WeakSet()
     conn.messages = []
     conn._close_timeout = 0.5
+    conn._creator_pid = _os.getpid()
     return conn
 
 

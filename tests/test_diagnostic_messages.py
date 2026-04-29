@@ -116,8 +116,11 @@ class TestLoopAffinityMessageAtCallSites:
     async def test_ensure_locks_raises_with_loop_ids(self) -> None:
         """Drive the actual call site: bind on loop A, attempt use on
         loop B, assert message contains the loop ids."""
+        import os as _os
+
         conn = AsyncConnection.__new__(AsyncConnection)
         conn._closed = False
+        conn._creator_pid = _os.getpid()
         # Bind to a fake loop reference.
         import weakref
 

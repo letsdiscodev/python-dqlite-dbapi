@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 import weakref
 from types import TracebackType
 from typing import NoReturn
@@ -151,6 +152,12 @@ class AsyncConnection:
         self._close_timeout = close_timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
+        # Fork-after-init is unsupported: the inherited TCP socket
+        # is shared with the parent and writer.close() would FIN
+        # the parent's connection, and asyncio primitives are bound
+        # to the parent's loop. Symmetric with the sync sibling and
+        # the client-layer guards.
+        self._creator_pid = os.getpid()
         # asyncio primitives MUST be created inside the loop they will
         # run on. We instantiate lazily in _ensure_connection / the
         # op-serializing paths so constructors can safely run outside
@@ -193,6 +200,16 @@ class AsyncConnection:
         # per race. Fail fast here so no primitives are created.
         if self._closed:
             raise InterfaceError("Connection is closed")
+        # Fork-after-init: asyncio primitives are bound to the parent
+        # loop and the inherited socket is shared. Reject up front
+        # with the same diagnostic the sync sibling and the client
+        # layer use, so a forked worker sees a clear "reconstruct in
+        # the child" message instead of a confusing
+        # "Connection bound to a different event loop" error.
+        if os.getpid() != self._creator_pid:
+            raise InterfaceError(
+                "Connection used after fork; reconstruct from configuration in the target process."
+            )
         loop = asyncio.get_running_loop()
         if self._connect_lock is None:
             self._loop_ref = weakref.ref(loop)
@@ -257,6 +274,22 @@ class AsyncConnection:
         with mysterious "connection closed" errors mid-query.
         """
         if self._closed:
+            return
+        # Fork-after-init: the inherited socket FD is shared with the
+        # parent and the asyncio op_lock is bound to the parent's
+        # loop. Driving the async teardown here would either send FIN
+        # on the parent's connection (writer.close on the inherited
+        # FD) or hang on a parent-loop primitive. Flip the local
+        # state to closed and drop references quietly. Symmetric with
+        # the sync ``Connection.close`` and ``DqliteConnection.close``
+        # fork short-circuits.
+        if os.getpid() != self._creator_pid:
+            self._closed = True
+            self._async_conn = None
+            self._connect_lock = None
+            self._op_lock = None
+            self._loop_ref = None
+            self._cursors.clear()
             return
         # Set _closed first so any task waiting on the lock sees the
         # closed state as soon as it acquires. Then drain the current
@@ -426,6 +459,16 @@ class AsyncConnection:
         """
         inner = self._async_conn
         if inner is None:
+            return
+        # Fork-after-init: ``writer.close()`` on the inherited socket
+        # FD would send FIN on a connection the parent still holds
+        # open. Quietly drop the local reference instead so child GC
+        # has nothing left to act on. Symmetric with the
+        # ``DqliteConnection.close`` and ``Connection.close`` fork
+        # short-circuits; this synchronous force-close path was the
+        # last gap left by cycle 20's async-only fork guards.
+        if os.getpid() != self._creator_pid:
+            self._async_conn = None
             return
         proto = getattr(inner, "_protocol", None)
         if proto is None:
