@@ -351,8 +351,17 @@ def _convert_params(params: Sequence[Any] | None) -> list[Any] | None:
 
 
 def _strip_leading_comments(sql: str) -> str:
-    """Strip leading SQL comments (-- and /* */) and whitespace."""
-    s = sql.strip()
+    """Strip leading SQL comments (-- and /* */) and whitespace.
+
+    Also strips a leading UTF-8 BOM (``\\ufeff``). SQLite's
+    ``prepare.c::sqlite3_prepare_v2`` skips a leading BOM before
+    tokenisation; Python's ``str.strip()`` does NOT consider
+    ``\\ufeff`` whitespace, so a SQL file imported via
+    ``encoding='utf-8'`` (instead of ``utf-8-sig``) or written with
+    PowerShell ``Set-Content`` / Notepad would otherwise trip the
+    classifier prefix-checks.
+    """
+    s = sql.lstrip("﻿").strip()
     while True:
         if s.startswith("--"):
             newline = s.find("\n")
