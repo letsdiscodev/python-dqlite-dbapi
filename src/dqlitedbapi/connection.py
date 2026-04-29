@@ -652,10 +652,24 @@ class Connection:
                 # via the standard exception path, NOT trigger
                 # invalidation.
                 future.cancel()
-                if self._async_conn is not None:
+                # Synchronously null ``self._async_conn`` from the
+                # calling thread so the next sync op gets a fresh-
+                # connect path regardless of whether the loop thread
+                # has drained yet. ``self._async_conn = None`` is a
+                # single STORE_ATTR (GIL-atomic on CPython); the
+                # still-running loop-thread coroutine holds its own
+                # local reference to the dying conn and will reap its
+                # own transport via the scheduled ``_invalidate``.
+                # Without this null-out, a slow read on the loop can
+                # keep ``_in_use=True`` for up to the read deadline,
+                # wedging the next sync op with "another operation
+                # is in progress" until the old coroutine yields.
+                dying = self._async_conn
+                self._async_conn = None
+                if dying is not None:
                     with contextlib.suppress(RuntimeError):
                         loop.call_soon_threadsafe(
-                            self._async_conn._invalidate,
+                            dying._invalidate,
                             InterfaceError("operation interrupted"),
                         )
                 with contextlib.suppress(BaseException):

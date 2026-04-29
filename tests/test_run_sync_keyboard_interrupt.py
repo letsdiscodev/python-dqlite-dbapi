@@ -102,6 +102,44 @@ def test_run_sync_keyboard_interrupt_invalidates_underlying_connection() -> None
         conn._closed = True
 
 
+def test_run_sync_keyboard_interrupt_synchronously_nulls_async_conn() -> None:
+    """The KI arm must null ``self._async_conn`` synchronously on
+    the calling thread (a single GIL-atomic STORE_ATTR) so the next
+    sync op sees a fresh-connect path regardless of whether the
+    loop-thread coroutine has drained yet.
+
+    Without this, a slow loop-thread read can keep ``_in_use=True``
+    until the read deadline fires, wedging the next sync op with
+    "another operation is in progress" for up to ``self._timeout``
+    seconds.
+    """
+    conn = _make_with_loop_thread()
+    try:
+        # Capture the inner conn before KI lands.
+        before_inner = conn._async_conn
+        assert before_inner is not None
+
+        with (
+            patch(
+                "concurrent.futures.Future.result",
+                side_effect=KeyboardInterrupt,
+            ),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            conn.commit()
+
+        # The synchronous null-out happens on the calling thread
+        # before KI is re-raised — observable immediately upon return
+        # without any wait for the loop to drain.
+        assert conn._async_conn is None, (
+            "KI arm must synchronously null self._async_conn so the "
+            "next sync op gets a fresh-connect path; saw conn._async_conn "
+            f"= {conn._async_conn!r}"
+        )
+    finally:
+        conn._closed = True
+
+
 def test_run_sync_propagates_system_exit() -> None:
     conn = _make_with_loop_thread()
     try:
