@@ -22,10 +22,16 @@ from dqlitedbapi.types import (
     _datetime_from_unixtime,
     _Description,
 )
+from dqlitewire.constants import (
+    DQLITE_NOTFOUND,
+    DQLITE_PARSE,
+    DQLITE_PROTO,
+    ValueType,
+    primary_sqlite_code,
+)
 from dqlitewire.constants import SQLITE_CORRUPT as _SQLITE_CORRUPT
 from dqlitewire.constants import SQLITE_FORMAT as _SQLITE_FORMAT
 from dqlitewire.constants import SQLITE_NOTADB as _SQLITE_NOTADB
-from dqlitewire.constants import ValueType, primary_sqlite_code
 
 __all__ = ["Cursor"]
 
@@ -97,6 +103,7 @@ _CODE_TO_EXCEPTION: dict[
         | DataError
         | ProgrammingError
         | DatabaseError
+        | InterfaceError
     ],
 ] = {
     _SQLITE_CONSTRAINT: IntegrityError,
@@ -109,20 +116,45 @@ _CODE_TO_EXCEPTION: dict[
     _SQLITE_FORMAT: DatabaseError,
     _SQLITE_NOTADB: DatabaseError,
     _SQLITE_PROTOCOL: OperationalError,
+    # dqlite-namespace error codes (>= 1000). ``primary_sqlite_code``
+    # passes them through unchanged (see ``dqlitewire.constants``),
+    # so the dispatch table keys match the code observed on the wire.
+    # Upstream emission sites:
+    # - ``gateway.c::handle_request_*`` paths emit ``DQLITE_PROTO``
+    #   for "unrecognised request type" and similar protocol-misuse
+    #   replies → ``InterfaceError`` per PEP 249 §6.
+    # - ``gateway.c::handle_request_open`` emits ``DQLITE_NOTFOUND``
+    #   for "database does not exists" → ``ProgrammingError``
+    #   (database-name typo / stale config).
+    # - ``gateway.c`` emits ``DQLITE_PARSE`` for schema-version
+    #   mismatch / unrecognised cluster format / unrecognised request
+    #   type → ``ProgrammingError`` (caller-fault).
+    DQLITE_PROTO: InterfaceError,
+    DQLITE_NOTFOUND: ProgrammingError,
+    DQLITE_PARSE: ProgrammingError,
 }
 
 
 def _classify_operational(
     code: int | None,
 ) -> type[
-    OperationalError | IntegrityError | InternalError | DataError | ProgrammingError | DatabaseError
+    OperationalError
+    | IntegrityError
+    | InternalError
+    | DataError
+    | ProgrammingError
+    | DatabaseError
+    | InterfaceError
 ]:
-    """Pick a PEP 249 exception class from a SQLite error code.
+    """Pick a PEP 249 exception class from a SQLite or dqlite error code.
 
     Returns OperationalError for unknown / unmapped codes so the
     existing "anything can surface as OperationalError" contract
     holds; mapped codes surface as their PEP 249 equivalent
-    (IntegrityError, InternalError, DataError, ProgrammingError).
+    (IntegrityError, InternalError, DataError, ProgrammingError,
+    InterfaceError). Dqlite-namespace codes (DQLITE_PROTO/PARSE/
+    NOTFOUND, ≥ 1000) bypass the SQLite-primary mask via
+    ``primary_sqlite_code`` and dispatch directly.
     """
     if code is None:
         return OperationalError
@@ -167,7 +199,19 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # logs, structured-error tooling) don't have to walk
         # ``__cause__`` for it. ``message`` stays truncated for safe
         # default ``str(exc)``.
-        raise exc_cls(e.message, code=e.code, raw_message=e.raw_message) from e
+        #
+        # ``InterfaceError`` does not subclass ``DatabaseError`` and
+        # therefore does not accept ``code`` / ``raw_message`` —
+        # dqlite-namespace ``DQLITE_PROTO`` codes route to
+        # InterfaceError per PEP 249 §6 (protocol misuse rather than
+        # database-operation failure). The original code is still
+        # reachable via ``__cause__`` (the chained ``e``); the
+        # interface-error message keeps the code visible inline so
+        # callers don't have to walk the cause for routine
+        # diagnostics.
+        if issubclass(exc_cls, DatabaseError):
+            raise exc_cls(e.message, code=e.code, raw_message=e.raw_message) from e
+        raise exc_cls(f"{e.message} (code={e.code})") from e
     except _client_exc.DqliteConnectionError as e:
         # DqliteConnectionError carries no SQLite code today — pass
         # code=None explicitly so the signature matches the sibling
