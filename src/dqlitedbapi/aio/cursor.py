@@ -611,7 +611,13 @@ class AsyncCursor:
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else "open"
-        return f"<AsyncCursor rowcount={self._rowcount} {state}>"
+        # Include the parent connection's address and ``id(self)`` so
+        # the repr disambiguates cursors fanned across pooled
+        # connections in logs. See sync ``Cursor.__repr__``.
+        address = getattr(self._connection, "_address", "?")
+        return (
+            f"<AsyncCursor address={address!r} rowcount={self._rowcount} {state} at 0x{id(self):x}>"
+        )
 
     def __reduce__(self) -> NoReturn:
         # AsyncCursors hold a back-reference to a loop-bound

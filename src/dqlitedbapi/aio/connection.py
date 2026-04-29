@@ -37,6 +37,36 @@ __all__ = ["AsyncConnection"]
 logger = logging.getLogger(__name__)
 
 
+def _format_loop_affinity_message(
+    bound: asyncio.AbstractEventLoop | None,
+    current: asyncio.AbstractEventLoop | None,
+    site: str,
+) -> str:
+    """Build the loop-affinity ProgrammingError message with both
+    loop identities.
+
+    Mirrors the sync ``Connection`` thread-affinity message which
+    already names both thread ids — operators reading "different
+    event loop" without identifiers cannot tell whether the bound
+    loop has been garbage-collected (recovery: replace the
+    connection) or whether two concurrent loops are running
+    (recovery: route the call to the right loop).
+    """
+    if bound is None:
+        bound_descr = "garbage-collected (loop was closed and GC'd)"
+    elif bound.is_closed():
+        bound_descr = f"id=0x{id(bound):x} (closed)"
+    else:
+        bound_descr = f"id=0x{id(bound):x}"
+    current_descr = f"id=0x{id(current):x}" if current is not None else "no running loop"
+    return (
+        f"AsyncConnection {site} called from a different event loop; "
+        f"AsyncConnection instances are loop-bound and cannot be "
+        f"reused across asyncio.run() invocations. "
+        f"Originally bound loop: {bound_descr}; current loop: {current_descr}."
+    )
+
+
 class AsyncConnection:
     """Async database connection, loop-bound.
 
@@ -171,11 +201,7 @@ class AsyncConnection:
         else:
             bound = self._loop_ref() if self._loop_ref is not None else None
             if bound is not loop:
-                raise ProgrammingError(
-                    "AsyncConnection was first used on a different event loop; "
-                    "AsyncConnection instances are loop-bound and cannot be "
-                    "reused across asyncio.run() invocations."
-                )
+                raise ProgrammingError(_format_loop_affinity_message(bound, loop, "was first used"))
         # ``_op_lock`` is created together with ``_connect_lock`` above;
         # the assertion keeps mypy narrow without a runtime cost.
         assert self._op_lock is not None
@@ -579,8 +605,7 @@ class AsyncConnection:
                 bound = self._loop_ref()
                 if bound is not None and bound is not current_loop:
                     raise ProgrammingError(
-                        "AsyncConnection.cursor() called from a different "
-                        "event loop; AsyncConnection instances are loop-bound."
+                        _format_loop_affinity_message(bound, current_loop, ".cursor()")
                     )
         cur = AsyncCursor(self)
         self._cursors.add(cur)

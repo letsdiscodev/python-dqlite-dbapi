@@ -1242,7 +1242,13 @@ class Cursor:
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else "open"
-        return f"<Cursor rowcount={self._rowcount} {state}>"
+        # Include the parent connection's address and ``id(self)`` so
+        # the repr is self-disambiguating in logs that fan multiple
+        # cursors across pooled connections. ``getattr`` with ``'?'``
+        # fallback tolerates mock-backed test fixtures whose stub
+        # connection lacks ``_address``.
+        address = getattr(self._connection, "_address", "?")
+        return f"<Cursor address={address!r} rowcount={self._rowcount} {state} at 0x{id(self):x}>"
 
     def __reduce__(self) -> NoReturn:
         # Cursors hold a back-reference to a Connection that owns a
