@@ -184,6 +184,18 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     code=1 for the genuine reply, so the whitelist is exhaustive on
     its own — the message-text fallback is only valid alongside a
     real SQLite code.
+
+    Substring guard rationale: ``DQLITE_ERROR = 1`` (defined in
+    ``dqlite-upstream/include/dqlite.h``) shares the wire low-byte
+    with ``SQLITE_ERROR = 1``. Upstream emits ``DQLITE_ERROR`` from
+    ``gateway.c::handle_request_transfer`` ("leadership transfer
+    failed") on the ``REQUEST_TRANSFER`` path. The Python client
+    does not invoke that request type today, so the collision is
+    latent — but the substring filter is the only thing standing
+    between the latent dqlite-namespace code-1 emission and a
+    silent swallow by ``commit()`` / ``rollback()``. Drop the
+    filter only if the wire layer gains a namespace-discriminator
+    byte upstream.
     """
     code = getattr(exc, "code", None)
     if code is None:
