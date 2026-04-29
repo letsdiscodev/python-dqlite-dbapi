@@ -814,6 +814,14 @@ class Connection:
         """Async implementation of commit."""
         if self._async_conn is None:
             raise InterfaceError("Connection is closed")
+        # Clear ``messages`` under the lock so the PEP 249 contract
+        # "messages cleared by every method call" is atomic with the
+        # operation. ``_run_sync`` holds ``_op_lock`` across this
+        # coroutine; the pre-lock clear in ``commit()`` leaves a
+        # window where a sibling thread could write directly to
+        # ``messages`` between that clear and the lock acquire.
+        # Mirror the async sibling's defense-in-depth shape.
+        del self.messages[:]
         try:
             # Route through ``_call_client`` so client-layer errors
             # (including ``DqliteConnectionError`` for an externally
@@ -849,6 +857,9 @@ class Connection:
         """Async implementation of rollback."""
         if self._async_conn is None:
             raise InterfaceError("Connection is closed")
+        # In-lock messages clear; see ``_commit_async`` for the
+        # rationale.
+        del self.messages[:]
         try:
             # See ``_commit_async``: route through ``_call_client`` so
             # client-layer failures surface as PEP 249 ``Error``
