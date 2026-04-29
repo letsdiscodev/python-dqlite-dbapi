@@ -487,3 +487,15 @@ class TestIso8601FractionalSecondsVariants:
         from dqlitedbapi.types import _datetime_from_iso8601
 
         assert _datetime_from_iso8601(encoded) == expected
+
+    def test_decoder_accepts_bare_date_via_datetime_fromisoformat(self) -> None:
+        """Python 3.11+ relaxed ``datetime.fromisoformat`` to accept
+        bare ``YYYY-MM-DD`` without a time component (returning a
+        midnight datetime). Pin the contract so a regression that
+        re-tightens the parser, or that re-introduces a dead
+        ``date.fromisoformat`` fallback, cannot land silently."""
+        from dqlitedbapi.types import _datetime_from_iso8601
+
+        result = _datetime_from_iso8601("2024-01-15")
+        assert isinstance(result, datetime.datetime)
+        assert result == datetime.datetime(2024, 1, 15, 0, 0)

@@ -411,15 +411,13 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
         pass
     try:
         return datetime.time.fromisoformat(text)
-    except ValueError:
-        pass
-    try:
-        d = datetime.date.fromisoformat(text)
     except ValueError as exc:
+        # ``datetime.fromisoformat`` on Python 3.11+ accepts every
+        # form ``date.fromisoformat`` accepts (bare ``YYYY-MM-DD``,
+        # ISO week dates), so the only remaining failure shape is
+        # input that ``time.fromisoformat`` also rejects — i.e.
+        # genuine garbage. Surface as ``DataError``.
         raise DataError(f"Cannot parse ISO 8601 datetime from server: {text!r}") from exc
-    # pragma: no cover - dead on Python 3.11+ (datetime.fromisoformat
-    # now accepts bare YYYY-MM-DD, so this date-fallback never fires).
-    return datetime.datetime(d.year, d.month, d.day)  # pragma: no cover
 
 
 # Maximum UNIXTIME value that ``datetime.fromtimestamp(..., tz=UTC)``
