@@ -5,6 +5,7 @@ import concurrent.futures
 import contextlib
 import logging
 import math
+import os
 import threading
 import warnings
 import weakref
@@ -417,6 +418,18 @@ class Connection:
         self._op_lock = threading.Lock()
         self._connect_lock: asyncio.Lock | None = None
         self._creator_thread = threading.get_ident()
+        # ``threading.get_ident()`` returns the OS pthread tid which on
+        # Linux/macOS may match across fork (the child's main thread
+        # tid usually equals the pid). Fork-after-init is unsupported:
+        # the inherited TCP socket would be shared with the parent and
+        # writes would interleave on the wire, the inherited daemon
+        # loop thread does not survive fork, and asyncio primitives
+        # bound to the parent's loop are unusable in the child. Store
+        # the creator pid so cross-fork use raises a clear
+        # ``InterfaceError`` from any public method, instead of silent
+        # corruption. Symmetric with the pickle / copy / deepcopy
+        # guards on this class.
+        self._creator_pid = os.getpid()
         # PEP 249 optional extension. No driver path currently appends
         # here; callers can rely on the attribute existing.
         self.messages: list[tuple[type[Exception], Exception | str]] = []
@@ -432,7 +445,16 @@ class Connection:
         self._cursors: weakref.WeakSet[Cursor] = weakref.WeakSet()
 
     def _check_thread(self) -> None:
-        """Raise ProgrammingError if called from a different thread than the creator."""
+        """Raise on cross-process (fork) or cross-thread misuse.
+
+        - InterfaceError if called from a forked child (pid mismatch).
+        - ProgrammingError if called from a different thread than the creator.
+        """
+        if os.getpid() != self._creator_pid:
+            raise InterfaceError(
+                "Connection used after fork; reconstruct from configuration "
+                "in the target process."
+            )
         current = threading.get_ident()
         if current != self._creator_thread:
             raise ProgrammingError(
