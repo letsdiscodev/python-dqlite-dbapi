@@ -16,7 +16,12 @@ from dqlitedbapi.cursor import (
     _strip_leading_comments,
     _to_signed_int64,
 )
-from dqlitedbapi.exceptions import InterfaceError, NotSupportedError, ProgrammingError
+from dqlitedbapi.exceptions import (
+    DataError,
+    InterfaceError,
+    NotSupportedError,
+    ProgrammingError,
+)
 from dqlitedbapi.types import _Description
 
 if TYPE_CHECKING:
@@ -220,8 +225,6 @@ class AsyncCursor:
                 if len(column_types) == 0 and len(rows) == 0:
                     type_codes: list[Any] = [None] * len(columns)
                 elif len(column_types) != len(columns):
-                    from dqlitedbapi.exceptions import DataError
-
                     raise DataError(
                         f"Wire response has {len(columns)} columns but "
                         f"{len(column_types)} type codes"

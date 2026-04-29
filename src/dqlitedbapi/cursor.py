@@ -913,8 +913,6 @@ class Cursor:
                 if len(column_types) == 0 and len(rows) == 0:
                     type_codes: list[Any] = [None] * len(columns)
                 elif len(column_types) != len(columns):
-                    from dqlitedbapi.exceptions import DataError
-
                     raise DataError(
                         f"Wire response has {len(columns)} columns but "
                         f"{len(column_types)} type codes"
