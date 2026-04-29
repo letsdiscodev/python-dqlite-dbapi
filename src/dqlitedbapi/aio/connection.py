@@ -5,6 +5,7 @@ import contextlib
 import logging
 import weakref
 from types import TracebackType
+from typing import NoReturn
 
 from dqliteclient import DqliteConnection
 from dqliteclient.connection import _parse_address as _client_parse_address
@@ -607,6 +608,20 @@ class AsyncConnection:
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
         return f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
+
+    def __reduce__(self) -> NoReturn:
+        # AsyncConnections own a loop-bound socket, asyncio Locks tied
+        # to a specific event loop, and a weakref-finalizer cycle —
+        # none of which survives pickling. Surface a clear driver-level
+        # TypeError instead of leaking the underlying unpickleable-
+        # member message.
+        raise TypeError(
+            f"cannot pickle {type(self).__name__!r} object — async "
+            "driver connections own a loop-bound socket and asyncio "
+            "primitives tied to a specific event loop; use a "
+            "connection pool or recreate the connection in the "
+            "consumer process instead"
+        )
 
     async def __aenter__(self) -> "AsyncConnection":
         try:

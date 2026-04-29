@@ -613,6 +613,18 @@ class AsyncCursor:
         state = "closed" if self._closed else "open"
         return f"<AsyncCursor rowcount={self._rowcount} {state}>"
 
+    def __reduce__(self) -> NoReturn:
+        # AsyncCursors hold a back-reference to a loop-bound
+        # AsyncConnection; none of that survives pickling. Surface a
+        # clear driver-level TypeError instead of the default pickle
+        # walk's confusing internal-member message.
+        raise TypeError(
+            f"cannot pickle {type(self).__name__!r} object — async "
+            "cursors hold a reference to a loop-bound driver "
+            "connection; use fetchall()/fetchmany() to materialise "
+            "rows before crossing a process boundary"
+        )
+
     def __aiter__(self) -> "AsyncCursor":
         # Synchronous loop-binding check: surface a loop-mismatch at
         # the ``async for cursor:`` site rather than one await deeper

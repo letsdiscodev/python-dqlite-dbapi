@@ -1244,6 +1244,19 @@ class Cursor:
         state = "closed" if self._closed else "open"
         return f"<Cursor rowcount={self._rowcount} {state}>"
 
+    def __reduce__(self) -> NoReturn:
+        # Cursors hold a back-reference to a Connection that owns a
+        # live socket and an event-loop thread; none of that survives
+        # pickling. Surface a clear driver-level TypeError instead of
+        # leaking the underlying ``cannot pickle '_thread.lock'``
+        # message that the default pickle walk produces.
+        raise TypeError(
+            f"cannot pickle {type(self).__name__!r} object — cursors "
+            "hold a reference to a live driver Connection; use "
+            "fetchall()/fetchmany() to materialise rows before crossing "
+            "a process boundary"
+        )
+
     def __iter__(self) -> "Cursor":
         return self
 

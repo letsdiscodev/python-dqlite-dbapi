@@ -10,7 +10,7 @@ import warnings
 import weakref
 from collections.abc import Coroutine
 from types import TracebackType
-from typing import Any, Final
+from typing import Any, Final, NoReturn
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
@@ -956,6 +956,21 @@ class Connection:
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
         return f"<Connection address={self._address!r} database={self._database!r} {state}>"
+
+    def __reduce__(self) -> NoReturn:
+        # Connections own a live socket, an event-loop thread, and a
+        # weakref-finalizer cycle — none of which survives pickling.
+        # Without this guard the default pickle walks the attribute
+        # graph and surfaces a confusing ``cannot pickle '_thread.lock'``
+        # message that buries the driver-level intent. Stdlib
+        # ``sqlite3.Connection`` raises an explicit driver-level
+        # TypeError; mirror that shape.
+        raise TypeError(
+            f"cannot pickle {type(self).__name__!r} object — driver "
+            "connections own a live socket and an event-loop thread; "
+            "use a connection pool or recreate the connection in the "
+            "consumer process instead"
+        )
 
     def __enter__(self) -> "Connection":
         # Eager connect to match ``AsyncConnection.__aenter__`` — both
