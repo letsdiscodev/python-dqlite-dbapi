@@ -901,6 +901,19 @@ class Connection:
         """
         return self._address
 
+    @property
+    def closed(self) -> bool:
+        """``True`` once :meth:`close` has been called.
+
+        Mirrors the psycopg / asyncpg convention so callers porting
+        idempotent-close patterns (``if not conn.closed: conn.close()``)
+        do not hit ``AttributeError``. PEP 249 does not mandate this
+        property; stdlib ``sqlite3`` famously omits it. The underlying
+        flag is already maintained by every method that mutates
+        closed-ness.
+        """
+        return self._closed
+
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
         return f"<Connection address={self._address!r} database={self._database!r} {state}>"

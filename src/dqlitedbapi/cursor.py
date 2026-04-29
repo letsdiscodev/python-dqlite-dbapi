@@ -775,6 +775,15 @@ class Cursor:
             raise ProgrammingError(f"arraysize must be >= 1, got {value}")
         self._arraysize = value
 
+    @property
+    def closed(self) -> bool:
+        """``True`` once :meth:`close` has been called.
+
+        Peer-driver parity (psycopg, asyncpg). PEP 249 does not
+        require it; the underlying flag is already maintained.
+        """
+        return self._closed
+
     def _check_closed(self) -> None:
         if self._closed:
             raise InterfaceError("Cursor is closed")

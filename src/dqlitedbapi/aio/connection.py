@@ -558,6 +558,15 @@ class AsyncConnection:
         """
         return self._address
 
+    @property
+    def closed(self) -> bool:
+        """``True`` once :meth:`close` has been called.
+
+        Peer-driver parity (psycopg, asyncpg). PEP 249 does not
+        require it; the underlying flag is already maintained.
+        """
+        return self._closed
+
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
         return f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
