@@ -558,19 +558,25 @@ class AsyncCursor:
         if conn_messages is not None:
             del conn_messages[:]
 
-    def callproc(
-        self, procname: str, parameters: Sequence[Any] | None = None
-    ) -> Sequence[Any] | None:
+    def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
         """PEP 249 optional extension — not supported.
 
         Sync despite the cursor being async: the method raises
         unconditionally, so wrapping it in a coroutine has no value and
         would diverge from the sync siblings (``nextset`` / ``scroll``)
         and from the SQLAlchemy adapter (``sqlalchemy-dqlite``), which
-        both expose these as plain methods.
+        both expose these as plain methods. Annotated ``NoReturn``
+        because the body always raises — symmetric with ``nextset``.
         """
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
+        # Loop-binding check: parallel to the sync side's
+        # ``_check_thread()`` for ``callproc`` / ``nextset`` /
+        # ``scroll``. Without it, a call from a foreign event loop
+        # silently surfaces ``NotSupportedError`` and the caller is
+        # left thinking the cursor is still loop-A bound. Sibling
+        # consistency with ``setinputsizes`` / ``setoutputsize``.
+        self._connection._ensure_locks()
         # PEP 249 §6.1.1 names ``callproc`` among the cursor methods
         # that clear ``Connection.messages`` / ``Cursor.messages``.
         # Clear before raising so the contract holds even on the
@@ -585,6 +591,8 @@ class AsyncCursor:
         """PEP 249 optional extension — not supported."""
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
+        # Loop-binding check; see ``callproc`` for rationale.
+        self._connection._ensure_locks()
         # PEP 249 §6.1.1 names ``nextset`` among the cursor methods
         # that clear ``Connection.messages``; clear before raising so
         # the contract holds even on the not-supported path.
@@ -598,6 +606,8 @@ class AsyncCursor:
         """PEP 249 optional extension — not supported."""
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
+        # Loop-binding check; see ``callproc`` for rationale.
+        self._connection._ensure_locks()
         # Sibling consistency with ``nextset`` / ``callproc`` /
         # ``setinputsizes`` / ``setoutputsize``: clear ``messages`` on
         # the not-supported path so a future code path that populates

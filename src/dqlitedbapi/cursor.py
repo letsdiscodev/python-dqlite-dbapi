@@ -1209,43 +1209,50 @@ class Cursor:
         clear the ``messages`` list; we do so even though the method
         itself does no work.
         """
-        self._connection._check_thread()
-        # PEP 249 §6.1.2 — operations on a closed cursor raise.
-        self._check_closed()
+        # PEP 249 §6.1.1 — clear "prior to executing the call" so the
+        # contract holds even on the cross-thread-rejection path. The
+        # six primary methods (execute / executemany / fetchone /
+        # fetchmany / fetchall / close) all clear before
+        # ``_check_thread`` for the same reason; this method and its
+        # four secondary-method siblings keep the same ordering.
         del self.messages[:]
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:
             del conn_messages[:]
+        self._connection._check_thread()
+        # PEP 249 §6.1.2 — operations on a closed cursor raise.
+        self._check_closed()
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
         self._connection._check_thread()
         # PEP 249 §6.1.2 — operations on a closed cursor raise.
         self._check_closed()
-        del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
 
-    def callproc(
-        self, procname: str, parameters: Sequence[Any] | None = None
-    ) -> Sequence[Any] | None:
+    def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
         """PEP 249 optional extension — not supported.
 
-        dqlite (and SQLite) have no stored-procedure concept.
+        dqlite (and SQLite) have no stored-procedure concept. Annotated
+        ``NoReturn`` because the body unconditionally raises
+        ``NotSupportedError`` — symmetric with ``nextset`` below.
         """
-        self._connection._check_thread()
-        # PEP 249 §6.1.2 — closed-cursor ops raise. Order: check
-        # closed-state first so the diagnostic reflects the root cause.
-        self._check_closed()
         # PEP 249 §6.1.1 names ``callproc`` among the cursor methods
         # that clear ``Connection.messages`` / ``Cursor.messages``.
-        # Clear before raising so the contract holds even on the
-        # not-supported path. Mirrors ``nextset`` below.
+        # Clear before any guard so the contract holds even on the
+        # cross-thread-rejection path. Mirrors ``nextset`` below.
         del self.messages[:]
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:
             del conn_messages[:]
+        self._connection._check_thread()
+        # PEP 249 §6.1.2 — closed-cursor ops raise. Order: check
+        # closed-state before raising NotSupported so the diagnostic
+        # reflects the root cause.
+        self._check_closed()
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> NoReturn:
@@ -1253,16 +1260,17 @@ class Cursor:
 
         dqlite's wire protocol does not return multiple result sets.
         """
-        self._connection._check_thread()
-        # PEP 249 §6.1.2 — closed-cursor operations raise.
-        self._check_closed()
         # PEP 249 §6.1.1 names ``nextset`` among the cursor methods
-        # that clear ``Connection.messages``; clear before raising so
-        # the contract holds even on the not-supported path.
+        # that clear ``Connection.messages``; clear before any guard
+        # so the contract holds even on the cross-thread-rejection
+        # path.
         del self.messages[:]
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:
             del conn_messages[:]
+        self._connection._check_thread()
+        # PEP 249 §6.1.2 — closed-cursor operations raise.
+        self._check_closed()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
     def scroll(self, value: int, mode: str = "relative") -> None:
@@ -1271,17 +1279,18 @@ class Cursor:
         The dqlite cursor is forward-only; rows are buffered from a
         streamed wire response.
         """
-        self._connection._check_thread()
-        self._check_closed()
         # PEP 249 §6.1.1 lists ``nextset`` but not ``scroll`` in the
         # explicit-clear set; we clear here too for sibling consistency
         # with ``nextset`` / ``callproc`` / ``setinputsizes`` /
         # ``setoutputsize``. Cheap and removes a latent foot-gun for
-        # future code that starts populating ``messages``.
+        # future code that starts populating ``messages``. Order
+        # matches the secondary-method family: clear before any guard.
         del self.messages[:]
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:
             del conn_messages[:]
+        self._connection._check_thread()
+        self._check_closed()
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def __repr__(self) -> str:

@@ -209,7 +209,8 @@ class TestAsyncCursorDescriptionIdentity:
 
 
 class TestOptionalAsyncCursorMethodsRaise:
-    def test_callproc_raises_not_supported(self) -> None:
+    @pytest.mark.asyncio
+    async def test_callproc_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError
 
         conn = AsyncConnection("localhost:9001")
@@ -230,7 +231,8 @@ class TestOptionalAsyncCursorMethodsRaise:
         assert not inspect.iscoroutinefunction(AsyncCursor.nextset)
         assert not inspect.iscoroutinefunction(AsyncCursor.scroll)
 
-    def test_nextset_raises_not_supported(self) -> None:
+    @pytest.mark.asyncio
+    async def test_nextset_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError
 
         conn = AsyncConnection("localhost:9001")
@@ -238,7 +240,8 @@ class TestOptionalAsyncCursorMethodsRaise:
         with pytest.raises(NotSupportedError):
             cursor.nextset()
 
-    def test_scroll_raises_not_supported(self) -> None:
+    @pytest.mark.asyncio
+    async def test_scroll_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError
 
         conn = AsyncConnection("localhost:9001")
