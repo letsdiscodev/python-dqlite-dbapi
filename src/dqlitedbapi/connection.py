@@ -100,6 +100,24 @@ def _validate_timeout(timeout: float) -> None:
         raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
 
 
+def _wrap_positive_int(value: int | None, name: str) -> int | None:
+    """Wrap the client-layer ``_validate_positive_int_or_none``'s
+    ``TypeError`` / ``ValueError`` into PEP 249 ``ProgrammingError``.
+
+    PEP 249 §7 requires every error originating from the driver to be
+    a subclass of ``Error``. The client-layer validator deliberately
+    raises Python-convention exceptions (per ISSUE-39 — correct for
+    client-only consumers); the dbapi entry points are the boundary
+    that translates to PEP 249 shapes. Sibling pattern to the
+    ``_client_parse_address`` ``ValueError → InterfaceError`` wrap and
+    to ``_validate_timeout``'s direct ``ProgrammingError``.
+    """
+    try:
+        return _validate_positive_int_or_none(value, name)
+    except (TypeError, ValueError) as e:
+        raise ProgrammingError(str(e)) from e
+
+
 def _validate_close_timeout(close_timeout: float) -> None:
     """Raise ProgrammingError if ``close_timeout`` is not a positive finite number.
 
@@ -385,8 +403,8 @@ class Connection:
         self._address = address
         self._database = database
         self._timeout = timeout
-        self._max_total_rows = _validate_positive_int_or_none(max_total_rows, "max_total_rows")
-        self._max_continuation_frames = _validate_positive_int_or_none(
+        self._max_total_rows = _wrap_positive_int(max_total_rows, "max_total_rows")
+        self._max_continuation_frames = _wrap_positive_int(
             max_continuation_frames, "max_continuation_frames"
         )
         self._trust_server_heartbeat = trust_server_heartbeat

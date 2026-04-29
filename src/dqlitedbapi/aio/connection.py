@@ -9,7 +9,6 @@ from typing import NoReturn
 
 from dqliteclient import DqliteConnection
 from dqliteclient.connection import _parse_address as _client_parse_address
-from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import (
@@ -17,6 +16,7 @@ from dqlitedbapi.connection import (
     _is_no_transaction_error,
     _validate_close_timeout,
     _validate_timeout,
+    _wrap_positive_int,
 )
 from dqlitedbapi.cursor import _call_client
 from dqlitedbapi.exceptions import (
@@ -143,8 +143,8 @@ class AsyncConnection:
         self._address = address
         self._database = database
         self._timeout = timeout
-        self._max_total_rows = _validate_positive_int_or_none(max_total_rows, "max_total_rows")
-        self._max_continuation_frames = _validate_positive_int_or_none(
+        self._max_total_rows = _wrap_positive_int(max_total_rows, "max_total_rows")
+        self._max_continuation_frames = _wrap_positive_int(
             max_continuation_frames, "max_continuation_frames"
         )
         self._trust_server_heartbeat = trust_server_heartbeat
