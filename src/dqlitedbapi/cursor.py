@@ -397,6 +397,10 @@ _SQL_NOISE_RE = re.compile(
     '(?:[^']|'')*'          # single-quoted string literal
     | "(?:[^"]|"")*"        # double-quoted identifier
     | \[[^\]]*\]            # bracket-quoted identifier
+    | `(?:[^`]|``)*`        # backtick-quoted identifier (MySQL-compat;
+                            # SQLite accepts these and uses doubled-`
+                            # escaping inside, parity with the
+                            # double-quoted identifier branch)
     | --[^\n]*              # line comment
     | /\*.*?\*/             # block comment
     """,
