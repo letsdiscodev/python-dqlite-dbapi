@@ -64,10 +64,26 @@ _SQLITE_TOOBIG: Final[int] = 18
 _SQLITE_MISMATCH: Final[int] = 20
 
 # SQLITE_RANGE (25) — "bind index out of range" — is a caller-side
-# parameter-binding error; PEP 249 ``ProgrammingError`` is the right
-# fit ("bad parameter ... wrong number of parameters") rather than
-# ``DataError``.
+# parameter-binding error. Stdlib ``sqlite3`` maps it to
+# ``InterfaceError`` (driver-interface misuse, CPython
+# ``Modules/_sqlite/util.c::get_exception_class`` switch). Mirror
+# stdlib so cross-driver code branching on
+# ``isinstance(exc, sqlite3.InterfaceError)`` works the same way.
 _SQLITE_RANGE: Final[int] = 25
+
+# SQLITE_MISUSE (21) — "library used incorrectly" — driver-interface
+# misuse. Stdlib ``sqlite3`` maps to ``InterfaceError`` (same switch
+# as RANGE). Match for cross-driver parity.
+_SQLITE_MISUSE: Final[int] = 21
+
+# SQLITE_NOTFOUND (12) — internal lookup miss inside SQLite (the
+# server propagates this when an opcode operand is missing). Stdlib
+# ``sqlite3`` maps to ``InternalError`` (groups with INTERNAL,
+# IOERR_VNODE, IOERR_CONVPATH). The dqlite-namespace twin
+# ``DQLITE_NOTFOUND`` (1002) is a separate "server-side scratch
+# registry miss" shape that maps to ProgrammingError; the SQLite
+# primary 12 follows the stdlib mapping.
+_SQLITE_NOTFOUND: Final[int] = 12
 
 # SQLITE_NOMEM (7) — server-side allocation failure. CPython stdlib
 # ``sqlite3`` raises ``MemoryError`` (system-level, bypasses PEP 249);
@@ -110,7 +126,9 @@ _CODE_TO_EXCEPTION: dict[
     _SQLITE_INTERNAL: InternalError,
     _SQLITE_TOOBIG: DataError,
     _SQLITE_MISMATCH: IntegrityError,
-    _SQLITE_RANGE: ProgrammingError,
+    _SQLITE_RANGE: InterfaceError,
+    _SQLITE_MISUSE: InterfaceError,
+    _SQLITE_NOTFOUND: InternalError,
     _SQLITE_NOMEM: InternalError,
     _SQLITE_CORRUPT: DatabaseError,
     _SQLITE_FORMAT: DatabaseError,
@@ -170,7 +188,7 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
       client.OperationalError (other codes)     → dbapi.OperationalError
       client.DqliteConnectionError → dbapi.OperationalError (network flavor)
       client.ClusterError          → dbapi.OperationalError
-      client.ProtocolError         → dbapi.InterfaceError
+      client.ProtocolError         → dbapi.OperationalError
       client.DataError             → dbapi.DataError
       client.InterfaceError        → dbapi.InterfaceError
       any other DqliteError        → dbapi.InterfaceError
@@ -200,18 +218,12 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # ``__cause__`` for it. ``message`` stays truncated for safe
         # default ``str(exc)``.
         #
-        # ``InterfaceError`` does not subclass ``DatabaseError`` and
-        # therefore does not accept ``code`` / ``raw_message`` —
-        # dqlite-namespace ``DQLITE_PROTO`` codes route to
-        # InterfaceError per PEP 249 §6 (protocol misuse rather than
-        # database-operation failure). The original code is still
-        # reachable via ``__cause__`` (the chained ``e``); the
-        # interface-error message keeps the code visible inline so
-        # callers don't have to walk the cause for routine
-        # diagnostics.
-        if issubclass(exc_cls, DatabaseError):
-            raise exc_cls(e.message, code=e.code, raw_message=e.raw_message) from e
-        raise exc_cls(f"{e.message} (code={e.code})") from e
+        # InterfaceError carries the same ``code`` / ``raw_message``
+        # surface as DatabaseError so SA's ``is_disconnect`` and
+        # operator log tooling can branch on the wire code without
+        # walking ``__cause__``. Symmetric with the DatabaseError
+        # branch; both subclass code-bearing surfaces.
+        raise exc_cls(e.message, code=e.code, raw_message=e.raw_message) from e
     except _client_exc.DqliteConnectionError as e:
         # DqliteConnectionError carries no SQLite code today — pass
         # code=None explicitly so the signature matches the sibling

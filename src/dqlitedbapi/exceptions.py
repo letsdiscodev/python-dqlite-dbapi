@@ -39,9 +39,39 @@ class Error(Exception):
 
 
 class InterfaceError(Error):
-    """Error related to the database interface."""
+    """Error related to the database interface.
 
-    pass
+    Optionally carries the SQLite or dqlite extended error ``code``
+    and the full server text on ``raw_message``. Most ``InterfaceError``
+    instances are misuse diagnostics raised inside the driver itself
+    (no code), but server-emitted ``DQLITE_PROTO`` (1001 — protocol
+    misuse) routes to ``InterfaceError`` per PEP 249 §6 and carries
+    the wire-level code so callers / SA's ``is_disconnect`` /
+    ``raw_message``-consuming log tooling can branch on it without
+    walking ``__cause__``. Symmetric with :class:`DatabaseError`'s
+    code-bearing accessor; callers should use
+    ``getattr(exc, "code", None)`` to test rather than ``isinstance``.
+    """
+
+    code: int | None
+    raw_message: str
+
+    def __init__(
+        self,
+        message: object = "",
+        code: int | None = None,
+        *,
+        raw_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.raw_message = str(message) if raw_message is None else raw_message
+
+    def __repr__(self) -> str:
+        msg = self.args[0] if self.args else ""
+        if self.code is None:
+            return f"{type(self).__name__}({msg!r})"
+        return f"{type(self).__name__}({msg!r}, code={self.code})"
 
 
 class DatabaseError(Error):

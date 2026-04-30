@@ -20,6 +20,7 @@ from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client
 from dqlitedbapi.exceptions import (
+    DatabaseError,
     InterfaceError,
     NotSupportedError,
     OperationalError,
@@ -174,6 +175,24 @@ async def _build_and_connect(
         # path via the code-based branch, matching the query path.
         # Plumb raw_message so callers that want the un-truncated
         # server text don't have to walk __cause__.
+        #
+        # Route through the same primary-code classifier the cursor
+        # path uses so connect-time CORRUPT / NOTADB / FORMAT etc.
+        # surface as the right PEP 249 subclass instead of a bare
+        # OperationalError. Without this, an operator pointing dqlite
+        # at a non-database file sees `OperationalError("Failed to
+        # connect: ...")` instead of the more diagnostic
+        # `DatabaseError`.
+        from dqlitedbapi.cursor import _classify_operational
+
+        exc_cls = _classify_operational(e.code)
+        if issubclass(exc_cls, DatabaseError) or issubclass(exc_cls, InterfaceError):
+            raise exc_cls(
+                f"Failed to connect: {e.message}",
+                code=e.code,
+                raw_message=f"Failed to connect: {e.raw_message}",
+            ) from e
+        # Fallback if a future class lands outside both umbrellas.
         raise OperationalError(
             f"Failed to connect: {e.message}",
             code=e.code,

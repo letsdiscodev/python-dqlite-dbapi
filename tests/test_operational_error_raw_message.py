@@ -56,8 +56,23 @@ def test_integrity_error_raw_message_explicit() -> None:
     assert exc.raw_message == "full server text with details"
 
 
-def test_interface_error_does_not_carry_raw_message_field() -> None:
-    """Sanity: InterfaceError is plain (not _DatabaseErrorWithCode), so
-    no raw_message attribute is added there."""
-    exc = InterfaceError("something")
-    assert not hasattr(exc, "raw_message")
+def test_interface_error_carries_code_and_raw_message() -> None:
+    """InterfaceError accepts ``code`` / ``raw_message`` so server-
+    emitted DQLITE_PROTO (1001) and SQLITE_RANGE / SQLITE_MISUSE map
+    to InterfaceError without losing the wire-level diagnostic.
+    Symmetric with DatabaseError's code-bearing surface so SA's
+    ``is_disconnect`` and operator log tooling can branch on the code
+    without walking ``__cause__``."""
+    exc = InterfaceError("interface misuse", code=1001, raw_message="full server text")
+    assert exc.code == 1001
+    assert exc.raw_message == "full server text"
+    # Default message is preserved on .args[0].
+    assert exc.args[0] == "interface misuse"
+
+
+def test_interface_error_default_raw_message_is_message() -> None:
+    """When raw_message is not provided, the message is used verbatim
+    so callers always see a non-empty raw_message field."""
+    exc = InterfaceError("misuse")
+    assert exc.raw_message == "misuse"
+    assert exc.code is None

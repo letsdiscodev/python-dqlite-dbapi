@@ -16,7 +16,7 @@ import pytest
 
 import dqliteclient.exceptions as _client_exc
 from dqlitedbapi.aio import AsyncConnection
-from dqlitedbapi.exceptions import DatabaseError
+from dqlitedbapi.exceptions import Error
 
 
 def _build_fake_inner(code: int, message: str) -> Any:
@@ -60,7 +60,7 @@ async def test_aio_commit_swallow_matrix(code: int, should_swallow: bool) -> Non
     if should_swallow:
         await conn.commit()
     else:
-        with pytest.raises(DatabaseError):
+        with pytest.raises(Error):
             await conn.commit()
 
 
@@ -85,5 +85,5 @@ async def test_aio_rollback_swallow_matrix(code: int, should_swallow: bool) -> N
     if should_swallow:
         await conn.rollback()
     else:
-        with pytest.raises(DatabaseError):
+        with pytest.raises(Error):
             await conn.rollback()

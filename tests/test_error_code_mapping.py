@@ -47,9 +47,14 @@ _MATRIX = [
     # SQLITE_MISMATCH — stdlib sqlite3 groups this with SQLITE_CONSTRAINT
     # under IntegrityError (see cursor.py for rationale).
     (20, IntegrityError),  # SQLITE_MISMATCH
-    # SQLITE_RANGE — bind-index out of range — is caller-side bad
-    # parameter, closest to PEP 249 ProgrammingError.
-    (25, ProgrammingError),  # SQLITE_RANGE
+    # SQLITE_RANGE / SQLITE_MISUSE — driver-interface misuse. Stdlib
+    # sqlite3 maps both to InterfaceError (CPython _sqlite/util.c
+    # get_exception_class switch); mirror for cross-driver parity.
+    (25, InterfaceError),  # SQLITE_RANGE
+    (21, InterfaceError),  # SQLITE_MISUSE
+    # SQLITE_NOTFOUND (12) — internal lookup miss. Stdlib sqlite3
+    # maps to InternalError.
+    (12, InternalError),  # SQLITE_NOTFOUND
     # SQLITE_INTERNAL (primary code 2) — PEP 249 and stdlib sqlite3 map
     # this to InternalError. Extended-code siblings (``code & 0xFF == 2``)
     # should follow the same mapping by the masking convention.
@@ -83,11 +88,17 @@ async def test_call_client_maps_code(code: int | None, expected_cls: type) -> No
         await _call_client(raise_op())
     # Code must be forwarded regardless of classification.
     assert getattr(exc_info.value, "code", None) == (code or 0)
-    # The mapped exception remains a DatabaseError (PEP 249 root for
-    # database-sourced failures).
+    # The mapped exception is a PEP 249 ``Error`` subclass — the
+    # five DatabaseError-coded subclasses for SQL-domain codes plus
+    # ``InterfaceError`` for driver-misuse codes (RANGE, MISUSE).
     assert isinstance(
         exc_info.value,
-        OperationalError | IntegrityError | InternalError | DataError | ProgrammingError,
+        OperationalError
+        | IntegrityError
+        | InternalError
+        | DataError
+        | ProgrammingError
+        | InterfaceError,
     )
 
 
