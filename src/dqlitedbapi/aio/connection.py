@@ -280,6 +280,12 @@ class AsyncConnection:
         """
         if self._closed:
             return
+        # PEP 249 §6.1.1: Connection.messages should be cleared on
+        # any standard Connection method invocation. Sync and async
+        # commit/rollback/cursor paths already clear; align close()
+        # so the contract is uniform across the four required
+        # methods.
+        del self.messages[:]
         # Fork-after-init: the inherited socket FD is shared with the
         # parent and the asyncio op_lock is bound to the parent's
         # loop. Driving the async teardown here would either send FIN
@@ -680,6 +686,58 @@ class AsyncConnection:
         require it; the underlying flag is already maintained.
         """
         return self._closed
+
+    # PEP 249 §7 (TPC) and stdlib sqlite3 parity stubs. Without these
+    # a caller hits AttributeError which escapes the dbapi.Error
+    # hierarchy. Same shape as the sync sibling.
+
+    async def tpc_begin(self, xid: object) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    async def tpc_prepare(self) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    async def tpc_commit(self, xid: object | None = None) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    async def tpc_rollback(self, xid: object | None = None) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    async def tpc_recover(self) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    def enable_load_extension(self, enabled: bool) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support runtime extension loading")
+
+    def load_extension(self, path: str, *, entrypoint: str | None = None) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support runtime extension loading")
+
+    async def backup(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite does not support the stdlib sqlite3 online backup API; "
+            "use the dqlite-server dump/restore mechanism instead"
+        )
+
+    def iterdump(self) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite does not support stdlib sqlite3 iterdump; "
+            "use the dqlite-server dump/restore mechanism instead"
+        )
+
+    def create_function(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support user-defined SQL functions")
+
+    def create_aggregate(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support user-defined SQL aggregates")
+
+    def create_collation(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support user-defined SQL collations")
+
+    def create_window_function(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support user-defined SQL window functions")
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")

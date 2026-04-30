@@ -802,6 +802,12 @@ class Connection:
         # short-circuit. Mirrors the cursor-side resolution.
         if self._closed:
             return
+        # PEP 249 §6.1.1: Connection.messages should be cleared on
+        # any standard Connection method invocation. The sibling
+        # commit/rollback/cursor paths already clear; align close()
+        # so the contract is uniform across the four required
+        # methods.
+        del self.messages[:]
         # Fork-after-init: the inherited connection FDs are shared
         # with the parent, the inherited daemon loop thread did not
         # survive fork (only the calling thread crosses), and
@@ -1115,6 +1121,64 @@ class Connection:
         closed-ness.
         """
         return self._closed
+
+    # PEP 249 §7 (TPC extension) and stdlib sqlite3 parity stubs.
+    # PEP 249 says drivers without TPC support MUST raise
+    # NotSupportedError on the TPC methods rather than letting
+    # AttributeError leak (which escapes the dbapi.Error hierarchy).
+    # The stdlib-sqlite3 helpers (load_extension, backup, iterdump,
+    # create_function/aggregate/collation) similarly should surface
+    # via NotSupportedError so cross-driver code that calls them
+    # inside ``except sqlite3.Error:`` catches uniformly. dqlite-
+    # server does not implement any of these.
+
+    def tpc_begin(self, xid: object) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    def tpc_prepare(self) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    def tpc_commit(self, xid: object | None = None) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    def tpc_rollback(self, xid: object | None = None) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    def tpc_recover(self) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
+        raise NotSupportedError("dqlite does not support two-phase commit")
+
+    def enable_load_extension(self, enabled: bool) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support runtime extension loading")
+
+    def load_extension(self, path: str, *, entrypoint: str | None = None) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support runtime extension loading")
+
+    def backup(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite does not support the stdlib sqlite3 online backup API; "
+            "use the dqlite-server dump/restore mechanism instead"
+        )
+
+    def iterdump(self) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite does not support stdlib sqlite3 iterdump; "
+            "use the dqlite-server dump/restore mechanism instead"
+        )
+
+    def create_function(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support user-defined SQL functions")
+
+    def create_aggregate(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support user-defined SQL aggregates")
+
+    def create_collation(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support user-defined SQL collations")
+
+    def create_window_function(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not support user-defined SQL window functions")
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
