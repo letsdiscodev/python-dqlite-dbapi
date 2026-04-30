@@ -32,6 +32,67 @@ def _make_with_loop_thread() -> Connection:
     return conn
 
 
+def test_close_nulls_async_conn_when_run_sync_close_path_is_suppressed() -> None:
+    """``Connection.close()`` wraps the loop-side
+    ``_run_sync(self._close_async())`` call in
+    ``contextlib.suppress(Exception)``. When that suppress
+    fires (e.g. ``_run_sync`` raises before the coroutine body
+    executes — bounded ``_op_lock.acquire`` timeout, wedged
+    loop), ``_close_async``'s own ``finally`` (which nulls
+    ``self._async_conn``) never runs. The dbapi reports the
+    connection closed, but the underlying client-layer
+    connection is still strongly referenced — its writer
+    transport's FD lingers past loop teardown, surfacing as
+    ``ResourceWarning("unclosed transport")`` at GC.
+
+    Mirror the async sibling's discipline (``AsyncConnection``
+    finally clause sets ``self._async_conn = None`` on every
+    exit path): null the inner ref unconditionally before the
+    loop is closed, with a best-effort
+    ``writer.close()`` to reap the FD synchronously.
+    """
+    conn = _make_with_loop_thread()
+    try:
+        # Inject a stub _async_conn so the close path actually
+        # has something to null. We don't need a real client
+        # conn — the assertion is purely on lifecycle bookkeeping.
+        from unittest.mock import MagicMock
+
+        stub_inner = MagicMock()
+        stub_inner._protocol = MagicMock()
+        stub_inner._protocol._writer = MagicMock()
+        conn._async_conn = stub_inner
+
+        # Force the _run_sync arm to raise so the suppress fires.
+        def _raise(coro: object) -> None:
+            # Must close the coroutine to suppress
+            # "coroutine was never awaited" warnings.
+            with contextlib.suppress(Exception):
+                coro.close()  # type: ignore[attr-defined]
+            raise RuntimeError("simulated _run_sync wedge")
+
+        with patch.object(conn, "_run_sync", side_effect=_raise):
+            conn.close()
+
+        # The load-bearing assertion: the inner reference is
+        # cleared regardless of whether _run_sync ran the
+        # coroutine. Otherwise GC of the dbapi instance is the
+        # only path to FD release, and asyncio prints
+        # "unclosed transport" at that point.
+        assert conn._async_conn is None, (
+            "Connection.close() must null self._async_conn even "
+            "when _run_sync(self._close_async()) is suppressed — "
+            "otherwise the underlying writer transport leaks past "
+            "loop teardown."
+        )
+        # Best-effort writer.close() ran so the FD is reaped
+        # synchronously instead of waiting on
+        # _SelectorSocketTransport's deferred __del__.
+        stub_inner._protocol._writer.close.assert_called_once_with()
+    finally:
+        conn._closed = True
+
+
 def test_close_does_not_block_when_op_lock_already_held_on_creator_thread() -> None:
     """Reproduce the signal-handler scenario: acquire ``_op_lock``
     on the creator thread (mocking the "_run_sync is parked"

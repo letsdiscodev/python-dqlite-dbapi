@@ -1040,6 +1040,35 @@ class Connection:
                         self._run_sync(self._close_async())
         finally:
             with self._loop_lock:
+                # Mirror ``AsyncConnection.close()``'s ``finally``-
+                # clause discipline (``aio/connection.py``: every
+                # exit path nulls ``self._async_conn``). The two
+                # ``Exception``-suppressing arms above (same-thread
+                # KI re-entry's ``coro.close()`` and the wedged-loop
+                # ``contextlib.suppress(Exception)``) skip
+                # ``_close_async``'s own finally — leaving
+                # ``self._async_conn`` pointing at a live
+                # ``DqliteConnection`` whose writer transport's FD
+                # is reaped only at GC, AFTER the loop teardown
+                # below stops the selector. ``connection_lost`` then
+                # cannot fire and the FD lingers until the dbapi
+                # instance itself is GC'd, surfacing as a
+                # ``ResourceWarning("unclosed transport")``.
+                #
+                # Best-effort writer.close() drives FIN to the peer
+                # synchronously instead of waiting on the
+                # ``_SelectorSocketTransport``'s deferred ``__del__``.
+                # Placed BEFORE ``self._loop.close()`` below so the
+                # writer.close runs while the selector still exists
+                # to dispatch the close event.
+                if self._async_conn is not None:
+                    inner = self._async_conn
+                    proto = getattr(inner, "_protocol", None)
+                    writer = getattr(proto, "_writer", None) if proto is not None else None
+                    if writer is not None:
+                        with contextlib.suppress(Exception):
+                            writer.close()
+                    self._async_conn = None
                 if self._loop is not None and not self._loop.is_closed():
                     self._loop.call_soon_threadsafe(self._loop.stop)
                     if self._thread is not None:
