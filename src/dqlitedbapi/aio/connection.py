@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import warnings
 import weakref
 from types import TracebackType
 from typing import NoReturn
@@ -36,6 +37,35 @@ from dqlitewire import (
 __all__ = ["AsyncConnection"]
 
 logger = logging.getLogger(__name__)
+
+
+def _async_unclosed_warning(closed_flag: list[bool], address: str) -> None:
+    """Emit a ResourceWarning when an ``AsyncConnection`` is GC'd
+    without ``await close()``.
+
+    Stdlib ``sqlite3`` raises ``ResourceWarning`` on
+    ``Connection.__del__`` when the user forgot to close; the sync
+    sibling matches that contract via ``_cleanup_loop_thread``. The
+    async sibling has no daemon loop to reap (the user owns the
+    loop), but the warning is still load-bearing for ops:
+    operators forgetting ``await aconn.close()`` see only asyncio's
+    own "Unclosed transport" warnings, which point at the StreamReader/
+    StreamWriter rather than the dqlite layer they came from.
+
+    Suppression-narrow ``RuntimeError`` mirrors the sync sibling's
+    interpreter-shutdown race protection.
+    """
+    if closed_flag[0]:
+        return
+    with contextlib.suppress(RuntimeError):
+        warnings.warn(
+            f"AsyncConnection(address={address!r}) was garbage-collected "
+            f"without await close(). Call ``await aconn.close()`` "
+            f"explicitly to avoid this warning and to release the "
+            f"underlying socket promptly.",
+            ResourceWarning,
+            stacklevel=2,
+        )
 
 
 def _format_loop_affinity_message(
@@ -184,6 +214,16 @@ class AsyncConnection:
         # cursor whose AsyncConnection was externally closed used to
         # silently answer from stale in-memory rows.
         self._cursors: weakref.WeakSet[AsyncCursor] = weakref.WeakSet()
+        # Mutable 1-element flag the finalizer reads. ``close()`` sets
+        # it to True so the finalizer knows the user closed
+        # explicitly and skips the ResourceWarning. We do NOT attempt
+        # async cleanup from the finalizer — the user owns the event
+        # loop, and emitting a warning is the only safe synchronous
+        # signal available. Symmetric with the sync ``Connection``
+        # finalizer's responsibility split (which does drive an
+        # owned daemon thread; the async sibling has none).
+        self._closed_flag: list[bool] = [False]
+        weakref.finalize(self, _async_unclosed_warning, self._closed_flag, address)
 
     def _ensure_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
         """Lazy-create the asyncio locks on the currently-running loop.
@@ -296,6 +336,7 @@ class AsyncConnection:
         # fork short-circuits.
         if os.getpid() != self._creator_pid:
             self._closed = True
+            self._closed_flag[0] = True
             self._async_conn = None
             self._connect_lock = None
             self._op_lock = None
@@ -306,6 +347,7 @@ class AsyncConnection:
         # closed state as soon as it acquires. Then drain the current
         # in-flight op (if any) under the lock.
         self._closed = True
+        self._closed_flag[0] = True
         # Cascade to tracked cursors before the teardown drains the
         # wire so buffered fetches stop answering from stale rows.
         # Writes go directly to the cursor's private attributes —

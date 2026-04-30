@@ -912,7 +912,27 @@ class Connection:
                     self._loop.call_soon_threadsafe(self._loop.stop)
                     if self._thread is not None:
                         self._thread.join(timeout=_LOOP_THREAD_JOIN_TIMEOUT_SECONDS)
-                    self._loop.close()
+                    # ``loop.close()`` raises
+                    # ``RuntimeError("Cannot close a running event loop")``
+                    # if ``thread.join`` returned with the loop still
+                    # alive (a wire read longer than the join budget
+                    # leaves the loop spinning). The finalizer wraps
+                    # the same call defensively (see
+                    # ``_cleanup_loop_thread``); mirror that here so
+                    # ``Connection.close()`` cannot leak a bare
+                    # ``RuntimeError`` past the PEP 249 ``Error``
+                    # hierarchy. Drop the local refs unconditionally
+                    # so a retry close re-runs through the
+                    # finalizer's reaping path on next GC.
+                    try:
+                        self._loop.close()
+                    except RuntimeError:
+                        logger.debug(
+                            "Connection.close: loop.close raised RuntimeError "
+                            "(loop thread did not exit within %s s); refs cleared",
+                            _LOOP_THREAD_JOIN_TIMEOUT_SECONDS,
+                            exc_info=True,
+                        )
                     self._loop = None
                     self._thread = None
                 # Drop the asyncio.Lock bound to the loop we just closed;

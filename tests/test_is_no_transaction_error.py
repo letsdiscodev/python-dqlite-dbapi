@@ -62,16 +62,23 @@ class TestIsNoTransactionError:
         exc = OperationalError("disk I/O error", code=1)
         assert _is_no_transaction_error(exc) is False
 
-    def test_cannot_rollback_substring_matches(self) -> None:
-        # The client-layer sibling helper ``_is_no_tx_rollback_error``
-        # accepts both ``"no transaction is active"`` and
-        # ``"cannot rollback"`` substrings. Mirror the dbapi recogniser
-        # so a future server wording that drops the trailing
-        # ``"no transaction is active"`` clause does not produce a
-        # silent layer divergence (dbapi raising while client treats
-        # it as benign).
-        exc = OperationalError("cannot rollback", code=1)
+    def test_cannot_commit_with_no_tx_clause_matches(self) -> None:
+        # Both upstream wordings ("cannot rollback - no transaction
+        # is active" and "cannot commit - no transaction is active")
+        # contain the anchored "no transaction is active" substring,
+        # which is now the single canonical match. The bare "cannot
+        # rollback" token was removed because it was too permissive
+        # (any unrelated SQLite error or DQLITE_ERROR=1 message
+        # containing those words would otherwise trigger silent-swallow).
+        exc = OperationalError("cannot commit - no transaction is active", code=1)
         assert _is_no_transaction_error(exc) is True
+
+    def test_bare_cannot_rollback_no_longer_matches(self) -> None:
+        # A message containing "cannot rollback" but not the anchored
+        # "no transaction is active" clause must NOT trigger silent-
+        # swallow.
+        exc = OperationalError("cannot rollback because the disk is full", code=1)
+        assert _is_no_transaction_error(exc) is False
 
     def test_cannot_rollback_with_unrelated_code_rejected(self) -> None:
         # Code-gate (primary code 1) is the real defence — the
