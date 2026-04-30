@@ -9,7 +9,7 @@ import os
 import threading
 import warnings
 import weakref
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Mapping, Sequence
 from types import TracebackType
 from typing import Any, Final, NoReturn
 
@@ -1278,6 +1278,48 @@ class Connection:
             raise InterfaceError("Connection is closed")
         cur = Cursor(self)
         self._cursors.add(cur)
+        return cur
+
+    def execute(
+        self,
+        operation: str,
+        parameters: Sequence[Any] | Mapping[str, Any] | None = None,
+    ) -> Cursor:
+        """PEP 249 optional extension — open a cursor, run ``execute``,
+        return the cursor.
+
+        Parity with stdlib ``sqlite3.Connection.execute`` and with the
+        async-side ``AsyncAdaptedConnection.execute`` (cycle 21).
+        SA-internal code paths and the ``connect``-event listener
+        idiom call ``dbapi_connection.execute(...)`` directly; without
+        this method, sync dialect users hit ``AttributeError`` on the
+        first checkout of a ``dqlite://`` engine that registers a
+        ``connect`` listener — an opaque diagnostic that escapes the
+        ``dbapi.Error`` hierarchy.
+
+        On a synchronous failure of ``cur.execute(...)`` close the
+        freshly-opened cursor before re-raising so the caller's
+        exception path doesn't leak an unowned cursor. Mirrors the
+        async adapter's discipline (the cycle-22 cleanup-on-raise
+        follow-up).
+        """
+        cur = self.cursor()
+        try:
+            if parameters is None:
+                cur.execute(operation)
+            else:
+                # ``Cursor.execute`` accepts ``Sequence | None`` at the
+                # signature; the SA-facing wrapper widens to
+                # ``Mapping`` for parity with the SA-reference
+                # connector. A ``Mapping`` is rejected by
+                # ``Cursor.execute`` at runtime with
+                # ``ProgrammingError`` (paramstyle="qmark"), preserving
+                # the underlying contract.
+                cur.execute(operation, parameters)  # type: ignore[arg-type]
+        except BaseException:
+            with contextlib.suppress(Exception):
+                cur.close()
+            raise
         return cur
 
     @property
