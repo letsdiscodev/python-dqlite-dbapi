@@ -40,7 +40,9 @@ __all__ = ["AsyncConnection"]
 logger = logging.getLogger(__name__)
 
 
-def _async_unclosed_warning(closed_flag: list[bool], address: str) -> None:
+def _async_unclosed_warning(
+    closed_flag: list[bool], connected_flag: list[bool], address: str
+) -> None:
     """Emit a ResourceWarning when an ``AsyncConnection`` is GC'd
     without ``await close()``.
 
@@ -53,10 +55,27 @@ def _async_unclosed_warning(closed_flag: list[bool], address: str) -> None:
     own "Unclosed transport" warnings, which point at the StreamReader/
     StreamWriter rather than the dqlite layer they came from.
 
+    Three-flag gate:
+
+    - ``closed_flag[0]`` is True if ``close()`` ran or if the
+      synchronous ``force_close_transport`` (terminate / SA outside-
+      greenlet) ran.
+    - ``connected_flag[0]`` is True only after ``_ensure_connection``
+      successfully built the underlying ``DqliteConnection``. A
+      never-connected instance has nothing to clean up — the warning
+      would be a false positive.
+
+    Without the connected-flag gate, common patterns like
+    ``conn = AsyncConnection(...); del conn`` (early-error or
+    test-fixture flow) would emit a misleading warning. Without
+    ``force_close_transport`` setting ``closed_flag``, the SA
+    ``terminate()`` path triggers the warning even though the
+    transport was reaped.
+
     Suppression-narrow ``RuntimeError`` mirrors the sync sibling's
     interpreter-shutdown race protection.
     """
-    if closed_flag[0]:
+    if closed_flag[0] or not connected_flag[0]:
         return
     with contextlib.suppress(RuntimeError):
         warnings.warn(
@@ -224,7 +243,20 @@ class AsyncConnection:
         # finalizer's responsibility split (which does drive an
         # owned daemon thread; the async sibling has none).
         self._closed_flag: list[bool] = [False]
-        weakref.finalize(self, _async_unclosed_warning, self._closed_flag, address)
+        # Companion flag flipped True only after ``_ensure_connection``
+        # successfully builds the underlying ``DqliteConnection``. The
+        # finalizer skips the ResourceWarning when False so a
+        # never-connected instance (e.g. ``conn = AsyncConnection(...);
+        # del conn``, common in early-error and test-fixture flows)
+        # doesn't emit a misleading "GC'd without close" warning.
+        self._connected_flag: list[bool] = [False]
+        weakref.finalize(
+            self,
+            _async_unclosed_warning,
+            self._closed_flag,
+            self._connected_flag,
+            address,
+        )
 
     def _ensure_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
         """Lazy-create the asyncio locks on the currently-running loop.
@@ -339,6 +371,10 @@ class AsyncConnection:
                     await built.close()
                 raise InterfaceError("Connection is closed")
             self._async_conn = built
+            # Flip the finalizer's "anything to clean up" gate. From
+            # this point GC without close emits the ResourceWarning;
+            # before this point a never-connected instance is silent.
+            self._connected_flag[0] = True
 
         return self._async_conn
 
@@ -546,6 +582,14 @@ class AsyncConnection:
         Callers that need to wait for the async path to drain should
         await ``close()`` from the original loop instead.
         """
+        # Set the finalizer's closed_flag so a subsequent GC sweep
+        # does not emit a misleading "GC'd without close()" warning
+        # — the user (or SA's terminate()) explicitly cleaned up via
+        # the synchronous force-close path. The flag is set
+        # unconditionally (even on the no-op inner=None / fork-child
+        # branches) so any path through this method counts as
+        # explicit cleanup.
+        self._closed_flag[0] = True
         inner = self._async_conn
         if inner is None:
             return

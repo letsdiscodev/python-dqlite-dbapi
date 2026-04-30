@@ -39,6 +39,7 @@ def _prime_connection_with_in_use_inner() -> AsyncConnection:
     conn._close_timeout = 0.5
     conn._creator_pid = _os.getpid()
     conn._closed_flag = [False]
+    conn._connected_flag = [True]
     return conn
 
 
