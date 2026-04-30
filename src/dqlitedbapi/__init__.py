@@ -134,10 +134,14 @@ def connect(
     Args:
         address: Node address in "host:port" format
         database: Database name to open
-        timeout: Connection timeout in seconds — must be a positive
-            finite number. ``0``, negatives, and non-finite values are
-            rejected here rather than silently passed through to the
-            underlying connection.
+        timeout: Per-RPC-phase timeout in seconds — must be a positive
+            finite number. The same budget is applied to each phase of
+            an operation (send, read, any continuation drain), so a
+            single high-level call can take up to roughly N × ``timeout``
+            end-to-end. To enforce a true end-to-end deadline, wrap the
+            call in ``asyncio.timeout(...)``. ``0``, negatives, and
+            non-finite values are rejected here rather than silently
+            passed through to the underlying connection.
         max_total_rows: Cumulative row cap across continuation frames
             for a single query. Forwarded to the underlying
             :class:`Connection`. ``None`` disables the cap.

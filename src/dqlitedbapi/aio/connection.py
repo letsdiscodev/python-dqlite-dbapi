@@ -116,7 +116,12 @@ class AsyncConnection:
         Args:
             address: Node address in "host:port" format
             database: Database name to open
-            timeout: Connection timeout in seconds (positive, finite)
+            timeout: Per-RPC-phase timeout in seconds (positive,
+                finite). Each phase of an operation (send, read, any
+                continuation drain) gets the full budget independently
+                — a single call can take up to roughly N × ``timeout``
+                end-to-end. Wrap callers in ``asyncio.timeout(...)``
+                to enforce a wall-clock deadline.
             max_total_rows: Cumulative row cap across continuation
                 frames. Forwarded to the underlying DqliteConnection;
                 ``None`` disables the cap.
@@ -681,9 +686,9 @@ class AsyncConnection:
         return f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
 
     def __reduce__(self) -> NoReturn:
-        # AsyncConnections own a loop-bound socket, asyncio Locks tied
-        # to a specific event loop, and a weakref-finalizer cycle —
-        # none of which survives pickling. Surface a clear driver-level
+        # AsyncConnections own a loop-bound socket and asyncio Locks
+        # tied to a specific event loop — neither survives pickling.
+        # Surface a clear driver-level
         # TypeError instead of leaking the underlying unpickleable-
         # member message.
         raise TypeError(

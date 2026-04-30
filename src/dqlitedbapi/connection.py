@@ -107,8 +107,8 @@ def _wrap_positive_int(value: int | None, name: str) -> int | None:
 
     PEP 249 §7 requires every error originating from the driver to be
     a subclass of ``Error``. The client-layer validator deliberately
-    raises Python-convention exceptions (per ISSUE-39 — correct for
-    client-only consumers); the dbapi entry points are the boundary
+    raises Python-convention exceptions — correct for client-only
+    consumers; the dbapi entry points are the boundary
     that translates to PEP 249 shapes. Sibling pattern to the
     ``_client_parse_address`` ``ValueError → InterfaceError`` wrap and
     to ``_validate_timeout``'s direct ``ProgrammingError``.
@@ -363,10 +363,15 @@ class Connection:
         Args:
             address: Node address in "host:port" format
             database: Database name to open
-            timeout: Connection timeout in seconds (must be positive
+            timeout: Per-RPC-phase timeout in seconds (must be positive
                 and finite; validated here so direct ``Connection(...)``
                 calls don't silently accept bad values that later
-                produce hangs or stranger downstream errors)
+                produce hangs or stranger downstream errors). Each phase
+                of an operation (send, read, any continuation drain)
+                gets the full budget independently — a single call can
+                take up to roughly N × ``timeout`` end-to-end. Wrap
+                callers in ``asyncio.timeout(...)`` to enforce a
+                wall-clock deadline.
             max_total_rows: Cumulative row cap across continuation
                 frames for a single query. Forwarded to the underlying
                 :class:`DqliteConnection`. ``None`` disables the cap.
