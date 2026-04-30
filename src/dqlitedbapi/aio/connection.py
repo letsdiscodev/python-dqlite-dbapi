@@ -594,8 +594,17 @@ class AsyncConnection:
         # branches) so any path through this method counts as
         # explicit cleanup.
         self._closed_flag[0] = True
+        # Also flip the public-facing closed flag so ``aconn.closed``
+        # reflects reality and a subsequent ``await aconn.close()``
+        # short-circuits via the closed-early-return at the top of
+        # close(). Without this, terminate() reaped the writer but
+        # left ``self._closed = False``; ``aconn.cursor()`` succeeded
+        # against a dead transport and a follow-up close() drove the
+        # full async teardown again on already-closed primitives.
+        self._closed = True
         inner = self._async_conn
         if inner is None:
+            self._async_conn = None
             return
         # Fork-after-init: ``writer.close()`` on the inherited socket
         # FD would send FIN on a connection the parent still holds
