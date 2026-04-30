@@ -333,10 +333,16 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
         if value.tzinfo is None:
             return base
         # tzinfo is set (checked above), so utcoffset() returns timedelta.
-        # A None here would indicate a broken tzinfo subclass; be explicit.
+        # A None here means the tzinfo subclass declared itself but
+        # cannot resolve an offset for this datetime — be explicit
+        # and reject rather than silently demoting to naive (which
+        # would lose the user's tz-awareness intent without warning).
         offset = value.utcoffset()
         if offset is None:
-            return base
+            raise DataError(
+                f"datetime is tz-aware but tzinfo.utcoffset() returned None for "
+                f"{value!r}; cannot encode without a resolvable UTC offset"
+            )
         return base + _format_utc_offset(offset)
     # datetime.date (must come after datetime check — datetime is a subclass).
     return value.isoformat()
@@ -359,7 +365,10 @@ def _iso8601_from_time(value: datetime.time) -> str:
         return base
     offset = value.utcoffset()
     if offset is None:
-        return base
+        raise DataError(
+            f"time is tz-aware but tzinfo.utcoffset() returned None for "
+            f"{value!r}; cannot encode without a resolvable UTC offset"
+        )
     return base + _format_utc_offset(offset)
 
 
