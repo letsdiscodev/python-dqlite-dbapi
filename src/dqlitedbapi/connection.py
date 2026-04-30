@@ -634,10 +634,33 @@ class Connection:
             # it explicitly to suppress "coroutine was never awaited"
             # ResourceWarnings (and free its frame).
             coro.close()
-            if self._async_conn is not None and self._loop is not None and self._async_conn._in_use:
+            # Mirror the post-acquire KI arm's synchronous null-out
+            # discipline. The loop-thread coroutine for the prior
+            # in-flight op holds ``_in_use=True`` and is parked on a
+            # slow ``reader.read()``; the queued
+            # ``call_soon_threadsafe(_invalidate)`` only lands when
+            # the read yields (potentially up to the read deadline
+            # away). Without the synchronous null-out, a retry from
+            # the signal handler reads a stale non-None
+            # ``self._async_conn``, hits ``_check_in_use``, and
+            # raises "another operation is in progress" — wedging
+            # the connection until the prior coroutine drains.
+            #
+            # ``self._async_conn = None`` is a single STORE_ATTR
+            # (GIL-atomic on CPython); the loop-thread coroutine
+            # holds its own local reference to the dying conn and
+            # will reap its transport via the scheduled
+            # ``_invalidate`` below.
+            #
+            # Gated on ``_in_use`` (preserved from the original
+            # code) so a KI raised during a quiet acquire (no prior
+            # op) does not invalidate gratuitously.
+            dying = self._async_conn
+            if dying is not None and self._loop is not None and dying._in_use:
+                self._async_conn = None
                 with contextlib.suppress(RuntimeError):
                     self._loop.call_soon_threadsafe(
-                        self._async_conn._invalidate,
+                        dying._invalidate,
                         InterfaceError("operation interrupted during op-lock acquire"),
                     )
             raise

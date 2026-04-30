@@ -241,6 +241,65 @@ def test_keyboard_interrupt_during_op_lock_acquire_invalidates_when_prior_op_in_
         conn._closed = True
 
 
+def test_keyboard_interrupt_during_op_lock_acquire_nulls_async_conn_synchronously() -> None:
+    """Pre-acquire KI arm must mirror the post-acquire arm's
+    synchronous ``self._async_conn = None`` discipline so the
+    next sync op gets a fresh-connect path even if the loop has
+    not yet drained the scheduled ``_invalidate``.
+
+    Without this, a retry from the signal handler reads a stale
+    non-None ``self._async_conn`` whose ``_in_use=True`` is still
+    latched (the loop's slow ``reader.read()`` has not yielded);
+    the retry's ``_get_async_connection`` returns the dying conn,
+    ``_check_in_use`` fires, and the call wedges with "another
+    operation is in progress" until the read deadline.
+    """
+    conn = _make_with_loop_thread()
+    try:
+        # Capture invalidate so we can assert it was scheduled.
+        invalidate_calls: list[Exception] = []
+
+        def capture_invalidate(*args: object, **kwargs: object) -> None:
+            if args:
+                invalidate_calls.append(args[0])  # type: ignore[arg-type]
+
+        conn._async_conn._invalidate = capture_invalidate  # type: ignore[method-assign,union-attr,unused-ignore]
+        # Simulate prior-op-in-flight precondition (matches the
+        # gating in the production code).
+        conn._async_conn._in_use = True  # type: ignore[union-attr]
+
+        fake_lock = MagicMock()
+        fake_lock.acquire.side_effect = KeyboardInterrupt
+        conn._op_lock = fake_lock
+
+        with pytest.raises(KeyboardInterrupt):
+            conn.commit()
+
+        # Load-bearing assertion: synchronous null-out before the
+        # KI propagates, mirroring the post-acquire arm's
+        # ISSUE-785 discipline.
+        assert conn._async_conn is None, (
+            "Pre-acquire KI arm must null self._async_conn "
+            "synchronously — otherwise a retry from the signal "
+            "handler wedges on stale _in_use=True until the loop "
+            "coroutine yields."
+        )
+
+        # And the invalidate was still scheduled (preserved
+        # behavior — wedged loop coroutine needs the poison so
+        # the wire stream gets reaped when it finally yields).
+        import time
+
+        for _ in range(50):
+            if invalidate_calls:
+                break
+            time.sleep(0.01)
+        assert invalidate_calls
+        assert isinstance(invalidate_calls[0], InterfaceError)
+    finally:
+        conn._closed = True
+
+
 def test_keyboard_interrupt_during_op_lock_acquire_no_op_when_idle() -> None:
     """Negative pin: KI during a quiet acquire (no prior op wedged)
     must NOT schedule a gratuitous invalidation. Re-raise the KI
