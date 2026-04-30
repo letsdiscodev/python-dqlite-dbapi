@@ -216,6 +216,14 @@ async def _build_and_connect(
         # retry loop against the permanent policy rejection — matches
         # the ``_call_client`` query-path wrap.
         raise InterfaceError(f"Cluster policy rejection; {e}") from e
+    except _client_exc.DqliteConnectionError as e:
+        # Transport / handshake failure at the connect layer (TCP
+        # refused, DNS failure, server-reset). The cursor-path
+        # classifier maps DqliteConnectionError to OperationalError;
+        # mirror it on the connect path so SA's pool retry loop sees
+        # the right shape and the substring scan can classify it.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise OperationalError(f"Failed to connect: {e}", code=None, raw_message=raw_msg) from e
     except _client_exc.ClusterError as e:
         # Non-policy ClusterError — transient at the cluster discovery
         # layer (no leader yet, all nodes unreachable). Surface as

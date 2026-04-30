@@ -334,14 +334,15 @@ class TestCursorDescriptionEdgeCases:
             assert c.fetchall() == []
 
     def test_description_typecode_when_only_row_is_all_null(self, cluster_address: str) -> None:
-        """A row of all-NULLs sets every column's type nibble to NULL in the
-        wire frame, which propagates to ``description[i][1]`` as
-        ``ValueType.NULL`` (= 5). Locked in so a future refactor (e.g.
-        falling back to declared column types when the first row is all
-        NULLs) is a deliberate decision, not a silent drift.
+        """A row of all-NULLs sets every column's type nibble to NULL
+        in the wire frame. The dbapi maps ``ValueType.NULL`` to
+        ``None`` on ``description[i][1]`` to satisfy PEP 249 §6.1.2:
+        ``type_code`` "must compare equal to one of Type Objects
+        defined below" — NULL is not one of the five Type Objects
+        (STRING / BINARY / NUMBER / DATETIME / ROWID). Locked in so
+        a future refactor that surfaces the raw wire byte is a
+        deliberate decision, not a silent drift.
         """
-        from dqlitewire.constants import ValueType
-
         with connect(cluster_address, database="test_desc_nulls") as conn:
             c = conn.cursor()
             c.execute("CREATE TABLE IF NOT EXISTS desc_nulls (a INTEGER, b TEXT)")
@@ -353,10 +354,8 @@ class TestCursorDescriptionEdgeCases:
             assert c.description is not None
             assert len(c.description) == 2
             assert [col[0] for col in c.description] == ["a", "b"]
-            # Current contract: per-row NULL override flips the type
-            # nibble, so declared column types are lost when the sample
-            # row is all-NULLs. ValueType.NULL == 5.
-            assert [col[1] for col in c.description] == [int(ValueType.NULL), int(ValueType.NULL)]
+            # PEP 249 §6.1.2 — NULL → None on the description.
+            assert [col[1] for col in c.description] == [None, None]
             assert c.fetchall() == [(None, None)]
 
 
