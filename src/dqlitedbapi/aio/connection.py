@@ -448,6 +448,10 @@ class AsyncConnection:
                 # performed" surface — the row index must be reset
                 # alongside the buffer.
                 cur._row_index = 0
+                # PEP 249 §6.4: clear messages on the cascade so a
+                # post-cascade ``cur.messages`` access doesn't see
+                # stale entries.
+                del cur.messages[:]
         finally:
             self._cursors.clear()
         if self._async_conn is None:

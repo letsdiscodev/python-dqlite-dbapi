@@ -22,6 +22,7 @@ from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client
 from dqlitedbapi.exceptions import (
     DatabaseError,
+    DataError,
     InterfaceError,
     NotSupportedError,
     OperationalError,
@@ -215,8 +216,52 @@ async def _build_and_connect(
         # retry loop against the permanent policy rejection — matches
         # the ``_call_client`` query-path wrap.
         raise InterfaceError(f"Cluster policy rejection; {e}") from e
-    except Exception as e:
-        raise OperationalError(f"Failed to connect: {e}") from e
+    except _client_exc.ClusterError as e:
+        # Non-policy ClusterError — transient at the cluster discovery
+        # layer (no leader yet, all nodes unreachable). Surface as
+        # OperationalError so the SA pool's retry loop classifies it
+        # correctly, with raw_message preserved.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise OperationalError(f"Failed to connect: {e}", code=None, raw_message=raw_msg) from e
+    except _client_exc.ProtocolError as e:
+        # Wire-level desync during handshake (very rare). Match the
+        # cursor-path classifier's wording so SA's substring scan
+        # sees the canonical "wire decode failed" prefix.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise OperationalError(f"wire decode failed: {e}", code=None, raw_message=raw_msg) from e
+    except _client_exc.DataError as e:
+        # Encode-side error during the open handshake (e.g. a binary
+        # database name that fails encode_text). Surface as DataError
+        # per PEP 249 §7 — symmetric with the cursor-path classifier.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise DataError(str(e), code=None, raw_message=raw_msg) from e
+    except _client_exc.InterfaceError as e:
+        # Driver-misuse on the connect path (e.g. cross-loop reuse of
+        # an inner DqliteConnection). Surface as InterfaceError per
+        # PEP 249 — symmetric with the cursor-path classifier.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise InterfaceError(str(e), code=None, raw_message=raw_msg) from e
+    except _client_exc.DqliteError as e:
+        # Catch-all for any future DqliteError subclass not enumerated
+        # above. Surface as InterfaceError so an unexpected error
+        # type stays inside PEP 249's Error hierarchy. Mirrors the
+        # cursor-path classifier's catch-all at the end of
+        # ``_call_client``.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise InterfaceError(
+            f"unrecognized client error ({type(e).__name__}): {e}",
+            code=None,
+            raw_message=raw_msg,
+        ) from e
+    except OSError as e:
+        # Transport-level error escaping the client's wrap discipline
+        # (e.g. an asyncio cancellation that bypassed the inner
+        # try/except, or a refactor regression that newly leaks
+        # ConnectionResetError past the client layer). PEP 249 §7
+        # requires database-sourced failures to surface as Error
+        # subclasses; OperationalError is the right shape for
+        # transport.
+        raise OperationalError(f"Failed to connect: {e}", code=None, raw_message=str(e)) from e
     return conn
 
 
@@ -881,6 +926,13 @@ class Connection:
                 # alongside the buffer or a future rownumber accessor
                 # change could expose stale post-close state.
                 cur._row_index = 0
+                # PEP 249 §6.4: Cursor.messages "should be cleared
+                # automatically by all standard cursor methods"; the
+                # close-cascade should also leave each cursor's list
+                # empty so a post-cascade ``cur.messages`` access
+                # doesn't see stale entries from before the parent
+                # connection closed.
+                del cur.messages[:]
         finally:
             self._cursors.clear()
         # Detach the finalizer — it's about to do nothing useful, and
