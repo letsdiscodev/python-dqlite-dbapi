@@ -15,7 +15,7 @@ from typing import Any, Final, NoReturn
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
-from dqliteclient.connection import _parse_address as _client_parse_address
+from dqliteclient.connection import parse_address as _client_parse_address
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client

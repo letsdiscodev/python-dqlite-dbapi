@@ -9,7 +9,7 @@ from types import TracebackType
 from typing import NoReturn
 
 from dqliteclient import DqliteConnection
-from dqliteclient.connection import _parse_address as _client_parse_address
+from dqliteclient.connection import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import (

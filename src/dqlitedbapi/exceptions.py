@@ -67,6 +67,12 @@ class InterfaceError(Error):
         self.code = code
         self.raw_message = str(message) if raw_message is None else raw_message
 
+    @property
+    def sqlite_errorcode(self) -> int | None:
+        """Stdlib ``sqlite3``-parity alias for :attr:`code` (since
+        Python 3.11). Returns the same value as :attr:`code`."""
+        return self.code
+
     def __repr__(self) -> str:
         msg = self.args[0] if self.args else ""
         if self.code is None:
@@ -100,6 +106,18 @@ class DatabaseError(Error):
         super().__init__(message)
         self.code = code
         self.raw_message = str(message) if raw_message is None else raw_message
+
+    @property
+    def sqlite_errorcode(self) -> int | None:
+        """Stdlib ``sqlite3``-parity alias for :attr:`code`.
+
+        Python 3.11 added ``sqlite3.Error.sqlite_errorcode`` exposing
+        the SQLite extended error code. Cross-driver code that branches
+        on ``e.sqlite_errorcode == sqlite3.SQLITE_BUSY`` continues to
+        work against dqlite without the caller importing dqlite-specific
+        symbols. Returns the same value as :attr:`code`.
+        """
+        return self.code
 
     def __repr__(self) -> str:
         msg = self.args[0] if self.args else ""
