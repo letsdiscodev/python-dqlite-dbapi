@@ -22,6 +22,8 @@ permanent rejections, not "not yet."
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 import dqlitedbapi
@@ -30,7 +32,7 @@ from dqlitedbapi.exceptions import NotSupportedError
 
 
 @pytest.fixture
-def conn() -> dqlitedbapi.Connection:
+def conn() -> Iterator[dqlitedbapi.Connection]:
     c = dqlitedbapi.connect("127.0.0.1:9999")
     yield c
     c._closed_flag[0] = True
