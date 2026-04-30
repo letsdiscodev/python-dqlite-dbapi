@@ -690,16 +690,45 @@ class Connection:
                         # diagnostic.
                         recovered_error = recovered
                 future.cancel()
+                # Synchronously null ``self._async_conn`` from the
+                # calling thread, mirroring the
+                # ``(KeyboardInterrupt, SystemExit)`` arm below. Same
+                # rationale: a slow ``reader.read()`` parked on the
+                # loop has not yet reached a scheduling checkpoint,
+                # so the ``call_soon_threadsafe(_invalidate)`` we
+                # queue next will only land when that read yields
+                # (potentially up to the read deadline away).
+                # Without the synchronous null-out, the caller's
+                # retry hits ``_check_in_use`` against the still-
+                # latched ``_in_use=True`` on the dying conn and
+                # raises "another operation is in progress" until
+                # the slow read finally drains.
+                #
+                # ``self._async_conn = None`` is a single STORE_ATTR
+                # (GIL-atomic on CPython); the loop-thread coroutine
+                # holds its own local reference to the dying conn and
+                # will reap its own transport via the scheduled
+                # ``_invalidate`` below.
+                #
+                # The null-out is placed AFTER the
+                # ``recovered_error`` race-recovery branch above so a
+                # coroutine that actually completed (success or
+                # late server-side exception) does not get its
+                # connection state torn out from under it — the
+                # recovery branch returns / raises directly without
+                # falling through to here.
+                dying = self._async_conn
+                self._async_conn = None
                 # Poison the underlying connection. The coroutine may have
                 # half-written a request; the wire is in unknown state.
                 # Fire-and-forget on the loop thread (don't await).
-                if self._async_conn is not None:
+                if dying is not None:
                     # RuntimeError if the loop is already shutting down.
                     with contextlib.suppress(
                         RuntimeError
                     ):  # pragma: no cover - race: loop closing mid-schedule
                         loop.call_soon_threadsafe(
-                            self._async_conn._invalidate,
+                            dying._invalidate,
                             OperationalError(f"sync timeout after {self._timeout}s"),
                         )
                 # Wait a bounded time for the cancelled coroutine to

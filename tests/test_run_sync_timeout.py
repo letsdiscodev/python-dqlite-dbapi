@@ -326,3 +326,87 @@ class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
             )
         else:
             pytest.fail("expected IntegrityError to be raised")
+
+
+class TestRunSyncTimeoutSynchronousNullOutOfAsyncConn:
+    """The TimeoutError arm of ``_run_sync`` must synchronously null
+    ``self._async_conn`` from the calling thread — exactly like the
+    sibling ``(KeyboardInterrupt, SystemExit)`` arm does — so the
+    next sync call gets a fresh-connect path even when the loop
+    thread is still parked inside a slow ``reader.read()`` and
+    has not yet drained the scheduled ``_invalidate``.
+    """
+
+    def test_timeout_arm_nulls_async_conn_synchronously(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import concurrent.futures as cf
+        from typing import Any
+
+        from dqlitedbapi import connection as conn_module
+
+        conn = Connection("localhost:9001", timeout=0.05)
+
+        # Stand in for a real ``AsyncConnection`` so the cleanup arm's
+        # ``self._async_conn is not None`` guard passes and the
+        # scheduled-on-loop ``_invalidate`` callable resolves. We do
+        # NOT need it to be invoked — only the synchronous null-out is
+        # under test here.
+        class _StubAsyncConn:
+            def _invalidate(self, exc: BaseException | None = None) -> None:
+                pass
+
+        conn._async_conn = _StubAsyncConn()  # type: ignore[assignment]
+
+        class _StubFuture:
+            def __init__(self) -> None:
+                self._calls = 0
+
+            def cancel(self) -> bool:
+                return True
+
+            def done(self) -> bool:
+                return False
+
+            def cancelled(self) -> bool:
+                return False
+
+            def result(self, timeout: float | None = None) -> None:
+                self._calls += 1
+                if self._calls == 1:
+                    raise cf.TimeoutError()
+                # bounded-wait second call: pretend the cancelled
+                # coroutine has now unwound cleanly
+                raise cf.CancelledError()
+
+        stub = _StubFuture()
+
+        def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _StubFuture:
+            coro.close()
+            return stub
+
+        monkeypatch.setattr(
+            conn_module.asyncio,  # type: ignore[attr-defined]
+            "run_coroutine_threadsafe",
+            _fake_run_coroutine_threadsafe,
+        )
+
+        async def _never_runs() -> None:
+            await asyncio.sleep(999)
+
+        with pytest.raises(OperationalError, match="timed out"):
+            conn._run_sync(_never_runs())
+
+        # The synchronous null-out is the load-bearing assertion: a
+        # subsequent sync op must take the fresh-connect path
+        # regardless of whether the loop thread has drained the
+        # scheduled ``_invalidate`` yet. Without this null-out, a
+        # caller's retry would hit ``_check_in_use`` against the
+        # stale dying conn whose ``_in_use=True`` is still latched
+        # until the slow read finally yields.
+        assert conn._async_conn is None, (
+            "TimeoutError arm must null self._async_conn synchronously, "
+            "mirroring the (KeyboardInterrupt, SystemExit) arm — otherwise "
+            "the next sync op wedges on a stale _in_use=True until the "
+            "slow loop-side read deadline fires."
+        )
