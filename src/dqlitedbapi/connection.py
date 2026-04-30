@@ -1354,6 +1354,18 @@ class Connection:
     # via NotSupportedError so cross-driver code that calls them
     # inside ``except sqlite3.Error:`` catches uniformly. dqlite-
     # server does not implement any of these.
+    #
+    # **Note for cross-driver code porting from stdlib ``sqlite3``:**
+    # ``hasattr(conn, "tpc_begin")`` returns ``True`` on this driver
+    # because the stub IS defined (it just unconditionally raises).
+    # Stdlib ``sqlite3`` has no ``tpc_*`` methods at all, so
+    # ``hasattr`` returns ``False`` there. Code that feature-detects
+    # via ``hasattr`` will mistakenly take the "supported" branch
+    # against dqlitedbapi and then surface ``NotSupportedError``
+    # from inside the call. To portably test for support, use a
+    # ``try: conn.tpc_begin(xid); except dbapi.NotSupportedError:``
+    # block instead of ``hasattr``. The same caveat applies to
+    # ``callproc`` / ``nextset`` / ``scroll`` on the cursor side.
 
     def tpc_begin(self, xid: object) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")

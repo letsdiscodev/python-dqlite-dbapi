@@ -1326,6 +1326,14 @@ class Cursor:
         dqlite (and SQLite) have no stored-procedure concept. Annotated
         ``NoReturn`` because the body unconditionally raises
         ``NotSupportedError`` — symmetric with ``nextset`` below.
+
+        **Note for cross-driver code porting from stdlib ``sqlite3``:**
+        ``hasattr(cur, "callproc")`` returns ``True`` here because the
+        method is defined (it just unconditionally raises). Stdlib
+        ``sqlite3.Cursor`` has no ``callproc`` / ``nextset`` / ``scroll``
+        attributes, so ``hasattr`` returns ``False`` there. Use
+        ``try / except NotSupportedError`` for portable feature-
+        detection; ``hasattr`` is misleading on this driver.
         """
         # PEP 249 §6.1.1 names ``callproc`` among the cursor methods
         # that clear ``Connection.messages`` / ``Cursor.messages``.
