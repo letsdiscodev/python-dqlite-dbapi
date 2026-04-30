@@ -214,8 +214,16 @@ async def _build_and_connect(
         # narrows ``InterfaceError`` matching to "connection is
         # closed" / "cursor is closed", so the pool does NOT enter a
         # retry loop against the permanent policy rejection — matches
-        # the ``_call_client`` query-path wrap.
-        raise InterfaceError(f"Cluster policy rejection; {e}") from e
+        # the ``_call_client`` query-path wrap. Plumb code=None /
+        # raw_message symmetric with the seven sibling per-class
+        # arms below; the prefix is on ``message`` only, leaving
+        # ``raw_message`` as the verbatim server text.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise InterfaceError(
+            f"Cluster policy rejection; {e}",
+            code=None,
+            raw_message=raw_msg,
+        ) from e
     except _client_exc.DqliteConnectionError as e:
         # Transport / handshake failure at the connect layer (TCP
         # refused, DNS failure, server-reset). The cursor-path

@@ -247,11 +247,17 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # "connection is closed" / "cursor is closed" — so the pool
         # invalidates the permanent-reject slot without scheduling a
         # retry against the policy wall.
+        # Apply the "Cluster policy rejection;" prefix only to the
+        # user-facing ``message`` — ``raw_message`` is reserved for
+        # the verbatim server text per the cycle-21 contract. The
+        # prefix is the discriminator for callers branching without
+        # importing client-layer types; it has no place on the
+        # un-modified server-text accessor.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(
             f"Cluster policy rejection; {e}",
             code=None,
-            raw_message=f"Cluster policy rejection; {raw_msg}",
+            raw_message=raw_msg,
         ) from e
     except _client_exc.ClusterError as e:
         # Non-policy ClusterError — transient, code=None.
