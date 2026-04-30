@@ -187,17 +187,23 @@ async def _build_and_connect(
         from dqlitedbapi.cursor import _classify_operational
 
         exc_cls = _classify_operational(e.code)
+        # Preserve the un-modified server text on raw_message so
+        # callers reading the un-truncated diagnostic see exactly
+        # what the server emitted. The "Failed to connect: " prefix
+        # belongs on the user-facing ``message`` only — prefixing
+        # raw_message would contaminate the "verbatim server text"
+        # contract cycle 21 introduced.
         if issubclass(exc_cls, DatabaseError) or issubclass(exc_cls, InterfaceError):
             raise exc_cls(
                 f"Failed to connect: {e.message}",
                 code=e.code,
-                raw_message=f"Failed to connect: {e.raw_message}",
+                raw_message=e.raw_message,
             ) from e
         # Fallback if a future class lands outside both umbrellas.
         raise OperationalError(
             f"Failed to connect: {e.message}",
             code=e.code,
-            raw_message=f"Failed to connect: {e.raw_message}",
+            raw_message=e.raw_message,
         ) from e
     except _client_exc.ClusterPolicyError as e:
         # Deterministic configuration mismatch. Route through
@@ -252,7 +258,12 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     # low byte is 1 or 21 would slip past the whitelist and be surfaced.
     if primary_sqlite_code(code) not in _NO_TX_CODES:
         return False
-    lowered = str(exc).lower()
+    # Match against the un-truncated server text (raw_message) rather
+    # than ``str(exc)`` (truncated). A long server message that has
+    # the no-tx clause beyond the truncation cap would otherwise miss
+    # the substring and surface the no-tx as a real error.
+    raw = getattr(exc, "raw_message", None) or str(exc)
+    lowered = raw.lower()
     return any(s in lowered for s in _NO_TX_SUBSTRINGS)
 
 

@@ -227,10 +227,12 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
     except _client_exc.DqliteConnectionError as e:
         # DqliteConnectionError carries no SQLite code today — pass
         # code=None explicitly so the signature matches the sibling
-        # OperationalError handler above. Downstream disconnect
-        # detection reaches the original via ``__cause__`` (set by the
-        # ``from e``), so no information is lost.
-        raise OperationalError(str(e), code=None) from e
+        # OperationalError handler above. Plumb raw_message via the
+        # standard accessor so callers reading the un-truncated
+        # diagnostic don't need to walk ``__cause__``; falls back to
+        # str(e) on older client versions without the attribute.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise OperationalError(str(e), code=None, raw_message=raw_msg) from e
     except _client_exc.ClusterPolicyError as e:
         # Deterministic: configured policy rejected the leader. The
         # client layer explicitly excludes this from retry (see
@@ -245,10 +247,16 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # "connection is closed" / "cursor is closed" — so the pool
         # invalidates the permanent-reject slot without scheduling a
         # retry against the policy wall.
-        raise InterfaceError(f"Cluster policy rejection; {e}") from e
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise InterfaceError(
+            f"Cluster policy rejection; {e}",
+            code=None,
+            raw_message=f"Cluster policy rejection; {raw_msg}",
+        ) from e
     except _client_exc.ClusterError as e:
         # Non-policy ClusterError — transient, code=None.
-        raise OperationalError(str(e), code=None) from e
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise OperationalError(str(e), code=None, raw_message=raw_msg) from e
     except _client_exc.ProtocolError as e:
         # Wire decode / stream error — the socket is desynced, even if
         # TCP is alive. PEP 249 ``OperationalError`` ("problems with
@@ -259,19 +267,27 @@ async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
         # routes the failure through the disconnect-classifier's
         # substring branch so the pool slot invalidates on the first
         # round-trip.
-        raise OperationalError(str(e), code=None) from e
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise OperationalError(str(e), code=None, raw_message=raw_msg) from e
     except _client_exc.DataError as e:
         # client.DataError carries no server code today (encode-side
         # error surface), but plumb code=None explicitly so the
         # signature stays symmetric with the coded branches above.
-        raise DataError(str(e), code=None) from e
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise DataError(str(e), code=None, raw_message=raw_msg) from e
     except _client_exc.InterfaceError as e:
-        raise InterfaceError(str(e)) from e
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise InterfaceError(str(e), code=None, raw_message=raw_msg) from e
     except _client_exc.DqliteError as e:
         # Catch-all for any future subclass of DqliteError not enumerated
         # above. Surface as InterfaceError rather than leaking to the
         # caller as a non-DBAPI exception.
-        raise InterfaceError(f"unrecognized client error ({type(e).__name__}): {e}") from e
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise InterfaceError(
+            f"unrecognized client error ({type(e).__name__}): {e}",
+            code=None,
+            raw_message=raw_msg,
+        ) from e
     except (TypeError, ValueError) as e:
         # PEP 249 §7 mandates ``DataError`` for "problems with the
         # processed data". The wire encoder in ``dqlitewire.types``
