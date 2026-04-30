@@ -523,6 +523,27 @@ class AsyncConnection:
                         if writer is not None:
                             with contextlib.suppress(Exception):
                                 writer.close()
+                    # Drain any ``_pending_drain`` task scheduled on
+                    # the inner client by a sibling task's
+                    # ``_invalidate``. The inner client's canonical
+                    # ``_close_impl`` awaits this task explicitly; the
+                    # cross-task fallback above bypasses
+                    # ``_close_impl`` entirely (raised InterfaceError
+                    # before reaching it), so the drain bookkeeping
+                    # has to be mirrored here. Without this, the
+                    # only remaining reachability for the drain task
+                    # is the inner conn — which we are about to
+                    # null — and Python prints "Task was destroyed
+                    # but it is pending" at GC. Defensive None /
+                    # done() check: typical entry has no pending
+                    # drain (the InterfaceError fired BECAUSE
+                    # ``_invalidate`` had not yet run); the drain
+                    # only exists if the sibling raced a prior
+                    # invalidate ahead of this close.
+                    pending = getattr(inner, "_pending_drain", None)
+                    if pending is not None and not pending.done():
+                        with contextlib.suppress(BaseException):
+                            await asyncio.shield(pending)
                     # Fall through (no ``return``) to the unconditional
                     # ``self._async_conn = None`` and lock-cleanup tail
                     # below. ``return`` inside a ``finally`` block

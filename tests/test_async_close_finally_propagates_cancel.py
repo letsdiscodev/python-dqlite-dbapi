@@ -78,6 +78,64 @@ async def test_close_finally_does_not_swallow_cancelled_error_from_body() -> Non
 
 
 @pytest.mark.asyncio
+async def test_close_finally_interface_error_arm_drains_pending_drain_task() -> None:
+    """When the InterfaceError arm fires (cross-task contract violation),
+    the inner client may already carry a ``_pending_drain`` task
+    scheduled by a prior ``_invalidate``. The arm must await that
+    task before nulling ``self._async_conn`` — otherwise the drain
+    task is orphaned (its reader-pump never observes the writer's
+    FIN before its only reachability path goes away) and Python
+    prints "Task was destroyed but it is pending" at GC time.
+    """
+    conn = _prime_connection_with_in_use_inner()
+    conn._ensure_locks()
+
+    inner = MagicMock()
+    proto = MagicMock()
+    writer = MagicMock()
+    proto._writer = writer
+    inner._protocol = proto
+
+    # Synthesize a slow pending_drain task on the inner — modelling a
+    # sibling task's ``_invalidate`` having already scheduled a
+    # bounded ``wait_closed`` on the loop.
+    drain_observed = asyncio.Event()
+
+    async def _slow_drain() -> None:
+        try:
+            await asyncio.sleep(0.5)
+        finally:
+            drain_observed.set()
+
+    inner._pending_drain = asyncio.create_task(_slow_drain())
+    # Body's close raises CancelledError (so we skip the body's
+    # ``self._async_conn = None`` and reach the finally's shielded
+    # close); finally's shielded close raises InterfaceError so the
+    # arm under test runs.
+    inner.close = AsyncMock(
+        side_effect=[
+            asyncio.CancelledError(),
+            InterfaceError("connection still in_use"),
+        ]
+    )
+    conn._async_conn = inner
+
+    with pytest.raises(asyncio.CancelledError):
+        await conn.close()
+
+    # The pending_drain MUST have run to completion (or at least to a
+    # point where the close-side awaited it). Without the fix it
+    # would still be "pending" here.
+    assert inner._pending_drain.done(), (
+        "InterfaceError arm must await inner._pending_drain before "
+        "nulling _async_conn — otherwise the drain task is orphaned."
+    )
+    assert drain_observed.is_set()
+    # Force-close still ran.
+    assert writer.close.call_count >= 1
+
+
+@pytest.mark.asyncio
 async def test_close_finally_interface_error_path_clears_lock_state() -> None:
     """When ONLY the shielded close raises InterfaceError (the body's
     close went through fine), the lock-cleanup tail still runs and
