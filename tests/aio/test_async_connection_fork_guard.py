@@ -35,7 +35,7 @@ async def test_async_connection_used_after_fork_raises_interface_error() -> None
     conn._creator_pid = fake_parent_pid
 
     with (
-        patch("dqlitedbapi.aio.connection.os.getpid", return_value=fake_parent_pid + 1),
+        patch("dqliteclient.connection._current_pid", fake_parent_pid + 1),
         pytest.raises(InterfaceError, match="fork"),
     ):
         conn._ensure_locks()
@@ -56,7 +56,7 @@ def test_force_close_transport_after_fork_short_circuits() -> None:
     fake_parent_pid = conn._creator_pid + 1
     conn._creator_pid = fake_parent_pid
 
-    with patch("dqlitedbapi.aio.connection.os.getpid", return_value=fake_parent_pid + 1):
+    with patch("dqliteclient.connection._current_pid", fake_parent_pid + 1):
         conn.force_close_transport()
 
     writer.close.assert_not_called()
@@ -82,7 +82,7 @@ async def test_async_connection_close_after_fork_short_circuits() -> None:
     fake_parent_pid = conn._creator_pid + 1
     conn._creator_pid = fake_parent_pid
 
-    with patch("dqlitedbapi.aio.connection.os.getpid", return_value=fake_parent_pid + 1):
+    with patch("dqliteclient.connection._current_pid", fake_parent_pid + 1):
         await conn.close()
 
     inner.close.assert_not_called()

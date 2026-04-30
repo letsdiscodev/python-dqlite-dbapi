@@ -103,24 +103,28 @@ class TestSyncStdlibParityStubs:
             conn.create_window_function("name", 0, object)
 
 
-@pytest.mark.asyncio
 class TestAsyncTpcStubs:
+    @pytest.mark.asyncio
     async def test_tpc_begin(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_begin(object())
 
+    @pytest.mark.asyncio
     async def test_tpc_prepare(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_prepare()
 
+    @pytest.mark.asyncio
     async def test_tpc_commit(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_commit()
 
+    @pytest.mark.asyncio
     async def test_tpc_rollback(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_rollback()
 
+    @pytest.mark.asyncio
     async def test_tpc_recover(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_recover()

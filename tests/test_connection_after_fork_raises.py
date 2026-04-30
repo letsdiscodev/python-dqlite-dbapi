@@ -95,7 +95,7 @@ def test_dbapi_close_after_fork_scrubs_cursors() -> None:
     conn._creator_pid = fake_parent_pid
 
     try:
-        with patch("dqlitedbapi.connection.os.getpid", return_value=fake_parent_pid + 1):
+        with patch("dqliteclient.connection._current_pid", fake_parent_pid + 1):
             conn.close()
 
         assert cursor._closed is True
