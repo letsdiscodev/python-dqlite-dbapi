@@ -972,7 +972,14 @@ class Cursor:
                         f"{len(column_types)} type codes"
                     )
                 else:
-                    type_codes = list(column_types)
+                    # Map ValueType.NULL (5) to None: PEP 249 §6.1.2
+                    # says type_code "must compare equal to one of
+                    # Type Objects defined below" and NULL is not one
+                    # of the five Type Objects (STRING / BINARY /
+                    # NUMBER / DATETIME / ROWID). Surfacing None
+                    # instead matches the documented empty-result-set
+                    # deviation already in this module.
+                    type_codes = [None if c == ValueType.NULL else c for c in column_types]
                 self._description = tuple(
                     (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)
@@ -1173,10 +1180,12 @@ class Cursor:
         if size is None:
             size = self._arraysize
         if size < 0:
-            # Previously ``range(-5)`` silently returned [] — hid caller
-            # bugs. ``arraysize`` setter already validates >= 1; mirror
-            # that here.
-            raise ProgrammingError(f"fetchmany size must be non-negative, got {size}")
+            # Stdlib ``sqlite3.Cursor.fetchmany`` documents negative
+            # ``size`` as "fetch all remaining rows"; mirror that
+            # behaviour for cross-driver parity. The ``arraysize``
+            # SETTER still validates >= 1 (it's a stored-state
+            # invariant), but the per-call argument follows stdlib.
+            return self.fetchall()
 
         # Snapshot _row_index before the loop; restore on
         # cancel/exception so partially-iterated rows are not

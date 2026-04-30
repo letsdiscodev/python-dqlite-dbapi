@@ -237,7 +237,12 @@ class AsyncCursor:
                         f"{len(column_types)} type codes"
                     )
                 else:
-                    type_codes = list(column_types)
+                    # Map ValueType.NULL → None to satisfy PEP 249
+                    # §6.1.2 ("type_code must compare equal to one of
+                    # Type Objects"). See sync sibling rationale.
+                    from dqlitewire.constants import ValueType as _VT
+
+                    type_codes = [None if c == _VT.NULL else c for c in column_types]
                 self._description = tuple(
                     (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)
@@ -472,9 +477,10 @@ class AsyncCursor:
         if size is None:
             size = self._arraysize
         if size < 0:
-            # See sync Cursor.fetchmany: silently returning [] on a
-            # negative size hides caller bugs.
-            raise ProgrammingError(f"fetchmany size must be non-negative, got {size}")
+            # Stdlib parity: ``sqlite3.Cursor.fetchmany`` documents
+            # negative ``size`` as "fetch all remaining rows". Mirror
+            # the sync sibling.
+            return await self.fetchall()
 
         # Snapshot ``_row_index`` BEFORE the per-iteration ``fetchone()``
         # loop. On cancel/exception mid-loop, restore to (snapshot +
