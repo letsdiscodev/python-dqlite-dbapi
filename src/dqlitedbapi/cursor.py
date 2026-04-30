@@ -927,14 +927,27 @@ class Cursor:
                 # silently produced PEP-249-illegal descriptions when
                 # the wire layer returned fewer type codes than columns.
                 #
-                # Empty-result legitimate case: ``RowsResponse`` derives
-                # ``column_types`` from the first row's type header, so
-                # a zero-row result set returns ``column_types == []``.
-                # PEP 249 permits ``type_code=None`` when the type is
-                # not determinable; emit it in that specific case only.
-                # For the real anomaly (rows present but short
-                # ``column_types``), raise ``DataError`` so the wire
-                # bug surfaces loudly.
+                # Empty-result deviation from PEP 249 §6.1.2:
+                # ``RowsResponse`` derives ``column_types`` from the
+                # first row's type header, so a zero-row result set
+                # returns ``column_types == []`` and the type
+                # information is genuinely unrecoverable from the
+                # wire — dqlite's protocol does not carry declared
+                # column affinity separately from the per-row type
+                # tags. PEP 249 says ``type_code`` "must compare
+                # equal to one of Type Objects"; ``None`` does not.
+                # We emit ``None`` here as a documented deviation:
+                # any synthesised value (e.g. always TEXT) would be
+                # misleading in a different direction (a SELECT
+                # against an INTEGER column with no rows would
+                # advertise the wrong type), and a wire extension
+                # is a feature outside the scope of dbapi
+                # correctness. Callers that need column-type
+                # introspection on empty result sets should issue a
+                # PRAGMA table_info(...) query separately. For the
+                # real anomaly (rows present but short
+                # ``column_types``), raise ``DataError`` so the
+                # wire bug surfaces loudly.
                 if len(column_types) == 0 and len(rows) == 0:
                     type_codes: list[Any] = [None] * len(columns)
                 elif len(column_types) != len(columns):

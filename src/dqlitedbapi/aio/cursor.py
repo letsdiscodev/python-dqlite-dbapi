@@ -217,11 +217,18 @@ class AsyncCursor:
                 self._description = None
             else:
                 # PEP 249 §6.1.2 ``type_code`` must compare equal to a
-                # Type Object. See the sync ``_execute_async`` for the
-                # full rationale. Empty result set → column_types is
-                # legitimately empty (type_code=None is the only
-                # permitted representation). Non-empty but short →
-                # ``DataError`` so the anomaly surfaces loudly.
+                # Type Object. See the sync ``_execute_async`` for
+                # the full rationale. Empty result set → column_types
+                # is legitimately empty and the wire does not carry
+                # declared column affinity separately from the
+                # per-row type tags, so the type information is
+                # unrecoverable. We emit ``None`` as a documented
+                # deviation; any synthesised value would mislead in a
+                # different direction. Callers that need column-type
+                # introspection on empty result sets should issue
+                # ``PRAGMA table_info(...)`` separately. Non-empty
+                # but short → ``DataError`` so the anomaly surfaces
+                # loudly.
                 if len(column_types) == 0 and len(rows) == 0:
                     type_codes: list[Any] = [None] * len(columns)
                 elif len(column_types) != len(columns):
