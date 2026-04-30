@@ -551,8 +551,10 @@ class AsyncCursor:
         # same ``ProgrammingError`` they'd get from ``execute`` /
         # ``fetchone``. Without this, a sync no-op on a cursor bound
         # to loop A but called from loop B silently succeeds and
-        # masks the misuse until the next awaited op.
-        self._connection._ensure_locks()
+        # masks the misuse until the next awaited op. Non-binding
+        # helper so calling this on a fresh connection doesn't
+        # lazily bind it.
+        self._connection._check_loop_binding()
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
@@ -563,7 +565,7 @@ class AsyncCursor:
         # PEP 249 §6.1.2 — closed-cursor operations raise.
         self._check_closed()
         # Loop-binding check; see ``setinputsizes`` for rationale.
-        self._connection._ensure_locks()
+        self._connection._check_loop_binding()
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
         """PEP 249 optional extension — not supported.
@@ -591,7 +593,7 @@ class AsyncCursor:
         # silently surfaces ``NotSupportedError`` and the caller is
         # left thinking the cursor is still loop-A bound. Sibling
         # consistency with ``setinputsizes`` / ``setoutputsize``.
-        self._connection._ensure_locks()
+        self._connection._check_loop_binding()
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> NoReturn:
@@ -603,8 +605,13 @@ class AsyncCursor:
             del conn_messages[:]
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
-        # Loop-binding check; see ``callproc`` for rationale.
-        self._connection._ensure_locks()
+        # Loop-binding check; see ``callproc`` for rationale. Use
+        # the non-binding helper so a no-op cursor method on a fresh
+        # connection doesn't lazily bind the loop — a later
+        # legitimate call from a different loop would otherwise fail
+        # with a confusing "different event loop" diagnostic
+        # referring to a loop the user did not knowingly bind.
+        self._connection._check_loop_binding()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
     def scroll(self, value: int, mode: str = "relative") -> None:
@@ -620,8 +627,13 @@ class AsyncCursor:
             del conn_messages[:]
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
-        # Loop-binding check; see ``callproc`` for rationale.
-        self._connection._ensure_locks()
+        # Loop-binding check; see ``callproc`` for rationale. Use
+        # the non-binding helper so a no-op cursor method on a fresh
+        # connection doesn't lazily bind the loop — a later
+        # legitimate call from a different loop would otherwise fail
+        # with a confusing "different event loop" diagnostic
+        # referring to a loop the user did not knowingly bind.
+        self._connection._check_loop_binding()
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def __repr__(self) -> str:

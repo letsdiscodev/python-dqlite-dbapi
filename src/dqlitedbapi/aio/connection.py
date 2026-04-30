@@ -269,6 +269,41 @@ class AsyncConnection:
         assert self._op_lock is not None
         return self._connect_lock, self._op_lock
 
+    def _check_loop_binding(self) -> None:
+        """Validate the current loop matches the bound loop WITHOUT
+        binding on first use. Sibling of ``_ensure_locks``; intended
+        for cursor methods that don't need the locks (no-op /
+        always-raise paths like ``callproc``, ``nextset``,
+        ``scroll``, ``setinputsizes``, ``setoutputsize``) but should
+        still fail fast on cross-loop misuse. Without this split,
+        calling one of those methods on a fresh connection lazily
+        binds the loop to the calling task's loop, and a later
+        legitimate call from a different loop fails with a
+        ProgrammingError pointing at a loop the user did not
+        knowingly bind.
+
+        Raises ProgrammingError if the connection has already bound
+        to a different loop. No-op when not yet bound.
+        """
+        if self._closed:
+            raise InterfaceError("Connection is closed")
+        if os.getpid() != self._creator_pid:
+            raise InterfaceError(
+                "Connection used after fork; reconstruct from configuration in the target process."
+            )
+        if self._loop_ref is None:
+            return  # not yet bound — don't bind from here
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Outside an async context; the cursor method will raise
+            # NotSupportedError or no-op anyway. Don't manufacture a
+            # different error.
+            return
+        bound = self._loop_ref()
+        if bound is not loop:
+            raise ProgrammingError(_format_loop_affinity_message(bound, loop, "was first used"))
+
     async def _ensure_connection(self) -> DqliteConnection:
         """Ensure the underlying connection is established."""
         if self._closed:
