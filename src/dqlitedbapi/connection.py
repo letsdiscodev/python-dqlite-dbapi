@@ -15,6 +15,7 @@ from typing import Any, Final, NoReturn
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
+from dqliteclient import connection as _client_conn_mod
 from dqliteclient.connection import parse_address as _client_parse_address
 from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
@@ -474,7 +475,7 @@ class Connection:
         - InterfaceError if called from a forked child (pid mismatch).
         - ProgrammingError if called from a different thread than the creator.
         """
-        if os.getpid() != self._creator_pid:
+        if _client_conn_mod._current_pid != self._creator_pid:
             raise InterfaceError(
                 "Connection used after fork; reconstruct from configuration in the target process."
             )
@@ -821,7 +822,7 @@ class Connection:
         # closed inputs — quiet no-op preserves that contract for
         # the GC / atexit path that commonly drives close in a
         # forked worker.
-        if os.getpid() != self._creator_pid:
+        if _client_conn_mod._current_pid != self._creator_pid:
             self._closed = True
             self._closed_flag[0] = True
             # Cascade to tracked cursors so buffered fetches on them
