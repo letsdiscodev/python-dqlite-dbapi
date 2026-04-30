@@ -1,6 +1,8 @@
 """PEP 249 Cursor implementation for dqlite."""
 
+import contextlib
 import re
+import weakref
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol
@@ -1268,6 +1270,24 @@ class Cursor:
         # last-fetched offset contradicts the "consistent no-op
         # surface" the other scrubbed fields commit to.
         self._row_index = 0
+        # Drop the strong back-reference to the parent Connection so a
+        # closed cursor the user retains (debugger frame, class-level
+        # cache, pytest fixture cache) does not pin the Connection
+        # — and its daemon event-loop thread, ``weakref.finalize``
+        # registration, and asyncio primitives — past the user's
+        # intended lifetime. The connection's ``_cursors`` is already
+        # a ``WeakSet`` (cursor falls out cleanly when dropped); the
+        # reverse direction needs the same decoupling on close.
+        # ``weakref.proxy`` preserves the public ``cursor.connection``
+        # API while the Connection is alive; once the Connection is
+        # actually GC'd, ``cur.connection.<anything>`` raises
+        # ``ReferenceError`` — strictly better than the prior
+        # behaviour where a closed cursor silently kept the daemon
+        # loop thread alive forever.
+        with contextlib.suppress(
+            TypeError
+        ):  # pragma: no cover - Connection always supports weakref
+            self._connection = weakref.proxy(self._connection)
 
     def setinputsizes(self, sizes: Sequence[int | None]) -> None:
         """Set input sizes (no-op for dqlite).

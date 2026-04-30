@@ -1,5 +1,7 @@
 """Async cursor implementation for dqlite."""
 
+import contextlib
+import weakref
 from collections.abc import Iterable, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -542,6 +544,18 @@ class AsyncCursor:
         self._lastrowid = None
         # Mirror the sync cursor's scrub contract.
         self._row_index = 0
+        # Drop the strong back-reference to the parent
+        # ``AsyncConnection`` so a closed cursor the user retains
+        # does not pin the connection's loop-bound ``asyncio.Lock``,
+        # ``weakref.finalize`` registration, or any other
+        # connection-lifecycle state past the user's intended
+        # lifetime. The connection's ``_cursors`` is already a
+        # ``WeakSet``; this fixes the reverse direction. See
+        # ``Cursor.close`` for full rationale.
+        with contextlib.suppress(
+            TypeError
+        ):  # pragma: no cover - AsyncConnection always supports weakref
+            self._connection = weakref.proxy(self._connection)
 
     def setinputsizes(self, sizes: Sequence[int | None]) -> None:
         """Set input sizes (no-op for dqlite).
