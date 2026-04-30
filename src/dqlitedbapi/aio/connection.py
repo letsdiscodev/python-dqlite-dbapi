@@ -651,6 +651,31 @@ class AsyncConnection:
                 id(self),
                 exc_info=True,
             )
+        # Reap any ``_pending_drain`` task on the inner client. The
+        # canonical async ``close()`` awaits this task; the sync
+        # helper cannot await (no loop, no greenlet), so we cancel
+        # and null instead. ``Task.cancel()`` is callable from any
+        # thread that has the GIL — schedules a cancel via the
+        # task's owning loop's ``call_soon`` and falls silent if
+        # that loop is already closed (a CancelledError that nobody
+        # ever sees is preferable to "Task was destroyed but it
+        # is pending" at GC). Done-check skips the redundant
+        # cancel so the typical "drain already raced ahead" path
+        # is a clean no-op. Wrapped suppress because attribute
+        # writes on the inner conn could in principle raise (e.g.
+        # __slots__ violations on a custom subclass).
+        pending = getattr(inner, "_pending_drain", None)
+        if pending is not None and not pending.done():
+            with contextlib.suppress(Exception):
+                pending.cancel()
+        with contextlib.suppress(Exception):
+            inner._pending_drain = None
+        # Mirror the fork branch's null-out so the AsyncConnection
+        # does not keep claiming to reference a live inner conn
+        # after force-close. The fork branch above (line 638)
+        # already nulls; this brings the regular sync path to the
+        # same discipline.
+        self._async_conn = None
 
     @property
     def in_transaction(self) -> bool:
