@@ -759,7 +759,18 @@ class AsyncConnection:
         Mirrors stdlib ``sqlite3.Connection.in_transaction`` (and its
         sync sibling :attr:`dqlitedbapi.Connection.in_transaction`).
         Never-connected or closed connections return False.
+
+        Raises ``ProgrammingError`` if read from a foreign event loop
+        — symmetric with the sync sibling's ``_check_thread()`` raise
+        on cross-thread access. Without this, the underlying client-
+        layer ``DqliteConnection.in_transaction`` would silently read
+        loop-bound state from the wrong loop, and a follow-up
+        ``rollback()`` would then raise — making the property
+        un-usable as a cleanup-path discriminator. Uses
+        ``_check_loop_only`` (not ``_check_loop_binding``) so the
+        check does not lazy-bind the loop on first read.
         """
+        self._check_loop_only()
         # Snapshot the reference once: ``close()`` running concurrently
         # may null ``_async_conn`` between a None-check and an attribute
         # read. The local binding is immutable for the duration of the
