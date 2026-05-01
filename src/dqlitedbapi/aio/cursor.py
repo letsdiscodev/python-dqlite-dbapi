@@ -163,6 +163,30 @@ class AsyncCursor:
         """
         return self._closed
 
+    @property
+    def row_factory(self) -> None:
+        """stdlib ``sqlite3.Cursor.row_factory``-parity stub.
+
+        dqlitedbapi does not support custom row construction; rows
+        are always returned as plain tuples per PEP 249. Mirrors the
+        sync sibling ``Cursor.row_factory`` and the
+        ``Connection.row_factory`` shape — the property exists so
+        cross-driver code that reads ``cur.row_factory`` does not
+        leak ``AttributeError`` outside the ``dbapi.Error`` hierarchy
+        through the ``__slots__`` declaration; the setter rejects
+        writes with ``NotSupportedError``.
+        """
+        return None
+
+    @row_factory.setter
+    def row_factory(self, value: object) -> None:
+        if value is None:
+            return
+        raise NotSupportedError(
+            "dqlitedbapi does not support row_factory; rows are always "
+            "returned as plain tuples per PEP 249"
+        )
+
     def _check_closed(self) -> None:
         if self._closed:
             raise InterfaceError(f"Cursor is closed (id={id(self)})")

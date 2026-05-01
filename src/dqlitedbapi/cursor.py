@@ -898,6 +898,32 @@ class Cursor:
         """
         return self._closed
 
+    @property
+    def row_factory(self) -> None:
+        """stdlib ``sqlite3.Cursor.row_factory``-parity stub.
+
+        dqlitedbapi does not support custom row construction; rows
+        are always returned as plain tuples per PEP 249. The
+        property exists so cross-driver code that READS
+        ``cur.row_factory`` does not hit ``AttributeError`` (the
+        ``__slots__`` declaration would otherwise leak a bare
+        AttributeError outside the ``dbapi.Error`` hierarchy on a
+        WRITE attempt). The setter rejects with ``NotSupportedError``
+        so an assignment surfaces the unsupported-feature signal
+        inside the PEP 249 §7 hierarchy. Mirrors the
+        ``Connection.row_factory`` discipline.
+        """
+        return None
+
+    @row_factory.setter
+    def row_factory(self, value: object) -> None:
+        if value is None:
+            return
+        raise NotSupportedError(
+            "dqlitedbapi does not support row_factory; rows are always "
+            "returned as plain tuples per PEP 249"
+        )
+
     def _check_closed(self) -> None:
         if self._closed:
             raise InterfaceError(f"Cursor is closed (id={id(self)})")
