@@ -11,7 +11,7 @@
 # ``DQLITEWIRE_ALLOW_FREE_THREADED=1`` is signalling they accept
 # the single-owner discipline across all layers.
 
-from typing import NoReturn
+from typing import Final, Literal, NoReturn
 
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
@@ -55,7 +55,7 @@ from dqlitewire import (
 )
 
 # PEP 249 module-level attributes
-apilevel = "2.0"
+apilevel: Final[Literal["2.0"]] = "2.0"
 # PEP 249 value 1: threads may share the module.
 #
 # This driver is stricter than the PEP minimum: each Connection is
@@ -63,8 +63,8 @@ apilevel = "2.0"
 # different thread raises ProgrammingError. Use one Connection per
 # thread, or use the async API (dqlitedbapi.aio.aconnect) for a
 # single-thread-per-loop model.
-threadsafety = 1
-paramstyle = "qmark"  # Question mark style: WHERE name=?
+threadsafety: Final[Literal[1]] = 1
+paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name=?
 
 # SQLite compatibility attributes (for SQLAlchemy).
 #

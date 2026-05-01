@@ -1,5 +1,7 @@
 """Async PEP 249-style interface for dqlite."""
 
+from typing import Final, Literal
+
 from dqlitedbapi import __version__
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
@@ -51,14 +53,14 @@ from dqlitewire import (
 # sibling), not ``dqlitedbapi.aio``. (aiosqlite and asyncpg do not
 # set ``apilevel`` because they are not consumed via SA's
 # ``import_dbapi`` discovery path; we set it for SA dialect glue.)
-apilevel = "2.0"
+apilevel: Final[Literal["2.0"]] = "2.0"
 # PEP 249 value 1: threads may share the module.
 #
 # The async API is further restricted: each AsyncConnection is bound
 # to the event loop it was first used on (see dqlitedbapi.aio.connection).
 # Use one AsyncConnection per loop.
-threadsafety = 1
-paramstyle = "qmark"  # Question mark style: WHERE name=?
+threadsafety: Final[Literal[1]] = 1
+paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name=?
 
 # SQLite compatibility attributes (for SQLAlchemy).
 #
