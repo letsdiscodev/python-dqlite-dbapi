@@ -111,6 +111,26 @@ Connection-level `commit()` / `rollback()` semantics:
 - **SERIALIZABLE isolation only.** Every statement is ordered by Raft;
   weaker isolation levels aren't exposed.
 
+## Cross-version semantic shift: NULL in BOOLEAN/DATETIME columns
+
+Upstream dqlite commit `f30fc99` (`query: preserve SQLITE_NULL type
+for NULL values`, 2026-01-25) changed the wire encoding of NULL cells
+in columns declared `BOOLEAN`, `DATE`, `DATETIME`, or `TIMESTAMP`:
+
+- **Before** `f30fc99`: a NULL cell was emitted with the column's
+  coerced type — `BOOLEAN(0)` (decodes to `False`) or `ISO8601("")`
+  (decodes to `""`), indistinguishable from a real `FALSE` / empty
+  string.
+- **After** `f30fc99`: a NULL cell is emitted with `SQLITE_NULL` and
+  decodes to `None`.
+
+Code that does `if cur.fetchone()[0] is None:` against an old-server
+cluster will silently miss NULL rows. After a cluster upgrade past
+`f30fc99`, the same code starts firing where it previously read
+`False` / `""`. There is no driver-level handshake distinguishing the
+two server versions — check your dqlite cluster version before relying
+on `is None` for `BOOLEAN` / `DATETIME` columns.
+
 ## Layering
 
 Three related packages play different roles:
