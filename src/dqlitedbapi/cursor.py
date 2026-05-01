@@ -841,19 +841,21 @@ class Cursor:
         Returns ``None`` before the first INSERT runs on this cursor
         and after ``close()`` scrubs the cursor's state.
 
-        Unlike ``sqlite3.Cursor.lastrowid``, the value is scoped to the
-        cursor, not the underlying Connection: a sibling cursor on the
-        same Connection will not observe this cursor's last INSERT.
-        The scrub on ``close()`` is consistent with that scope — ROLLBACK
-        / UPDATE / DELETE / DDL do NOT clear it (mirroring stdlib), but
-        closing the cursor does.
+        Cursor-scoped, matching stdlib ``sqlite3.Cursor.lastrowid``: a
+        sibling cursor on the same Connection does NOT observe this
+        cursor's last INSERT (each cursor stores its own snapshot
+        captured at INSERT time from the underlying connection's
+        ``sqlite3_last_insert_rowid``). ROLLBACK / UPDATE / DELETE /
+        DDL do NOT clear it (mirroring stdlib), but ``close()``
+        scrubs it as part of the closed-cursor "no operation
+        performed" surface contract.
 
         **Not updated for ``INSERT ... RETURNING``** (or any row-returning
         statement). dqlite's wire protocol does not return
         ``last_insert_id`` on row-returning responses (it is only
         populated on Exec responses), so the row-returning execute path
         cannot surface the rowid. Read the id from the returned row
-        instead. This is a known divergence from ``sqlite3.Cursor.
+        instead. This IS a divergence from stdlib ``sqlite3.Cursor.
         lastrowid``, which updates after ``INSERT ... RETURNING``.
         """
         return self._lastrowid
