@@ -1004,6 +1004,11 @@ class Connection:
                     cur._rowcount = -1
                     cur._lastrowid = None
                     cur._row_index = 0
+                    # Mirror ``Cursor.close()``'s back-ref proxy
+                    # so a cascade-closed cursor does not pin the
+                    # (now-closing) parent connection.
+                    with contextlib.suppress(TypeError):
+                        cur._connection = weakref.proxy(cur._connection)
             finally:
                 self._cursors.clear()
             if self._finalizer is not None:
@@ -1042,6 +1047,10 @@ class Connection:
                 # doesn't see stale entries from before the parent
                 # connection closed.
                 del cur.messages[:]
+                # Mirror ``Cursor.close()``'s strong-ref release; see
+                # the fork-branch sibling above for full rationale.
+                with contextlib.suppress(TypeError):
+                    cur._connection = weakref.proxy(cur._connection)
         finally:
             self._cursors.clear()
         # Detach the finalizer — it's about to do nothing useful, and

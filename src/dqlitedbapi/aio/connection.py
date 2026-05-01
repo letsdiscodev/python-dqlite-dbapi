@@ -316,7 +316,8 @@ class AsyncConnection:
         ProgrammingError pointing at a loop the user did not
         knowingly bind.
 
-        Raises ProgrammingError if the connection has already bound
+        Raises ``InterfaceError`` on closed / post-fork; raises
+        ``ProgrammingError`` if the connection has already bound
         to a different loop. No-op when not yet bound.
         """
         if self._closed:
@@ -325,6 +326,19 @@ class AsyncConnection:
             raise InterfaceError(
                 "Connection used after fork; reconstruct from configuration in the target process."
             )
+        self._check_loop_only()
+
+    def _check_loop_only(self) -> None:
+        """Validate the current loop matches the bound loop; do NOT
+        check ``_closed`` and do NOT bind on first use.
+
+        Used by ``AsyncCursor.__aiter__`` to mirror PEP 234 / PEP 492
+        sync-side behaviour: ``iter(cur) is cur`` succeeds even on
+        a closed cursor / closed connection — the closed-state
+        diagnostic is deferred to the first ``fetchone`` /
+        ``__anext__``. The loop-binding check is preserved so a
+        cross-loop misuse fails up front.
+        """
         if self._loop_ref is None:
             return  # not yet bound — don't bind from here
         try:
@@ -489,6 +503,17 @@ class AsyncConnection:
                 # post-cascade ``cur.messages`` access doesn't see
                 # stale entries.
                 del cur.messages[:]
+                # Mirror ``AsyncCursor.close()``'s strong-ref
+                # release: replace the cursor's ``_connection``
+                # back-reference with a ``weakref.proxy`` so a
+                # cascade-closed cursor that the user retains does
+                # not pin the (now-closing) parent connection's
+                # loop-bound state. Without this, the cascade
+                # cleared every other cursor field but left the
+                # back-ref intact — asymmetric with the explicit-
+                # close path.
+                with contextlib.suppress(TypeError):
+                    cur._connection = weakref.proxy(cur._connection)
         finally:
             self._cursors.clear()
         if self._async_conn is None:

@@ -696,18 +696,16 @@ class AsyncCursor:
     def __aiter__(self) -> Self:
         # Surface a loop-mismatch at the ``async for cursor:`` site
         # rather than one await deeper inside ``__anext__``'s
-        # ``fetchone``. Use the non-binding ``_check_loop_binding`` —
-        # ``__aiter__`` itself does NOT touch the wire; the
-        # subsequent ``__anext__`` calls ``fetchone`` which performs
-        # the binding lazy-create through ``_ensure_locks``. Calling
-        # the binding helper here would let an iteration over a
-        # never-executed cursor (no rows, immediate StopAsyncIteration)
-        # bind the connection to the iterating loop — blocking a
-        # later legitimate execute from the user's intended loop.
-        # Sibling no-op cursor methods (``setinputsizes`` /
-        # ``setoutputsize`` / ``callproc`` / ``nextset`` / ``scroll``)
-        # use the same non-binding helper for the same reason.
-        self._connection._check_loop_binding()
+        # ``fetchone``. Use the loop-only variant
+        # (``_check_loop_only``) so a closed connection / closed
+        # cursor does NOT raise here — sync ``Cursor.__iter__`` is
+        # bare ``return self`` per PEP 234 + project pin
+        # (``test_pep249_misc_pins.py``); the async sibling matches
+        # so ``aiter(cur) is cur`` works on closed cursors too.
+        # The closed-state diagnostic is deferred to the first
+        # ``__anext__`` / ``fetchone``, matching the synchronous
+        # pin's documented design.
+        self._connection._check_loop_only()
         return self
 
     async def __anext__(self) -> tuple[Any, ...]:
