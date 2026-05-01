@@ -5,7 +5,7 @@ import re
 import weakref
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol
+from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, Self
 
 import dqliteclient.exceptions as _client_exc
 from dqlitedbapi.exceptions import (
@@ -918,7 +918,7 @@ class Cursor:
         self._row_index = 0
         self._rowcount = -1
 
-    def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> "Cursor":
+    def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> Self:
         """Execute a database operation (query or command).
 
         Returns ``self`` so callers can chain ``.fetchall()`` etc.
@@ -1039,7 +1039,7 @@ class Cursor:
             # from a clean state.
             self._row_index = 0
 
-    def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]) -> "Cursor":
+    def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]) -> Self:
         """Execute a database operation multiple times.
 
         Cancellation atomicity: this driver runs in autocommit-by-default
@@ -1454,7 +1454,7 @@ class Cursor:
             "a process boundary"
         )
 
-    def __iter__(self) -> "Cursor":
+    def __iter__(self) -> Self:
         return self
 
     def __next__(self) -> tuple[Any, ...]:
@@ -1463,7 +1463,7 @@ class Cursor:
             raise StopIteration
         return row
 
-    def __enter__(self) -> "Cursor":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(

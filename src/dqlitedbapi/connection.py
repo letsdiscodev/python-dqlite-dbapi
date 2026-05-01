@@ -11,7 +11,7 @@ import warnings
 import weakref
 from collections.abc import Coroutine, Sequence
 from types import TracebackType
-from typing import Any, Final, NoReturn
+from typing import Any, Final, NoReturn, Self
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection
@@ -1633,7 +1633,7 @@ class Connection:
             "consumer process instead"
         )
 
-    def __enter__(self) -> "Connection":
+    def __enter__(self) -> Self:
         # Eager connect to match ``AsyncConnection.__aenter__`` — both
         # context managers should fail at the ``with`` line when the
         # cluster is unreachable, not inside the body's first operation.

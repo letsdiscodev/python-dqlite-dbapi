@@ -4,7 +4,7 @@ import contextlib
 import weakref
 from collections.abc import Iterable, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, Self
 
 from dqlitedbapi.cursor import (
     _EXECUTEMANY_REJECT_VERBS,
@@ -273,9 +273,7 @@ class AsyncCursor:
             # iterator starts from a clean state.
             self._row_index = 0
 
-    async def execute(
-        self, operation: str, parameters: Sequence[Any] | None = None
-    ) -> "AsyncCursor":
+    async def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> Self:
         """Execute a database operation (query or command).
 
         Returns ``self`` so callers can chain ``.fetchall()`` etc.
@@ -308,9 +306,7 @@ class AsyncCursor:
 
         return self
 
-    async def executemany(
-        self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]
-    ) -> "AsyncCursor":
+    async def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]) -> Self:
         """Execute a database operation multiple times.
 
         An empty ``seq_of_parameters`` must not leave stale SELECT
@@ -697,7 +693,7 @@ class AsyncCursor:
             "rows before crossing a process boundary"
         )
 
-    def __aiter__(self) -> "AsyncCursor":
+    def __aiter__(self) -> Self:
         # Surface a loop-mismatch at the ``async for cursor:`` site
         # rather than one await deeper inside ``__anext__``'s
         # ``fetchone``. Use the non-binding ``_check_loop_binding`` —
@@ -720,7 +716,7 @@ class AsyncCursor:
             raise StopAsyncIteration
         return row
 
-    async def __aenter__(self) -> "AsyncCursor":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(

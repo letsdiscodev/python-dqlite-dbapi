@@ -8,7 +8,7 @@ import warnings
 import weakref
 from collections.abc import Iterable, Sequence
 from types import TracebackType
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Self
 
 from dqliteclient import DqliteConnection
 from dqliteclient import connection as _client_conn_mod
@@ -1153,7 +1153,7 @@ class AsyncConnection:
             "consumer process instead"
         )
 
-    async def __aenter__(self) -> "AsyncConnection":
+    async def __aenter__(self) -> Self:
         try:
             await self.connect()
         except BaseException:
