@@ -860,8 +860,27 @@ class Connection:
                             dying._invalidate,
                             InterfaceError("operation interrupted"),
                         )
-                with contextlib.suppress(BaseException):
+                # Narrow suppress: a SECOND KI/SystemExit landing
+                # inside the 1-second bounded wait must propagate so
+                # the user's Ctrl-C escalation reaches the process.
+                # The original (first) KI is still re-raised by the
+                # trailing ``raise``. CancelledError/TimeoutError
+                # are absorbed (cancellation acknowledged); other
+                # ``Exception`` from the cancelled coroutine is
+                # DEBUG-logged so a programming bug in cleanup is
+                # observable. Mirrors the timeout arm's narrow shape.
+                try:
                     future.result(timeout=1.0)
+                except (
+                    concurrent.futures.CancelledError,
+                    concurrent.futures.TimeoutError,
+                ):
+                    pass
+                except Exception:
+                    logger.debug(
+                        "sync KI/SystemExit cleanup: unexpected error during bounded cancel-wait",
+                        exc_info=True,
+                    )
                 raise
         finally:
             # Only release if we actually acquired. ``acquired`` is
