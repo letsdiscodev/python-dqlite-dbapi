@@ -103,6 +103,70 @@ class TestSyncStdlibParityStubs:
             conn.create_window_function("name", 0, object)
 
 
+class TestSyncCycle22StubFamily:
+    """Stubs added alongside the cycle-22 stdlib-parity work
+    (executescript, interrupt, set_authorizer / progress /
+    trace, total_changes, getlimit / setlimit, getconfig /
+    setconfig, serialize / deserialize, blobopen). All return
+    ``NotSupportedError`` rather than escaping ``AttributeError``;
+    pin the behaviour so a future regression to
+    ``AttributeError`` (e.g. accidentally removing the stub)
+    surfaces in the unit suite, not just in cross-driver
+    integration smoke tests."""
+
+    def test_executescript(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="executescript"):
+            conn.executescript("CREATE TABLE t (id INT);")
+
+    def test_interrupt(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="interrupt"):
+            conn.interrupt()
+
+    def test_set_authorizer(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="authorization"):
+            conn.set_authorizer(lambda *a: 0)
+
+    def test_set_progress_handler(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="progress"):
+            conn.set_progress_handler(lambda: None, 1000)
+
+    def test_set_trace_callback(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="trace"):
+            conn.set_trace_callback(print)
+
+    def test_total_changes(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="total_changes"):
+            _ = conn.total_changes  # property, no parens
+
+    def test_getlimit(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="getlimit"):
+            conn.getlimit(0)
+
+    def test_setlimit(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="setlimit"):
+            conn.setlimit(0, 1024)
+
+    def test_getconfig(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="getconfig"):
+            conn.getconfig(0)
+
+    def test_setconfig(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="setconfig"):
+            conn.setconfig(0, True)
+
+    def test_serialize(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="serialize"):
+            conn.serialize()
+
+    def test_deserialize(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="deserialize"):
+            conn.deserialize(b"\x00")
+
+    def test_blobopen(self, conn: dqlitedbapi.Connection) -> None:
+        with pytest.raises(NotSupportedError, match="blob_open"):
+            conn.blobopen("main", "t", "data", 1)
+
+
 class TestAsyncTpcStubs:
     @pytest.mark.asyncio
     async def test_tpc_begin(self, aconn: AsyncConnection) -> None:
@@ -167,6 +231,63 @@ class TestAsyncStdlibParityStubs:
     def test_create_window_function(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError, match="window"):
             aconn.create_window_function("name", 0, object)
+
+
+class TestAsyncCycle22StubFamily:
+    """Async sibling of ``TestSyncCycle22StubFamily``."""
+
+    @pytest.mark.asyncio
+    async def test_executescript(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="executescript"):
+            await aconn.executescript("CREATE TABLE t (id INT);")
+
+    def test_interrupt(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="interrupt"):
+            aconn.interrupt()
+
+    def test_set_authorizer(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="authorization"):
+            aconn.set_authorizer(lambda *a: 0)
+
+    def test_set_progress_handler(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="progress"):
+            aconn.set_progress_handler(lambda: None, 1000)
+
+    def test_set_trace_callback(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="trace"):
+            aconn.set_trace_callback(print)
+
+    def test_total_changes(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="total_changes"):
+            _ = aconn.total_changes  # property, no parens
+
+    def test_getlimit(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="getlimit"):
+            aconn.getlimit(0)
+
+    def test_setlimit(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="setlimit"):
+            aconn.setlimit(0, 1024)
+
+    def test_getconfig(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="getconfig"):
+            aconn.getconfig(0)
+
+    def test_setconfig(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="setconfig"):
+            aconn.setconfig(0, True)
+
+    def test_serialize(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="serialize"):
+            aconn.serialize()
+
+    def test_deserialize(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="deserialize"):
+            aconn.deserialize(b"\x00")
+
+    def test_blobopen(self, aconn: AsyncConnection) -> None:
+        with pytest.raises(NotSupportedError, match="blob_open"):
+            aconn.blobopen("main", "t", "data", 1)
 
 
 def test_close_clears_messages() -> None:
