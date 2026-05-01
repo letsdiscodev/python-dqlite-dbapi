@@ -643,7 +643,7 @@ class AsyncCursor:
         self._connection._check_loop_binding()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
-    def scroll(self, value: int, mode: str = "relative") -> None:
+    def scroll(self, value: int, mode: str = "relative") -> NoReturn:
         """PEP 249 optional extension — not supported."""
         # Sibling consistency with ``nextset`` / ``callproc`` /
         # ``setinputsizes`` / ``setoutputsize``: clear ``messages`` on
@@ -663,6 +663,11 @@ class AsyncCursor:
         # with a confusing "different event loop" diagnostic
         # referring to a loop the user did not knowingly bind.
         self._connection._check_loop_binding()
+        # PEP 249 §6.1.1 enumerates ``mode`` ∈ {"relative", "absolute"};
+        # validate before NotSupportedError so a caller typo surfaces
+        # as a caller-side bug. ProgrammingError stays in dbapi.Error.
+        if mode not in ("relative", "absolute"):
+            raise ProgrammingError(f"scroll mode must be 'relative' or 'absolute', got {mode!r}")
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def executescript(self, sql_script: str) -> NoReturn:

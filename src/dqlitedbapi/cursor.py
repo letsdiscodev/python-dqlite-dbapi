@@ -1396,7 +1396,7 @@ class Cursor:
         self._check_closed()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
-    def scroll(self, value: int, mode: str = "relative") -> None:
+    def scroll(self, value: int, mode: str = "relative") -> NoReturn:
         """PEP 249 optional extension — not supported.
 
         The dqlite cursor is forward-only; rows are buffered from a
@@ -1414,6 +1414,14 @@ class Cursor:
             del conn_messages[:]
         self._connection._check_thread()
         self._check_closed()
+        # PEP 249 §6.1.1 enumerates ``mode`` ∈ {"relative", "absolute"}.
+        # Validate before the unconditional NotSupportedError so a
+        # caller typo (``cur.scroll(5, "absolutely")``) surfaces as a
+        # caller-side bug rather than being masked by the same
+        # diagnostic a correct call would produce. ProgrammingError
+        # stays inside the dbapi.Error hierarchy.
+        if mode not in ("relative", "absolute"):
+            raise ProgrammingError(f"scroll mode must be 'relative' or 'absolute', got {mode!r}")
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def executescript(self, sql_script: str) -> NoReturn:
