@@ -1443,6 +1443,65 @@ class Connection:
             "on the per-RPC timeout"
         )
 
+    # stdlib ``sqlite3.Connection``-parity stubs for VDBE-callback
+    # / db-status / db-config / serialize / blob-open primitives.
+    # None are wire-feasible (the VDBE / pager runs server-side; no
+    # client-callable hook). Stub with ``NotSupportedError`` so the
+    # rejection stays inside the ``dbapi.Error`` hierarchy instead
+    # of leaking ``AttributeError``. Same family as the existing
+    # ``load_extension`` / ``backup`` / ``iterdump`` / ``create_*``
+    # stubs.
+
+    def set_authorizer(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite-server does not expose a per-prepare authorization callback"
+        )
+
+    def set_progress_handler(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not expose a VDBE progress callback")
+
+    def set_trace_callback(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite-server does not expose a per-statement trace callback")
+
+    @property
+    def total_changes(self) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite-server does not surface a total_changes counter on the wire"
+        )
+
+    def getlimit(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite-server does not expose sqlite3_db_status getlimit/setlimit on the wire"
+        )
+
+    def setlimit(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite-server does not expose sqlite3_db_status getlimit/setlimit on the wire"
+        )
+
+    def getconfig(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite-server does not expose sqlite3_db_config getconfig/setconfig on the wire"
+        )
+
+    def setconfig(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite-server does not expose sqlite3_db_config getconfig/setconfig on the wire"
+        )
+
+    def serialize(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite does not support sqlite3_serialize; conflicts with the distributed Raft model"
+        )
+
+    def deserialize(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError(
+            "dqlite does not support sqlite3_deserialize; conflicts with the distributed Raft model"
+        )
+
+    def blobopen(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotSupportedError("dqlite does not expose sqlite3_blob_open on the wire")
+
     def enable_load_extension(self, enabled: bool) -> NoReturn:
         raise NotSupportedError("dqlite-server does not support runtime extension loading")
 
