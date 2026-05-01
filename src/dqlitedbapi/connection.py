@@ -906,7 +906,7 @@ class Connection:
     async def _get_async_connection(self) -> DqliteConnection:
         """Get or create the underlying async connection."""
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
 
         if self._async_conn is not None:
             return self._async_conn
@@ -950,7 +950,7 @@ class Connection:
         del self.messages[:]
         self._check_thread()
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         # _get_async_connection is a coroutine; route through _run_sync
         # so we share the same loop-in-thread the cursor path uses.
         self._run_sync(self._get_async_connection())
@@ -1295,7 +1295,7 @@ class Connection:
         del self.messages[:]
         self._check_thread()
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._async_conn is None:
             return
         # Local short-circuit when no transaction is active. Mirrors
@@ -1315,7 +1315,7 @@ class Connection:
     async def _commit_async(self) -> None:
         """Async implementation of commit."""
         if self._async_conn is None:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         # Clear ``messages`` under the lock so the PEP 249 contract
         # "messages cleared by every method call" is atomic with the
         # operation. ``_run_sync`` holds ``_op_lock`` across this
@@ -1346,7 +1346,7 @@ class Connection:
         del self.messages[:]
         self._check_thread()
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._async_conn is None:
             return
         # See commit() — same local short-circuit applies. Saves a
@@ -1358,7 +1358,7 @@ class Connection:
     async def _rollback_async(self) -> None:
         """Async implementation of rollback."""
         if self._async_conn is None:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         # In-lock messages clear; see ``_commit_async`` for the
         # rationale.
         del self.messages[:]
@@ -1376,7 +1376,7 @@ class Connection:
         del self.messages[:]
         self._check_thread()
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         cur = Cursor(self)
         self._cursors.add(cur)
         return cur

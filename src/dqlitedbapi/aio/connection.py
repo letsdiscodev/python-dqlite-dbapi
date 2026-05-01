@@ -278,7 +278,7 @@ class AsyncConnection:
         # without re-nulling them, leaking three asyncio primitives
         # per race. Fail fast here so no primitives are created.
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         # Fork-after-init: asyncio primitives are bound to the parent
         # loop and the inherited socket is shared. Reject up front
         # with the same diagnostic the sync sibling and the client
@@ -321,7 +321,7 @@ class AsyncConnection:
         to a different loop. No-op when not yet bound.
         """
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if _client_conn_mod._current_pid != self._creator_pid:
             raise InterfaceError(
                 "Connection used after fork; reconstruct from configuration in the target process."
@@ -355,7 +355,7 @@ class AsyncConnection:
     async def _ensure_connection(self) -> DqliteConnection:
         """Ensure the underlying connection is established."""
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
 
         if self._async_conn is not None:
             return self._async_conn
@@ -384,7 +384,7 @@ class AsyncConnection:
             if self._closed:
                 with contextlib.suppress(Exception):
                     await built.close()
-                raise InterfaceError("Connection is closed")
+                raise InterfaceError(f"Connection is closed (id={id(self)})")
             self._async_conn = built
             # Flip the finalizer's "anything to clean up" gate. From
             # this point GC without close emits the ResourceWarning;
@@ -858,7 +858,7 @@ class AsyncConnection:
         # so the contract holds regardless of which branch we take.
         del self.messages[:]
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._async_conn is None:
             return
         _, op_lock = self._ensure_locks()
@@ -868,7 +868,7 @@ class AsyncConnection:
             # released. Without this second check we would dereference
             # ``self._async_conn.execute`` on ``None``.
             if self._closed or self._async_conn is None:
-                raise InterfaceError("Connection is closed")
+                raise InterfaceError(f"Connection is closed (id={id(self)})")
             # Clear ``messages`` under the lock so the PEP 249
             # contract "messages cleared by every method call" is
             # atomic with the operation. Clearing only pre-lock leaves
@@ -903,14 +903,14 @@ class AsyncConnection:
         # PEP 249 §6.1.1 messages-clear contract; see commit() above.
         del self.messages[:]
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._async_conn is None:
             return
         _, op_lock = self._ensure_locks()
         async with op_lock:
             # Re-check under the lock for the same race as commit().
             if self._closed or self._async_conn is None:
-                raise InterfaceError("Connection is closed")
+                raise InterfaceError(f"Connection is closed (id={id(self)})")
             # Clear ``messages`` under the lock; see ``commit`` rationale.
             del self.messages[:]
             # Read ``in_transaction`` under the lock; see commit() for
@@ -938,7 +938,7 @@ class AsyncConnection:
         """
         del self.messages[:]
         if self._closed:
-            raise InterfaceError("Connection is closed")
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._loop_ref is not None:
             try:
                 current_loop = asyncio.get_running_loop()

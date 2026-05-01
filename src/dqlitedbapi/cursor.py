@@ -900,7 +900,7 @@ class Cursor:
 
     def _check_closed(self) -> None:
         if self._closed:
-            raise InterfaceError("Cursor is closed")
+            raise InterfaceError(f"Cursor is closed (id={id(self)})")
 
     def _reset_execute_state(self) -> None:
         """Clear per-execute state to the "no result set" baseline.
