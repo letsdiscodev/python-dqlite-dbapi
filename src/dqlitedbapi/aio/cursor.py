@@ -660,8 +660,16 @@ class AsyncCursor:
         self._connection._check_loop_binding()
         raise NotSupportedError("dqlite cursors are not scrollable")
 
-    async def executescript(self, sql_script: str) -> NoReturn:
-        """stdlib ``sqlite3.Cursor``-parity stub. See sync sibling."""
+    def executescript(self, sql_script: str) -> NoReturn:
+        """stdlib ``sqlite3.Cursor``-parity stub. See sync sibling.
+
+        Defined as a plain ``def`` (not ``async def``) so the
+        unconditional raise fires on the call line. An ``async def``
+        stub would defer the raise to ``await`` and a caller who
+        forgot the ``await`` would observe a silent no-op with only a
+        GC-time coroutine-was-never-awaited warning — defeating the
+        diagnostic-leak prevention this stub family was added for.
+        """
         del self.messages[:]
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:

@@ -1065,11 +1065,21 @@ class AsyncConnection:
     def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")
 
-    async def executescript(self, sql_script: str) -> NoReturn:
+    def executescript(self, sql_script: str) -> NoReturn:
         """stdlib ``sqlite3``-parity stub. dqlite has no
-        multi-statement-script primitive on the wire; raises
-        ``NotSupportedError`` rather than escaping ``dbapi.Error``
-        as ``AttributeError``. Mirrors the sync sibling."""
+        multi-statement-script primitive on the wire (each statement
+        requires a separate Prepare → Exec / Query round-trip); raises
+        ``NotSupportedError`` rather than escaping ``dbapi.Error`` as
+        ``AttributeError``. Mirrors the sync sibling.
+
+        Defined as a plain ``def`` (not ``async def``) so the
+        unconditional raise fires on the call line — symmetric with
+        the sync sibling. An ``async def`` stub would defer the raise
+        to ``await``, and a caller who forgot the ``await`` would
+        observe a silent no-op with only a GC-time
+        ``RuntimeWarning("coroutine was never awaited")``, defeating
+        the diagnostic-leak prevention this stub family was added for.
+        """
         raise NotSupportedError(
             "dqlite does not support stdlib sqlite3 executescript; "
             "split the script and execute each statement individually"

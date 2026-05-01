@@ -238,8 +238,12 @@ class TestAsyncCycle22StubFamily:
 
     @pytest.mark.asyncio
     async def test_executescript(self, aconn: AsyncConnection) -> None:
+        # ``executescript`` is plain ``def`` (not ``async def``) so the
+        # NotSupportedError fires on the call line — symmetric with the
+        # sync sibling. See test_async_executescript_stub_raises_on_call
+        # for the call-line-vs-await pin.
         with pytest.raises(NotSupportedError, match="executescript"):
-            await aconn.executescript("CREATE TABLE t (id INT);")
+            aconn.executescript("CREATE TABLE t (id INT);")
 
     def test_interrupt(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError, match="interrupt"):
