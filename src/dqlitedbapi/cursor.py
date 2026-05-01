@@ -3,7 +3,7 @@
 import contextlib
 import re
 import weakref
-from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol
 
@@ -200,7 +200,7 @@ def _classify_operational(
     return _CODE_TO_EXCEPTION.get(primary_sqlite_code(code), OperationalError)
 
 
-async def _call_client[T](coro: Coroutine[Any, Any, T]) -> T:
+async def _call_client[T](coro: Awaitable[T]) -> T:
     """Await a client-layer coroutine, mapping its exceptions into the
     PEP 249 hierarchy. Preserves the original via ``from``.
 
