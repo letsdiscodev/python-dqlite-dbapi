@@ -9,7 +9,7 @@ import os
 import threading
 import warnings
 import weakref
-from collections.abc import Coroutine, Sequence
+from collections.abc import Coroutine, Iterable, Sequence
 from types import TracebackType
 from typing import Any, Final, NoReturn, Self
 
@@ -1409,6 +1409,35 @@ class Connection:
                 cur.execute(operation)
             else:
                 cur.execute(operation, parameters)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                cur.close()
+            raise
+        return cur
+
+    def executemany(
+        self,
+        operation: str,
+        seq_of_parameters: Iterable[Sequence[Any]],
+    ) -> Cursor:
+        """PEP 249 optional extension — open a cursor, run
+        ``executemany``, return the cursor.
+
+        Parity with stdlib ``sqlite3.Connection.executemany`` and with
+        the async-side ``AsyncConnection.executemany``. Cross-driver
+        code (aiosqlite / psycopg / asyncpg) reaches for this shortcut
+        on both sync and async sides; without it, sync callers hit
+        ``AttributeError`` — an opaque diagnostic that escapes the
+        ``dbapi.Error`` hierarchy.
+
+        Mirrors the cleanup-on-raise discipline of ``execute``: close
+        the freshly-opened cursor on synchronous failure before
+        re-raising so the caller's exception path doesn't leak an
+        unowned cursor.
+        """
+        cur = self.cursor()
+        try:
+            cur.executemany(operation, seq_of_parameters)
         except BaseException:
             with contextlib.suppress(Exception):
                 cur.close()
