@@ -128,6 +128,7 @@ def connect(
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
     close_timeout: float = 0.5,
+    **unknown_kwargs: object,
 ) -> Connection:
     """Connect to a dqlite database.
 
@@ -156,6 +157,19 @@ def connect(
     Returns:
         A Connection object
     """
+    # Reject stdlib ``sqlite3.connect`` kwargs that this driver
+    # cannot honour (``detect_types``, ``isolation_level``,
+    # ``check_same_thread``, ``factory``, ``cached_statements``,
+    # ``uri``, ``autocommit``) with ``NotSupportedError`` rather
+    # than letting Python's call-protocol leak ``TypeError``
+    # (which escapes ``except dbapi.Error:``). Cross-driver code
+    # that passes stdlib kwargs through should be able to catch
+    # the rejection inside the dbapi error hierarchy.
+    if unknown_kwargs:
+        raise NotSupportedError(
+            f"dqlite connect() rejects stdlib sqlite3 kwargs not supported "
+            f"by this driver: {sorted(unknown_kwargs)}"
+        )
     # Validation happens in ``Connection.__init__`` (both ``timeout``
     # and ``close_timeout``); re-calling ``_validate_timeout`` here
     # was redundant and leaked the private symbol onto

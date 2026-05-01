@@ -119,6 +119,7 @@ def connect(
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
     close_timeout: float = 0.5,
+    **unknown_kwargs: object,
 ) -> AsyncConnection:
     """Create a dqlite connection (connects lazily on first use).
 
@@ -150,6 +151,15 @@ def connect(
     Returns:
         An AsyncConnection object
     """
+    # Reject stdlib ``sqlite3.connect`` kwargs as ``NotSupportedError``
+    # so cross-driver porting code's ``except dbapi.Error:`` catches
+    # the rejection instead of bare ``TypeError``. Sync sibling does
+    # the same.
+    if unknown_kwargs:
+        raise NotSupportedError(
+            f"dqlite connect() rejects stdlib sqlite3 kwargs not supported "
+            f"by this driver: {sorted(unknown_kwargs)}"
+        )
     # Validation happens in ``AsyncConnection.__init__`` (both
     # ``timeout`` and ``close_timeout``); re-calling
     # ``_validate_timeout`` here was redundant and asymmetric.
@@ -173,6 +183,7 @@ async def aconnect(
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
     close_timeout: float = 0.5,
+    **unknown_kwargs: object,
 ) -> AsyncConnection:
     """Connect to a dqlite database asynchronously.
 
@@ -202,6 +213,13 @@ async def aconnect(
     Returns:
         A connected AsyncConnection object
     """
+    # Reject stdlib ``sqlite3.connect`` kwargs as ``NotSupportedError``;
+    # see ``connect`` sibling.
+    if unknown_kwargs:
+        raise NotSupportedError(
+            f"dqlite aconnect() rejects stdlib sqlite3 kwargs not supported "
+            f"by this driver: {sorted(unknown_kwargs)}"
+        )
     # Validation happens in ``AsyncConnection.__init__`` (both
     # ``timeout`` and ``close_timeout``); re-calling
     # ``_validate_timeout`` here was redundant and asymmetric.
