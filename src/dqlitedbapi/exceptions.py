@@ -1,5 +1,8 @@
 """PEP 249 exception hierarchy for dqlite."""
 
+import sqlite3 as _stdlib_sqlite3
+from functools import lru_cache
+
 __all__ = [
     "DataError",
     "DatabaseError",
@@ -12,6 +15,40 @@ __all__ = [
     "ProgrammingError",
     "Warning",
 ]
+
+
+@lru_cache(maxsize=1)
+def _stdlib_code_to_name() -> dict[int, str]:
+    """Cache stdlib's ``SQLITE_*`` constant set as a code-to-name
+    map. Built lazily on first access so import overhead is paid
+    only when ``sqlite_errorname`` is actually queried.
+
+    Skips non-error constants (authorizer / opcode names that share
+    the prefix) by including only ``SQLITE_*`` integers that fit in
+    the 16-bit primary or extended-code range. The stdlib constants
+    are a stable surface — Python 3.11+ guarantees the names match
+    the upstream SQLite header.
+    """
+    table: dict[int, str] = {}
+    for name in dir(_stdlib_sqlite3):
+        if not name.startswith("SQLITE_"):
+            continue
+        value = getattr(_stdlib_sqlite3, name)
+        if not isinstance(value, int):
+            continue
+        # First-wins for collisions — stdlib uses the canonical
+        # error symbol on the lower numeric value.
+        table.setdefault(value, name)
+    return table
+
+
+def _sqlite_errorname(code: int | None) -> str | None:
+    """Look up the symbolic SQLite error name for ``code``. Returns
+    ``None`` for ``None`` codes and for codes not present in stdlib's
+    constant table (e.g. dqlite-namespace codes ≥1000)."""
+    if code is None:
+        return None
+    return _stdlib_code_to_name().get(code)
 
 
 class Warning(Exception):  # PEP 249 mandated class name
@@ -73,6 +110,21 @@ class InterfaceError(Error):
         Python 3.11). Returns the same value as :attr:`code`."""
         return self.code
 
+    @property
+    def sqlite_errorname(self) -> str | None:
+        """Stdlib ``sqlite3``-parity alias (Python 3.11+) for the
+        symbolic name of :attr:`code` (e.g. ``"SQLITE_CONSTRAINT_UNIQUE"``).
+
+        Looked up via stdlib ``sqlite3``'s ``SQLITE_*`` constant set so
+        cross-driver code that branches on
+        ``e.sqlite_errorname == "SQLITE_BUSY"`` continues to work
+        against dqlite. Returns ``None`` if :attr:`code` is ``None`` or
+        if the code is not present in stdlib's constant table — the
+        latter covers dqlite-namespace codes (≥1000) which have no
+        upstream symbolic name.
+        """
+        return _sqlite_errorname(self.code)
+
     def __repr__(self) -> str:
         msg = self.args[0] if self.args else ""
         if self.code is None:
@@ -118,6 +170,12 @@ class DatabaseError(Error):
         symbols. Returns the same value as :attr:`code`.
         """
         return self.code
+
+    @property
+    def sqlite_errorname(self) -> str | None:
+        """Stdlib ``sqlite3``-parity alias (Python 3.11+); see
+        :class:`InterfaceError.sqlite_errorname`."""
+        return _sqlite_errorname(self.code)
 
     def __repr__(self) -> str:
         msg = self.args[0] if self.args else ""
