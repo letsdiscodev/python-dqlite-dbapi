@@ -685,12 +685,20 @@ class AsyncCursor:
         )
 
     def __aiter__(self) -> "AsyncCursor":
-        # Synchronous loop-binding check: surface a loop-mismatch at
-        # the ``async for cursor:`` site rather than one await deeper
-        # inside ``__anext__``'s ``fetchone``. The fetch* methods
-        # carry the same up-front check; mirror it here so ``async
-        # for`` doesn't silently start iterating on the wrong loop.
-        self._connection._ensure_locks()
+        # Surface a loop-mismatch at the ``async for cursor:`` site
+        # rather than one await deeper inside ``__anext__``'s
+        # ``fetchone``. Use the non-binding ``_check_loop_binding`` —
+        # ``__aiter__`` itself does NOT touch the wire; the
+        # subsequent ``__anext__`` calls ``fetchone`` which performs
+        # the binding lazy-create through ``_ensure_locks``. Calling
+        # the binding helper here would let an iteration over a
+        # never-executed cursor (no rows, immediate StopAsyncIteration)
+        # bind the connection to the iterating loop — blocking a
+        # later legitimate execute from the user's intended loop.
+        # Sibling no-op cursor methods (``setinputsizes`` /
+        # ``setoutputsize`` / ``callproc`` / ``nextset`` / ``scroll``)
+        # use the same non-binding helper for the same reason.
+        self._connection._check_loop_binding()
         return self
 
     async def __anext__(self) -> tuple[Any, ...]:
