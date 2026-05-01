@@ -912,6 +912,37 @@ class AsyncConnection:
         """
         return self._closed
 
+    @property
+    def row_factory(self) -> None:
+        """stdlib ``sqlite3.Connection.row_factory``-parity stub.
+        See sync sibling. Returns None; setter rejects non-None
+        with NotSupportedError so a silent write cannot happen."""
+        return None
+
+    @row_factory.setter
+    def row_factory(self, value: object) -> None:
+        if value is None:
+            return
+        raise NotSupportedError(
+            "dqlitedbapi does not support row_factory; rows are always "
+            "returned as plain tuples per PEP 249"
+        )
+
+    @property
+    def text_factory(self) -> type[str]:
+        """stdlib ``sqlite3.Connection.text_factory``-parity stub.
+        See sync sibling."""
+        return str
+
+    @text_factory.setter
+    def text_factory(self, value: object) -> None:
+        if value is str:
+            return
+        raise NotSupportedError(
+            "dqlitedbapi does not support text_factory; TEXT cells are "
+            "always returned as str (UTF-8 decoded at the wire layer)"
+        )
+
     async def execute(
         self,
         operation: str,

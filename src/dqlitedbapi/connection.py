@@ -1379,6 +1379,48 @@ class Connection:
         """
         return self._closed
 
+    @property
+    def row_factory(self) -> None:
+        """stdlib ``sqlite3.Connection.row_factory``-parity stub.
+
+        dqlitedbapi does not support custom row construction; rows
+        are always returned as plain tuples per PEP 249. The
+        property exists so cross-driver code that READS
+        ``conn.row_factory`` does not hit ``AttributeError``; the
+        SETTER rejects with ``NotSupportedError`` so an attempted
+        write does not silently succeed (which today would just
+        add a regular attribute to the instance and have no effect
+        on row construction)."""
+        return None
+
+    @row_factory.setter
+    def row_factory(self, value: object) -> None:
+        if value is None:
+            return
+        raise NotSupportedError(
+            "dqlitedbapi does not support row_factory; rows are always "
+            "returned as plain tuples per PEP 249"
+        )
+
+    @property
+    def text_factory(self) -> type[str]:
+        """stdlib ``sqlite3.Connection.text_factory``-parity stub.
+
+        dqlitedbapi always returns TEXT cells as ``str`` (UTF-8
+        decoded at the wire layer); custom text-factory routing is
+        not supported. Setter rejects non-``str`` values with
+        ``NotSupportedError`` so a silent write cannot happen."""
+        return str
+
+    @text_factory.setter
+    def text_factory(self, value: object) -> None:
+        if value is str:
+            return
+        raise NotSupportedError(
+            "dqlitedbapi does not support text_factory; TEXT cells are "
+            "always returned as str (UTF-8 decoded at the wire layer)"
+        )
+
     # PEP 249 §7 (TPC extension) and stdlib sqlite3 parity stubs.
     # PEP 249 says drivers without TPC support MUST raise
     # NotSupportedError on the TPC methods rather than letting
