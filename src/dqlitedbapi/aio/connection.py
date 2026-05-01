@@ -952,6 +952,23 @@ class AsyncConnection:
     def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")
 
+    async def executescript(self, sql_script: str) -> NoReturn:
+        """stdlib ``sqlite3``-parity stub. dqlite has no
+        multi-statement-script primitive on the wire; raises
+        ``NotSupportedError`` rather than escaping ``dbapi.Error``
+        as ``AttributeError``. Mirrors the sync sibling."""
+        raise NotSupportedError(
+            "dqlite does not support stdlib sqlite3 executescript; "
+            "split the script and execute each statement individually"
+        )
+
+    def interrupt(self) -> NoReturn:
+        """stdlib ``sqlite3``-parity stub. See sync sibling."""
+        raise NotSupportedError(
+            "dqlite does not surface interrupt() at the dbapi layer; "
+            "use asyncio.timeout(...) or rely on the per-RPC timeout"
+        )
+
     def enable_load_extension(self, enabled: bool) -> NoReturn:
         raise NotSupportedError("dqlite-server does not support runtime extension loading")
 

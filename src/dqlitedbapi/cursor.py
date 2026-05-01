@@ -1395,6 +1395,23 @@ class Cursor:
         self._check_closed()
         raise NotSupportedError("dqlite cursors are not scrollable")
 
+    def executescript(self, sql_script: str) -> NoReturn:
+        """stdlib ``sqlite3.Cursor``-parity stub. dqlite has no
+        multi-statement-script primitive on the wire; raises
+        ``NotSupportedError`` rather than escaping ``dbapi.Error``
+        as ``AttributeError``. Same shape as the
+        ``Connection.executescript`` stub."""
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
+        self._connection._check_thread()
+        self._check_closed()
+        raise NotSupportedError(
+            "dqlite does not support stdlib sqlite3 executescript; "
+            "split the script and execute each statement individually"
+        )
+
     def __repr__(self) -> str:
         state = "closed" if self._closed else "open"
         # Include the parent connection's address and ``id(self)`` so

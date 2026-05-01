@@ -662,6 +662,19 @@ class AsyncCursor:
         self._connection._check_loop_binding()
         raise NotSupportedError("dqlite cursors are not scrollable")
 
+    async def executescript(self, sql_script: str) -> NoReturn:
+        """stdlib ``sqlite3.Cursor``-parity stub. See sync sibling."""
+        del self.messages[:]
+        conn_messages = getattr(self._connection, "messages", None)
+        if conn_messages is not None:
+            del conn_messages[:]
+        self._check_closed()
+        self._connection._check_loop_binding()
+        raise NotSupportedError(
+            "dqlite does not support stdlib sqlite3 executescript; "
+            "split the script and execute each statement individually"
+        )
+
     def __repr__(self) -> str:
         state = "closed" if self._closed else "open"
         # Include the parent connection's address and ``id(self)`` so
