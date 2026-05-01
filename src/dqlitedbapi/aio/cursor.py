@@ -557,23 +557,24 @@ class AsyncCursor:
         ):  # pragma: no cover - AsyncConnection always supports weakref
             self._connection = weakref.proxy(self._connection)
 
-    def setinputsizes(self, sizes: Sequence[int | None]) -> None:
+    def setinputsizes(self, sizes: Sequence[Any]) -> None:
         """Set input sizes (no-op for dqlite).
 
         PEP 249 §6.1.1 names ``setinputsizes`` among the methods that
         clear the ``messages`` list; we do so even though the method
-        itself does no work.
+        itself does no work. ``sizes`` accepts ``Sequence[Any]`` per
+        PEP 249 §6.2 — items may be a Type Object, an int, or
+        ``None``.
         """
         # PEP 249 §6.1.1 — clear "prior to executing the call" so the
-        # contract holds even on the closed-cursor and cross-loop
-        # rejection paths. Sync siblings (and the six primary methods
-        # on this same class) follow the same ordering.
+        # contract holds even on the cross-loop rejection path.
         del self.messages[:]
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:
             del conn_messages[:]
-        # PEP 249 §6.1.2 — closed-cursor operations raise.
-        self._check_closed()
+        # PEP 249 §6.2 says implementations are "free to have this
+        # method do nothing" — including on closed cursors. Skip
+        # the closed-cursor check.
         # Surface a loop-binding mismatch up front so callers see the
         # same ``ProgrammingError`` they'd get from ``execute`` /
         # ``fetchone``. Without this, a sync no-op on a cursor bound
@@ -589,9 +590,7 @@ class AsyncCursor:
         conn_messages = getattr(self._connection, "messages", None)
         if conn_messages is not None:
             del conn_messages[:]
-        # PEP 249 §6.1.2 — closed-cursor operations raise.
-        self._check_closed()
-        # Loop-binding check; see ``setinputsizes`` for rationale.
+        # PEP 249 §6.2 — see ``setinputsizes`` rationale.
         self._connection._check_loop_binding()
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:

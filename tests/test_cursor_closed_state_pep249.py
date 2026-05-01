@@ -24,17 +24,21 @@ def _make_cursor() -> Cursor:
 
 
 class TestSetinputsizesSetoutputsizeClosedCheck:
-    def test_setinputsizes_raises_on_closed_cursor(self) -> None:
-        cur = _make_cursor()
-        cur.close()
-        with pytest.raises(InterfaceError, match="closed"):
-            cur.setinputsizes([None])
+    """PEP 249 §6.2 says implementations are "free to have these
+    methods do nothing" — including on closed cursors. Pin the
+    no-raise behavior so a cleanup helper that calls
+    ``setinputsizes`` / ``setoutputsize`` on a closed cursor does
+    not crash."""
 
-    def test_setoutputsize_raises_on_closed_cursor(self) -> None:
+    def test_setinputsizes_does_not_raise_on_closed_cursor(self) -> None:
         cur = _make_cursor()
         cur.close()
-        with pytest.raises(InterfaceError, match="closed"):
-            cur.setoutputsize(4096)
+        cur.setinputsizes([None])
+
+    def test_setoutputsize_does_not_raise_on_closed_cursor(self) -> None:
+        cur = _make_cursor()
+        cur.close()
+        cur.setoutputsize(4096)
 
 
 class TestNotSupportedMethodsRaiseClosedFirst:

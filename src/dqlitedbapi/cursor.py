@@ -1289,12 +1289,18 @@ class Cursor:
         ):  # pragma: no cover - Connection always supports weakref
             self._connection = weakref.proxy(self._connection)
 
-    def setinputsizes(self, sizes: Sequence[int | None]) -> None:
+    def setinputsizes(self, sizes: Sequence[Any]) -> None:
         """Set input sizes (no-op for dqlite).
 
         PEP 249 §6.1.1 names ``setinputsizes`` among the methods that
         clear the ``messages`` list; we do so even though the method
         itself does no work.
+
+        ``sizes`` accepts ``Sequence[Any]`` per PEP 249 §6.2 — items
+        may be a Type Object (``STRING`` / ``BINARY`` / ``NUMBER`` /
+        ``DATETIME`` / ``ROWID``), an int (max length hint), or
+        ``None``. dqlite ignores the value either way; the wide
+        annotation matches the spec shape.
         """
         # PEP 249 §6.1.1 — clear "prior to executing the call" so the
         # contract holds even on the cross-thread-rejection path. The
@@ -1307,8 +1313,10 @@ class Cursor:
         if conn_messages is not None:
             del conn_messages[:]
         self._connection._check_thread()
-        # PEP 249 §6.1.2 — operations on a closed cursor raise.
-        self._check_closed()
+        # PEP 249 §6.2 says implementations are "free to have this
+        # method do nothing" — including on closed cursors. Skip the
+        # closed-cursor check so a closed-cursor cleanup helper can
+        # call setinputsizes / setoutputsize without a raise.
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
@@ -1317,8 +1325,7 @@ class Cursor:
         if conn_messages is not None:
             del conn_messages[:]
         self._connection._check_thread()
-        # PEP 249 §6.1.2 — operations on a closed cursor raise.
-        self._check_closed()
+        # PEP 249 §6.2 — see ``setinputsizes`` rationale.
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
         """PEP 249 optional extension — not supported.

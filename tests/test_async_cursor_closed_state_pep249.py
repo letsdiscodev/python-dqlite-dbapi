@@ -34,17 +34,18 @@ def _make_async_cursor() -> AsyncCursor:
 
 
 class TestSetinputsizesSetoutputsizeClosedCheck:
-    async def test_setinputsizes_raises_on_closed_cursor(self) -> None:
-        cur = _make_async_cursor()
-        await cur.close()
-        with pytest.raises(InterfaceError, match="closed"):
-            cur.setinputsizes([None])
+    """PEP 249 §6.2 says implementations are "free to have these
+    methods do nothing" — including on closed cursors."""
 
-    async def test_setoutputsize_raises_on_closed_cursor(self) -> None:
+    async def test_setinputsizes_does_not_raise_on_closed_cursor(self) -> None:
         cur = _make_async_cursor()
         await cur.close()
-        with pytest.raises(InterfaceError, match="closed"):
-            cur.setoutputsize(4096)
+        cur.setinputsizes([None])
+
+    async def test_setoutputsize_does_not_raise_on_closed_cursor(self) -> None:
+        cur = _make_async_cursor()
+        await cur.close()
+        cur.setoutputsize(4096)
 
 
 class TestNotSupportedMethodsRaiseClosedFirst:

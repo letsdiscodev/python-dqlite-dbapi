@@ -74,18 +74,28 @@ def _drive_other_loop(invoke_async: Callable[[], Any]) -> list[BaseException]:
 
 @pytest.mark.asyncio
 async def test_setinputsizes_closed_cursor_clears_messages_first() -> None:
+    """PEP 249 §6.2 says ``setinputsizes`` is "free to do nothing"
+    even on closed cursors. Pin: messages clear and the call
+    returns without raising."""
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
     _seed(cur)
-    _expect_messages_cleared_after_closed_call(lambda c: c.setinputsizes([None]), cur)
+    cur._closed = True
+    cur.setinputsizes([None])
+    assert list(cur.messages) == []
+    assert list(cur._connection.messages) == []
 
 
 @pytest.mark.asyncio
 async def test_setoutputsize_closed_cursor_clears_messages_first() -> None:
+    """Same as ``setinputsizes`` per PEP 249 §6.2."""
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
     _seed(cur)
-    _expect_messages_cleared_after_closed_call(lambda c: c.setoutputsize(64), cur)
+    cur._closed = True
+    cur.setoutputsize(64)
+    assert list(cur.messages) == []
+    assert list(cur._connection.messages) == []
 
 
 @pytest.mark.asyncio
