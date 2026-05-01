@@ -1120,7 +1120,18 @@ class Connection:
                             writer.close()
                     self._async_conn = None
                 if self._loop is not None and not self._loop.is_closed():
-                    self._loop.call_soon_threadsafe(self._loop.stop)
+                    # ``is_closed()`` is a TOCTOU check — the loop
+                    # could be closed by a concurrent finalizer /
+                    # interpreter-shutdown sweep between the check
+                    # and the ``call_soon_threadsafe`` call, raising
+                    # ``RuntimeError("Event loop is closed")``. The
+                    # finalizer at ``_cleanup_loop_thread`` already
+                    # wraps the same call in ``suppress(RuntimeError)``;
+                    # mirror the discipline here so ``Connection.close``
+                    # cannot leak a bare ``RuntimeError`` past the
+                    # PEP 249 ``Error`` hierarchy on the race.
+                    with contextlib.suppress(RuntimeError):
+                        self._loop.call_soon_threadsafe(self._loop.stop)
                     if self._thread is not None:
                         self._thread.join(timeout=_LOOP_THREAD_JOIN_TIMEOUT_SECONDS)
                     # ``loop.close()`` raises
