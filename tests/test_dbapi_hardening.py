@@ -134,11 +134,12 @@ class TestFetchmanyNegativeSize:
         from dqlitedbapi.aio.cursor import AsyncCursor
 
         class _FakeAsyncConn:
-            # AsyncCursor's fetch* methods now route through
-            # ``_ensure_locks()`` for the loop-binding diagnostic;
-            # the mock must satisfy that contract with a no-op.
-            def _ensure_locks(self) -> tuple[None, None]:
-                return (None, None)
+            # AsyncCursor's fetch* methods route through the
+            # non-binding ``_check_loop_binding`` for the loop-binding
+            # diagnostic without lazy-binding the loop on a fresh
+            # cursor; the mock must satisfy that contract with a no-op.
+            def _check_loop_binding(self) -> None:
+                return None
 
         cursor = AsyncCursor(_FakeAsyncConn())  # type: ignore[arg-type]
         cursor._description = [("x", None, None, None, None, None, None)]  # type: ignore[assignment]
