@@ -270,7 +270,7 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # retry against the policy wall.
         # Apply the "Cluster policy rejection;" prefix only to the
         # user-facing ``message`` — ``raw_message`` is reserved for
-        # the verbatim server text per the cycle-21 contract. The
+        # the verbatim server text per the raw_message contract. The
         # prefix is the discriminator for callers branching without
         # importing client-layer types; it has no place on the
         # un-modified server-text accessor.

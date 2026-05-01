@@ -701,8 +701,8 @@ class AsyncConnection:
         # open. Quietly drop the local reference instead so child GC
         # has nothing left to act on. Symmetric with the
         # ``DqliteConnection.close`` and ``Connection.close`` fork
-        # short-circuits; this synchronous force-close path was the
-        # last gap left by cycle 20's async-only fork guards.
+        # short-circuits; this synchronous force-close path completes
+        # the symmetric pid-guard discipline.
         if _client_conn_mod._current_pid != self._creator_pid:
             self._async_conn = None
             return

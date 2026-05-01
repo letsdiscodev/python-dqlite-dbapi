@@ -193,7 +193,7 @@ async def _build_and_connect(
         # what the server emitted. The "Failed to connect: " prefix
         # belongs on the user-facing ``message`` only — prefixing
         # raw_message would contaminate the "verbatim server text"
-        # contract cycle 21 introduced.
+        # contract.
         if issubclass(exc_cls, DatabaseError) or issubclass(exc_cls, InterfaceError):
             raise exc_cls(
                 f"Failed to connect: {e.message}",
@@ -1390,19 +1390,18 @@ class Connection:
         return the cursor.
 
         Parity with stdlib ``sqlite3.Connection.execute`` and with the
-        async-side ``AsyncAdaptedConnection.execute`` (cycle 21).
-        SA-internal code paths and the ``connect``-event listener
-        idiom call ``dbapi_connection.execute(...)`` directly; without
-        this method, sync dialect users hit ``AttributeError`` on the
-        first checkout of a ``dqlite://`` engine that registers a
-        ``connect`` listener — an opaque diagnostic that escapes the
-        ``dbapi.Error`` hierarchy.
+        async-side ``AsyncAdaptedConnection.execute``. SA-internal code
+        paths and the ``connect``-event listener idiom call
+        ``dbapi_connection.execute(...)`` directly; without this method,
+        sync dialect users hit ``AttributeError`` on the first checkout
+        of a ``dqlite://`` engine that registers a ``connect`` listener
+        — an opaque diagnostic that escapes the ``dbapi.Error``
+        hierarchy.
 
         On a synchronous failure of ``cur.execute(...)`` close the
         freshly-opened cursor before re-raising so the caller's
         exception path doesn't leak an unowned cursor. Mirrors the
-        async adapter's discipline (the cycle-22 cleanup-on-raise
-        follow-up).
+        async adapter's cleanup-on-raise discipline.
         """
         cur = self.cursor()
         try:
