@@ -110,6 +110,20 @@ _SQLITE_NOMEM: Final[int] = 7
 # code was considered.
 _SQLITE_PROTOCOL: Final[int] = 15
 
+# Primary codes that CPython stdlib routes to bare ``DatabaseError``
+# via ``util.c::get_exception_class``'s ``default:`` arm. Each of
+# these conveys a deterministic / non-transient condition (NOLFS:
+# no large-file-system; AUTH: authorizer rejection; NOTICE / WARNING:
+# informational diagnostics) that should NOT be misclassified as
+# transient ``OperationalError``. dqlite-server doesn't currently
+# emit any of these on the wire, but the routing is forward-compat
+# parity — locking it down means a future server change won't
+# silently get the wrong PEP 249 class.
+_SQLITE_NOLFS: Final[int] = 22
+_SQLITE_AUTH: Final[int] = 23
+_SQLITE_NOTICE: Final[int] = 27
+_SQLITE_WARNING: Final[int] = 28
+
 # Registry of primary-code → PEP 249 class. Keep the default
 # (OperationalError) outside the dict so adding a code is one line.
 _CODE_TO_EXCEPTION: dict[
@@ -136,6 +150,11 @@ _CODE_TO_EXCEPTION: dict[
     _SQLITE_FORMAT: DatabaseError,
     _SQLITE_NOTADB: DatabaseError,
     _SQLITE_PROTOCOL: OperationalError,
+    # CPython stdlib parity — see the primary-code constants above.
+    _SQLITE_NOLFS: DatabaseError,
+    _SQLITE_AUTH: DatabaseError,
+    _SQLITE_NOTICE: DatabaseError,
+    _SQLITE_WARNING: DatabaseError,
     # dqlite-namespace error codes (>= 1000). ``primary_sqlite_code``
     # passes them through unchanged (see ``dqlitewire.constants``),
     # so the dispatch table keys match the code observed on the wire.
