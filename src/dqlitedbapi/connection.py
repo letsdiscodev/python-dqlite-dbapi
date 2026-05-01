@@ -14,10 +14,9 @@ from types import TracebackType
 from typing import Any, Final, NoReturn, Self
 
 import dqliteclient.exceptions as _client_exc
-from dqliteclient import DqliteConnection
+from dqliteclient import DqliteConnection, validate_positive_int_or_none
 from dqliteclient import connection as _client_conn_mod
 from dqliteclient.connection import parse_address as _client_parse_address
-from dqliteclient.protocol import _validate_positive_int_or_none
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client
 from dqlitedbapi.exceptions import (
@@ -96,7 +95,7 @@ def _validate_timeout(timeout: float) -> None:
     but ``isinstance(True, int)`` is True and ``math.isfinite(True)``
     returns True, so a caller passing ``timeout=True`` would silently
     get a 1-second budget. Match the sibling validator
-    ``_validate_positive_int_or_none`` in the client layer.
+    ``validate_positive_int_or_none`` in the client layer.
     """
     if isinstance(timeout, bool):
         raise ProgrammingError(f"timeout must be a positive finite number, got {timeout!r} (bool)")
@@ -105,7 +104,7 @@ def _validate_timeout(timeout: float) -> None:
 
 
 def _wrap_positive_int(value: int | None, name: str) -> int | None:
-    """Wrap the client-layer ``_validate_positive_int_or_none``'s
+    """Wrap the client-layer ``validate_positive_int_or_none``'s
     ``TypeError`` / ``ValueError`` into PEP 249 ``ProgrammingError``.
 
     PEP 249 §7 requires every error originating from the driver to be
@@ -117,7 +116,7 @@ def _wrap_positive_int(value: int | None, name: str) -> int | None:
     to ``_validate_timeout``'s direct ``ProgrammingError``.
     """
     try:
-        return _validate_positive_int_or_none(value, name)
+        return validate_positive_int_or_none(value, name)
     except (TypeError, ValueError) as e:
         raise ProgrammingError(str(e)) from e
 
