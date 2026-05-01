@@ -6,8 +6,9 @@ import logging
 import os
 import warnings
 import weakref
+from collections.abc import Iterable, Sequence
 from types import TracebackType
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from dqliteclient import DqliteConnection
 from dqliteclient import connection as _client_conn_mod
@@ -880,6 +881,54 @@ class AsyncConnection:
         require it; the underlying flag is already maintained.
         """
         return self._closed
+
+    async def execute(
+        self,
+        operation: str,
+        parameters: Sequence[Any] | None = None,
+    ) -> AsyncCursor:
+        """PEP 249 optional extension — open a cursor, run ``execute``,
+        return the cursor.
+
+        Mirrors stdlib ``sqlite3.Connection.execute`` and
+        aiosqlite's ``Connection.execute``. Sync sibling
+        ``Connection.execute`` already exists; this completes the
+        async parity.
+
+        On a synchronous failure of ``cur.execute(...)`` close the
+        freshly-opened cursor before re-raising so the caller's
+        exception path doesn't leak an unowned cursor with loop-
+        bound state.
+        """
+        cur = self.cursor()
+        try:
+            if parameters is None:
+                await cur.execute(operation)
+            else:
+                await cur.execute(operation, parameters)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await cur.close()
+            raise
+        return cur
+
+    async def executemany(
+        self,
+        operation: str,
+        seq_of_parameters: Iterable[Sequence[Any]],
+    ) -> AsyncCursor:
+        """PEP 249 optional extension — open a cursor, run
+        ``executemany``, return the cursor. Mirrors stdlib
+        ``sqlite3.Connection.executemany`` and aiosqlite's
+        ``Connection.executemany``."""
+        cur = self.cursor()
+        try:
+            await cur.executemany(operation, seq_of_parameters)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await cur.close()
+            raise
+        return cur
 
     # PEP 249 §7 (TPC) and stdlib sqlite3 parity stubs. Without these
     # a caller hits AttributeError which escapes the dbapi.Error
