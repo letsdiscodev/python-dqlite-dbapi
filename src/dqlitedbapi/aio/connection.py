@@ -416,6 +416,36 @@ class AsyncConnection:
         if _client_conn_mod._current_pid != self._creator_pid:
             self._closed = True
             self._closed_flag[0] = True
+            # Walk the inner client conn's own fork-close path
+            # before dropping the reference. The inner client's
+            # ``DqliteConnection.close()`` fork short-circuit nulls
+            # ``_pending_drain``: an inherited parent-loop
+            # ``asyncio.Task`` reference would otherwise persist as
+            # a Python attribute on the inner conn, get GC'd in
+            # the child, and trip the asyncio pending-task tracker
+            # — emitting "Task was destroyed but it is pending" at
+            # child interpreter shutdown. The sync sibling
+            # already drives the inner fork-close; mirror that
+            # discipline here so the asymmetric noise goes away.
+            if self._async_conn is not None:
+                inner = self._async_conn
+                pending = getattr(inner, "_pending_drain", None)
+                if pending is not None:
+                    # The Task is bound to the parent's (now-defunct)
+                    # loop; the child cannot ``await`` it. Drop the
+                    # Python reference so GC reclaims without the
+                    # pending-task tracker complaint. ``Task.cancel()``
+                    # would also be safe here but is a no-op against
+                    # a parent-loop task; just clearing the slot is
+                    # enough.
+                    with contextlib.suppress(Exception):
+                        inner._pending_drain = None
+                # Same null-out for ``_protocol`` / ``_db_id`` —
+                # they reference parent-loop StreamReaderProtocol
+                # / StreamWriter pairs that the child cannot use.
+                with contextlib.suppress(Exception):
+                    inner._protocol = None
+                    inner._db_id = None
             self._async_conn = None
             self._connect_lock = None
             self._op_lock = None
