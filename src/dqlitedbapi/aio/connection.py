@@ -771,6 +771,24 @@ class AsyncConnection:
             "to control transaction boundaries instead."
         )
 
+    @property
+    def isolation_level(self) -> None:
+        """stdlib pre-3.12 ``sqlite3.Connection.isolation_level``-
+        parity surface. See sync sibling for full rationale.
+        Returns None (autocommit sentinel)."""
+        return None
+
+    @isolation_level.setter
+    def isolation_level(self, value: object) -> None:
+        if value is None:
+            return
+        raise NotSupportedError(
+            "dqlite operates in autocommit-by-default mode and does not "
+            "support stdlib sqlite3 implicit-transaction isolation_level "
+            "values; use explicit BEGIN/COMMIT via cursor.execute or set "
+            "isolation_level=None to acknowledge the existing mode."
+        )
+
     async def commit(self) -> None:
         """Commit any pending transaction.
 

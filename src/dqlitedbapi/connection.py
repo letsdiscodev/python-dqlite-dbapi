@@ -1205,6 +1205,38 @@ class Connection:
             "to control transaction boundaries instead."
         )
 
+    @property
+    def isolation_level(self) -> None:
+        """stdlib pre-3.12 ``sqlite3.Connection.isolation_level``-
+        parity surface. Returns ``None`` — stdlib's autocommit
+        sentinel; truthful for dqlite's autocommit-by-default mode
+        (the bijection ``autocommit=True`` ↔ ``isolation_level=None``).
+
+        Setter accepts ``None`` (acknowledges the existing mode);
+        the implicit-transaction values (``""``, ``"DEFERRED"``,
+        ``"IMMEDIATE"``, ``"EXCLUSIVE"``) raise
+        ``NotSupportedError`` because the wire protocol does not
+        surface server-side implicit-transaction semantics.
+
+        Without this property, ``conn.isolation_level = None``
+        succeeded silently (Python allows arbitrary instance
+        attribute writes without ``__slots__``); the user's
+        attempt to express "use autocommit" had no effect on the
+        driver. The property closes the silent-write footgun.
+        """
+        return None
+
+    @isolation_level.setter
+    def isolation_level(self, value: object) -> None:
+        if value is None:
+            return
+        raise NotSupportedError(
+            "dqlite operates in autocommit-by-default mode and does not "
+            "support stdlib sqlite3 implicit-transaction isolation_level "
+            "values; use explicit BEGIN/COMMIT via cursor.execute or set "
+            "isolation_level=None to acknowledge the existing mode."
+        )
+
     def commit(self) -> None:
         """Commit any pending transaction.
 
