@@ -17,17 +17,66 @@ __all__ = [
 ]
 
 
-@lru_cache(maxsize=1)
-def _stdlib_code_to_name() -> dict[int, str]:
-    """Cache stdlib's ``SQLITE_*`` constant set as a code-to-name
-    map. Built lazily on first access so import overhead is paid
-    only when ``sqlite_errorname`` is actually queried.
+# Hardcoded primary SQLite result-code table. The numeric range 0-28
+# (plus 100 / 101 for ROW / DONE) collides with stdlib's authorizer-
+# action constants (``SQLITE_CREATE_INDEX = 1``, ``SQLITE_CREATE_TABLE
+# = 2``, ``SQLITE_CREATE_TRIGGER = 7``, ``SQLITE_DETACH = 25``,
+# ``SQLITE_ALTER_TABLE = 26``, etc.) — a ``dir()`` walk over the
+# ``sqlite3`` module yields the alphabetically-first name per numeric
+# value, which is the AUTHORIZER constant for ~half the primary
+# error codes. Hardcoding the canonical primary names per the
+# upstream SQLite ``rescode.html`` page guarantees the right
+# symbol even when stdlib's constant set grows.
+#
+# Source of truth: https://www.sqlite.org/rescode.html
+_PRIMARY_RESULT_CODE_NAMES: dict[int, str] = {
+    0: "SQLITE_OK",
+    1: "SQLITE_ERROR",
+    2: "SQLITE_INTERNAL",
+    3: "SQLITE_PERM",
+    4: "SQLITE_ABORT",
+    5: "SQLITE_BUSY",
+    6: "SQLITE_LOCKED",
+    7: "SQLITE_NOMEM",
+    8: "SQLITE_READONLY",
+    9: "SQLITE_INTERRUPT",
+    10: "SQLITE_IOERR",
+    11: "SQLITE_CORRUPT",
+    12: "SQLITE_NOTFOUND",
+    13: "SQLITE_FULL",
+    14: "SQLITE_CANTOPEN",
+    15: "SQLITE_PROTOCOL",
+    16: "SQLITE_EMPTY",
+    17: "SQLITE_SCHEMA",
+    18: "SQLITE_TOOBIG",
+    19: "SQLITE_CONSTRAINT",
+    20: "SQLITE_MISMATCH",
+    21: "SQLITE_MISUSE",
+    22: "SQLITE_NOLFS",
+    23: "SQLITE_AUTH",
+    24: "SQLITE_FORMAT",
+    25: "SQLITE_RANGE",
+    26: "SQLITE_NOTADB",
+    27: "SQLITE_NOTICE",
+    28: "SQLITE_WARNING",
+    100: "SQLITE_ROW",
+    101: "SQLITE_DONE",
+}
 
-    Skips non-error constants (authorizer / opcode names that share
-    the prefix) by including only ``SQLITE_*`` integers that fit in
-    the 16-bit primary or extended-code range. The stdlib constants
-    are a stable surface — Python 3.11+ guarantees the names match
-    the upstream SQLite header.
+
+@lru_cache(maxsize=1)
+def _stdlib_extended_code_to_name() -> dict[int, str]:
+    """Cache stdlib's extended-code ``SQLITE_*`` constants
+    (codes >= 256) as a code-to-name map. Built lazily on first
+    access.
+
+    Extended codes use upper bits (subcode << 8 | primary) so they
+    do NOT collide with the authorizer / opcode / limit / config
+    constants, which are all in the 0-255 range. Walking
+    ``dir(sqlite3)`` and filtering on ``value >= 256`` yields a
+    clean code-to-name table for every extended result code stdlib
+    exposes (e.g. ``SQLITE_CONSTRAINT_UNIQUE = 2067``,
+    ``SQLITE_IOERR_READ = 266``).
     """
     table: dict[int, str] = {}
     for name in dir(_stdlib_sqlite3):
@@ -36,19 +85,27 @@ def _stdlib_code_to_name() -> dict[int, str]:
         value = getattr(_stdlib_sqlite3, name)
         if not isinstance(value, int):
             continue
-        # First-wins for collisions — stdlib uses the canonical
-        # error symbol on the lower numeric value.
+        if value < 256:
+            # Primary codes (0-28) and authorizer / opcode / limit
+            # constants share this range; primary error names are
+            # hand-curated in ``_PRIMARY_RESULT_CODE_NAMES`` to dodge
+            # the alphabetical-collision ambiguity.
+            continue
         table.setdefault(value, name)
     return table
 
 
 def _sqlite_errorname(code: int | None) -> str | None:
     """Look up the symbolic SQLite error name for ``code``. Returns
-    ``None`` for ``None`` codes and for codes not present in stdlib's
-    constant table (e.g. dqlite-namespace codes ≥1000)."""
+    ``None`` for ``None`` codes and for codes not present in either
+    the primary-code table or stdlib's extended-code constant set
+    (e.g. dqlite-namespace codes ≥1000)."""
     if code is None:
         return None
-    return _stdlib_code_to_name().get(code)
+    name = _PRIMARY_RESULT_CODE_NAMES.get(code)
+    if name is not None:
+        return name
+    return _stdlib_extended_code_to_name().get(code)
 
 
 class Warning(Exception):  # PEP 249 mandated class name

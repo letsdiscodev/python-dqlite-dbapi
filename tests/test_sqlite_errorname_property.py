@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 import dqlitedbapi
 from dqlitedbapi.exceptions import DatabaseError, IntegrityError, InterfaceError
 
@@ -54,3 +56,41 @@ def test_module_exports_errorname_alongside_errorcode() -> None:
     assert hasattr(dqlitedbapi.DatabaseError, "sqlite_errorname")
     assert hasattr(dqlitedbapi.InterfaceError, "sqlite_errorcode")
     assert hasattr(dqlitedbapi.InterfaceError, "sqlite_errorname")
+
+
+@pytest.mark.parametrize(
+    ("code", "expected_name"),
+    [
+        (1, "SQLITE_ERROR"),
+        (2, "SQLITE_INTERNAL"),
+        (5, "SQLITE_BUSY"),
+        (6, "SQLITE_LOCKED"),
+        (7, "SQLITE_NOMEM"),
+        (8, "SQLITE_READONLY"),
+        (10, "SQLITE_IOERR"),
+        (11, "SQLITE_CORRUPT"),
+        (13, "SQLITE_FULL"),
+        (14, "SQLITE_CANTOPEN"),
+        (19, "SQLITE_CONSTRAINT"),
+        (20, "SQLITE_MISMATCH"),
+        (21, "SQLITE_MISUSE"),
+        (24, "SQLITE_FORMAT"),
+        (25, "SQLITE_RANGE"),
+        (26, "SQLITE_NOTADB"),
+    ],
+)
+def test_primary_error_codes_return_canonical_error_names(code: int, expected_name: str) -> None:
+    """Primary SQLite error codes (0-28) must return the canonical
+    error symbol — NOT an authorizer / opcode / limit constant
+    that happens to share the numeric value.
+
+    stdlib ``sqlite3`` exposes constants like ``SQLITE_CREATE_INDEX
+    = 1`` (authorizer) alongside ``SQLITE_ERROR = 1`` (error code).
+    A naive ``dir()`` walk produces the wrong name for ~half the
+    primary codes when the authorizer / opcode / limit constant
+    sorts alphabetically before the error symbol.
+    """
+    err = DatabaseError("test", code=code)
+    assert err.sqlite_errorname == expected_name, (
+        f"code {code} should yield {expected_name!r}, got {err.sqlite_errorname!r}"
+    )
