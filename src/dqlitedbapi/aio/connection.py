@@ -394,7 +394,13 @@ class AsyncConnection:
         return self._async_conn
 
     async def connect(self) -> None:
-        """Establish the connection."""
+        """Eagerly establish the TCP session.
+
+        Optional — the connection is lazy and the first cursor() or
+        execute() will connect automatically. Await this to fail-fast
+        when the cluster is unreachable, without allocating a cursor.
+        Mirrors :meth:`Connection.connect` (the sync sibling).
+        """
         # Project-wide invariant: every public Connection method
         # clears ``messages`` first. ``connect()`` is a dqlite
         # extension (not in PEP 249), but the uniform discipline
