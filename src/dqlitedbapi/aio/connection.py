@@ -548,7 +548,14 @@ class AsyncConnection:
                     # invalidate ahead of this close.
                     pending = getattr(inner, "_pending_drain", None)
                     if pending is not None and not pending.done():
-                        with contextlib.suppress(BaseException):
+                        # Narrow suppress: KI/SystemExit are one-shot
+                        # signals that must propagate; CancelledError
+                        # is re-delivered at the next await so absorbing
+                        # it here is the canonical shield+suppress idiom.
+                        # Mirrors the narrowing of the same pattern in
+                        # ``DqliteConnection._close_impl`` and
+                        # ``ConnectionPool._release``.
+                        with contextlib.suppress(Exception, asyncio.CancelledError):
                             await asyncio.shield(pending)
                     # Fall through (no ``return``) to the unconditional
                     # ``self._async_conn = None`` and lock-cleanup tail
