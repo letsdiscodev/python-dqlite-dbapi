@@ -11,6 +11,8 @@
 # ``DQLITEWIRE_ALLOW_FREE_THREADED=1`` is signalling they accept
 # the single-owner discipline across all layers.
 
+from typing import NoReturn
+
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
 )
@@ -88,6 +90,10 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "sqlite_version_info",
     # Functions
     "connect",
+    "register_adapter",
+    "register_converter",
+    "complete_statement",
+    "enable_callback_tracebacks",
     # Classes
     "Connection",
     "Cursor",
@@ -182,4 +188,45 @@ def connect(
         max_continuation_frames=max_continuation_frames,
         trust_server_heartbeat=trust_server_heartbeat,
         close_timeout=close_timeout,
+    )
+
+
+# Module-level stdlib ``sqlite3``-parity stubs. dqlitedbapi does not
+# support pluggable type adaptation / converter dispatch (the wire
+# protocol carries type tags but no caller-side hook for adapter
+# registration); the SQL-completeness predicate and callback
+# traceback toggle are similarly stdlib-only utilities. Stub with
+# ``NotSupportedError`` so cross-driver code that calls these at
+# module level (``dqlitedbapi.register_adapter(decimal.Decimal,
+# str)``) hits the dbapi error hierarchy instead of bare
+# ``AttributeError``. Mirrors the per-class TPC / load_extension /
+# create_function / create_collation stub family.
+
+
+def register_adapter(*args: object, **kwargs: object) -> NoReturn:
+    raise NotSupportedError(
+        "dqlitedbapi does not support stdlib sqlite3 register_adapter; "
+        "pluggable type adaptation has no wire-layer hook"
+    )
+
+
+def register_converter(*args: object, **kwargs: object) -> NoReturn:
+    raise NotSupportedError(
+        "dqlitedbapi does not support stdlib sqlite3 register_converter; "
+        "the wire protocol does not surface declared column types for "
+        "converter dispatch"
+    )
+
+
+def complete_statement(*args: object, **kwargs: object) -> NoReturn:
+    raise NotSupportedError(
+        "dqlitedbapi does not support stdlib sqlite3 complete_statement; "
+        "REPL-helper utility not in PEP 249's surface"
+    )
+
+
+def enable_callback_tracebacks(*args: object, **kwargs: object) -> NoReturn:
+    raise NotSupportedError(
+        "dqlitedbapi does not support stdlib sqlite3 enable_callback_tracebacks; "
+        "this driver has no callback-handler family for the toggle to apply to"
     )
