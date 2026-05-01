@@ -1195,8 +1195,16 @@ class Connection:
         return True
 
     @autocommit.setter
-    def autocommit(self, value: bool) -> None:
-        if value is True:
+    def autocommit(self, value: object) -> None:
+        # Accept ``True`` (acknowledges the existing mode) and the
+        # stdlib sentinel ``sqlite3.LEGACY_TRANSACTION_CONTROL``
+        # (numerically ``-1``) — stdlib's 3.12+ surface uses the
+        # sentinel as the "do not change isolation" signal that
+        # cross-driver code passes through. Any other value
+        # (including ``False`` / ``0`` / ``1`` / truthy non-bool)
+        # raises ``NotSupportedError`` — stdlib itself enforces a
+        # similarly strict gate (no PyObject_IsTrue coercion).
+        if value is True or value == -1:
             return
         raise NotSupportedError(
             "dqlite operates in autocommit-by-default mode; the autocommit "

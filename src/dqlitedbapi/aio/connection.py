@@ -761,8 +761,11 @@ class AsyncConnection:
         return True
 
     @autocommit.setter
-    def autocommit(self, value: bool) -> None:
-        if value is True:
+    def autocommit(self, value: object) -> None:
+        # See sync sibling for full rationale: accept True or
+        # ``sqlite3.LEGACY_TRANSACTION_CONTROL`` (==-1); reject
+        # everything else.
+        if value is True or value == -1:
             return
         raise NotSupportedError(
             "dqlite operates in autocommit-by-default mode; the autocommit "
