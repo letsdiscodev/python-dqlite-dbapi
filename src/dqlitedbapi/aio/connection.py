@@ -380,6 +380,12 @@ class AsyncConnection:
 
     async def connect(self) -> None:
         """Establish the connection."""
+        # Project-wide invariant: every public Connection method
+        # clears ``messages`` first. ``connect()`` is a dqlite
+        # extension (not in PEP 249), but the uniform discipline
+        # extends here so a stale entry doesn't survive an eager-
+        # connect call. Mirrors the sync sibling.
+        del self.messages[:]
         await self._ensure_connection()
 
     async def close(self) -> None:

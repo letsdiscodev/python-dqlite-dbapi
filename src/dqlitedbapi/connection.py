@@ -907,6 +907,16 @@ class Connection:
         when the cluster is unreachable, without allocating a cursor.
         Mirrors :meth:`AsyncConnection.connect`.
         """
+        # PEP 249 §6.4: ``Connection.messages`` is "cleared by all
+        # standard methods". ``connect()`` is a dqlite extension
+        # (not in PEP 249), but the project-wide invariant — every
+        # public Connection method clears messages first — covers
+        # this method too. Without the clear, a stale entry from
+        # any prior path would survive an eager-connect call,
+        # breaking the uniform "method-call resets messages"
+        # contract that ``cursor`` / ``commit`` / ``rollback`` /
+        # ``close`` already follow.
+        del self.messages[:]
         self._check_thread()
         if self._closed:
             raise InterfaceError("Connection is closed")
