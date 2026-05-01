@@ -630,6 +630,18 @@ class Connection:
         try:
             acquired = self._op_lock.acquire(timeout=self._timeout)
         except (KeyboardInterrupt, SystemExit):
+            # If KI/SystemExit landed in the bytecode-narrow gap
+            # between ``acquire(timeout=...)`` returning True and
+            # ``acquired = ...`` STORE_FAST executing, the lock IS
+            # held but the local ``acquired`` is unbound — the outer
+            # try/finally below would then skip the release and
+            # permanently leak the lock. Best-effort release here:
+            # ``threading.Lock.release()`` raises RuntimeError when
+            # the lock is unlocked, so a suppress makes the call
+            # safe in the more-common "KI landed before acquire
+            # could complete" case too.
+            with contextlib.suppress(RuntimeError):
+                self._op_lock.release()
             # The coroutine was never scheduled on the loop, so close
             # it explicitly to suppress "coroutine was never awaited"
             # ResourceWarnings (and free its frame).

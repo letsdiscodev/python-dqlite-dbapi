@@ -234,9 +234,15 @@ def test_keyboard_interrupt_during_op_lock_acquire_invalidates_when_prior_op_in_
         assert invalidate_calls, "expected _invalidate to be scheduled"
         assert isinstance(invalidate_calls[0], InterfaceError)
         assert "op-lock acquire" in str(invalidate_calls[0]).lower()
-        # The acquire failed; the fake lock's release was never called
-        # (which would raise on a mock). Pin: release was NOT called.
-        fake_lock.release.assert_not_called()
+        # The KI cleanup arm now best-effort releases the lock under
+        # ``contextlib.suppress(RuntimeError)`` to defend against the
+        # bytecode-narrow gap where ``acquire`` returned True but the
+        # KI landed before STORE_FAST. RuntimeError on an unlocked
+        # ``threading.Lock`` is suppressed; the call is safe in both
+        # the gap and the more-common "KI before acquire returned"
+        # case. The mock's release just records the call without
+        # raising, so we can pin its presence here.
+        assert fake_lock.release.call_count == 1
     finally:
         conn._closed = True
 
