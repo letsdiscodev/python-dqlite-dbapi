@@ -9,7 +9,7 @@ import os
 import threading
 import warnings
 import weakref
-from collections.abc import Coroutine, Mapping, Sequence
+from collections.abc import Coroutine, Sequence
 from types import TracebackType
 from typing import Any, Final, NoReturn
 
@@ -1293,7 +1293,7 @@ class Connection:
     def execute(
         self,
         operation: str,
-        parameters: Sequence[Any] | Mapping[str, Any] | None = None,
+        parameters: Sequence[Any] | None = None,
     ) -> Cursor:
         """PEP 249 optional extension — open a cursor, run ``execute``,
         return the cursor.
@@ -1318,14 +1318,7 @@ class Connection:
             if parameters is None:
                 cur.execute(operation)
             else:
-                # ``Cursor.execute`` accepts ``Sequence | None`` at the
-                # signature; the SA-facing wrapper widens to
-                # ``Mapping`` for parity with the SA-reference
-                # connector. A ``Mapping`` is rejected by
-                # ``Cursor.execute`` at runtime with
-                # ``ProgrammingError`` (paramstyle="qmark"), preserving
-                # the underlying contract.
-                cur.execute(operation, parameters)  # type: ignore[arg-type]
+                cur.execute(operation, parameters)
         except BaseException:
             with contextlib.suppress(Exception):
                 cur.close()
