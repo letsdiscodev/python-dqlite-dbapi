@@ -1,5 +1,6 @@
 """Async PEP 249-style interface for dqlite."""
 
+import logging
 from typing import Final, Literal
 
 from dqlitedbapi import __version__
@@ -53,6 +54,8 @@ from dqlitewire import (
 # sibling), not ``dqlitedbapi.aio``. (aiosqlite and asyncpg do not
 # set ``apilevel`` because they are not consumed via SA's
 # ``import_dbapi`` discovery path; we set it for SA dialect glue.)
+logger = logging.getLogger(__name__)
+
 apilevel: Final[Literal["2.0"]] = "2.0"
 # PEP 249 value 1: threads may share the module.
 #
@@ -242,10 +245,19 @@ async def aconnect(
         # SA dialect (DqliteDialect_aio.connect) uses the same
         # pattern. Catch BaseException to cover CancelledError from
         # an outer asyncio.timeout; suppress only Exception during
-        # the close so the original cancel / error propagates.
-        import contextlib
-
-        with contextlib.suppress(Exception):
+        # the close so the original cancel / error propagates. Log
+        # any close-side error at DEBUG so a forensic trail exists
+        # for an operator triaging cleanup-time failures (the
+        # original connect error is what users see, but a follow-up
+        # debug log surfaces secondary failures that would otherwise
+        # be swallowed silently). Mirrors the SA-glue
+        # ``aio_close`` discipline.
+        try:
             await conn.close()
+        except Exception:
+            logger.debug(
+                "aconnect: exception during cleanup-close after failed connect",
+                exc_info=True,
+            )
         raise
     return conn

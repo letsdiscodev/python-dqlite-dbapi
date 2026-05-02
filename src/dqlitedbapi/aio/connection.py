@@ -1292,9 +1292,19 @@ class AsyncConnection:
             # hit "bound to a different event loop" instead of the
             # real connect error. ``close()`` is idempotent and
             # handles the never-connected case by resetting the
-            # lock primitives.
-            with contextlib.suppress(Exception):
+            # lock primitives. Log close-side errors at DEBUG so a
+            # forensic trail exists for an operator triaging cleanup-
+            # time failures.
+            try:
                 await self.close()
+            except Exception:
+                logger.debug(
+                    "AsyncConnection.__aenter__ (id=%s, address=%s): "
+                    "exception during cleanup-close after failed connect",
+                    id(self),
+                    self._address,
+                    exc_info=True,
+                )
             raise
         return self
 
