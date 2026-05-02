@@ -29,7 +29,12 @@ def test_sync_executemany_failure_clears_rowcount(cluster_address: str) -> None:
         # behaviour so callers don't observe a misleading
         # last-iteration rowcount.
         assert cur.rowcount == -1
-        assert cur.lastrowid is None
+        # ``_lastrowid`` is intentionally preserved across a failed
+        # executemany — stdlib ``sqlite3.Cursor.lastrowid`` is
+        # documented as not being cleared by failed/cancelled
+        # operations. The successful iteration before the failure DID
+        # insert id=2; that rowid survives the mid-batch IntegrityError.
+        assert cur.lastrowid == 2
         assert cur._rows == []
         assert cur._description is None
     finally:
@@ -51,7 +56,8 @@ async def test_async_executemany_failure_clears_rowcount(
                 [(1,), (2,), (1,)],
             )
         assert cur.rowcount == -1
-        assert cur.lastrowid is None
+        # _lastrowid preserved across failed executemany (stdlib parity).
+        assert cur.lastrowid == 2
         assert cur._rows == []
         assert cur._description is None
     finally:
