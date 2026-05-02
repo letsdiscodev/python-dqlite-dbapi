@@ -934,11 +934,27 @@ class AsyncConnection:
         ``ProgrammingError`` up front rather than letting the first
         await inside ``_ensure_locks`` surface the same error with a
         less specific diagnostic. No running loop (SA greenlet glue)
-        is a valid case — skip the check.
+        is a valid case — skip the loop check.
+
+        Fork-after-init guard: every other public method on this
+        class (``_ensure_locks``, ``_check_loop_binding``, ``close``,
+        ``force_close_transport``) compares ``_current_pid`` against
+        ``self._creator_pid`` and raises if a fork has crossed the
+        boundary. Without the same check here, a forked child calling
+        ``aconn.cursor()`` from sync context (the SA-glue shape) would
+        silently register a parent-pinned cursor in the child's
+        ``self._cursors`` WeakSet and return a live wrapper. Match the
+        sync sibling (``Connection.cursor`` enforces it via
+        ``_check_thread``).
         """
         del self.messages[:]
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        if _client_conn_mod._current_pid != self._creator_pid:
+            raise InterfaceError(
+                "AsyncConnection used after fork; reconstruct from configuration "
+                "in the target process."
+            )
         if self._loop_ref is not None:
             try:
                 current_loop = asyncio.get_running_loop()

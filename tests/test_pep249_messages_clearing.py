@@ -235,6 +235,7 @@ def test_async_connection_rollback_clears_messages() -> None:
 
 
 def test_async_connection_cursor_clears_messages() -> None:
+    import os
     import weakref
 
     conn = MagicMock(spec=AsyncConnection)
@@ -242,6 +243,9 @@ def test_async_connection_cursor_clears_messages() -> None:
     # ``cursor()`` reads ``_loop_ref`` for the best-effort loop-binding
     # check; spec'd mock needs it set explicitly.
     conn._loop_ref = None
+    # Front-line fork-pid guard reads ``_creator_pid``; align with the
+    # current pid so the same-process call proceeds.
+    conn._creator_pid = os.getpid()
     conn.messages = [(DbApiWarning, "stale")]
     # AsyncConnection.cursor() registers the new cursor in a WeakSet
     # so close() can cascade; give the mock a real one.
