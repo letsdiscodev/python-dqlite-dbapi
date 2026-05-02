@@ -319,6 +319,13 @@ class AsyncCursor:
 
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:
+            # PEP 249 §6.1.1 — clear messages under the lock so the
+            # contract "messages cleared by every method call" is
+            # atomic with the operation. Clearing only pre-lock leaves
+            # a window where a sibling task could append between this
+            # clear and the EXEC. Mirrors the commit/rollback
+            # discipline.
+            del self.messages[:]
             # Re-check after acquiring the lock so that a concurrent
             # ``cursor.close()`` / ``connection.close()`` that reaches the
             # closed flag first wins deterministically. Without the
@@ -420,6 +427,10 @@ class AsyncCursor:
         # parity.
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:
+            # PEP 249 §6.1.1 — clear messages under the lock; see
+            # ``execute`` and ``commit`` for the under-lock-clear
+            # rationale.
+            del self.messages[:]
             self._check_closed()
             try:
                 for params in seq_of_parameters:
