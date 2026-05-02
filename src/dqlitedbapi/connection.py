@@ -225,12 +225,19 @@ async def _build_and_connect(
         ) from e
     except _client_exc.DqliteConnectionError as e:
         # Transport / handshake failure at the connect layer (TCP
-        # refused, DNS failure, server-reset). The cursor-path
-        # classifier maps DqliteConnectionError to OperationalError;
-        # mirror it on the connect path so SA's pool retry loop sees
-        # the right shape and the substring scan can classify it.
+        # refused, DNS failure, server-reset, leader-change rewrap).
+        # The cursor-path classifier maps DqliteConnectionError to
+        # OperationalError; mirror it on the connect path so SA's
+        # pool retry loop sees the right shape and the substring
+        # scan can classify it. Thread the optional ``code`` and
+        # ``raw_message`` through so a leader-change rewrap (the
+        # client's ``connect()`` LEADER_ERROR_CODES branch surfaces
+        # ``DqliteConnectionError(..., code=10250, raw_message=...)``)
+        # carries the wire-level signal that SA's is_disconnect's
+        # code-based classifier expects — matching the query path.
+        code = getattr(e, "code", None)
         raw_msg = getattr(e, "raw_message", None) or str(e)
-        raise OperationalError(f"Failed to connect: {e}", code=None, raw_message=raw_msg) from e
+        raise OperationalError(f"Failed to connect: {e}", code=code, raw_message=raw_msg) from e
     except _client_exc.ClusterError as e:
         # Non-policy ClusterError — transient at the cluster discovery
         # layer (no leader yet, all nodes unreachable). Surface as
