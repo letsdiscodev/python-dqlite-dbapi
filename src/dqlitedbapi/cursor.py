@@ -1193,11 +1193,22 @@ class Cursor:
             # rowcount=-1 ("undetermined"); use that signal so callers
             # cannot mistake the last iteration's rowcount for the
             # cumulative count of successfully-applied iterations.
+            # ``_lastrowid`` is intentionally NOT reset — stdlib
+            # ``sqlite3.Cursor.lastrowid`` is documented as "the
+            # rowid of the last row inserted" and is NOT cleared by
+            # a failed/cancelled subsequent operation. A user who
+            # saw ``cur.lastrowid`` after an INSERT, then ran an
+            # ``executemany`` that failed mid-batch, should still see
+            # the prior INSERT's rowid (per the lastrowid property
+            # docstring: "close() is the single lifecycle event that
+            # scrubs it"). PEP 249 §6.1.1 also requires messages be
+            # cleared by every cursor method call; clear here so the
+            # contract holds even on the BaseException re-raise.
             self._rowcount = -1
             self._rows = []
             self._description = None
-            self._lastrowid = None
             self._row_index = 0
+            del self.messages[:]
             raise
         acc.apply(self)
 

@@ -449,11 +449,25 @@ class AsyncCursor:
                 # iteration's value (misleading), so reset to
                 # PEP 249's "undetermined" sentinel and clear the
                 # other state fields. Mirrors the sync sibling.
+                # ``_lastrowid`` is intentionally NOT reset — stdlib
+                # ``sqlite3.Cursor.lastrowid`` is documented as
+                # "the rowid of the last row inserted" and is NOT
+                # cleared by a failed/cancelled subsequent operation.
+                # A user who did ``cur.execute("INSERT ...")``, saw
+                # ``cur.lastrowid``, then ran an ``executemany`` that
+                # failed mid-batch should still see the prior INSERT's
+                # rowid (per the cursor docstring at module top:
+                # "ROLLBACK / UPDATE / DELETE / DDL do NOT clear it
+                # (mirroring stdlib), but close() scrubs it").
+                # PEP 249 §6.1.1 also requires messages be cleared
+                # by every cursor method call; clear here so the
+                # contract holds even on the BaseException re-raise
+                # path.
                 self._rowcount = -1
                 self._rows = []
                 self._description = None
-                self._lastrowid = None
                 self._row_index = 0
+                del self.messages[:]
                 raise
             # Final guard before apply; pairs with the ``_closed``
             # check inside ``_ExecuteManyAccumulator.apply``.

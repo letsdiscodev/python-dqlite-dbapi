@@ -59,11 +59,15 @@ async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> N
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
     # Every field is reset to the "no operation performed" surface;
-    # rowcount=-1 (PEP 249 "undetermined").
+    # rowcount=-1 (PEP 249 "undetermined"). _lastrowid is intentionally
+    # NOT reset — stdlib sqlite3.Cursor.lastrowid is documented as not
+    # being cleared by failed/cancelled operations, and the cursor's
+    # docstring at module top pins close() as the single lifecycle
+    # event that scrubs it.
     assert cur._rowcount == -1
     assert cur._rows == []
     assert cur._description is None
-    assert cur._lastrowid is None
+    assert cur._lastrowid == 99  # preserved (stdlib parity)
     assert cur._row_index == 0
 
 
@@ -96,5 +100,5 @@ async def test_async_executemany_basecaught_resets_all_fields_and_reraises() -> 
     assert aconn_cursor._rowcount == -1
     assert list(aconn_cursor._rows) == []
     assert aconn_cursor._description is None
-    assert aconn_cursor._lastrowid is None
+    assert aconn_cursor._lastrowid == 99  # preserved (stdlib parity)
     assert aconn_cursor._row_index == 0
