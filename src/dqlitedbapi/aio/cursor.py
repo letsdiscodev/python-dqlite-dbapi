@@ -582,8 +582,15 @@ class AsyncCursor:
         # contract holds even on the cross-loop rejection path.
         del self.messages[:]
         # PEP 249 §6.2 says implementations are "free to have this
-        # method do nothing" — including on closed cursors. Skip
-        # the closed-cursor check.
+        # method do nothing" — including on closed cursors. Mirror
+        # the sync sibling's documented permissive-on-closed
+        # behaviour: a closed-cursor cleanup helper can call
+        # setinputsizes / setoutputsize without a raise. Without
+        # this short-circuit, ``_check_loop_binding`` would raise
+        # ``InterfaceError("Connection is closed")``, diverging from
+        # the sync sibling and from the documented intent.
+        if self._closed or self._connection._closed:
+            return
         # Surface a loop-binding mismatch up front so callers see the
         # same ``ProgrammingError`` they'd get from ``execute`` /
         # ``fetchone``. Without this, a sync no-op on a cursor bound
@@ -597,6 +604,8 @@ class AsyncCursor:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
         # PEP 249 §6.2 — see ``setinputsizes`` rationale.
+        if self._closed or self._connection._closed:
+            return
         self._connection._check_loop_binding()
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
