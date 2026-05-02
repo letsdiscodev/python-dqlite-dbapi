@@ -309,11 +309,16 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(str(e), code=None, raw_message=raw_msg) from e
     except _client_exc.DqliteError as e:
-        # Catch-all for any future subclass of DqliteError not enumerated
-        # above. Surface as InterfaceError rather than leaking to the
-        # caller as a non-DBAPI exception.
+        # Catch-all for any future subclass of DqliteError not
+        # enumerated above. PEP 249 §7: errors that occur during the
+        # operation of the database are wrapped in DatabaseError or
+        # its subclasses; an InterfaceError wrap would mis-classify
+        # a server-sourced error as a driver-misuse error. Use
+        # DatabaseError as the conservative wrap class so cross-
+        # driver code using ``except DatabaseError:`` for server-side
+        # failures catches future error classes correctly.
         raw_msg = getattr(e, "raw_message", None) or str(e)
-        raise InterfaceError(
+        raise DatabaseError(
             f"unrecognized client error ({type(e).__name__}): {e}",
             code=None,
             raw_message=raw_msg,

@@ -20,7 +20,7 @@ import pytest
 
 import dqlitedbapi
 from dqlitedbapi.cursor import _call_client, _is_row_returning
-from dqlitedbapi.exceptions import DataError, InterfaceError, ProgrammingError
+from dqlitedbapi.exceptions import DatabaseError, DataError, ProgrammingError
 
 
 class TestRownumberProperty:
@@ -203,7 +203,13 @@ class TestCallClientCatchAll:
             raise _NovelClientError("something new")
 
         async def _run() -> None:
-            with pytest.raises(InterfaceError, match="unrecognized client error"):
+            # PEP 249 §7: server-sourced errors are wrapped in
+            # DatabaseError, not InterfaceError. The catch-all wraps
+            # an unknown DqliteError subclass as DatabaseError so
+            # cross-driver code using `except DatabaseError:` for
+            # server-side failures catches future error classes
+            # correctly.
+            with pytest.raises(DatabaseError, match="unrecognized client error"):
                 await _call_client(raiser())
 
         asyncio.run(_run())

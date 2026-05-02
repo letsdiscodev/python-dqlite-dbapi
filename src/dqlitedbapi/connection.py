@@ -265,12 +265,16 @@ async def _build_and_connect(
         raise InterfaceError(str(e), code=None, raw_message=raw_msg) from e
     except _client_exc.DqliteError as e:
         # Catch-all for any future DqliteError subclass not enumerated
-        # above. Surface as InterfaceError so an unexpected error
-        # type stays inside PEP 249's Error hierarchy. Mirrors the
-        # cursor-path classifier's catch-all at the end of
-        # ``_call_client``.
+        # above. PEP 249 §7: errors that occur during the operation
+        # of the database are wrapped in DatabaseError or its
+        # subclasses; an InterfaceError wrap would mis-classify a
+        # server-sourced error as a driver-misuse error. Use
+        # DatabaseError as the conservative wrap class so cross-
+        # driver code using ``except DatabaseError:`` catches future
+        # error classes correctly. Mirrors the cursor-path classifier
+        # catch-all at the end of ``_call_client``.
         raw_msg = getattr(e, "raw_message", None) or str(e)
-        raise InterfaceError(
+        raise DatabaseError(
             f"unrecognized client error ({type(e).__name__}): {e}",
             code=None,
             raw_message=raw_msg,
