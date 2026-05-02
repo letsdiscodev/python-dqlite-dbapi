@@ -1555,7 +1555,7 @@ class Connection:
     def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")
 
-    def executescript(self, sql_script: str) -> NoReturn:
+    def executescript(self, sql_script: str, /) -> NoReturn:
         """stdlib ``sqlite3``-parity stub. dqlite has no
         multi-statement-script primitive on the wire (each statement
         requires a separate Prepare → Exec / Query round-trip), so

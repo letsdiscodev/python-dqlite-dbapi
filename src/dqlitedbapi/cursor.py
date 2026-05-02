@@ -1440,7 +1440,7 @@ class Cursor:
             raise ProgrammingError(f"scroll mode must be 'relative' or 'absolute', got {mode!r}")
         raise NotSupportedError("dqlite cursors are not scrollable")
 
-    def executescript(self, sql_script: str) -> NoReturn:
+    def executescript(self, sql_script: str, /) -> NoReturn:
         """stdlib ``sqlite3.Cursor``-parity stub. dqlite has no
         multi-statement-script primitive on the wire; raises
         ``NotSupportedError`` rather than escaping ``dbapi.Error``
