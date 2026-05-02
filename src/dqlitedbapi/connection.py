@@ -1413,6 +1413,12 @@ class Connection:
         exception path doesn't leak an unowned cursor. Mirrors the
         async adapter's cleanup-on-raise discipline.
         """
+        # PEP 249 §6.4: messages list is cleared automatically by all
+        # standard connection methods. ``self.cursor()`` does its own
+        # clear, but eagerly clearing here aligns this shortcut's
+        # prelude shape with the seven other public Connection
+        # methods that all clear-before-anything-else.
+        del self.messages[:]
         cur = self.cursor()
         try:
             if parameters is None:
@@ -1445,6 +1451,9 @@ class Connection:
         re-raising so the caller's exception path doesn't leak an
         unowned cursor.
         """
+        # PEP 249 §6.4: see ``execute`` shortcut for the eager-clear
+        # rationale.
+        del self.messages[:]
         cur = self.cursor()
         try:
             cur.executemany(operation, seq_of_parameters)
