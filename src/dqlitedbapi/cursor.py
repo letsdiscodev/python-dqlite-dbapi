@@ -1373,6 +1373,17 @@ class Cursor:
         # the same reason; this method and its four secondary-method
         # siblings keep the same ordering.
         del self.messages[:]
+        # Validate input shape at the public boundary even though the
+        # body is a no-op. PEP 249 §6.2 expressly permits this method
+        # to do nothing, but the project's input-validation discipline
+        # (e.g. ``arraysize.setter`` rejecting ``bool``) argues for
+        # raising on a misshapen call so a caller-side bug surfaces
+        # at the call site instead of being silently absorbed.
+        if not isinstance(sizes, (list, tuple)):
+            raise TypeError(
+                f"setinputsizes expects a sequence (list/tuple), "
+                f"got {type(sizes).__name__}"
+            )
         # PEP 249 §6.2 says implementations are "free to have this
         # method do nothing" — including on closed cursors. Skip BOTH
         # the closed-cursor check AND the thread check on a closed
@@ -1390,6 +1401,16 @@ class Cursor:
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
+        # Validate input shape — see ``setinputsizes`` rationale.
+        if not isinstance(size, int) or isinstance(size, bool):
+            raise TypeError(
+                f"setoutputsize expects an int, got {type(size).__name__}"
+            )
+        if column is not None and (not isinstance(column, int) or isinstance(column, bool)):
+            raise TypeError(
+                f"setoutputsize column expects an int or None, "
+                f"got {type(column).__name__}"
+            )
         # PEP 249 §6.2 — see ``setinputsizes`` rationale.
         if self._closed:
             return
