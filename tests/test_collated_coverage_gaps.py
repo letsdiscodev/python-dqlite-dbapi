@@ -24,9 +24,16 @@ class TestAioConnectUnknownKwargsRejection:
     def test_rejects_stdlib_sqlite3_kwargs(self) -> None:
         async def _drive() -> None:
             with pytest.raises(NotSupportedError):
-                await dqlite_aio.connect(
+                # connect's signature uses **unknown_kwargs to absorb
+                # any unrecognised kwarg and surface NotSupportedError;
+                # passing a stdlib sqlite3 kwarg drives the rejection
+                # arm. ``isolation_level`` is one such kwarg.
+                # The await is on the synchronous-rejection path:
+                # connect raises before any coroutine work, so the
+                # pytest.raises wraps a sync raise, not an awaitable.
+                _ = dqlite_aio.connect(
                     "127.0.0.1:9001",
-                    isolation_level=None,  # type: ignore[call-arg]
+                    isolation_level=None,
                 )
 
         asyncio.run(_drive())

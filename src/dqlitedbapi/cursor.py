@@ -1381,8 +1381,7 @@ class Cursor:
         # at the call site instead of being silently absorbed.
         if not isinstance(sizes, (list, tuple)):
             raise TypeError(
-                f"setinputsizes expects a sequence (list/tuple), "
-                f"got {type(sizes).__name__}"
+                f"setinputsizes expects a sequence (list/tuple), got {type(sizes).__name__}"
             )
         # PEP 249 §6.2 says implementations are "free to have this
         # method do nothing" — including on closed cursors. Skip BOTH
@@ -1403,13 +1402,10 @@ class Cursor:
         del self.messages[:]
         # Validate input shape — see ``setinputsizes`` rationale.
         if not isinstance(size, int) or isinstance(size, bool):
-            raise TypeError(
-                f"setoutputsize expects an int, got {type(size).__name__}"
-            )
+            raise TypeError(f"setoutputsize expects an int, got {type(size).__name__}")
         if column is not None and (not isinstance(column, int) or isinstance(column, bool)):
             raise TypeError(
-                f"setoutputsize column expects an int or None, "
-                f"got {type(column).__name__}"
+                f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
         # PEP 249 §6.2 — see ``setinputsizes`` rationale.
         if self._closed:
