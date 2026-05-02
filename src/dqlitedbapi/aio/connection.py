@@ -712,20 +712,24 @@ class AsyncConnection:
         if _client_conn_mod._current_pid != self._creator_pid:
             self._async_conn = None
             return
+        # Close the transport writer if one exists; the cleanup tail
+        # below (pending-drain reap and ``self._async_conn = None``)
+        # runs unconditionally so a post-_invalidate state where
+        # ``_protocol`` has already been cleared (or a
+        # ``_writer is None`` on a partially-constructed inner) does
+        # not skip the reap and the null-out.
         proto = getattr(inner, "_protocol", None)
-        if proto is None:
-            return
-        writer = getattr(proto, "_writer", None)
-        if writer is None:
-            return
-        try:
-            writer.close()
-        except Exception:  # noqa: BLE001 - last-resort cleanup
-            logger.debug(
-                "AsyncConnection.force_close_transport (id=%s): writer.close() raised; ignoring",
-                id(self),
-                exc_info=True,
-            )
+        writer = getattr(proto, "_writer", None) if proto is not None else None
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:  # noqa: BLE001 - last-resort cleanup
+                logger.debug(
+                    "AsyncConnection.force_close_transport (id=%s): "
+                    "writer.close() raised; ignoring",
+                    id(self),
+                    exc_info=True,
+                )
         # Reap any ``_pending_drain`` task on the inner client. The
         # canonical async ``close()`` awaits this task; the sync
         # helper cannot await (no loop, no greenlet), so we cancel
