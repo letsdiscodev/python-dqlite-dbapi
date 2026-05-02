@@ -891,6 +891,12 @@ class Cursor:
         # Reject bools explicitly even though ``bool`` is an ``int``
         # subclass: ``arraysize = True`` silently coercing to 1 is a
         # caller-bug trap, not a useful affordance.
+        # PEP 249 §6.1.2: any method on a closed cursor must raise an
+        # ``Error`` subclass. Apply the closed-state guard on the
+        # SETTER (state-mutating op on a closed cursor); leave the
+        # GETTER permissive — peer drivers (sqlite3, psycopg) also
+        # let the read pass on a closed cursor as a defensive accessor.
+        self._check_closed()
         if not isinstance(value, int) or isinstance(value, bool):
             raise ProgrammingError(f"arraysize must be a positive int, got {type(value).__name__}")
         if value < 1:
@@ -925,6 +931,8 @@ class Cursor:
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
+        # PEP 249 §6.1.2: state-mutating ops on a closed cursor raise.
+        self._check_closed()
         if value is None:
             return
         raise NotSupportedError(
