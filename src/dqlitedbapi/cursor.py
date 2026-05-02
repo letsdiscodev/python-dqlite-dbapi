@@ -955,8 +955,14 @@ class Cursor:
         Returns ``self`` so callers can chain ``.fetchall()`` etc.
         """
         del self.messages[:]
-        self._connection._check_thread()
+        # ``_check_closed`` BEFORE ``_check_thread``: ``Cursor.close()``
+        # swaps ``self._connection`` for a ``weakref.proxy``; once the
+        # parent ``Connection`` is GC'd, ``_connection._check_thread()``
+        # raises ``ReferenceError`` — outside the PEP 249 ``Error``
+        # hierarchy. ``_check_closed`` reads only ``self._closed`` and
+        # raises ``InterfaceError`` (a real ``Error`` subclass).
         self._check_closed()
+        self._connection._check_thread()
         # Clear after the guards but before the wire call so a caller
         # who executes on a closed cursor still sees the sharp
         # ``InterfaceError("Cursor is closed")`` without a state-clobber
@@ -1083,8 +1089,9 @@ class Cursor:
         default rationale.
         """
         del self.messages[:]
-        self._connection._check_thread()
+        # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
+        self._connection._check_thread()
         # Reject transaction-control verbs and pure queries up front so
         # the caller's frame sees the ProgrammingError rather than
         # having it surface deep inside the async helper. stdlib
@@ -1199,8 +1206,9 @@ class Cursor:
         Returns ``None`` when no more rows are available.
         """
         del self.messages[:]
-        self._connection._check_thread()
+        # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
+        self._connection._check_thread()
         self._check_result_set()
 
         if self._row_index >= len(self._rows):
@@ -1217,8 +1225,9 @@ class Cursor:
         defaults to ``self.arraysize``.
         """
         del self.messages[:]
-        self._connection._check_thread()
+        # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
+        self._connection._check_thread()
         self._check_result_set()
 
         if size is None:
@@ -1254,8 +1263,9 @@ class Cursor:
         Returns an empty list when the cursor has no more rows.
         """
         del self.messages[:]
-        self._connection._check_thread()
+        # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
+        self._connection._check_thread()
         self._check_result_set()
 
         result = self._rows[self._row_index :]
@@ -1335,21 +1345,31 @@ class Cursor:
         # PEP 249 §6.1.1 — clear "prior to executing the call" so the
         # contract holds even on the cross-thread-rejection path. The
         # six primary methods (execute / executemany / fetchone /
-        # fetchmany / fetchall / close) all clear before
-        # ``_check_thread`` for the same reason; this method and its
-        # four secondary-method siblings keep the same ordering.
+        # fetchmany / fetchall / close) all clear before any guard for
+        # the same reason; this method and its four secondary-method
+        # siblings keep the same ordering.
         del self.messages[:]
-        self._connection._check_thread()
         # PEP 249 §6.2 says implementations are "free to have this
-        # method do nothing" — including on closed cursors. Skip the
-        # closed-cursor check so a closed-cursor cleanup helper can
-        # call setinputsizes / setoutputsize without a raise.
+        # method do nothing" — including on closed cursors. Skip BOTH
+        # the closed-cursor check AND the thread check on a closed
+        # cursor: ``Cursor.close()`` swaps ``self._connection`` for a
+        # ``weakref.proxy``; once the parent ``Connection`` is GC'd,
+        # ``_connection._check_thread()`` raises ``ReferenceError`` —
+        # outside the PEP 249 ``Error`` hierarchy. The documented
+        # intent is "free to do nothing on closed", so an early return
+        # preserves both the no-raise contract and the GC'd-proxy
+        # safety.
+        if self._closed:
+            return
+        self._connection._check_thread()
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
-        self._connection._check_thread()
         # PEP 249 §6.2 — see ``setinputsizes`` rationale.
+        if self._closed:
+            return
+        self._connection._check_thread()
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
         """PEP 249 optional extension — not supported.
@@ -1371,11 +1391,11 @@ class Cursor:
         # Clear before any guard so the contract holds even on the
         # cross-thread-rejection path. Mirrors ``nextset`` below.
         del self.messages[:]
-        self._connection._check_thread()
-        # PEP 249 §6.1.2 — closed-cursor ops raise. Order: check
-        # closed-state before raising NotSupported so the diagnostic
-        # reflects the root cause.
+        # PEP 249 §6.1.2 — closed-cursor ops raise. ``_check_closed``
+        # BEFORE ``_check_thread``: see ``execute``'s prelude comment
+        # for the GC'd-proxy ``ReferenceError`` rationale.
         self._check_closed()
+        self._connection._check_thread()
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> NoReturn:
@@ -1388,9 +1408,10 @@ class Cursor:
         # so the contract holds even on the cross-thread-rejection
         # path.
         del self.messages[:]
-        self._connection._check_thread()
         # PEP 249 §6.1.2 — closed-cursor operations raise.
+        # ``_check_closed`` first; see ``execute`` for rationale.
         self._check_closed()
+        self._connection._check_thread()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
     def scroll(self, value: int, mode: str = "relative") -> NoReturn:
@@ -1406,8 +1427,9 @@ class Cursor:
         # future code that starts populating ``messages``. Order
         # matches the secondary-method family: clear before any guard.
         del self.messages[:]
-        self._connection._check_thread()
+        # ``_check_closed`` first; see ``execute`` for rationale.
         self._check_closed()
+        self._connection._check_thread()
         # PEP 249 §6.1.1 enumerates ``mode`` ∈ {"relative", "absolute"}.
         # Validate before the unconditional NotSupportedError so a
         # caller typo (``cur.scroll(5, "absolutely")``) surfaces as a
@@ -1425,8 +1447,9 @@ class Cursor:
         as ``AttributeError``. Same shape as the
         ``Connection.executescript`` stub."""
         del self.messages[:]
-        self._connection._check_thread()
+        # ``_check_closed`` first; see ``execute`` for rationale.
         self._check_closed()
+        self._connection._check_thread()
         raise NotSupportedError(
             "dqlite does not support stdlib sqlite3 executescript; "
             "split the script and execute each statement individually"
