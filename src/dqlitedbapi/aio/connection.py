@@ -672,15 +672,24 @@ class AsyncConnection:
         underlying packages, which broke silently when the chain
         changed shape.
 
-        Concurrent-safety: this method may be invoked while an async
-        ``close()`` is in flight on the same connection (different
-        greenlet, different thread, or finalize racing user code).
-        Both will end up calling ``writer.close()``, which is itself
-        idempotent — calling it twice is harmless. The hook does NOT
-        wait for the in-flight async close to finish; if a rollback
-        is mid-flight, it will be cancelled by the transport teardown.
-        Callers that need to wait for the async path to drain should
-        await ``close()`` from the original loop instead.
+        Concurrent-safety: this method is intended for the case where
+        the bound event loop has already been closed (typical SA pool
+        finalize / GC sweep / atexit). It is NOT safe to invoke
+        against a live loop from a non-loop thread:
+        ``StreamWriter.close()`` is documented as not thread-safe in
+        stdlib asyncio; calling it from a thread other than the loop's
+        owning thread races with the selector's transport state.
+        Production callers (SA finalize, atexit, GC) hit the
+        loop-already-dead path where this concern does not apply.
+        Callers that need to wait for the async path to drain from a
+        live loop should await ``close()`` from the original loop
+        instead.
+
+        The pending-drain cancel is loop-aware (see the implementation
+        below): on the owning thread or with a closed loop, cancel
+        runs directly; on a foreign thread with a live loop the cancel
+        is scheduled via ``call_soon_threadsafe`` so the ready-queue
+        is not mutated cross-thread.
         """
         # Set the finalizer's closed_flag so a subsequent GC sweep
         # does not emit a misleading "GC'd without close()" warning
@@ -1333,6 +1342,16 @@ class AsyncConnection:
                     exc_type.__name__,
                     exc_info=True,
                 )
-        # Do NOT close — matches stdlib sqlite3 / aiosqlite / psycopg.
+        # Do NOT close — matches stdlib ``sqlite3.Connection.__exit__``.
+        # NOTE: aiosqlite's ``Connection.__aexit__`` DOES call
+        # ``self.close()`` and psycopg async ``Connection.__aexit__``
+        # also closes; this driver follows stdlib's per-connection
+        # semantics rather than the close-on-exit shape used by
+        # aiosqlite/psycopg.
+        #
+        # See also the operational caveat on ``commit()``: a leader
+        # flip mid-COMMIT can surface as ``OperationalError`` from
+        # this method on a clean-exit ``async with conn:``.
+        #
         # Callers who want eager close use ``conn.close()`` explicitly
         # or go through a pool.

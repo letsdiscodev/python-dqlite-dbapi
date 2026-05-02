@@ -1,4 +1,15 @@
-"""PEP 249 compliant interface for dqlite."""
+"""PEP 249 compliant interface for dqlite.
+
+Closed-state error class
+========================
+
+Operations on a closed ``Connection`` or ``Cursor`` raise
+``InterfaceError`` (subclass of ``Error``). PEP 249 §7 permits either
+``InterfaceError`` or ``ProgrammingError`` for closed-state misuse;
+this driver matches psycopg's convention. Stdlib ``sqlite3`` chose
+``ProgrammingError``. Cross-driver code that wants to catch closed-
+state misuse portably should catch ``Error`` (the parent class).
+"""
 
 # Free-threaded Python (python3.13t / PEP 703) is not supported.
 # The guard lives in ``dqlitewire.__init__`` (this package's transitive
