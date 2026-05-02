@@ -1111,20 +1111,33 @@ class AsyncConnection:
     # PEP 249 §7 (TPC) and stdlib sqlite3 parity stubs. Without these
     # a caller hits AttributeError which escapes the dbapi.Error
     # hierarchy. Same shape as the sync sibling.
+    #
+    # Plain ``def`` (NOT ``async def``) so a forgotten ``await`` —
+    # ``aconn.tpc_begin(xid)`` instead of ``await aconn.tpc_begin(xid)``
+    # — surfaces the ``NotSupportedError`` immediately rather than
+    # producing a discarded coroutine that warns "coroutine was never
+    # awaited" at GC. Mirrors the ``executescript`` / ``backup`` stubs
+    # which were converted from ``async def`` to ``def`` for the same
+    # diagnostic reason.
 
-    async def tpc_begin(self, xid: object) -> NoReturn:
+    def tpc_begin(self, xid: object) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")
 
-    async def tpc_prepare(self) -> NoReturn:
+    def tpc_prepare(self) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")
 
-    async def tpc_commit(self, xid: object | None = None) -> NoReturn:
+    def tpc_commit(self, xid: object | None = None) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")
 
-    async def tpc_rollback(self, xid: object | None = None) -> NoReturn:
+    def tpc_rollback(self, xid: object | None = None) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")
 
-    async def tpc_recover(self) -> NoReturn:
+    def tpc_recover(self) -> NoReturn:
+        # Annotated NoReturn (always raises). PEP 249 §7 specifies
+        # tpc_recover() returns list[Xid] for an actual implementation
+        # — feature-detection callers should use ``hasattr(conn,
+        # "tpc_recover")`` plus a try/except rather than inspecting
+        # the return annotation, since this stub will always raise.
         raise NotSupportedError("dqlite does not support two-phase commit")
 
     def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
