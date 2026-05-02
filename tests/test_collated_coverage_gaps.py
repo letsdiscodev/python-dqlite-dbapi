@@ -56,7 +56,7 @@ class TestConnectionRowFactoryRejection:
 
         conn = Connection.__new__(Connection)
         with pytest.raises(NotSupportedError):
-            conn.row_factory = lambda cur, row: row  # type: ignore[assignment]
+            conn.row_factory = lambda cur, row: row
 
 
 class TestConnectionTextFactoryRejection:
@@ -81,7 +81,7 @@ class TestConnectionTextFactoryRejection:
 
         conn = Connection.__new__(Connection)
         with pytest.raises(NotSupportedError):
-            conn.text_factory = bytes  # type: ignore[assignment]
+            conn.text_factory = bytes
 
 
 class TestSyncCursorExecutescriptStub:
