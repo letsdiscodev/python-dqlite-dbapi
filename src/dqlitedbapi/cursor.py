@@ -246,14 +246,17 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # branch; both subclass code-bearing surfaces.
         raise exc_cls(e.message, code=e.code, raw_message=e.raw_message) from e
     except _client_exc.DqliteConnectionError as e:
-        # DqliteConnectionError carries no SQLite code today — pass
-        # code=None explicitly so the signature matches the sibling
-        # OperationalError handler above. Plumb raw_message via the
-        # standard accessor so callers reading the un-truncated
-        # diagnostic don't need to walk ``__cause__``; falls back to
-        # str(e) on older client versions without the attribute.
-        raw_msg = getattr(e, "raw_message", None) or str(e)
-        raise OperationalError(str(e), code=None, raw_message=raw_msg) from e
+        # DqliteConnectionError optionally carries the SQLite code
+        # from a leader-change rewrap on the connect path; thread it
+        # so SA's is_disconnect code-based classifier can fire on
+        # both connect and query paths. The ``raw_message`` accessor
+        # comes from the ``DqliteError`` base — callers reading the
+        # un-truncated diagnostic don't need to walk ``__cause__``;
+        # the ``or str(e)`` fallback covers raises that constructed
+        # the error without explicit raw_message.
+        code = getattr(e, "code", None)
+        raw_msg = e.raw_message or str(e)
+        raise OperationalError(str(e), code=code, raw_message=raw_msg) from e
     except _client_exc.ClusterPolicyError as e:
         # Deterministic: configured policy rejected the leader. The
         # client layer explicitly excludes this from retry (see
