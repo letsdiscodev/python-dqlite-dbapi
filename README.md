@@ -110,6 +110,15 @@ Connection-level `commit()` / `rollback()` semantics:
   `sqlite3`'s implicit-transaction model — see Transactions above.
 - **SERIALIZABLE isolation only.** Every statement is ordered by Raft;
   weaker isolation levels aren't exposed.
+- **`WITH ... INSERT/UPDATE/DELETE` (CTE-prefixed pure DML) reports
+  zero `rowcount` and no `lastrowid`.** The driver dispatches between
+  the row-returning and execute paths via a prefix-based heuristic;
+  CTE-prefixed pure DML is misclassified as row-returning and the
+  server's actual count / id is dropped. Stdlib `sqlite3` handles
+  this correctly because it dispatches at the SQLite engine level.
+  Workaround: rewrite as plain DML, or use `INSERT ... RETURNING id`
+  to get the id back through the row-returning path. (PEP 249
+  doesn't mandate `lastrowid` correctness for INSERT-via-CTE.)
 
 ## Cross-version semantic shift: NULL in BOOLEAN/DATETIME columns
 
