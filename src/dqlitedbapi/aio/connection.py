@@ -733,20 +733,54 @@ class AsyncConnection:
         # Reap any ``_pending_drain`` task on the inner client. The
         # canonical async ``close()`` awaits this task; the sync
         # helper cannot await (no loop, no greenlet), so we cancel
-        # and null instead. ``Task.cancel()`` is callable from any
-        # thread that has the GIL — schedules a cancel via the
-        # task's owning loop's ``call_soon`` and falls silent if
-        # that loop is already closed (a CancelledError that nobody
-        # ever sees is preferable to "Task was destroyed but it
-        # is pending" at GC). Done-check skips the redundant
-        # cancel so the typical "drain already raced ahead" path
-        # is a clean no-op. Wrapped suppress because attribute
-        # writes on the inner conn could in principle raise (e.g.
-        # __slots__ violations on a custom subclass).
+        # and null instead. ``Task.cancel()`` is NOT documented as
+        # thread-safe — CPython implements it via ``loop.call_soon``
+        # which is also not thread-safe. The threadsafe analogue is
+        # ``loop.call_soon_threadsafe(task.cancel)``. The typical
+        # SA-finalize / atexit / GC path hits this method when the
+        # task's owning loop has already been closed, in which case
+        # the task is itself in a terminal state and ``cancel()`` is
+        # a no-op. Use a loop-aware schedule path that defers to
+        # ``call_soon_threadsafe`` when the loop is alive but owned
+        # by another thread, so we never mutate the ready-queue
+        # cross-thread; fall back to a direct cancel when on the
+        # owning thread; short-circuit when the loop is closed
+        # (cancel would be a no-op anyway). Done-check skips the
+        # redundant schedule on a typical "drain already raced
+        # ahead" path. Wrapped suppress because attribute writes on
+        # the inner conn could in principle raise (e.g. __slots__
+        # violations on a custom subclass).
         pending = getattr(inner, "_pending_drain", None)
         if pending is not None and not pending.done():
             with contextlib.suppress(Exception):
-                pending.cancel()
+                # Determine whether the task's owning loop is alive
+                # AND owned by this thread. Only the
+                # owning-thread-on-live-loop path can mutate
+                # ``Task.cancel`` directly; every other path must
+                # defer via ``call_soon_threadsafe`` (or fall back to
+                # a direct cancel when the loop is gone — Task.cancel
+                # is a no-op on a closed loop, but still inside the
+                # asyncio C contract).
+                try:
+                    pending_loop = pending.get_loop()
+                except Exception:
+                    pending_loop = None
+                running = None
+                with contextlib.suppress(RuntimeError):
+                    running = asyncio.get_running_loop()
+                if pending_loop is None or pending_loop.is_closed():
+                    # Loop is gone; cancel is a no-op anyway. Call
+                    # directly — matches the pre-fix contract callers
+                    # depend on for the SA finalize / atexit / GC path.
+                    pending.cancel()
+                elif running is pending_loop:
+                    # On the owning thread; safe to mutate directly.
+                    pending.cancel()
+                else:
+                    # Live loop, foreign thread: schedule via
+                    # call_soon_threadsafe so the cancel runs on the
+                    # owning thread without racing the ready-queue.
+                    pending_loop.call_soon_threadsafe(pending.cancel)
         with contextlib.suppress(Exception):
             inner._pending_drain = None
         # Mirror the fork branch's null-out so the AsyncConnection
