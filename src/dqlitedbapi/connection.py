@@ -299,6 +299,20 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     message happens to include the magic substring will not be
     swallowed.
 
+    Substring fragility: the matched text is the SQLite engine's
+    canonical wording (``"no transaction is active"``), pinned by
+    ``NO_TRANSACTION_MESSAGE_SUBSTRINGS`` in
+    ``dqlitewire.constants`` and exercised by the integration test
+    ``tests/integration/test_no_transaction_error_wording.py`` against
+    a live cluster. A future SQLite version that rephrases the message
+    would surface this as a real ``OperationalError`` from
+    ``commit()`` / ``rollback()`` rather than a silent swallow — the
+    integration test would catch it before users see the regression.
+    Server-side rephrasings are extremely rare (the canonical wording
+    has been stable across many SQLite releases); the substring guard
+    is the best available signal short of a stable extended-error-code
+    pin, which dqlite does not currently emit for this case.
+
     A ``code`` of ``None`` (the dbapi wraps DqliteConnectionError /
     ClusterError / ProtocolError / DataError with ``code=None``) must
     NOT match: those classes are precisely the errors we want to
