@@ -429,6 +429,17 @@ class Connection:
     leaves the iterations that already completed persisted. See
     ``Cursor.executemany`` / ``AsyncCursor.executemany`` for the
     cancellation-atomicity contract.
+
+    Thread-affinity: every public method enforces the
+    ``threadsafety=1`` contract via ``_check_thread()`` — calls from a
+    foreign OS thread raise ``ProgrammingError``. Read-only property
+    reads (``closed``, ``address``, ``autocommit``,
+    ``isolation_level``, ``row_factory``) bypass the check and are
+    GIL-atomic at the CPython level — safe to read from any thread.
+    The ``in_transaction`` property is the exception: it retains
+    ``_check_thread()`` for shipped-API compatibility (callers depend
+    on the cross-thread raise; removing it would be a behavioural
+    change).
     """
 
     # PEP 249 optional extension ("Attributes from Module Exceptions"):
