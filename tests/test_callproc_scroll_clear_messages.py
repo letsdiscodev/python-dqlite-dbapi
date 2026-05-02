@@ -29,16 +29,20 @@ def test_sync_callproc_clears_messages(cursor) -> None:
     cur, conn = cursor
     with pytest.raises(NotSupportedError):
         cur.callproc("p")
-    assert list(conn.messages) == []
+    # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
+    # are independent surfaces. Cursor methods clear only Cursor.messages.
     assert list(cur.messages) == []
+    assert list(conn.messages) == [(Warning, "stale")]
 
 
 def test_sync_scroll_clears_messages(cursor) -> None:
     cur, conn = cursor
     with pytest.raises(NotSupportedError):
         cur.scroll(1)
-    assert list(conn.messages) == []
+    # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
+    # are independent surfaces. Cursor methods clear only Cursor.messages.
     assert list(cur.messages) == []
+    assert list(conn.messages) == [(Warning, "stale")]
 
 
 @pytest.mark.asyncio
@@ -54,8 +58,10 @@ async def test_async_callproc_clears_messages() -> None:
     cur.messages.append((Warning, "stale"))
     with pytest.raises(NotSupportedError):
         cur.callproc("p")
-    assert list(conn.messages) == []
+    # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
+    # are independent surfaces. Cursor methods clear only Cursor.messages.
     assert list(cur.messages) == []
+    assert list(conn.messages) == [(Warning, "stale")]
 
 
 @pytest.mark.asyncio
@@ -68,5 +74,7 @@ async def test_async_scroll_clears_messages() -> None:
     cur.messages.append((Warning, "stale"))
     with pytest.raises(NotSupportedError):
         cur.scroll(1)
-    assert list(conn.messages) == []
+    # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
+    # are independent surfaces. Cursor methods clear only Cursor.messages.
     assert list(cur.messages) == []
+    assert list(conn.messages) == [(Warning, "stale")]

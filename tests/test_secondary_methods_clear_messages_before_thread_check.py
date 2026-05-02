@@ -58,9 +58,10 @@ def _expect_messages_cleared_after_cross_thread_call(invoke: Callable[[], None],
     # The PEP 249 §6.1.1 contract: messages cleared "prior to
     # executing the call" — must hold on the rejected path.
     assert list(cur.messages) == [], "Cursor.messages must be cleared before _check_thread raises"
-    assert list(cur._connection.messages) == [], (
-        "Connection.messages must be cleared before _check_thread raises"
-    )
+    # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
+    # are independent surfaces. Cursor methods must NOT clear
+    # Connection.messages.
+    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
 
 
 @pytest.fixture

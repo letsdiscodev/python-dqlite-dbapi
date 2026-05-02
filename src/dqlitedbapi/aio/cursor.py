@@ -473,11 +473,6 @@ class AsyncCursor:
         # already adopted.
         self._connection._check_loop_binding()
         self._check_result_set()
-        # PEP 249 §6.1.1 — Connection.messages is cleared by the
-        # cursor fetch methods. Defensive against test mocks.
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
 
         if self._row_index >= len(self._rows):
             return None
@@ -497,11 +492,6 @@ class AsyncCursor:
         # Loop-binding check; see ``fetchone`` rationale.
         self._connection._check_loop_binding()
         self._check_result_set()
-        # PEP 249 §6.1.1 — Connection.messages is cleared by the
-        # cursor fetch methods. Defensive against test mocks.
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
 
         if size is None:
             size = self._arraysize
@@ -542,11 +532,6 @@ class AsyncCursor:
         # Loop-binding check; see ``fetchone`` rationale.
         self._connection._check_loop_binding()
         self._check_result_set()
-        # PEP 249 §6.1.1 — Connection.messages is cleared by the
-        # cursor fetch methods. Defensive against test mocks.
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
 
         result = self._rows[self._row_index :]
         self._row_index = len(self._rows)
@@ -596,9 +581,6 @@ class AsyncCursor:
         # PEP 249 §6.1.1 — clear "prior to executing the call" so the
         # contract holds even on the cross-loop rejection path.
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         # PEP 249 §6.2 says implementations are "free to have this
         # method do nothing" — including on closed cursors. Skip
         # the closed-cursor check.
@@ -614,9 +596,6 @@ class AsyncCursor:
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         # PEP 249 §6.2 — see ``setinputsizes`` rationale.
         self._connection._check_loop_binding()
 
@@ -635,9 +614,6 @@ class AsyncCursor:
         # Clear before any guard so the contract holds even on the
         # closed-cursor / cross-loop / not-supported paths.
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
         # Loop-binding check: parallel to the sync side's
@@ -653,9 +629,6 @@ class AsyncCursor:
         """PEP 249 optional extension — not supported."""
         # PEP 249 §6.1.1 — clear before any guard.
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
         # Loop-binding check; see ``callproc`` for rationale. Use
@@ -675,9 +648,6 @@ class AsyncCursor:
         # ``messages`` cannot leave stale entries visible after the
         # caller observed the rejection. Clear before any guard.
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
         # Loop-binding check; see ``callproc`` for rationale. Use
@@ -705,9 +675,6 @@ class AsyncCursor:
         diagnostic-leak prevention this stub family was added for.
         """
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         self._check_closed()
         self._connection._check_loop_binding()
         raise NotSupportedError(

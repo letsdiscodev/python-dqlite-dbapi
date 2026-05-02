@@ -46,9 +46,10 @@ def _expect_messages_cleared_after_closed_call(invoke: Callable[[Any], None], cu
     with pytest.raises(InterfaceError, match="closed"):
         invoke(cur)
     assert list(cur.messages) == [], "Cursor.messages must be cleared before _check_closed raises"
-    assert list(cur._connection.messages) == [], (
-        "Connection.messages must be cleared before _check_closed raises"
-    )
+    # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
+    # are independent surfaces. Cursor methods must NOT clear
+    # Connection.messages.
+    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
 
 
 def _drive_other_loop(invoke_async: Callable[[], Any]) -> list[BaseException]:
@@ -83,7 +84,9 @@ async def test_setinputsizes_closed_cursor_clears_messages_first() -> None:
     cur._closed = True
     cur.setinputsizes([None])
     assert list(cur.messages) == []
-    assert list(cur._connection.messages) == []
+    # Connection.messages is the connection's surface; cursor methods
+    # must not clear it (PEP 249 §6.1.1 / §6.1.2 independent surfaces).
+    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
 
 
 @pytest.mark.asyncio
@@ -95,7 +98,9 @@ async def test_setoutputsize_closed_cursor_clears_messages_first() -> None:
     cur._closed = True
     cur.setoutputsize(64)
     assert list(cur.messages) == []
-    assert list(cur._connection.messages) == []
+    # Connection.messages is the connection's surface; cursor methods
+    # must not clear it (PEP 249 §6.1.1 / §6.1.2 independent surfaces).
+    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
 
 
 @pytest.mark.asyncio
@@ -137,4 +142,6 @@ async def test_callproc_cross_loop_clears_messages_first() -> None:
         f"expected ProgrammingError from cross-loop call; got {errors!r}"
     )
     assert list(cur.messages) == []
-    assert list(cur._connection.messages) == []
+    # Connection.messages is the connection's surface; cursor methods
+    # must not clear it (PEP 249 §6.1.1 / §6.1.2 independent surfaces).
+    assert list(cur._connection.messages) == [(Warning, "stale-conn")]

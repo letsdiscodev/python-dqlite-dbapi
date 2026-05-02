@@ -35,15 +35,20 @@ def test_setoutputsize_clears_cursor_messages() -> None:
     assert cur.messages == []
 
 
-def test_setinputsizes_clears_connection_messages() -> None:
+def test_setinputsizes_does_not_clear_connection_messages() -> None:
+    """PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
+    are independent surfaces. Cursor methods must NOT clear the
+    connection's list."""
     cur = _make_cursor()
-    cur._connection.messages.append((RuntimeError, "stale"))
+    seed = (RuntimeError, "session-level diagnostic")
+    cur._connection.messages.append(seed)
     cur.setinputsizes([None])
-    assert cur._connection.messages == []
+    assert cur._connection.messages == [seed]
 
 
-def test_setoutputsize_clears_connection_messages() -> None:
+def test_setoutputsize_does_not_clear_connection_messages() -> None:
     cur = _make_cursor()
-    cur._connection.messages.append((RuntimeError, "stale"))
+    seed = (RuntimeError, "session-level diagnostic")
+    cur._connection.messages.append(seed)
     cur.setoutputsize(4096)
-    assert cur._connection.messages == []
+    assert cur._connection.messages == [seed]

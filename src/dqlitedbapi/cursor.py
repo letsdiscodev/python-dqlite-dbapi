@@ -1202,14 +1202,6 @@ class Cursor:
         self._connection._check_thread()
         self._check_closed()
         self._check_result_set()
-        # PEP 249 §6.1.1 — ``Connection.messages`` is cleared by the
-        # cursor fetch methods. Done after the closed-check so a
-        # closed cursor's fetch raises ``InterfaceError`` without
-        # first perturbing the connection's diagnostic list. Defensive
-        # against test mocks that pre-date the PEP 249 messages surface.
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
 
         if self._row_index >= len(self._rows):
             return None
@@ -1228,12 +1220,6 @@ class Cursor:
         self._connection._check_thread()
         self._check_closed()
         self._check_result_set()
-        # PEP 249 §6.1.1 — clear Connection.messages too. Defensive
-        # against test mocks that pre-date the PEP 249 messages
-        # surface.
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
 
         if size is None:
             size = self._arraysize
@@ -1271,12 +1257,6 @@ class Cursor:
         self._connection._check_thread()
         self._check_closed()
         self._check_result_set()
-        # PEP 249 §6.1.1 — clear Connection.messages too. Defensive
-        # against test mocks that pre-date the PEP 249 messages
-        # surface.
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
 
         result = self._rows[self._row_index :]
         self._row_index = len(self._rows)
@@ -1359,9 +1339,6 @@ class Cursor:
         # ``_check_thread`` for the same reason; this method and its
         # four secondary-method siblings keep the same ordering.
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         self._connection._check_thread()
         # PEP 249 §6.2 says implementations are "free to have this
         # method do nothing" — including on closed cursors. Skip the
@@ -1371,9 +1348,6 @@ class Cursor:
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         self._connection._check_thread()
         # PEP 249 §6.2 — see ``setinputsizes`` rationale.
 
@@ -1397,9 +1371,6 @@ class Cursor:
         # Clear before any guard so the contract holds even on the
         # cross-thread-rejection path. Mirrors ``nextset`` below.
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         self._connection._check_thread()
         # PEP 249 §6.1.2 — closed-cursor ops raise. Order: check
         # closed-state before raising NotSupported so the diagnostic
@@ -1417,9 +1388,6 @@ class Cursor:
         # so the contract holds even on the cross-thread-rejection
         # path.
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         self._connection._check_thread()
         # PEP 249 §6.1.2 — closed-cursor operations raise.
         self._check_closed()
@@ -1438,9 +1406,6 @@ class Cursor:
         # future code that starts populating ``messages``. Order
         # matches the secondary-method family: clear before any guard.
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         self._connection._check_thread()
         self._check_closed()
         # PEP 249 §6.1.1 enumerates ``mode`` ∈ {"relative", "absolute"}.
@@ -1460,9 +1425,6 @@ class Cursor:
         as ``AttributeError``. Same shape as the
         ``Connection.executescript`` stub."""
         del self.messages[:]
-        conn_messages = getattr(self._connection, "messages", None)
-        if conn_messages is not None:
-            del conn_messages[:]
         self._connection._check_thread()
         self._check_closed()
         raise NotSupportedError(
