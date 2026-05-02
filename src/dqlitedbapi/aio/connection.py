@@ -1017,6 +1017,19 @@ class AsyncConnection:
                     )
         cur = AsyncCursor(self)
         self._cursors.add(cur)
+        # Re-check ``_closed`` after add: ``cursor()`` is sync-on-loop
+        # but the surrounding ``close()`` cascade snapshots
+        # ``list(self._cursors)`` so a freshly-added cursor that beat
+        # the snapshot would skip the cascade and be returned to the
+        # caller as a usable wrapper attached to a connection that is
+        # mid-close. Defense-in-depth: if ``_closed`` flipped to True
+        # between the AsyncCursor construction and the WeakSet add,
+        # mark the cursor closed so its first await fails cleanly via
+        # ``_check_closed`` rather than running against a torn-down
+        # parent. The cascade handles the typical ordering; this
+        # re-check covers the narrow TOCTOU window.
+        if self._closed:
+            cur._closed = True
         return cur
 
     @property
