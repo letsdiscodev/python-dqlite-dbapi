@@ -28,7 +28,7 @@ from dqlitedbapi.exceptions import OperationalError
 
 @pytest.fixture
 def conn() -> Generator[dqlitedbapi.Connection]:
-    address = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:19001")
+    address = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:9001")
     c = dqlitedbapi.connect(address, timeout=5.0)
     try:
         yield c
@@ -38,7 +38,7 @@ def conn() -> Generator[dqlitedbapi.Connection]:
 
 @pytest.fixture
 async def aconn() -> AsyncGenerator[dqlitedbapi.aio.AsyncConnection]:
-    address = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:19001")
+    address = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:9001")
     c = await aconnect(address, timeout=5.0)
     try:
         yield c

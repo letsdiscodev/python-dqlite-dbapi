@@ -24,7 +24,7 @@ from dqlitedbapi.aio import aconnect
 
 @pytest.fixture
 def conn() -> Generator[dqlitedbapi.Connection]:
-    address = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:19001")
+    address = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:9001")
     c = dqlitedbapi.connect(address, timeout=5.0)
     try:
         yield c
@@ -74,7 +74,7 @@ class TestDescriptionAfterDdlPragma:
 @pytest.mark.integration
 class TestAsyncDescriptionAfterDdlPragma:
     async def test_description_is_none_after_ddl(self) -> None:
-        address = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:19001")
+        address = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:9001")
         conn = await aconnect(address, timeout=5.0)
         try:
             cur = conn.cursor()
