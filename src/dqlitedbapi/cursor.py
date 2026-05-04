@@ -1380,7 +1380,12 @@ class Cursor:
         # raising on a misshapen call so a caller-side bug surfaces
         # at the call site instead of being silently absorbed.
         if not isinstance(sizes, (list, tuple)):
-            raise TypeError(
+            # PEP 249 §7 requires every error originating from the
+            # driver to be a subclass of ``Error``. Bare ``TypeError``
+            # would escape ``except dbapi.Error:`` in cross-driver
+            # code; wrap as ``ProgrammingError`` to match the rest of
+            # the validator surface.
+            raise ProgrammingError(
                 f"setinputsizes expects a sequence (list/tuple), got {type(sizes).__name__}"
             )
         # PEP 249 §6.2 says implementations are "free to have this
@@ -1401,10 +1406,12 @@ class Cursor:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
         # Validate input shape — see ``setinputsizes`` rationale.
+        # ``ProgrammingError`` keeps the failure inside the
+        # ``dbapi.Error`` hierarchy per PEP 249 §7.
         if not isinstance(size, int) or isinstance(size, bool):
-            raise TypeError(f"setoutputsize expects an int, got {type(size).__name__}")
+            raise ProgrammingError(f"setoutputsize expects an int, got {type(size).__name__}")
         if column is not None and (not isinstance(column, int) or isinstance(column, bool)):
-            raise TypeError(
+            raise ProgrammingError(
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
         # PEP 249 §6.2 — see ``setinputsizes`` rationale.

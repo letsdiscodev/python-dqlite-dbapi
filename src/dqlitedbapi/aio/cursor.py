@@ -606,6 +606,14 @@ class AsyncCursor:
         # PEP 249 §6.1.1 — clear "prior to executing the call" so the
         # contract holds even on the cross-loop rejection path.
         del self.messages[:]
+        # Validate input shape symmetric with the sync sibling so a
+        # caller-side bug (e.g. passing a string) surfaces at the call
+        # site rather than being silently absorbed. PEP 249 §7 keeps
+        # the failure inside the ``dbapi.Error`` hierarchy.
+        if not isinstance(sizes, (list, tuple)):
+            raise ProgrammingError(
+                f"setinputsizes expects a sequence (list/tuple), got {type(sizes).__name__}"
+            )
         # PEP 249 §6.2 says implementations are "free to have this
         # method do nothing" — including on closed cursors. Mirror
         # the sync sibling's documented permissive-on-closed
@@ -628,6 +636,13 @@ class AsyncCursor:
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
+        # Validate input shape symmetric with sync sibling.
+        if not isinstance(size, int) or isinstance(size, bool):
+            raise ProgrammingError(f"setoutputsize expects an int, got {type(size).__name__}")
+        if column is not None and (not isinstance(column, int) or isinstance(column, bool)):
+            raise ProgrammingError(
+                f"setoutputsize column expects an int or None, got {type(column).__name__}"
+            )
         # PEP 249 §6.2 — see ``setinputsizes`` rationale.
         if self._closed or self._connection._closed:
             return
