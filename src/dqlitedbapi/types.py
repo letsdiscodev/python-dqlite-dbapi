@@ -481,6 +481,44 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
         raise DataError(f"Invalid UNIXTIME from server: {value!r}") from e
 
 
+# Stdlib-parity ``register_adapter`` registry: maps Python type →
+# adapter callable. Consulted by ``_convert_bind_param`` BEFORE the
+# built-in datetime branches so a caller-supplied adapter can override
+# even datetime handling. Module-scope per stdlib pre-3.12 sqlite3
+# semantics (per-Connection scope was added in stdlib 3.12 but
+# requires more state plumbing — the module-scope shape is the more
+# common ergonomic on the existing ecosystem).
+_ADAPTERS: dict[type, "Any"] = {}
+
+
+def register_adapter(type_: type, adapter: "Any") -> None:
+    """Register a Python-side adapter callable for ``type_``.
+
+    Mirrors stdlib ``sqlite3.register_adapter``: when a parameter of
+    type ``type_`` reaches the bind layer, ``adapter(value)`` runs
+    in the driver before the wire encode. Common uses:
+
+    - ``register_adapter(decimal.Decimal, str)`` — bind ``Decimal``
+      via TEXT.
+    - ``register_adapter(uuid.UUID, lambda u: u.bytes)`` — bind
+      UUID via BLOB.
+    - ``register_adapter(pathlib.Path, str)``,
+      ``register_adapter(MyEnum, lambda e: e.value)``, etc.
+
+    Symmetric with stdlib's ``register_converter`` is NOT
+    implemented: dqlite's wire protocol does not carry declared
+    column types, so type-name-keyed converters cannot be
+    dispatched on read. Callers wanting per-row decoding can use
+    ``Cursor.row_factory`` (when implemented) or post-fetch
+    coercion in user code.
+    """
+    if not callable(adapter):
+        raise TypeError(f"adapter must be callable, got {type(adapter).__name__}")
+    if not isinstance(type_, type):
+        raise TypeError(f"type_ must be a class, got {type(type_).__name__}")
+    _ADAPTERS[type_] = adapter
+
+
 def _convert_bind_param(value: Any) -> Any:
     """Map driver-level Python types to wire primitives.
 
@@ -488,7 +526,20 @@ def _convert_bind_param(value: Any) -> Any:
     date, and time are driver-level conveniences that we stringify to
     ISO 8601 before handing off. Everything else passes through
     unchanged.
+
+    A user-registered adapter (via ``register_adapter``) takes
+    precedence — it can override the built-in datetime / date / time
+    handlers and is the canonical hook for binding Decimal, UUID,
+    Path, Enum, etc.
     """
+    # User-registered adapter takes precedence. ``type(value)`` not
+    # isinstance: stdlib's contract is exact-class match (subclasses
+    # do not inherit the parent class's adapter unless explicitly
+    # registered). This keeps the contract predictable and matches
+    # ``sqlite3.register_adapter``.
+    adapter = _ADAPTERS.get(type(value))
+    if adapter is not None:
+        value = adapter(value)
     # ``datetime.datetime`` is a subclass of ``datetime.date`` but not
     # of ``datetime.time``, so the datetime/date check must fire first
     # for datetime inputs. ``datetime.time`` falls through to its own

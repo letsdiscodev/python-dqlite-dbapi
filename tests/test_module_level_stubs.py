@@ -16,9 +16,32 @@ import dqlitedbapi
 from dqlitedbapi.exceptions import NotSupportedError
 
 
-def test_register_adapter_raises_not_supported() -> None:
-    with pytest.raises(NotSupportedError, match="register_adapter"):
-        dqlitedbapi.register_adapter(int, str)
+def test_register_adapter_is_callable_stdlib_parity() -> None:
+    """``register_adapter`` is now a real Python-side hook (matches
+    stdlib ``sqlite3.register_adapter``). Common uses: ``Decimal``,
+    ``UUID``, ``Path``, ``Enum`` binding. Verify the basic shape.
+
+    Use a test-only sentinel class to avoid polluting the
+    module-level ``_ADAPTERS`` dict for ``int`` / ``str`` /
+    ``bytes`` etc. that other tests rely on.
+    """
+
+    class _RegAdapterSentinel:
+        pass
+
+    from dqlitedbapi.types import _ADAPTERS
+
+    # Should not raise:
+    dqlitedbapi.register_adapter(_RegAdapterSentinel, str)
+    try:
+        assert _RegAdapterSentinel in _ADAPTERS
+        # Bad shape still fails fast.
+        with pytest.raises(TypeError, match="callable"):
+            dqlitedbapi.register_adapter(_RegAdapterSentinel, "not callable")
+        with pytest.raises(TypeError, match="class"):
+            dqlitedbapi.register_adapter("not a type", str)  # type: ignore[arg-type]
+    finally:
+        _ADAPTERS.pop(_RegAdapterSentinel, None)
 
 
 def test_register_converter_raises_not_supported() -> None:

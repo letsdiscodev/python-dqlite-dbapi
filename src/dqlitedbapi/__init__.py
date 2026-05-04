@@ -202,23 +202,21 @@ def connect(
     )
 
 
-# Module-level stdlib ``sqlite3``-parity stubs. dqlitedbapi does not
-# support pluggable type adaptation / converter dispatch (the wire
-# protocol carries type tags but no caller-side hook for adapter
-# registration); the SQL-completeness predicate and callback
-# traceback toggle are similarly stdlib-only utilities. Stub with
-# ``NotSupportedError`` so cross-driver code that calls these at
-# module level (``dqlitedbapi.register_adapter(decimal.Decimal,
-# str)``) hits the dbapi error hierarchy instead of bare
-# ``AttributeError``. Mirrors the per-class TPC / load_extension /
-# create_function / create_collation stub family.
+# Module-level stdlib ``sqlite3``-parity hook: ``register_adapter``
+# is a Python-side hook that runs in the driver before the wire
+# encode (no wire-layer involvement needed). Common uses include
+# Decimal/UUID/Path/Enum binding — patterns the existing ecosystem
+# reaches for routinely.
+#
+# ``register_converter`` is genuinely unimplementable (dqlite's wire
+# does not surface declared column types for converter dispatch);
+# the SQL-completeness and callback-traceback helpers are likewise
+# stdlib REPL utilities outside PEP 249. Those stay as
+# NotSupportedError stubs.
 
-
-def register_adapter(*args: object, **kwargs: object) -> NoReturn:
-    raise NotSupportedError(
-        "dqlitedbapi does not support stdlib sqlite3 register_adapter; "
-        "pluggable type adaptation has no wire-layer hook"
-    )
+# Re-export the implementation from ``dqlitedbapi.types`` where
+# ``_convert_bind_param`` consults the registry.
+from dqlitedbapi.types import register_adapter  # noqa: E402, F401
 
 
 def register_converter(*args: object, **kwargs: object) -> NoReturn:
