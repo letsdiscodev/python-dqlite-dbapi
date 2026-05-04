@@ -779,7 +779,24 @@ class AsyncConnection:
                     # Live loop, foreign thread: schedule via
                     # call_soon_threadsafe so the cancel runs on the
                     # owning thread without racing the ready-queue.
-                    pending_loop.call_soon_threadsafe(pending.cancel)
+                    # Wrap so the cancelled task's CancelledError is
+                    # observed via a done-callback — otherwise asyncio's
+                    # task-finalisation logger emits "Task exception
+                    # was never retrieved" at GC under SA finalize-
+                    # from-foreign-thread paths. Mirrors the
+                    # ``_observe_drain_exception`` pattern used in
+                    # the client layer.
+                    def _cancel_and_observe(target: asyncio.Task[Any]) -> None:
+                        target.cancel()
+
+                        def _observe(t: asyncio.Task[Any]) -> None:
+                            if not t.cancelled():
+                                with contextlib.suppress(BaseException):
+                                    t.exception()
+
+                        target.add_done_callback(_observe)
+
+                    pending_loop.call_soon_threadsafe(_cancel_and_observe, pending)
         with contextlib.suppress(Exception):
             inner._pending_drain = None
         # Mirror the fork branch's null-out so the AsyncConnection

@@ -101,8 +101,13 @@ def test_cancel_scheduled_via_call_soon_threadsafe_from_foreign_thread() -> None
     pending.cancel.assert_not_called()
     assert len(cstu_calls) == 1
     callback, args = cstu_calls[0]
-    assert callback is pending.cancel
-    assert args == ()
+    # The scheduled callback is a wrapper that calls cancel() AND
+    # adds a done-callback to absorb the resulting CancelledError —
+    # otherwise asyncio's task-finalisation logger emits "Task
+    # exception was never retrieved" at GC. The wrapper's first
+    # positional arg is the pending task itself.
+    assert callable(callback)
+    assert args == (pending,)
     assert aconn._async_conn is None
 
     loop.close()
