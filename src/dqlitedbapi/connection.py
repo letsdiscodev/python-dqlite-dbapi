@@ -422,6 +422,24 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     return any(s in lowered for s in _NO_TX_SUBSTRINGS)
 
 
+def _safe_writer_close(writer: Any) -> None:
+    """``StreamWriter.close()`` last-resort: callable scheduled on the
+    owning loop via ``call_soon_threadsafe`` to drive FIN out of a
+    transport without awaiting the protocol-level drain.
+
+    Used by :meth:`Connection.force_close_transport` so terminate paths
+    don't crash the loop with a stray exception (e.g. transport already
+    closed by a connection_lost race).
+    """
+    try:
+        writer.close()
+    except Exception:  # noqa: BLE001 - last-resort cleanup
+        logger.debug(
+            "Connection.force_close_transport: writer.close() raised; ignoring",
+            exc_info=True,
+        )
+
+
 def _cleanup_loop_thread(
     loop: asyncio.AbstractEventLoop,
     thread: threading.Thread,
@@ -1286,6 +1304,110 @@ class Connection:
                 # against the next loop so the primitive never outlives its
                 # owning event loop.
                 self._connect_lock = None
+
+    def force_close_transport(self) -> None:
+        """Force-close the underlying socket transport without
+        awaiting any in-flight RPC.
+
+        Synchronous, bounded by ``close_timeout``. Mirrors the async
+        sibling :meth:`AsyncConnection.force_close_transport` for the
+        sync path. Intended for last-resort shutdown scenarios where
+        :meth:`close` would block on a stuck wire read — typically
+        SQLAlchemy's ``do_terminate`` during ``engine.dispose()``
+        under partition + SIGTERM, where ``close()``'s
+        ``self._timeout``-bounded ``_run_sync(_close_async())`` adds
+        latency the operator cannot afford.
+
+        Idempotent. Never raises on already-closed inputs.
+
+        Contract divergence from :meth:`close`:
+
+        - Skips the ``_run_sync(_close_async())`` await, so a parked
+          ``reader.read()`` does not gate the shutdown.
+        - Schedules the synchronous ``writer.close()`` via
+          ``call_soon_threadsafe`` (writer is not thread-safe per
+          stdlib asyncio); the loop processes the call before
+          ``loop.stop`` lands so FIN actually goes out.
+        - Bounded by ``self._close_timeout`` for the thread join,
+          not ``self._timeout``.
+        - No ``_check_thread`` / no ``_op_lock`` acquire — terminate
+          must work from finalize threads and signal handlers.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._closed_flag[0] = True
+        # Fork-after-init: same shape as close()'s pid guard. Drop
+        # local refs and skip touching the wire / dead loop.
+        if _client_conn_mod._current_pid != self._creator_pid:
+            try:
+                for cur in list(self._cursors):
+                    cur._closed = True
+                    cur._rows = []
+                    cur._description = None
+                    cur._rowcount = -1
+                    cur._lastrowid = None
+                    cur._row_index = 0
+                    with contextlib.suppress(TypeError):
+                        cur._connection = weakref.proxy(cur._connection)
+            finally:
+                self._cursors.clear()
+            if self._finalizer is not None:
+                self._finalizer.detach()
+                self._finalizer = None
+            return
+        # Cascade cursors — same shape as close()'s cascade.
+        try:
+            for cur in list(self._cursors):
+                cur._closed = True
+                cur._rows = []
+                cur._description = None
+                cur._rowcount = -1
+                cur._lastrowid = None
+                cur._row_index = 0
+                del cur.messages[:]
+                with contextlib.suppress(TypeError):
+                    cur._connection = weakref.proxy(cur._connection)
+        finally:
+            self._cursors.clear()
+        if self._finalizer is not None:
+            self._finalizer.detach()
+            self._finalizer = None
+        with self._loop_lock:
+            inner = self._async_conn
+            self._async_conn = None
+            loop = self._loop
+            if loop is not None and not loop.is_closed():
+                if inner is not None:
+                    proto = getattr(inner, "_protocol", None)
+                    writer = getattr(proto, "_writer", None) if proto is not None else None
+                    if writer is not None:
+                        # ``StreamWriter.close()`` is not thread-safe;
+                        # schedule on the owning loop. The
+                        # ``loop.stop`` we queue immediately afterwards
+                        # is itself a ``call_soon_threadsafe`` and the
+                        # loop processes ready callbacks in FIFO order,
+                        # so the writer.close lands first and FIN goes
+                        # out before ``run_forever`` exits.
+                        with contextlib.suppress(RuntimeError):
+                            loop.call_soon_threadsafe(_safe_writer_close, writer)
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(loop.stop)
+                if self._thread is not None:
+                    self._thread.join(timeout=self._close_timeout)
+                try:
+                    loop.close()
+                except RuntimeError:
+                    logger.debug(
+                        "Connection.force_close_transport: loop.close raised "
+                        "RuntimeError (loop thread did not exit within %s s); "
+                        "refs cleared",
+                        self._close_timeout,
+                        exc_info=True,
+                    )
+                self._loop = None
+                self._thread = None
+            self._connect_lock = None
 
     async def _close_async(self) -> None:
         """Async implementation of close -- runs on event loop thread."""
