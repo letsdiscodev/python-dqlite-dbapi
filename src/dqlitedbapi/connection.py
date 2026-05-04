@@ -16,7 +16,9 @@ from typing import Any, Final, NoReturn, Self
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import DqliteConnection, validate_positive_int_or_none
 from dqliteclient import connection as _client_conn_mod
+from dqliteclient.cluster import ClusterClient
 from dqliteclient.connection import parse_address as _client_parse_address
+from dqliteclient.node_store import MemoryNodeStore
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client
 from dqlitedbapi.exceptions import (
@@ -140,6 +142,30 @@ def _validate_close_timeout(close_timeout: float) -> None:
         )
 
 
+async def _resolve_leader(address: str, *, timeout: float) -> str:
+    """Resolve the cluster's current leader address from a seed.
+
+    Bootstraps from the user-supplied ``address`` (the URL host:port
+    in the SA dialect's case) and uses :class:`ClusterClient` to
+    follow the leader-redirect chain — same pattern go-dqlite's
+    ``database/sql`` driver implements via
+    ``client.NewLeaderConnector(store)``. Without this step,
+    connecting to a demoted-leader address surfaces
+    ``SQLITE_IOERR_NOT_LEADER`` from the server even though the
+    cluster has a healthy leader at a different address; the SA
+    pool's reconnect-after-pre-ping path cannot recover.
+
+    Wraps the seed in a single-node :class:`MemoryNodeStore` and
+    delegates to :meth:`ClusterClient.find_leader`. Returns the
+    leader's address on success; raises the underlying
+    ``ClusterError`` / ``ClusterPolicyError`` for the surrounding
+    error-translation arms in :func:`_build_and_connect` to handle.
+    """
+    store = MemoryNodeStore([address])
+    cluster = ClusterClient(store, timeout=timeout)
+    return await cluster.find_leader()
+
+
 async def _build_and_connect(
     address: str,
     *,
@@ -152,14 +178,53 @@ async def _build_and_connect(
 ) -> DqliteConnection:
     """Build a DqliteConnection with the given governors and connect it.
 
-    Wraps the construct-then-connect sequence that both the sync and
-    async Connection flavours execute under their respective locks. The
-    ``OperationalError`` message phrasing ("Failed to connect: ...") is
-    intentionally verbatim so test assertions that match on the prefix
-    continue to pass.
+    Performs the dqlite production-grade connect sequence:
+
+    1. Resolve the current leader via :func:`_resolve_leader` (one
+       round-trip against the seed; if the seed is the leader, the
+       leader-info reply is its own address).
+    2. Construct + connect a :class:`DqliteConnection` against the
+       leader address.
+
+    Wraps the sequence that both the sync and async Connection
+    flavours execute under their respective locks. The
+    ``OperationalError`` message phrasing ("Failed to connect: ...")
+    is intentionally verbatim so test assertions that match on the
+    prefix continue to pass.
+
+    Mirrors the canonical go-dqlite/driver layering — applications
+    should not need to special-case leader-flips between
+    connections; the dbapi handles the redirect transparently.
     """
+    try:
+        leader_address = await _resolve_leader(address, timeout=timeout)
+    except _client_exc.ClusterPolicyError as e:
+        # Operator allowlist rejected a redirect target. Surface as
+        # InterfaceError with the canonical prefix — symmetric with
+        # the post-construct ClusterPolicyError arm below.
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise InterfaceError(
+            f"Cluster policy rejection during leader discovery; {e}",
+            code=None,
+            raw_message=raw_msg,
+        ) from e
+    except _client_exc.ClusterError as e:
+        # All nodes in the seed's resolved store rejected the leader
+        # query (no node is currently leader, all unreachable, etc.).
+        # Surface as OperationalError so the SA pool's retry loop
+        # classifies it correctly. Different from the post-construct
+        # ClusterError arm only in the message prefix — operators
+        # reading logs need to tell "couldn't find leader" from
+        # "found leader but couldn't connect".
+        raw_msg = getattr(e, "raw_message", None) or str(e)
+        raise OperationalError(
+            f"Failed to find leader from {address}: {e}",
+            code=None,
+            raw_message=raw_msg,
+        ) from e
+
     conn = DqliteConnection(
-        address,
+        leader_address,
         database=database,
         timeout=timeout,
         max_total_rows=max_total_rows,

@@ -80,7 +80,13 @@ class TestCloseTimeoutPlumbing:
         the dbapi-level close_timeout so the actual wait_closed drain
         honours the caller's budget.
         """
-        with patch("dqlitedbapi.connection.DqliteConnection") as MockConn:
+        with (
+            patch(
+                "dqlitedbapi.connection._resolve_leader",
+                new=AsyncMock(side_effect=lambda address, *, timeout: address),
+            ),
+            patch("dqlitedbapi.connection.DqliteConnection") as MockConn,
+        ):
             instance = AsyncMock()
             instance.connect = AsyncMock()
             MockConn.return_value = instance

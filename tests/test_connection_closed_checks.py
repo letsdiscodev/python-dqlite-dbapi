@@ -190,8 +190,17 @@ class TestSyncConnectWrapsClusterPolicyRejection:
         async def _raise_policy(*args: object, **kwargs: object) -> None:
             raise _client_exc.ClusterPolicyError("not allowed")
 
-        # Patch the inner DqliteConnection.connect — this is what
-        # ``_build_and_connect`` awaits after constructing the conn.
+        # Patch ``_resolve_leader`` to short-circuit the leader-discovery
+        # step so the test exercises the post-find-leader
+        # ``DqliteConnection.connect`` arm. Then patch
+        # ``DqliteConnection.connect`` to raise the policy error this
+        # test pins.
+        async def _identity_resolve(address: str, *, timeout: float) -> str:
+            return address
+
+        monkeypatch.setattr(
+            "dqlitedbapi.connection._resolve_leader", _identity_resolve, raising=True
+        )
         monkeypatch.setattr("dqliteclient.DqliteConnection.connect", _raise_policy, raising=True)
 
         conn = connect("localhost:19001", timeout=2.0)

@@ -31,7 +31,13 @@ async def test_close_waits_for_in_flight_execute() -> None:
     async def fake_query_raw_typed(_sql: str, _params: object) -> tuple[list, list, list, list]:  # type: ignore[type-arg]
         return ([], [], [], [])
 
-    with patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn:
+    with (
+        patch(
+            "dqlitedbapi.connection._resolve_leader",
+            new=AsyncMock(side_effect=lambda address, *, timeout: address),
+        ),
+        patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn,
+    ):
         mock_instance = AsyncMock()
         mock_instance.connect = AsyncMock()
         mock_instance.execute = slow_execute
