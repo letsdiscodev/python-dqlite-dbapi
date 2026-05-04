@@ -36,8 +36,12 @@ async def test_operational_error_preserves_raw_message_through_call_client() -> 
     assert len(ei.value.args[0]) < len(long_msg)
     assert "truncated" in ei.value.args[0]
     assert ei.value.code == 1
-    # Full text reachable via raw_message.
-    assert ei.value.raw_message == long_msg
+    # ``raw_message`` is bounded at the client layer (4 KiB cap on
+    # OperationalError) — the verbatim server text rounds-trip with
+    # the cap applied. The cap protects cross-process pickled
+    # exception graphs from hostile-peer payload growth.
+    assert ei.value.raw_message.startswith("x" * 4000)
+    assert len(ei.value.raw_message) <= 4200
 
 
 def test_operational_error_raw_message_defaults_to_message_when_short() -> None:
