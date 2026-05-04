@@ -1116,11 +1116,26 @@ class Cursor:
         Wrap in an explicit transaction to make the batch atomic. See
         the ``Connection`` class docstring for the autocommit-by-
         default rationale.
+
+        ``lastrowid`` semantics match stdlib ``sqlite3.Cursor`` —
+        executemany resets ``lastrowid`` to None on entry and does
+        NOT update it across iterations (stdlib explicitly says
+        ``lastrowid`` is "left unchanged after executemany"; the
+        interpretation here is that the prior cursor's lastrowid is
+        cleared because the batch's outcome makes it stale, and not
+        updated again because the batch can have many INSERTs and
+        no single row id is the canonical answer).
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
         self._connection._check_thread()
+        # Stdlib parity: clear lastrowid at executemany entry. Without
+        # this, a prior INSERT's lastrowid leaks into the post-batch
+        # cursor state, making cross-driver code that reads
+        # ``cur.lastrowid`` after executemany observe the previous
+        # statement's value.
+        self._lastrowid = None
         # Reject transaction-control verbs and pure queries up front so
         # the caller's frame sees the ProgrammingError rather than
         # having it surface deep inside the async helper. stdlib
@@ -1210,6 +1225,15 @@ class Cursor:
             for params in seq_of_parameters:
                 await self._execute_async(operation, params)
                 acc.push(self)
+            # stdlib ``sqlite3.Cursor.executemany`` does NOT update
+            # ``lastrowid`` — the value reflects no single row across
+            # the batch and is "left unchanged" per the docs. The
+            # sync wrapper cleared lastrowid at entry; clear again
+            # after a successful loop so per-iteration writes inside
+            # ``_execute_async`` don't leak the last batch row's id
+            # to the caller. Keeps cross-driver code that reads
+            # ``cur.lastrowid`` after executemany observing ``None``.
+            self._lastrowid = None
         except BaseException:
             # Mid-batch failure leaves _rowcount at the last
             # iteration's value (which is misleading) and _rows /
