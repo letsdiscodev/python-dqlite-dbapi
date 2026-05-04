@@ -913,6 +913,22 @@ class Connection:
                     # against an autocommit DML that already
                     # persisted server-side, double-writing).
                     #
+                    # EXCEPT for ``asyncio.CancelledError``: it is a
+                    # ``BaseException`` (not ``Exception``), so
+                    # caller code doing ``except dbapi.Error:``
+                    # would NOT catch it and the cancellation signal
+                    # would propagate as a bare BaseException into
+                    # sync context — outside the PEP 249 hierarchy
+                    # and surprising to sync callers (asyncio
+                    # cancellation has no meaning in sync context).
+                    # Wrap it as ``OperationalError`` so the failure
+                    # stays inside ``dbapi.Error`` while preserving
+                    # the cause chain via ``__cause__``.
+                    if isinstance(recovered_error, asyncio.CancelledError):
+                        raise OperationalError(
+                            "Operation cancelled in async context (no meaning in sync caller)"
+                        ) from recovered_error
+                    #
                     # The original ``TimeoutError`` is still reachable
                     # via ``__context__`` — Python sets it
                     # automatically when raising inside an except —
