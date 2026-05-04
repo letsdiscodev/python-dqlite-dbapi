@@ -813,7 +813,23 @@ class Cursor:
         """The Connection this Cursor was created from.
 
         PEP 249 optional extension. Read-only.
+
+        After ``close()``, ``self._connection`` is swapped for a
+        ``weakref.proxy`` so the closed cursor doesn't pin the
+        Connection's daemon loop. Once the Connection is itself
+        GC'd, attribute access on the proxy raises ``ReferenceError``
+        — outside the PEP 249 ``Error`` hierarchy. Catch and re-raise
+        as ``InterfaceError`` so cross-driver code wrapping cursor
+        introspection in ``except dbapi.Error:`` continues to match.
         """
+        try:
+            # Touch any attribute to force the proxy to resolve. If
+            # the underlying Connection has been GC'd, this raises
+            # ReferenceError; otherwise the resolved object is the
+            # live Connection.
+            _ = self._connection.address
+        except ReferenceError as e:
+            raise InterfaceError("Cursor's parent Connection has been garbage-collected") from e
         return self._connection
 
     @property
