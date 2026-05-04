@@ -788,6 +788,7 @@ class Cursor:
         "_connection",
         "_description",
         "_lastrowid",
+        "_row_factory",
         "_row_index",
         "_rowcount",
         "_rows",
@@ -803,6 +804,20 @@ class Cursor:
         self._row_index = 0
         self._closed = False
         self._lastrowid: int | None = None
+        # stdlib ``sqlite3.Cursor.row_factory`` parity. None means
+        # "return plain tuples" (PEP 249 default). New cursors inherit
+        # the parent Connection's default factory if set. The class-
+        # name check below restricts inheritance to real Connection
+        # instances — MagicMock-typed test fakes have an auto-magic
+        # ``_row_factory`` attribute that would otherwise silently
+        # wrap every row. Use class-name comparison rather than
+        # ``isinstance`` to avoid the cursor → connection import
+        # cycle.
+        self._row_factory: Any = (
+            getattr(connection, "_row_factory", None)
+            if type(connection).__name__ == "Connection"
+            else None
+        )
         # PEP 249 optional extension. Currently no driver path appends
         # to this list; it's here so consumers can rely on the
         # attribute existing and being mutable.
@@ -929,32 +944,32 @@ class Cursor:
         return self._closed
 
     @property
-    def row_factory(self) -> None:
-        """stdlib ``sqlite3.Cursor.row_factory``-parity stub.
+    def row_factory(self) -> Any:
+        """stdlib ``sqlite3.Cursor.row_factory`` parity hook.
 
-        dqlitedbapi does not support custom row construction; rows
-        are always returned as plain tuples per PEP 249. The
-        property exists so cross-driver code that READS
-        ``cur.row_factory`` does not hit ``AttributeError`` (the
-        ``__slots__`` declaration would otherwise leak a bare
-        AttributeError outside the ``dbapi.Error`` hierarchy on a
-        WRITE attempt). The setter rejects with ``NotSupportedError``
-        so an assignment surfaces the unsupported-feature signal
-        inside the PEP 249 §7 hierarchy. Mirrors the
-        ``Connection.row_factory`` discipline.
+        Set to a callable ``factory(cursor, row) -> Any`` to wrap each
+        fetched tuple before returning. ``None`` (default) returns
+        plain tuples per PEP 249. Common factories:
+
+        - ``sqlite3.Row`` (stdlib): tuple-like with index AND
+          column-name access.
+        - ``lambda cur, row: dict(zip([c[0] for c in cur.description], row))``:
+          dict-of-column-name-to-value.
+
+        New cursors inherit the parent Connection's default factory.
+        Setting ``cur.row_factory = ...`` overrides per-cursor.
         """
-        return None
+        return self._row_factory
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
         # PEP 249 §6.1.2: state-mutating ops on a closed cursor raise.
         self._check_closed()
-        if value is None:
-            return
-        raise NotSupportedError(
-            "dqlitedbapi does not support row_factory; rows are always "
-            "returned as plain tuples per PEP 249"
-        )
+        if value is not None and not callable(value):
+            raise ProgrammingError(
+                f"row_factory must be callable or None, got {type(value).__name__}"
+            )
+        self._row_factory = value
 
     def _check_closed(self) -> None:
         if self._closed:
@@ -1280,6 +1295,9 @@ class Cursor:
 
         row = self._rows[self._row_index]
         self._row_index += 1
+        if self._row_factory is not None:
+            transformed: tuple[Any, ...] = self._row_factory(self, row)
+            return transformed
         return row
 
     def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
@@ -1334,6 +1352,8 @@ class Cursor:
 
         result = self._rows[self._row_index :]
         self._row_index = len(self._rows)
+        if self._row_factory is not None:
+            return [self._row_factory(self, row) for row in result]
         return result
 
     def close(self) -> None:

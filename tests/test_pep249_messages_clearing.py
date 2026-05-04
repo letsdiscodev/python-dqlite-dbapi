@@ -44,6 +44,7 @@ def _build_cursor() -> Cursor:
     cursor._row_index = 0
     cursor._closed = False
     cursor._lastrowid = None
+    cursor._row_factory = None
     cursor.messages = []
     return cursor
 
@@ -101,6 +102,7 @@ def _build_async_cursor() -> AsyncCursor:
     cursor._row_index = 0
     cursor._closed = False
     cursor._lastrowid = None
+    cursor._row_factory = None
     cursor.messages = []
     return cursor
 

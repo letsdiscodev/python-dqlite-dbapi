@@ -39,31 +39,44 @@ class TestAioConnectUnknownKwargsRejection:
         asyncio.run(_drive())
 
 
-class TestConnectionRowFactoryRejection:
-    """``Connection.row_factory`` returns None on read; the setter
-    rejects non-None with ``NotSupportedError``. Mirror class for the
-    cursor-level pin."""
+class TestConnectionRowFactoryHook:
+    """``Connection.row_factory`` is a Python-side hook (stdlib parity).
+    Default is None; setter accepts callable or None and rejects
+    non-callable with ``ProgrammingError``. New cursors inherit the
+    Connection's default."""
 
-    def test_sync_connection_row_factory_get_returns_none(self) -> None:
+    def test_sync_connection_row_factory_default_is_none(self) -> None:
         from dqlitedbapi.connection import Connection
 
-        # __new__ skips __init__; the property reads a slot that
-        # _row_factory_get returns None for unconditionally.
         conn = Connection.__new__(Connection)
+        conn._row_factory = None  # __new__ skips __init__
         assert conn.row_factory is None
 
     def test_sync_connection_row_factory_set_none_is_noop(self) -> None:
         from dqlitedbapi.connection import Connection
 
         conn = Connection.__new__(Connection)
+        conn._row_factory = None
         conn.row_factory = None  # no error
+        assert conn.row_factory is None
 
-    def test_sync_connection_row_factory_set_non_none_rejected(self) -> None:
+    def test_sync_connection_row_factory_accepts_callable(self) -> None:
         from dqlitedbapi.connection import Connection
 
         conn = Connection.__new__(Connection)
-        with pytest.raises(NotSupportedError):
-            conn.row_factory = lambda cur, row: row
+        conn._row_factory = None
+        factory = lambda cur, row: row  # noqa: E731
+        conn.row_factory = factory
+        assert conn.row_factory is factory
+
+    def test_sync_connection_row_factory_rejects_non_callable(self) -> None:
+        from dqlitedbapi.connection import Connection
+        from dqlitedbapi.exceptions import ProgrammingError
+
+        conn = Connection.__new__(Connection)
+        conn._row_factory = None
+        with pytest.raises(ProgrammingError):
+            conn.row_factory = 42
 
 
 class TestConnectionTextFactoryRejection:

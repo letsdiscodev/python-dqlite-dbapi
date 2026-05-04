@@ -614,6 +614,9 @@ class Connection:
         self._close_timeout = close_timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
+        # stdlib ``sqlite3.Connection.row_factory`` parity. None means
+        # "return plain tuples". New cursors inherit this default.
+        self._row_factory: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._loop_lock = threading.Lock()
@@ -1598,27 +1601,28 @@ class Connection:
         return self._closed
 
     @property
-    def row_factory(self) -> None:
-        """stdlib ``sqlite3.Connection.row_factory``-parity stub.
+    def row_factory(self) -> Any:
+        """stdlib ``sqlite3.Connection.row_factory`` parity hook.
 
-        dqlitedbapi does not support custom row construction; rows
-        are always returned as plain tuples per PEP 249. The
-        property exists so cross-driver code that READS
-        ``conn.row_factory`` does not hit ``AttributeError``; the
-        SETTER rejects with ``NotSupportedError`` so an attempted
-        write does not silently succeed (which today would just
-        add a regular attribute to the instance and have no effect
-        on row construction)."""
-        return None
+        Set to a callable ``factory(cursor, row) -> Any`` to wrap
+        each fetched tuple before returning. ``None`` (default)
+        returns plain tuples per PEP 249. New cursors inherit this
+        default; assigning ``cur.row_factory = ...`` overrides
+        per-cursor.
+
+        Common factory: ``sqlite3.Row`` from stdlib (tuple-like with
+        index AND column-name access). Custom factories can return
+        dicts, namedtuples, dataclasses, etc.
+        """
+        return self._row_factory
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
-        if value is None:
-            return
-        raise NotSupportedError(
-            "dqlitedbapi does not support row_factory; rows are always "
-            "returned as plain tuples per PEP 249"
-        )
+        if value is not None and not callable(value):
+            raise ProgrammingError(
+                f"row_factory must be callable or None, got {type(value).__name__}"
+            )
+        self._row_factory = value
 
     @property
     def text_factory(self) -> type[str]:

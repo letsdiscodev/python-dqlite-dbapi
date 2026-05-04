@@ -16,6 +16,7 @@ def _seeded_cursor(rows: list[tuple[int, ...]]) -> Cursor:
     conn = MagicMock()
     conn._get_async_connection = AsyncMock()
     conn._run_sync = MagicMock()
+    conn._row_factory = None
     c = Cursor(conn)
     c._rows = rows
     c._row_index = 0

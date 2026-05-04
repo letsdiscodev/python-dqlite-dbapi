@@ -208,6 +208,9 @@ class AsyncConnection:
         self._close_timeout = close_timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
+        # stdlib ``sqlite3.Connection.row_factory`` parity. None
+        # means "return plain tuples". New cursors inherit this default.
+        self._row_factory: Any = None
         # Fork-after-init is unsupported: the inherited TCP socket
         # is shared with the parent and writer.close() would FIN
         # the parent's connection, and asyncio primitives are bound
@@ -1086,20 +1089,19 @@ class AsyncConnection:
         return self._closed
 
     @property
-    def row_factory(self) -> None:
-        """stdlib ``sqlite3.Connection.row_factory``-parity stub.
-        See sync sibling. Returns None; setter rejects non-None
-        with NotSupportedError so a silent write cannot happen."""
-        return None
+    def row_factory(self) -> "Any":
+        """stdlib ``sqlite3.Connection.row_factory`` parity hook.
+        See sync sibling for full docs. New cursors inherit this
+        default; per-cursor override via ``cur.row_factory = ...``."""
+        return self._row_factory
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
-        if value is None:
-            return
-        raise NotSupportedError(
-            "dqlitedbapi does not support row_factory; rows are always "
-            "returned as plain tuples per PEP 249"
-        )
+        if value is not None and not callable(value):
+            raise ProgrammingError(
+                f"row_factory must be callable or None, got {type(value).__name__}"
+            )
+        self._row_factory = value
 
     @property
     def text_factory(self) -> type[str]:

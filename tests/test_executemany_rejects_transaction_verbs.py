@@ -85,6 +85,7 @@ def test_sync_executemany_admits_dml_unchanged() -> None:
     cursor._description = None
     cursor._rowcount = -1
     cursor._lastrowid = None
+    cursor._row_factory = None
     cursor._rows = []
     cursor._row_index = 0
     cursor._arraysize = 1

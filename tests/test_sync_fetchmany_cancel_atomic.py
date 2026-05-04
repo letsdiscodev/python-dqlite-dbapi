@@ -47,6 +47,7 @@ def _make_sync_counting_cursor(n: int, raise_after_advance: int) -> _CountingCur
     cur._description = (("col", 4, None, None, None, None, None),)
     cur._rowcount = n
     cur._lastrowid = None
+    cur._row_factory = None
     cur._rows = [(i,) for i in range(n)]
     cur._row_index = 0
     cur._arraysize = 1

@@ -47,6 +47,7 @@ class AsyncCursor:
         "_connection",
         "_description",
         "_lastrowid",
+        "_row_factory",
         "_row_index",
         "_rowcount",
         "_rows",
@@ -62,6 +63,15 @@ class AsyncCursor:
         self._row_index = 0
         self._closed = False
         self._lastrowid: int | None = None
+        # Inherit parent connection's default row_factory (stdlib
+        # parity). Class-name check restricts inheritance to real
+        # AsyncConnection instances — MagicMock-typed test fakes
+        # would otherwise silently wrap every row.
+        self._row_factory: Any = (
+            getattr(connection, "_row_factory", None)
+            if type(connection).__name__ == "AsyncConnection"
+            else None
+        )
         # PEP 249 optional extension; see Cursor.messages.
         self.messages: list[tuple[type[Exception], Exception | str]] = []
 
@@ -177,28 +187,19 @@ class AsyncCursor:
         return self._closed
 
     @property
-    def row_factory(self) -> None:
-        """stdlib ``sqlite3.Cursor.row_factory``-parity stub.
-
-        dqlitedbapi does not support custom row construction; rows
-        are always returned as plain tuples per PEP 249. Mirrors the
-        sync sibling ``Cursor.row_factory`` and the
-        ``Connection.row_factory`` shape — the property exists so
-        cross-driver code that reads ``cur.row_factory`` does not
-        leak ``AttributeError`` outside the ``dbapi.Error`` hierarchy
-        through the ``__slots__`` declaration; the setter rejects
-        writes with ``NotSupportedError``.
-        """
-        return None
+    def row_factory(self) -> Any:
+        """stdlib ``sqlite3.Cursor.row_factory`` parity hook. See
+        sync sibling ``Cursor.row_factory`` for full docs."""
+        return self._row_factory
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
-        if value is None:
-            return
-        raise NotSupportedError(
-            "dqlitedbapi does not support row_factory; rows are always "
-            "returned as plain tuples per PEP 249"
-        )
+        self._check_closed()
+        if value is not None and not callable(value):
+            raise ProgrammingError(
+                f"row_factory must be callable or None, got {type(value).__name__}"
+            )
+        self._row_factory = value
 
     def _check_closed(self) -> None:
         if self._closed:
@@ -517,6 +518,9 @@ class AsyncCursor:
 
         row = self._rows[self._row_index]
         self._row_index += 1
+        if self._row_factory is not None:
+            transformed: tuple[Any, ...] = self._row_factory(self, row)
+            return transformed
         return row
 
     async def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
@@ -573,6 +577,8 @@ class AsyncCursor:
 
         result = self._rows[self._row_index :]
         self._row_index = len(self._rows)
+        if self._row_factory is not None:
+            return [self._row_factory(self, row) for row in result]
         return result
 
     async def close(self) -> None:
