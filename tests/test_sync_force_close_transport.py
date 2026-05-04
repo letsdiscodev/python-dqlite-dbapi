@@ -22,6 +22,8 @@ import threading
 import time
 from unittest.mock import MagicMock
 
+import pytest
+
 from dqlitedbapi.connection import Connection
 
 
@@ -130,6 +132,46 @@ def test_force_close_transport_callable_from_foreign_thread() -> None:
     t.join(timeout=2.0)
     assert err == []
     assert conn.closed is True
+
+
+def test_force_close_transport_fork_branch_skips_loop_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fork-after-init: ``force_close_transport`` must NOT touch the
+    inherited daemon loop thread (which did not survive fork) or the
+    inherited socket FDs (still owned by the parent). Mirrors
+    :meth:`close`'s pid guard.
+    """
+    from dqliteclient import connection as _client_conn_mod
+
+    conn = _make_unconnected()
+    # Stand up a fake inner / loop / thread so the assertions below
+    # have something concrete to check.
+    fake_loop = MagicMock()
+    fake_loop.is_closed.return_value = False
+    fake_thread = MagicMock()
+    inner = MagicMock()
+    proto = MagicMock()
+    writer = MagicMock()
+    proto._writer = writer
+    inner._protocol = proto
+    conn._async_conn = inner
+    conn._loop = fake_loop
+    conn._thread = fake_thread
+
+    # Simulate fork: pid mismatch.
+    monkeypatch.setattr(_client_conn_mod, "_current_pid", conn._creator_pid + 1)
+
+    conn.force_close_transport()
+    # The fork branch must NOT schedule writer.close on a loop the
+    # child does not own, must NOT join the dead daemon thread, and
+    # must NOT close the parent-shared socket FD.
+    fake_loop.call_soon_threadsafe.assert_not_called()
+    fake_loop.close.assert_not_called()
+    fake_thread.join.assert_not_called()
+    writer.close.assert_not_called()
+    assert conn._closed is True
+    assert conn._closed_flag[0] is True
 
 
 def test_force_close_transport_cascades_cursors() -> None:
