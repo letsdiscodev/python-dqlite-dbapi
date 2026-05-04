@@ -6,7 +6,7 @@ import logging
 import os
 import warnings
 import weakref
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from types import TracebackType
 from typing import Any, NoReturn, Self
 
@@ -977,6 +977,33 @@ class AsyncConnection:
             except OperationalError as e:
                 if not _is_no_transaction_error(e):
                     raise
+
+    @contextlib.asynccontextmanager
+    async def transaction(self) -> "AsyncIterator[None]":
+        """Async context manager wrapping ``BEGIN`` / ``COMMIT`` /
+        ``ROLLBACK``.
+
+        Mirrors ``asyncpg.Connection.transaction()`` and
+        ``psycopg.AsyncConnection.transaction()`` — the canonical
+        async-DB-API pattern that asyncpg / psycopg / SA ORM expect
+        when a caller writes ``async with conn.transaction(): ...``.
+        Without this method, ``async with conn.transaction()`` raised
+        ``AttributeError`` outside the ``dbapi.Error`` hierarchy.
+
+        Delegates to the underlying client-layer
+        ``DqliteConnection.transaction()`` whose cancellation-aware
+        rollback discipline is the source of truth for transaction
+        semantics in this driver.
+
+        Re-raises ``InterfaceError`` if the connection is closed.
+        """
+        if self._closed:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
+        # Materialise the underlying client connection if we haven't
+        # yet — ``transaction()`` is an entry point on its own.
+        async_conn = await self._ensure_connection()
+        async with async_conn.transaction():
+            yield
 
     def cursor(self) -> AsyncCursor:
         """Return a new AsyncCursor object.
