@@ -88,21 +88,26 @@ _LOOP_THREAD_JOIN_TIMEOUT_SECONDS: Final[float] = 5.0
 def _validate_timeout(timeout: float) -> None:
     """Raise ProgrammingError if ``timeout`` is not a positive finite number.
 
-    Reused by ``dqlitedbapi.connect``, ``dqlitedbapi.aio.connect`` (the
-    sync-returning pun), and ``dqlitedbapi.aio.aconnect``. The exact
-    error phrasing is verbatim because several existing tests match on
-    the prefix ``"timeout must be a positive finite number"``.
+    Delegates to the client layer's ``_validate_timeout`` (the source
+    of truth for the bool/finite/positive predicate) and translates
+    its ``TypeError`` / ``ValueError`` to PEP 249 ``ProgrammingError``.
+    Sibling pattern to ``_wrap_positive_int`` below — both wrap
+    client-layer validators that deliberately use Python-convention
+    exceptions for the client-only path.
 
-    ``bool`` is rejected up front: ``isinstance(True, float)`` is False
-    but ``isinstance(True, int)`` is True and ``math.isfinite(True)``
-    returns True, so a caller passing ``timeout=True`` would silently
-    get a 1-second budget. Match the sibling validator
-    ``validate_positive_int_or_none`` in the client layer.
+    Previously this function re-implemented the predicate, which
+    risked silent drift from the client layer (e.g. accepting
+    ``Decimal`` in one but not the other). The shared validator
+    keeps the contract single-source-of-truth.
     """
-    if isinstance(timeout, bool):
-        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout!r} (bool)")
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ProgrammingError(f"timeout must be a positive finite number, got {timeout}")
+    from dqliteclient.connection import _validate_timeout as _client_validate_timeout
+
+    try:
+        _client_validate_timeout(timeout)
+    except (TypeError, ValueError) as e:
+        # Preserve the established error wording for tests that
+        # match on ``"timeout must be a positive finite number"``.
+        raise ProgrammingError(str(e)) from e
 
 
 def _wrap_positive_int(value: int | None, name: str) -> int | None:
