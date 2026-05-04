@@ -477,52 +477,33 @@ class AsyncConnection:
         # in-flight op (if any) under the lock.
         self._closed = True
         self._closed_flag[0] = True
-        # Cascade to tracked cursors before the teardown drains the
-        # wire so buffered fetches stop answering from stale rows.
-        # Writes go directly to the cursor's private attributes —
-        # ``AsyncCursor.close`` is ``async def`` so a ``cur.close()``
-        # call from this synchronous loop would produce an un-awaited
-        # coroutine. The direct-write path keeps the cascade
-        # trivially synchronous and also defends against a future
-        # change adding a lock acquire to ``AsyncCursor.close`` that
-        # would otherwise deadlock against the ``_op_lock`` acquire
-        # below.
-        # Wrap in try/finally so a KI/SystemExit landing mid-loop does
-        # not leave ``self._cursors`` populated with stale references.
-        # Per-cursor ``_closed = True`` is the LOAD-BEARING write; even
-        # if a later field-write is skipped on signal-arrival, the
-        # cursor's own ``_check_closed()`` gates all reads — so a
-        # cursor with ``_closed=True`` but stale ``_rows`` will reject
-        # fetch attempts cleanly.
-        try:
-            for cur in list(self._cursors):
-                cur._closed = True
-                cur._rows = []
-                cur._description = None
-                cur._rowcount = -1
-                cur._lastrowid = None
-                # Mirror AsyncCursor.close()'s consistent "no operation
-                # performed" surface — the row index must be reset
-                # alongside the buffer.
-                cur._row_index = 0
-                # PEP 249 §6.4: clear messages on the cascade so a
-                # post-cascade ``cur.messages`` access doesn't see
-                # stale entries.
-                del cur.messages[:]
-                # Mirror ``AsyncCursor.close()``'s strong-ref
-                # release: replace the cursor's ``_connection``
-                # back-reference with a ``weakref.proxy`` so a
-                # cascade-closed cursor that the user retains does
-                # not pin the (now-closing) parent connection's
-                # loop-bound state. Without this, the cascade
-                # cleared every other cursor field but left the
-                # back-ref intact — asymmetric with the explicit-
-                # close path.
-                with contextlib.suppress(TypeError):
-                    cur._connection = weakref.proxy(cur._connection)
-        finally:
-            self._cursors.clear()
+
+        def _cascade_cursors() -> None:
+            """Run the cursor cascade. Direct attribute writes —
+            ``AsyncCursor.close`` is async and would produce un-awaited
+            coroutines from a synchronous loop. ``_closed = True`` is
+            the LOAD-BEARING write; the cursor's own
+            ``_check_closed()`` gates all reads, so a cursor whose
+            later field-writes are skipped on signal-arrival still
+            rejects fetch attempts cleanly."""
+            try:
+                for cur in list(self._cursors):
+                    cur._closed = True
+                    cur._rows = []
+                    cur._description = None
+                    cur._rowcount = -1
+                    cur._lastrowid = None
+                    cur._row_index = 0
+                    del cur.messages[:]
+                    with contextlib.suppress(TypeError):
+                        cur._connection = weakref.proxy(cur._connection)
+            finally:
+                self._cursors.clear()
+
         if self._async_conn is None:
+            # Never-connected path: no in-flight op to race against;
+            # cascade outside the lock.
+            _cascade_cursors()
             # Null the lazy locks so a subsequent fixture or
             # SQLAlchemy-glue reuse of the object in a different event
             # loop cannot observe a primitive bound to the dead loop.
@@ -541,6 +522,15 @@ class AsyncConnection:
         op_lock = self._op_lock
         try:
             async with op_lock:
+                # Run the cursor cascade INSIDE the lock so concurrent
+                # in-flight fetches (which also hold the lock for their
+                # protocol round-trip) cannot see partial state — a
+                # fetch yielded between ``_check_closed()`` and a
+                # subsequent buffer read previously could observe
+                # ``_rows = []`` mid-iteration and surface a misleading
+                # ``ProgrammingError("no results to fetch")`` instead
+                # of an ``InterfaceError("Cursor is closed")``.
+                _cascade_cursors()
                 if self._async_conn is not None:
                     await self._async_conn.close()
                     self._async_conn = None
