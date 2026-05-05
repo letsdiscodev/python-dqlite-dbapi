@@ -192,6 +192,7 @@ class TestTypesModuleAll:
                 "NUMBER",
                 "DATETIME",
                 "ROWID",
+                "register_adapter",
             ]
         )
 

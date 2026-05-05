@@ -24,6 +24,7 @@ __all__ = [
     "TimeFromTicks",
     "Timestamp",
     "TimestampFromTicks",
+    "register_adapter",
 ]
 
 # Shape of ``cursor.description`` per PEP 249 §6.1.2: a sequence of
