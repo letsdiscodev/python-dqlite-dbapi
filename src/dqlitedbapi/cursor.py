@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, Self
 
 import dqliteclient.exceptions as _client_exc
+import dqlitewire.exceptions as _wire_exc
 from dqlitedbapi.exceptions import (
     DatabaseError,
     DataError,
@@ -305,6 +306,18 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # signature stays symmetric with the coded branches above.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise DataError(str(e), code=None, raw_message=raw_msg) from e
+    except _wire_exc.EncodeError as e:
+        # Wire-layer encode failure that escaped the client's
+        # ``_run_protocol`` (e.g. a Message constructor raising
+        # mid-validation before ``_run_protocol`` was reached).
+        # Encode-side problems are caller-input issues — PEP 249 §7
+        # ``DataError`` ("problems with the processed data: division
+        # by zero, numeric value out of range, etc."). Without this
+        # arm the wire EncodeError would propagate uncaught (it is
+        # NOT a ``_client_exc.ProtocolError`` — the inheritance runs
+        # the other direction). Pre-fix the bare wire exception
+        # leaked past ``except dbapi.Error:`` blocks.
+        raise DataError(f"wire encode failed: {e}", code=None) from e
     except _client_exc.InterfaceError as e:
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(str(e), code=None, raw_message=raw_msg) from e
