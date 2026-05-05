@@ -119,6 +119,29 @@ class TestThreadIdentityCheck:
 
         assert isinstance(error, ProgrammingError)
 
+    def test_row_factory_setter_from_wrong_thread_raises(self) -> None:
+        """Setting Connection.row_factory from a different thread must raise
+        ProgrammingError. The class docstring claims every public method
+        enforces threadsafety=1; the row_factory setter mutates state and
+        must follow the same discipline. Cross-thread mutation could
+        otherwise let a foreign thread override the row_factory used by
+        cursors created on the creator thread."""
+        conn = Connection("localhost:9001")
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                conn.row_factory = lambda c, r: r
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
     def test_setinputsizes_from_wrong_thread_raises(self) -> None:
         """setinputsizes() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")

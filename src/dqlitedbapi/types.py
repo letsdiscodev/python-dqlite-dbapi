@@ -25,6 +25,7 @@ __all__ = [
     "Timestamp",
     "TimestampFromTicks",
     "register_adapter",
+    "unregister_adapter",
 ]
 
 # Shape of ``cursor.description`` per PEP 249 §6.1.2: a sequence of
@@ -593,21 +594,26 @@ def register_adapter(type_: type, adapter: "Any") -> None:
     ``sqlite3.register_adapter`` pre-3.12 semantics. psycopg3-style
     per-connection scoping (``Connection.adapters``) is NOT
     supported: registering here affects every connection in the
-    process. Tests that register adapters should clean up by
-    explicitly removing the entry afterwards. Note that calling
-    ``register_adapter(type_, None)`` does NOT unregister — it
-    raises ``TypeError`` because ``None`` fails the
-    callable-check above. To remove an adapter, access the
-    private registry directly:
-    ``from dqlitedbapi.types import _ADAPTERS;
-    _ADAPTERS.pop(type_, None)``. This is internal and acceptable
-    for test cleanup; production code should not rely on it.
+    process. Tests that register adapters should clean up via
+    :func:`unregister_adapter`.
     """
     if not callable(adapter):
         raise TypeError(f"adapter must be callable, got {type(adapter).__name__}")
     if not isinstance(type_, type):
         raise TypeError(f"type_ must be a class, got {type(type_).__name__}")
     _ADAPTERS[type_] = adapter
+
+
+def unregister_adapter(type_: type) -> None:
+    """Remove a previously-registered adapter for ``type_``.
+
+    No-op if no adapter was registered for ``type_``. Counterpart to
+    :func:`register_adapter`. Module-scoped, mirroring the registration
+    side. Safe to call from test cleanup helpers (``finally:`` blocks,
+    ``pytest`` fixtures) without first checking whether the type is in
+    the registry.
+    """
+    _ADAPTERS.pop(type_, None)
 
 
 def _convert_bind_param(value: Any) -> Any:

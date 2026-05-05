@@ -1939,6 +1939,13 @@ class Connection:
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
+        # State-mutating setter — enforce thread-affinity discipline
+        # (the class docstring claims every public method does). The
+        # getter intentionally bypasses the check (read-only / GIL-
+        # atomic), but a cross-thread setter mutation would let a
+        # foreign thread override the row_factory for cursors created
+        # by the creator thread. Mirror ``arraysize.setter`` etc.
+        self._check_thread()
         if value is not None and not callable(value):
             raise ProgrammingError(
                 f"row_factory must be callable or None, got {type(value).__name__}"

@@ -49,6 +49,7 @@ from dqlitedbapi.types import (
     Timestamp,
     TimestampFromTicks,
     register_adapter,
+    unregister_adapter,
 )
 from dqlitewire import (
     DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
@@ -127,6 +128,7 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     # Type-adapter registry (shared module-global with the sync
     # surface; calling on either namespace mutates the same dict)
     "register_adapter",
+    "unregister_adapter",
     # NotSupportedError stubs mirroring stdlib sqlite3 — symmetric
     # with the sync surface so cross-driver code porting from
     # aiosqlite / stdlib gets a dbapi.Error rather than

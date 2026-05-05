@@ -102,6 +102,7 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     # Functions
     "connect",
     "register_adapter",
+    "unregister_adapter",
     "register_converter",
     "complete_statement",
     "enable_callback_tracebacks",
@@ -216,7 +217,7 @@ def connect(
 
 # Re-export the implementation from ``dqlitedbapi.types`` where
 # ``_convert_bind_param`` consults the registry.
-from dqlitedbapi.types import register_adapter  # noqa: E402, F401
+from dqlitedbapi.types import register_adapter, unregister_adapter  # noqa: E402, F401
 
 
 def register_converter(*args: object, **kwargs: object) -> NoReturn:

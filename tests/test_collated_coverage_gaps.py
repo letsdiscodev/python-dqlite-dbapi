@@ -8,6 +8,8 @@ behaviour so a future refactor cannot silently flip it.
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
 
 import pytest
 
@@ -49,14 +51,26 @@ class TestConnectionRowFactoryHook:
         from dqlitedbapi.connection import Connection
 
         conn = Connection.__new__(Connection)
-        conn._row_factory = None  # __new__ skips __init__
+        # The setter now enforces thread-affinity (mirroring every
+        # other state-mutating setter); seed the creator-pid /
+        # creator-thread sentinels so the in-test (same-thread) call
+        # passes the check.
+        conn._row_factory = None
+        conn._creator_pid = os.getpid()
+        conn._creator_thread = threading.get_ident()  # __new__ skips __init__
         assert conn.row_factory is None
 
     def test_sync_connection_row_factory_set_none_is_noop(self) -> None:
         from dqlitedbapi.connection import Connection
 
         conn = Connection.__new__(Connection)
+        # The setter now enforces thread-affinity (mirroring every
+        # other state-mutating setter); seed the creator-pid /
+        # creator-thread sentinels so the in-test (same-thread) call
+        # passes the check.
         conn._row_factory = None
+        conn._creator_pid = os.getpid()
+        conn._creator_thread = threading.get_ident()
         conn.row_factory = None  # no error
         assert conn.row_factory is None
 
@@ -64,7 +78,13 @@ class TestConnectionRowFactoryHook:
         from dqlitedbapi.connection import Connection
 
         conn = Connection.__new__(Connection)
+        # The setter now enforces thread-affinity (mirroring every
+        # other state-mutating setter); seed the creator-pid /
+        # creator-thread sentinels so the in-test (same-thread) call
+        # passes the check.
         conn._row_factory = None
+        conn._creator_pid = os.getpid()
+        conn._creator_thread = threading.get_ident()
         factory = lambda cur, row: row  # noqa: E731
         conn.row_factory = factory
         assert conn.row_factory is factory
@@ -74,7 +94,13 @@ class TestConnectionRowFactoryHook:
         from dqlitedbapi.exceptions import ProgrammingError
 
         conn = Connection.__new__(Connection)
+        # The setter now enforces thread-affinity (mirroring every
+        # other state-mutating setter); seed the creator-pid /
+        # creator-thread sentinels so the in-test (same-thread) call
+        # passes the check.
         conn._row_factory = None
+        conn._creator_pid = os.getpid()
+        conn._creator_thread = threading.get_ident()
         with pytest.raises(ProgrammingError):
             conn.row_factory = 42
 
