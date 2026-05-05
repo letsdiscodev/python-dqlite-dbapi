@@ -8,10 +8,9 @@
 
 import pytest
 
-import dqliteclient.exceptions
 from dqlitedbapi import connect
 from dqlitedbapi.aio import aconnect
-from dqlitedbapi.exceptions import OperationalError
+from dqlitedbapi.exceptions import ProgrammingError
 
 
 @pytest.mark.integration
@@ -161,13 +160,12 @@ class TestMultiStatementRejection:
     def test_semicolon_separated_select_rejected(self, cluster_address: str) -> None:
         """dqlite rejects multi-statement SQL — a real deviation from stdlib
         sqlite3 that applications commonly trip over. Pinning the error so
-        regressions don't silently change the behavior."""
-        # The error class is dqliteclient.OperationalError today (the
-        # DBAPI doesn't wrap); either is acceptable for now.
-        expected = (OperationalError, dqliteclient.exceptions.OperationalError)
+        regressions don't silently change the behavior. Client-side classifier
+        (cursor._classify_caller_sql) raises ProgrammingError per PEP 249 §7
+        before any wire round-trip; mirrors stdlib's exact wording."""
         with connect(cluster_address, database="test_multi_stmt") as conn:
             c = conn.cursor()
-            with pytest.raises(expected, match="nonempty statement tail"):
+            with pytest.raises(ProgrammingError, match="one statement at a time"):
                 c.execute("SELECT 1; SELECT 2;")
 
 
@@ -295,12 +293,14 @@ class TestBindBoundaryDataErrors:
             assert c.fetchone() == (value,)
 
     def test_bind_blob_over_cap_raises_data_error(self, cluster_address: str) -> None:
-        """A bind value larger than the wire-layer 16 MiB BLOB cap
-        must surface as ``DataError`` — never as a raw EncodeError or
-        a silent truncation."""
+        """A bind value larger than the wire-layer BLOB cap must surface
+        as ``DataError`` — never as a raw EncodeError or a silent
+        truncation. Sources the cap from the wire layer so future cap
+        raises don't silently break the pin."""
         from dqlitedbapi.exceptions import DataError
+        from dqlitewire.types import _MAX_BLOB_SIZE
 
-        big = b"x" * (16 * 1024 * 1024 + 1)
+        big = b"x" * (_MAX_BLOB_SIZE + 1)
         with connect(cluster_address, database="test_bind_overflow") as conn:
             c = conn.cursor()
             with pytest.raises(DataError):
