@@ -87,3 +87,23 @@ class TestArraysizeValidation:
         c = self._async_cursor()
         with pytest.raises(ProgrammingError, match="bool"):
             c.arraysize = True
+
+    # PEP 249 §6.1.2: state-mutating ops on a closed cursor must
+    # raise ``Error``. The closed-state guard runs FIRST so a
+    # closed-cursor error is not shadowed by a bad-value error.
+
+    def test_closed_cursor_raises_sync(self) -> None:
+        from dqlitedbapi.exceptions import InterfaceError
+
+        c = self._sync_cursor()
+        c.close()
+        with pytest.raises(InterfaceError):
+            c.arraysize = 5
+
+    def test_closed_cursor_raises_async(self) -> None:
+        from dqlitedbapi.exceptions import InterfaceError
+
+        c = self._async_cursor()
+        c._closed = True
+        with pytest.raises(InterfaceError):
+            c.arraysize = 5

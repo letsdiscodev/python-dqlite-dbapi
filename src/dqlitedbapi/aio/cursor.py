@@ -168,6 +168,12 @@ class AsyncCursor:
 
     @arraysize.setter
     def arraysize(self, value: int) -> None:
+        # PEP 249 §6.1.2: any state-mutating method on a closed cursor
+        # must raise an ``Error`` subclass. Apply the closed-state
+        # guard FIRST so a bool/int validation error doesn't shadow
+        # the closed-cursor error. Mirrors the sync sibling at
+        # ``cursor.py:920-935``.
+        self._check_closed()
         # Reject bools explicitly even though ``bool`` is an ``int``
         # subclass: ``arraysize = True`` silently coercing to 1 is a
         # caller-bug trap, not a useful affordance.
