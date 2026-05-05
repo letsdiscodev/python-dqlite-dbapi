@@ -86,10 +86,10 @@ paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name
 # dialect feature paths) and the pin test
 # (``tests/integration/test_sqlite_version_pin.py``) that verifies
 # the value against the live cluster.
-sqlite_version_info = _SQLITE_VERSION_INFO
-sqlite_version = _SQLITE_VERSION
+sqlite_version_info: Final[tuple[int, int, int]] = _SQLITE_VERSION_INFO
+sqlite_version: Final[str] = _SQLITE_VERSION
 
-__version__ = "0.1.4"
+__version__: Final[str] = "0.1.4"
 
 __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     # Module attributes

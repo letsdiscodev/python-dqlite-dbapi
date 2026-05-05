@@ -82,8 +82,8 @@ paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name
 # Re-exported from ``dqlitedbapi._constants`` so the sync and the
 # async surface cannot drift. See ``_constants.py`` for the rationale
 # and the pin test (``tests/integration/test_sqlite_version_pin.py``).
-sqlite_version_info = _SQLITE_VERSION_INFO
-sqlite_version = _SQLITE_VERSION
+sqlite_version_info: Final[tuple[int, int, int]] = _SQLITE_VERSION_INFO
+sqlite_version: Final[str] = _SQLITE_VERSION
 
 __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     # Module attributes
