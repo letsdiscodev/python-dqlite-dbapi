@@ -153,6 +153,24 @@ borrowed from one.
   `sqlite3`'s implicit-transaction model — see Transactions above.
 - **SERIALIZABLE isolation only.** Every statement is ordered by Raft;
   weaker isolation levels aren't exposed.
+- **PEP 249 type sentinels (`STRING`, `BINARY`, `NUMBER`, `DATETIME`,
+  `ROWID`) are unhashable.** Use chained equality against
+  `description[i][1]`, NOT set/dict membership:
+
+  ```python
+  type_code = cur.description[i][1]
+  if type_code == STRING or type_code == NUMBER:  # OK
+      ...
+  if type_code in {STRING, NUMBER}:               # raises TypeError
+      ...
+  ```
+
+  The sentinels wrap multiple wire type codes (`NUMBER` covers
+  INTEGER+FLOAT+BOOLEAN, `DATETIME` covers DATE+TIMESTAMP+ISO8601),
+  so no canonical hash can satisfy the Python hash-eq invariant.
+  Stdlib `sqlite3` doesn't export these sentinels at all, so the
+  chained-equality form is the cross-driver-portable idiom.
+
 - **`WITH ... INSERT/UPDATE/DELETE` (CTE-prefixed pure DML) reports
   zero `rowcount` and no `lastrowid`.** The driver dispatches between
   the row-returning and execute paths via a prefix-based heuristic;

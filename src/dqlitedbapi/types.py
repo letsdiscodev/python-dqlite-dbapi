@@ -202,6 +202,19 @@ class _DBAPIType:
     would make ``{NUMBER: x}[FLOAT_CODE]`` raise ``KeyError`` despite
     ``NUMBER == FLOAT_CODE`` being True. Refusing to hash turns that
     silent miss into a noisy ``TypeError``.
+
+    **Caller idiom** — introspecting ``description[i][1]`` against
+    type sentinels: use chained equality, NOT set membership::
+
+        type_code = cur.description[i][1]
+        if type_code == STRING or type_code == NUMBER:
+            ...
+
+    Set/dict membership (``type_code in {STRING, NUMBER}``) raises
+    ``TypeError: unhashable type`` for the reason above. The
+    chained-``==`` form is the PEP 249 idiom and works against this
+    driver and stdlib ``sqlite3`` (which does not export these
+    sentinels at all).
     """
 
     def __init__(self, *values: str | int | ValueType, _name: str = "") -> None:

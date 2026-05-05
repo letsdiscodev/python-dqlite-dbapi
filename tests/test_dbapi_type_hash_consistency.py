@@ -39,6 +39,31 @@ class TestDbapiTypesUnhashable:
             dict([(NUMBER, "x")])  # noqa: C406 -- literal triggers B018
 
 
+class TestDocumentedIdiom:
+    """Pin the chained-equality idiom documented in the class
+    docstring and README. Without this pin a future refactor that
+    implements ``__hash__ = lambda self: id(self)`` (which would
+    re-enable ``in {...}`` syntactically) would silently break
+    multi-value sentinel dispatch — set membership would fall back
+    to identity, missing every legitimate ``ValueType`` int.
+    """
+
+    def test_type_in_set_raises_typeerror(self) -> None:
+        # The shape that PEP 249 callers might naively try first.
+        with pytest.raises(TypeError, match="unhashable"):
+            _ = STRING in {STRING, NUMBER}
+
+    def test_chained_equality_is_the_documented_idiom(self) -> None:
+        from dqlitewire.constants import ValueType
+
+        # Wire type code as seen in description[i][1].
+        type_code = int(ValueType.TEXT)
+        assert type_code == STRING or type_code == NUMBER  # noqa: PLR1714
+
+        type_code = int(ValueType.INTEGER)
+        assert type_code == STRING or type_code == NUMBER  # noqa: PLR1714
+
+
 class TestDbapiTypesDistinct:
     """Distinct _DBAPIType instances must not collide under eq."""
 
