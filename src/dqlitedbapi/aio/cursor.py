@@ -558,6 +558,12 @@ class AsyncCursor:
         no result set is active (DML-only / never-executed). Stdlib
         parity with ``sqlite3.Cursor.fetchmany`` matching the
         ``fetchone`` parity already in place.
+
+        **Divergence from psycopg3**: an explicit ``size=0`` returns
+        ``[]`` here (stdlib ``sqlite3`` parity). psycopg3 treats
+        ``size=0`` as "use ``self.arraysize``". Pass ``None`` or
+        omit ``size`` to default to ``self.arraysize``. See sync
+        sibling for the rationale.
         """
         del self.messages[:]
         self._check_closed()

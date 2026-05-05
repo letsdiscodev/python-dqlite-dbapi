@@ -1448,6 +1448,15 @@ class Cursor:
         matching the ``fetchone`` parity already in place. Cross-
         driver code that polls ``cur.fetchmany(N) or default`` after
         a connect-and-cursor sequence works on stdlib and dqlite.
+
+        **Divergence from psycopg3**: an explicit ``size=0`` returns
+        ``[]`` here (stdlib ``sqlite3`` parity). psycopg3 treats
+        ``size=0`` as the sentinel meaning "use ``self.arraysize``"
+        (its default IS ``size: int = 0``, not ``None``). Cross-
+        driver code ported from psycopg that calls
+        ``cur.fetchmany(0)`` thinking it requests "default batch"
+        gets an empty list under dqlite. Pass ``None`` or omit
+        ``size`` to default to ``self.arraysize``.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
