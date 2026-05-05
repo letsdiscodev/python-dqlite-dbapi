@@ -630,9 +630,16 @@ class AsyncCursor:
             return []
 
         result = self._rows[self._row_index :]
-        self._row_index = len(self._rows)
         if self._row_factory is not None:
-            return [self._row_factory(self, row) for row in result]
+            # Apply factory BEFORE advancing ``_row_index``. Symmetric
+            # with the sync sibling and with ``fetchone`` / ``fetchmany``
+            # discipline — a raise inside a custom factory leaves the
+            # cursor index unchanged so the next fetchone returns the
+            # same row.
+            transformed = [self._row_factory(self, row) for row in result]
+            self._row_index = len(self._rows)
+            return transformed
+        self._row_index = len(self._rows)
         return result
 
     def drain_rows(self) -> list[tuple[Any, ...]]:

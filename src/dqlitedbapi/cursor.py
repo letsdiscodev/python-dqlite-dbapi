@@ -1531,9 +1531,24 @@ class Cursor:
             return []
 
         result = self._rows[self._row_index :]
-        self._row_index = len(self._rows)
         if self._row_factory is not None:
-            return [self._row_factory(self, row) for row in result]
+            # Apply factory BEFORE advancing ``_row_index`` so a raise
+            # inside the factory leaves the index unchanged. Symmetric
+            # with the discipline already in ``fetchone`` /
+            # ``fetchmany`` (factory-raise → cursor index preserved →
+            # next fetchone returns the same row, the desired retry
+            # semantic). Without this snapshot/restore, a fetchall on
+            # a row-factory that raises consumed the rows in the index
+            # sense AND surfaced no rows to the caller — an asymmetry
+            # vs the sibling fetch verbs.
+            try:
+                transformed = [self._row_factory(self, row) for row in result]
+            except BaseException:
+                # Index unchanged; raise propagates the factory error.
+                raise
+            self._row_index = len(self._rows)
+            return transformed
+        self._row_index = len(self._rows)
         return result
 
     def close(self) -> None:
