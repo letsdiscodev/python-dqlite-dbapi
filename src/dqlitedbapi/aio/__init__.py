@@ -37,6 +37,7 @@ from dqlitedbapi.types import (
     TimeFromTicks,
     Timestamp,
     TimestampFromTicks,
+    register_adapter,
 )
 from dqlitewire import (
     DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
@@ -112,6 +113,9 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "NUMBER",
     "DATETIME",
     "ROWID",
+    # Type-adapter registry (shared module-global with the sync
+    # surface; calling on either namespace mutates the same dict)
+    "register_adapter",
 ]
 
 
