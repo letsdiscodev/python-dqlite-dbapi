@@ -281,6 +281,30 @@ ROWID = _DBAPIType("ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER, _name="ROW
 # matching Go's database/sql driver split.
 
 
+# Display cap on server-controlled text embedded into exception
+# messages. Wire ``decode_text`` accepts up to
+# ``_MAX_TEXT_VALUE_SIZE`` (64 MiB); without truncation, an
+# unparseable ISO8601 cell from a hostile or compromised server
+# would inflate every ``DataError`` by ~2× via ``{text!r}`` quoting,
+# AND be preserved across pickle / structured logging via
+# ``Error.__reduce__``. Mirrors ``sqlalchemy-dqlite/base.py`` which
+# truncates server-controlled strings before logging.
+_MAX_DATA_ERROR_TEXT_DISPLAY: Final[int] = 200
+
+
+def _truncate_for_message(text: str) -> str:
+    """Bound a server-controlled string before interpolating into a
+    DataError message. The truncation marker carries the original
+    length so a triaging operator knows the original size class
+    without exposing the full payload."""
+    if len(text) <= _MAX_DATA_ERROR_TEXT_DISPLAY:
+        return text
+    return (
+        f"{text[:_MAX_DATA_ERROR_TEXT_DISPLAY]}"
+        f"... [truncated, {len(text) - _MAX_DATA_ERROR_TEXT_DISPLAY} chars]"
+    )
+
+
 def _format_utc_offset(offset: datetime.timedelta) -> str:
     """Format a UTC offset as ``±HH:MM`` (common) or ``±HH:MM:SS``.
 
@@ -439,7 +463,18 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
         # ISO week dates), so the only remaining failure shape is
         # input that ``time.fromisoformat`` also rejects — i.e.
         # genuine garbage. Surface as ``DataError``.
-        raise DataError(f"Cannot parse ISO 8601 datetime from server: {text!r}") from exc
+        #
+        # Truncate the offending text before interpolation. A hostile
+        # peer can return a wire TEXT cell up to ``_MAX_TEXT_VALUE_SIZE``
+        # (64 MiB); embedding the full payload in the exception message
+        # — which is then preserved across pickle, logged, and copied
+        # into ``raw_message`` — produces a ~128 MiB payload per
+        # malformed cell. The SA result_processor sites already truncate
+        # via ``_truncate_for_log``; this is the dbapi-layer twin that
+        # surfaces when SA is bypassed.
+        raise DataError(
+            f"Cannot parse ISO 8601 datetime from server: {_truncate_for_message(text)!r}"
+        ) from exc
 
 
 # Maximum UNIXTIME value that ``datetime.fromtimestamp(..., tz=UTC)``
