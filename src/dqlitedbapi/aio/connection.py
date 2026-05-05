@@ -523,20 +523,48 @@ class AsyncConnection:
         # at ``_async_conn is None`` returned.
         assert self._op_lock is not None
         op_lock = self._op_lock
+        op_lock_timed_out = False
         try:
-            async with op_lock:
-                # Run the cursor cascade INSIDE the lock so concurrent
-                # in-flight fetches (which also hold the lock for their
-                # protocol round-trip) cannot see partial state — a
-                # fetch yielded between ``_check_closed()`` and a
-                # subsequent buffer read previously could observe
-                # ``_rows = []`` mid-iteration and surface a misleading
-                # ``ProgrammingError("no results to fetch")`` instead
-                # of an ``InterfaceError("Cursor is closed")``.
-                _cascade_cursors()
-                if self._async_conn is not None:
-                    await self._async_conn.close()
-                    self._async_conn = None
+            # Bound the op_lock acquire by ``self._timeout`` to mirror
+            # the sync sibling at ``connection.py:756`` (``acquire(
+            # timeout=self._timeout)`` + InterfaceError on miss). Without
+            # the bound, ``close()`` waits indefinitely on a sibling
+            # task parked on a slow ``reader.read()`` — under SIGTERM
+            # / ``engine.dispose()``, an N-slot SA pool with stuck
+            # siblings hangs shutdown for ``N * timeout`` seconds.
+            #
+            # ``self._timeout`` (NOT ``self._close_timeout``) is the
+            # right budget: ``_close_timeout`` is the transport-drain
+            # window, while siblings are bounded by the per-RPC
+            # ``timeout``.
+            async with asyncio.timeout(self._timeout):
+                async with op_lock:
+                    # Run the cursor cascade INSIDE the lock so concurrent
+                    # in-flight fetches (which also hold the lock for their
+                    # protocol round-trip) cannot see partial state — a
+                    # fetch yielded between ``_check_closed()`` and a
+                    # subsequent buffer read previously could observe
+                    # ``_rows = []`` mid-iteration and surface a misleading
+                    # ``ProgrammingError("no results to fetch")`` instead
+                    # of an ``InterfaceError("Cursor is closed")``.
+                    _cascade_cursors()
+                    if self._async_conn is not None:
+                        await self._async_conn.close()
+                        self._async_conn = None
+        except TimeoutError:
+            # Sibling holds op_lock past ``self._timeout``. Don't wait
+            # further; force-close the transport synchronously so
+            # SIGTERM / dispose don't hang. The sibling's pending
+            # ``reader.read()`` will see EOF and surface a transport
+            # error, which its ``_run_protocol`` finally observes.
+            #
+            # The user's contract violation (close racing an in-flight
+            # op) surfaces as a transport failure on the in-flight
+            # operation — preferable to a multi-minute hang.
+            op_lock_timed_out = True
+            # ``force_close_transport`` is synchronous, idempotent, and
+            # never raises. It nulls ``self._async_conn`` itself.
+            self.force_close_transport()
         finally:
             # If a CancelledError lands during ``async with op_lock``'s
             # acquire — between the cursor cascade above and entering
@@ -643,6 +671,18 @@ class AsyncConnection:
             self._connect_lock = None
             self._op_lock = None
             self._loop_ref = None
+        if op_lock_timed_out:
+            # Surface the timed-out wait to the caller so SIGTERM/
+            # dispose handlers can log the unclean shutdown. The
+            # transport was force-closed inside the except arm; the
+            # sibling task's in-flight RPC will observe a transport
+            # error on next yield. ``raise`` here (outside the
+            # finally) so the InterfaceError replaces — rather than
+            # masks — any underlying close failure logged to debug.
+            raise InterfaceError(
+                f"close timed out after {self._timeout}s waiting for "
+                "in-flight operation; transport force-closed"
+            )
 
     def force_close_transport(self) -> None:
         """Synchronously tear down the underlying socket transport.

@@ -36,6 +36,7 @@ def _prime_connection_with_in_use_inner() -> AsyncConnection:
     conn._loop_ref = None
     conn._cursors = weakref.WeakSet()
     conn.messages = []
+    conn._timeout = 5.0
     conn._close_timeout = 0.5
     conn._creator_pid = _os.getpid()
     conn._closed_flag = [False]
