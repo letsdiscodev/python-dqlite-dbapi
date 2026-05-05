@@ -46,7 +46,7 @@ def test_named_param_sql_with_dict_rejected_with_mapping_diagnostic(
     """Mappings are rejected up front — a clean ``ProgrammingError``
     at the call site rather than a wire round-trip."""
     with pytest.raises(ProgrammingError):
-        cur.execute("SELECT :name", {"name": "x"})
+        cur.execute("SELECT :name", {"name": "x"})  # type: ignore[arg-type]
 
 
 def test_named_param_sql_with_list_falls_through_to_bind_count(

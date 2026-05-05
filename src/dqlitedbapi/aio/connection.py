@@ -1411,8 +1411,17 @@ class AsyncConnection:
             # lock primitives. Log close-side errors at DEBUG so a
             # forensic trail exists for an operator triaging cleanup-
             # time failures.
+            #
+            # ``asyncio.shield`` so a fresh outer cancel landing during
+            # the cleanup-close cannot itself replace the original
+            # connect-time exception. Without the shield, a cancel
+            # mid-cleanup raises a NEW ``CancelledError`` from
+            # ``close()``, which Python then propagates instead of the
+            # original — operators see the cleanup-cleanup site, not
+            # the connect failure that triggered cleanup. Sister fix
+            # to ``done/ISSUE-313``'s SA-adapter discipline.
             try:
-                await self.close()
+                await asyncio.shield(self.close())
             except Exception:
                 logger.debug(
                     "AsyncConnection.__aenter__ (id=%s, address=%s): "
@@ -1435,7 +1444,25 @@ class AsyncConnection:
             # stdlib sqlite3 / aiosqlite / psycopg semantics.
             return
         if exc_type is None:
-            await self.commit()
+            try:
+                await self.commit()
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                # Same partial-commit hazard the rollback arm flags:
+                # the COMMIT may have reached the leader before the
+                # cancel landed, leaving server-side state ambiguous.
+                # Log a breadcrumb at DEBUG so an operator triaging a
+                # dangling server-side transaction has a forensic
+                # trail; then re-raise so the cancel propagates
+                # faithfully. Symmetric with the rollback arm below.
+                logger.debug(
+                    "AsyncConnection.__aexit__ (address=%s, id=%s): "
+                    "commit interrupted by cancel/signal; "
+                    "server-side commit state may be ambiguous",
+                    self._address,
+                    id(self),
+                    exc_info=True,
+                )
+                raise
         else:
             try:
                 await self.rollback()
