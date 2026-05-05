@@ -2,8 +2,6 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from dqlitedbapi.cursor import Cursor
 
 
@@ -59,14 +57,17 @@ class TestFetchmanyEdges:
 
     def test_fetchone_on_no_result_set_returns_none(self) -> None:
         """Stdlib parity: fetchone on a never-executed / DML-only
-        cursor returns None. fetchmany / fetchall still raise."""
+        cursor returns None. fetchmany / fetchall return ``[]`` on
+        the same path (also stdlib-parity)."""
         conn = MagicMock()
         c = Cursor(conn)
         # No execute called → description is None.
         assert c.fetchone() is None
 
-    def test_fetchmany_on_no_result_set_raises(self) -> None:
+    def test_fetchmany_on_no_result_set_returns_empty_list(self) -> None:
+        """Stdlib parity: fetchmany on a never-executed / DML-only
+        cursor returns ``[]``. Symmetric with ``fetchone``
+        returning ``None``."""
         conn = MagicMock()
         c = Cursor(conn)
-        with pytest.raises(Exception, match="no results to fetch"):
-            c.fetchmany(5)
+        assert c.fetchmany(5) == []

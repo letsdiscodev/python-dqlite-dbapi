@@ -552,14 +552,18 @@ class AsyncCursor:
     async def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
         """Fetch up to ``size`` next rows of a query result.
 
-        Returns an empty list when no more rows are available. ``size``
-        defaults to ``self.arraysize``.
+        Returns an empty list when no more rows are available OR when
+        no result set is active (DML-only / never-executed). Stdlib
+        parity with ``sqlite3.Cursor.fetchmany`` matching the
+        ``fetchone`` parity already in place.
         """
         del self.messages[:]
         self._check_closed()
         # Loop-binding check; see ``fetchone`` rationale.
         self._connection._check_loop_binding()
-        self._check_result_set()
+        if self._description is None:
+            # No result set active. Match stdlib by returning ``[]``.
+            return []
 
         if size is None:
             size = self._arraysize
@@ -600,13 +604,17 @@ class AsyncCursor:
     async def fetchall(self) -> list[tuple[Any, ...]]:
         """Fetch all remaining rows of a query result.
 
-        Returns an empty list when the cursor has no more rows.
+        Returns an empty list when the cursor has no more rows OR
+        when no result set is active (DML-only / never-executed).
+        Stdlib parity with ``sqlite3.Cursor.fetchall``.
         """
         del self.messages[:]
         self._check_closed()
         # Loop-binding check; see ``fetchone`` rationale.
         self._connection._check_loop_binding()
-        self._check_result_set()
+        if self._description is None:
+            # No result set active. Match stdlib by returning ``[]``.
+            return []
 
         result = self._rows[self._row_index :]
         self._row_index = len(self._rows)

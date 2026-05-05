@@ -27,7 +27,7 @@ import pytest
 
 import dqlitedbapi
 import dqlitedbapi.aio
-from dqlitedbapi.exceptions import InterfaceError, OperationalError, ProgrammingError
+from dqlitedbapi.exceptions import InterfaceError, OperationalError
 
 
 def _build_sync_connection_with_mock_protocol() -> tuple[dqlitedbapi.Connection, MagicMock]:
@@ -146,11 +146,11 @@ class TestSyncCursorStateResetOnFailure:
 
             assert cur.description is None
             assert cur.rowcount == -1
-            with pytest.raises(ProgrammingError, match="no results to fetch"):
-                cur.fetchall()
-            # fetchone on no-result-set returns None (stdlib parity);
-            # fetchall / fetchmany still raise.
+            # Stdlib parity (fetchone/fetchmany/fetchall all return
+            # the empty value rather than raising on no-result-set).
+            assert cur.fetchall() == []
             assert cur.fetchone() is None
+            assert cur.fetchmany(5) == []
         finally:
             conn.close()
 
@@ -288,11 +288,11 @@ class TestAsyncCursorStateResetOnFailure:
 
             assert cur.description is None
             assert cur.rowcount == -1
-            with pytest.raises(ProgrammingError, match="no results to fetch"):
-                await cur.fetchall()
-            # fetchone on no-result-set returns None (stdlib parity);
-            # fetchall / fetchmany still raise.
+            # Stdlib parity (fetchone/fetchmany/fetchall all return
+            # the empty value rather than raising on no-result-set).
+            assert await cur.fetchall() == []
             assert await cur.fetchone() is None
+            assert await cur.fetchmany(5) == []
         finally:
             await aconn.close()
 

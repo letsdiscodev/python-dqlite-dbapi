@@ -4,7 +4,7 @@ import pytest
 
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
-from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
+from dqlitedbapi.exceptions import InterfaceError
 
 
 class TestAsyncCursor:
@@ -88,18 +88,21 @@ class TestAsyncCursor:
         assert await cursor.fetchone() is None
 
     @pytest.mark.asyncio
-    async def test_fetchmany_without_execute_raises(self) -> None:
+    async def test_fetchmany_without_execute_returns_empty_list(self) -> None:
+        """Stdlib parity: returns ``[]`` rather than raising —
+        symmetric with ``fetchone`` returning ``None``. See sync
+        sibling for rationale."""
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        with pytest.raises(ProgrammingError, match="no results to fetch"):
-            await cursor.fetchmany(5)
+        assert await cursor.fetchmany(5) == []
 
     @pytest.mark.asyncio
-    async def test_fetchall_without_execute_raises(self) -> None:
+    async def test_fetchall_without_execute_returns_empty_list(self) -> None:
+        """Stdlib parity: returns ``[]`` rather than raising. See
+        sync sibling for rationale."""
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        with pytest.raises(ProgrammingError, match="no results to fetch"):
-            await cursor.fetchall()
+        assert await cursor.fetchall() == []
 
     @pytest.mark.asyncio
     async def test_fetchone_no_rows_returns_none(self) -> None:

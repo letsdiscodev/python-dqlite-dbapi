@@ -1443,12 +1443,22 @@ class Cursor:
 
         Returns an empty list when no more rows are available. ``size``
         defaults to ``self.arraysize``.
+
+        Stdlib parity: ``sqlite3.Cursor.fetchmany()`` after a DML
+        (no result set active) returns ``[]`` rather than raising,
+        matching the ``fetchone`` parity already in place. Cross-
+        driver code that polls ``cur.fetchmany(N) or default`` after
+        a connect-and-cursor sequence works on stdlib and dqlite.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
         self._connection._check_thread()
-        self._check_result_set()
+        if self._description is None:
+            # No result set active (DML-only / never-executed). Match
+            # stdlib by returning ``[]`` rather than raising. Symmetric
+            # with ``fetchone`` which returns ``None`` on the same path.
+            return []
 
         if size is None:
             size = self._arraysize
@@ -1488,13 +1498,19 @@ class Cursor:
     def fetchall(self) -> list[tuple[Any, ...]]:
         """Fetch all remaining rows of a query result.
 
-        Returns an empty list when the cursor has no more rows.
+        Returns an empty list when the cursor has no more rows OR
+        when no result set is active (DML-only / never-executed
+        cursor). Stdlib parity: ``sqlite3.Cursor.fetchall()`` after
+        a DML returns ``[]`` rather than raising. Symmetric with
+        ``fetchone`` / ``fetchmany`` parity.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
         self._connection._check_thread()
-        self._check_result_set()
+        if self._description is None:
+            # No result set active. Match stdlib by returning ``[]``.
+            return []
 
         result = self._rows[self._row_index :]
         self._row_index = len(self._rows)

@@ -4,7 +4,7 @@ import pytest
 
 from dqlitedbapi import Connection
 from dqlitedbapi.cursor import Cursor
-from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
+from dqlitedbapi.exceptions import InterfaceError
 
 
 class TestCursor:
@@ -77,22 +77,26 @@ class TestCursor:
     def test_fetchone_without_execute_returns_none(self) -> None:
         """Stdlib parity: fetchone on a never-executed / DML-only
         cursor returns None rather than raising. fetchmany / fetchall
-        still raise (they use ``_check_result_set``)."""
+        return an empty list on the same path (also stdlib-parity)."""
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
         assert cursor.fetchone() is None
 
-    def test_fetchall_without_execute_raises(self) -> None:
+    def test_fetchall_without_execute_returns_empty_list(self) -> None:
+        """Stdlib parity: ``sqlite3.Cursor.fetchall()`` on a never-
+        executed / DML-only cursor returns ``[]``. Symmetric with
+        ``fetchone`` returning ``None``."""
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        with pytest.raises(ProgrammingError, match="no results to fetch"):
-            cursor.fetchall()
+        assert cursor.fetchall() == []
 
-    def test_fetchmany_without_execute_raises(self) -> None:
+    def test_fetchmany_without_execute_returns_empty_list(self) -> None:
+        """Stdlib parity: ``sqlite3.Cursor.fetchmany()`` on a never-
+        executed / DML-only cursor returns ``[]``. Symmetric with
+        ``fetchone`` and ``fetchall``."""
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        with pytest.raises(ProgrammingError, match="no results to fetch"):
-            cursor.fetchmany(5)
+        assert cursor.fetchmany(5) == []
 
     def test_context_manager(self) -> None:
         conn = Connection("localhost:9001")
