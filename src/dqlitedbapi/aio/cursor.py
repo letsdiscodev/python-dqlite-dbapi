@@ -260,10 +260,15 @@ class AsyncCursor:
             if not columns:
                 # PRAGMA write-form dispatches through the row-
                 # returning branch but produces no columns; match
-                # stdlib sqlite3's ``description is None`` contract
-                # for non-result statements. See the sync
-                # ``_execute_async`` companion for rationale.
+                # stdlib sqlite3's ``description = None`` /
+                # ``rowcount = -1`` contract for non-result statements.
+                # See the sync ``_execute_async`` companion for
+                # rationale.
                 self._description = None
+                self._rows = []
+                self._row_index = 0
+                self._rowcount = -1
+                return
             else:
                 # PEP 249 §6.1.2 ``type_code`` must compare equal to a
                 # Type Object. See the sync ``_execute_async`` for

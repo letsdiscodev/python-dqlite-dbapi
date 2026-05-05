@@ -1150,10 +1150,16 @@ class Cursor:
                 # (``PRAGMA foreign_keys``) but wrong for the write form
                 # (``PRAGMA foreign_keys = ON``) which produces no
                 # columns. Stdlib ``sqlite3`` sets ``description = None``
-                # for non-result statements; match that so callers who
-                # branch on ``description is None`` to detect
-                # non-queries behave consistently.
+                # AND keeps ``rowcount = -1`` (unknown / not applicable)
+                # for non-result statements; match both so callers who
+                # branch on ``cur.rowcount > 0`` after a PRAGMA write
+                # see ``-1`` (stdlib parity) rather than ``0`` (the
+                # row-returning branch's literal ``len(rows)``).
                 self._description = None
+                self._rows = []
+                self._row_index = 0
+                self._rowcount = -1
+                return
             else:
                 # PEP 249 §6.1.2 says ``type_code`` "must compare equal
                 # to one of Type Objects." ``None`` never compares equal
