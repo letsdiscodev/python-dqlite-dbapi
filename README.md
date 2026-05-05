@@ -101,6 +101,49 @@ Connection-level `commit()` / `rollback()` semantics:
   (`INSERT OR REPLACE`, `UPDATE` on a unique key) or an out-of-band
   state-check before retrying.
 
+## Differences from `aiosqlite`
+
+This driver is PEP 249-shaped (sync) and exposes an async surface
+under `dqlitedbapi.aio` that mirrors aiosqlite's module-level shape
+(`apilevel`, `paramstyle`, `connect`, `aconnect`, `AsyncConnection`,
+`AsyncCursor`). One notable deviation:
+
+- **`AsyncConnection.__aexit__` does NOT close the connection.** It
+  commits / rolls back per the body outcome and leaves the
+  connection reusable, matching stdlib `sqlite3.Connection.__exit__`
+  and PEP 249 §7. `aiosqlite.Connection.__aexit__` DOES close (closes
+  its proxy thread + sqlite3 connection). Cross-driver code porting
+  from `aiosqlite` must add an explicit `await conn.close()` (or
+  switch to a pool) for eager-close semantics.
+
+```python
+# aiosqlite-style (closes on aexit):
+async with aiosqlite.connect(":memory:") as conn:
+    ...
+
+# dqlitedbapi.aio-style (does NOT close on aexit, matches stdlib sqlite3):
+async with await dqlitedbapi.aio.connect(...) as conn:
+    ...
+    await conn.close()  # explicit
+```
+
+## Layering (pool ownership)
+
+Each `dqlitedbapi.Connection` (sync or async) owns exactly one
+underlying `dqliteclient.DqliteConnection`. The dbapi layer does NOT
+itself pool client connections — pooling lives one layer up:
+
+- **SQLAlchemy users**: SA's `QueuePool` (and async siblings) over
+  dbapi `Connection` objects is the production pool.
+- **Direct dbapi users**: a custom pool over dbapi `Connection`
+  objects is the supported pattern.
+- `dqliteclient.ConnectionPool` is for direct-client usage and is
+  unused by dqlitedbapi.
+
+A dbapi `Connection.close()` always closes the underlying client
+transport — not "return to a pool" — because the dbapi never
+borrowed from one.
+
 ## Limitations vs. stdlib `sqlite3`
 
 - **Multi-statement SQL is rejected.** `cursor.execute("SELECT 1;
