@@ -1,7 +1,7 @@
 """Pin: COMMIT raising leader-error code propagates (no silent swallow).
 
 The dbapi's ``_is_no_transaction_error`` whitelist only swallows
-``OperationalError`` whose primary code is in ``_NO_TX_CODES`` AND whose
+``OperationalError`` whose primary code is in ``_NO_TX_PRIMARY_CODES`` AND whose
 message matches the no-tx substring. Leader-flip codes
 (``SQLITE_IOERR_NOT_LEADER`` 10250, ``SQLITE_IOERR_LEADERSHIP_LOST``
 10506) primary-mask to 10 — outside the whitelist — so they MUST

@@ -65,7 +65,18 @@ logger = logging.getLogger(__name__)
 # normal ``OperationalError`` rather than silently swallow it at the
 # commit/rollback boundary — masking it would hide a real diagnostic
 # from callers who issued an empty COMMIT/ROLLBACK by accident.
-_NO_TX_CODES: Final[frozenset[int]] = frozenset({1})
+_NO_TX_PRIMARY_CODES: Final[frozenset[int]] = frozenset({1})
+# Type guard: all members must be primary SQLite codes (< 256)
+# because the lookup site below masks the incoming code with
+# ``primary_sqlite_code(...)`` before set membership. Adding an
+# extended code (e.g. a hypothetical ``SQLITE_ERROR_RETRY = 513``)
+# directly here would silently never match — ``513 & 0xFF == 1``,
+# set holds ``513``, no match. Asserted at module import so a
+# future contributor sees the violation immediately.
+assert all(0 <= c < 256 for c in _NO_TX_PRIMARY_CODES), (
+    "_NO_TX_PRIMARY_CODES must hold primary SQLite codes (< 256); "
+    "use primary_sqlite_code(extended) at the lookup site instead."
+)
 # Substrings that mark a benign "no transaction was active" reply.
 # Imported from ``dqlitewire`` so the dbapi recogniser and the
 # client-layer ``_is_no_tx_rollback_error`` share one source of
@@ -570,7 +581,7 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     # code); mirrors ``_classify_operational`` in cursor.py. Without the
     # mask, any extended variant of SQLITE_ERROR / SQLITE_MISUSE whose
     # low byte is 1 or 21 would slip past the whitelist and be surfaced.
-    if primary_sqlite_code(code) not in _NO_TX_CODES:
+    if primary_sqlite_code(code) not in _NO_TX_PRIMARY_CODES:
         return False
     # Match against the un-truncated server text (raw_message) rather
     # than ``str(exc)`` (truncated). A long server message that has

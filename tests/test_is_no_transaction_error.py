@@ -149,7 +149,7 @@ class TestIsNoTransactionErrorEdgeCases:
         assert _is_no_transaction_error(exc) is True
 
     def test_code_zero_empty_statement_not_swallowed(self) -> None:
-        """Pin: code=0 is NOT in ``_NO_TX_CODES`` — upstream emits
+        """Pin: code=0 is NOT in ``_NO_TX_PRIMARY_CODES`` — upstream emits
         ``failure(req, 0, "empty statement")`` from
         ``gateway.c::handle_prepare_done_cb`` for empty / comment-only
         SQL, and the wire layer accepts it as a legal FailureResponse.
