@@ -1624,15 +1624,25 @@ class Cursor:
         # (e.g. ``arraysize.setter`` rejecting ``bool``) argues for
         # raising on a misshapen call so a caller-side bug surfaces
         # at the call site instead of being silently absorbed.
-        if not isinstance(sizes, (list, tuple)):
+        # ``str`` and ``bytes`` are ``Sequence`` instances at the ABC
+        # level but are caller-bug shapes (passing a single string for
+        # an N-element sizes list is the canonical mistake). Reject
+        # them explicitly.
+        if isinstance(sizes, (str, bytes, bytearray)):
+            raise ProgrammingError(
+                f"setinputsizes expects a sequence of size hints, got {type(sizes).__name__}"
+            )
+        if not isinstance(sizes, Sequence):
+            # PEP 249 §6.2: ``sizes`` is "specified as a sequence".
             # PEP 249 §7 requires every error originating from the
             # driver to be a subclass of ``Error``. Bare ``TypeError``
             # would escape ``except dbapi.Error:`` in cross-driver
             # code; wrap as ``ProgrammingError`` to match the rest of
-            # the validator surface.
-            raise ProgrammingError(
-                f"setinputsizes expects a sequence (list/tuple), got {type(sizes).__name__}"
-            )
+            # the validator surface. Loosened from ``(list, tuple)``
+            # to the structural ``Sequence`` ABC so cross-driver
+            # callers passing a ``deque`` / ``range`` / custom Sequence
+            # subclass — accepted by stdlib + psycopg2 — work here too.
+            raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
         # PEP 249 §6.2 says implementations are "free to have this
         # method do nothing" — including on closed cursors. Skip BOTH
         # the closed-cursor check AND the thread check on a closed

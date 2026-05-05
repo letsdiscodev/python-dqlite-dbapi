@@ -718,10 +718,20 @@ class AsyncCursor:
         # caller-side bug (e.g. passing a string) surfaces at the call
         # site rather than being silently absorbed. PEP 249 §7 keeps
         # the failure inside the ``dbapi.Error`` hierarchy.
-        if not isinstance(sizes, (list, tuple)):
+        # ``str`` and ``bytes`` are ``Sequence`` instances at the ABC
+        # level but are caller-bug shapes (passing a single string for
+        # an N-element sizes list). Reject explicitly.
+        if isinstance(sizes, (str, bytes, bytearray)):
             raise ProgrammingError(
-                f"setinputsizes expects a sequence (list/tuple), got {type(sizes).__name__}"
+                f"setinputsizes expects a sequence of size hints, got {type(sizes).__name__}"
             )
+        if not isinstance(sizes, Sequence):
+            # PEP 249 §6.2: ``sizes`` is "specified as a sequence".
+            # Loosened from ``(list, tuple)`` to the structural
+            # ``Sequence`` ABC so cross-driver callers passing a
+            # ``deque`` / ``range`` / custom Sequence subclass —
+            # accepted by stdlib + psycopg2 — work here too.
+            raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
         # PEP 249 §6.2 says implementations are "free to have this
         # method do nothing" — including on closed cursors. Mirror
         # the sync sibling's documented permissive-on-closed

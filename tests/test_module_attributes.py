@@ -32,6 +32,16 @@ class TestExceptions:
         assert issubclass(dqlitedbapi.ProgrammingError, dqlitedbapi.DatabaseError)
         assert issubclass(dqlitedbapi.NotSupportedError, dqlitedbapi.DatabaseError)
 
+    def test_warning_is_not_subclass_of_error_pep249(self) -> None:
+        """PEP 249 §6: Warning is a sibling of Error under Exception, NOT a
+        subclass. A defensive refactor that "unified" the hierarchy
+        (Warning ← Error) would silently break PEP 249 conformance and
+        cause every cross-driver ``except Error:`` block to start
+        catching warnings."""
+        assert not issubclass(dqlitedbapi.Warning, dqlitedbapi.Error)
+        assert issubclass(dqlitedbapi.Warning, Exception)
+        assert not issubclass(dqlitedbapi.Error, dqlitedbapi.Warning)
+
 
 class TestTypeConstructors:
     def test_date(self) -> None:
