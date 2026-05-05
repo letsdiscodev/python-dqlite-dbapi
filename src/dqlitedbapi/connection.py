@@ -1256,6 +1256,41 @@ class Connection:
         # so we share the same loop-in-thread the cursor path uses.
         self._run_sync(self._get_async_connection())
 
+    def _cascade_cursors(self) -> None:
+        """Cascade close-state to every tracked cursor.
+
+        Called from both fork-branch and main-branch arms of
+        ``close()`` and ``force_close_transport()``. Mirrors stdlib
+        ``sqlite3.Connection.close()``'s implicit cursor cascade and
+        the async sibling at ``aio/connection.py:484``.
+
+        Always clears ``cur.messages`` per PEP 249 §6.4. Previously
+        the four duplicated copies of this body diverged: the
+        fork-branches dropped the ``del cur.messages[:]`` step that
+        the main-branches included — a cascade-closed cursor in a
+        forked child retained stale ``messages`` entries. The helper
+        is the union, not the intersection: every cascaded cursor
+        gets the full scrub regardless of fork-vs-main path.
+
+        ``weakref.proxy(cur._connection)`` is wrapped in
+        ``contextlib.suppress(TypeError)`` so a double-cascade (the
+        proxy is already a proxy) is silently absorbed — same shape
+        as ``Cursor.close``.
+        """
+        try:
+            for cur in list(self._cursors):
+                cur._closed = True
+                cur._rows = []
+                cur._description = None
+                cur._rowcount = -1
+                cur._lastrowid = None
+                cur._row_index = 0
+                del cur.messages[:]
+                with contextlib.suppress(TypeError):
+                    cur._connection = weakref.proxy(cur._connection)
+        finally:
+            self._cursors.clear()
+
     def close(self) -> None:
         """Close the connection."""
         # PEP 249 §6.1: close() must be idempotent ("further attempts
@@ -1297,21 +1332,7 @@ class Connection:
             # same; the non-fork branch below mirrors this loop.
             # Without it, a cursor inherited across fork retains
             # _closed=False and the parent's stale rows / description.
-            try:
-                for cur in list(self._cursors):
-                    cur._closed = True
-                    cur._rows = []
-                    cur._description = None
-                    cur._rowcount = -1
-                    cur._lastrowid = None
-                    cur._row_index = 0
-                    # Mirror ``Cursor.close()``'s back-ref proxy
-                    # so a cascade-closed cursor does not pin the
-                    # (now-closing) parent connection.
-                    with contextlib.suppress(TypeError):
-                        cur._connection = weakref.proxy(cur._connection)
-            finally:
-                self._cursors.clear()
+            self._cascade_cursors()
             if self._finalizer is not None:
                 self._finalizer.detach()
                 self._finalizer = None
@@ -1323,37 +1344,11 @@ class Connection:
         self._closed_flag[0] = True
         # Cascade to tracked cursors so buffered fetches on them
         # stop silently answering from stale in-memory rows. stdlib
-        # sqlite3.Connection.close() does the same. Writes go
+        # sqlite3.Connection.close() does the same. The helper writes
         # directly to the cursor's private attributes so we bypass
         # the Cursor.close() path (which would re-dispatch through
-        # Cursor.messages). Wrap in try/finally so a KI/SystemExit
-        # landing mid-loop does not leave ``self._cursors`` populated
-        # with stale references — see async sibling for rationale.
-        try:
-            for cur in list(self._cursors):
-                cur._closed = True
-                cur._rows = []
-                cur._description = None
-                cur._rowcount = -1
-                cur._lastrowid = None
-                # Mirror Cursor.close()'s consistent "no operation
-                # performed" surface — the row index must be reset
-                # alongside the buffer or a future rownumber accessor
-                # change could expose stale post-close state.
-                cur._row_index = 0
-                # PEP 249 §6.4: Cursor.messages "should be cleared
-                # automatically by all standard cursor methods"; the
-                # close-cascade should also leave each cursor's list
-                # empty so a post-cascade ``cur.messages`` access
-                # doesn't see stale entries from before the parent
-                # connection closed.
-                del cur.messages[:]
-                # Mirror ``Cursor.close()``'s strong-ref release; see
-                # the fork-branch sibling above for full rationale.
-                with contextlib.suppress(TypeError):
-                    cur._connection = weakref.proxy(cur._connection)
-        finally:
-            self._cursors.clear()
+        # Cursor.messages).
+        self._cascade_cursors()
         # Detach the finalizer — it's about to do nothing useful, and
         # keeping it registered would double-stop the loop.
         if self._finalizer is not None:
@@ -1499,36 +1494,13 @@ class Connection:
         # Fork-after-init: same shape as close()'s pid guard. Drop
         # local refs and skip touching the wire / dead loop.
         if _client_conn_mod._current_pid != self._creator_pid:
-            try:
-                for cur in list(self._cursors):
-                    cur._closed = True
-                    cur._rows = []
-                    cur._description = None
-                    cur._rowcount = -1
-                    cur._lastrowid = None
-                    cur._row_index = 0
-                    with contextlib.suppress(TypeError):
-                        cur._connection = weakref.proxy(cur._connection)
-            finally:
-                self._cursors.clear()
+            self._cascade_cursors()
             if self._finalizer is not None:
                 self._finalizer.detach()
                 self._finalizer = None
             return
         # Cascade cursors — same shape as close()'s cascade.
-        try:
-            for cur in list(self._cursors):
-                cur._closed = True
-                cur._rows = []
-                cur._description = None
-                cur._rowcount = -1
-                cur._lastrowid = None
-                cur._row_index = 0
-                del cur.messages[:]
-                with contextlib.suppress(TypeError):
-                    cur._connection = weakref.proxy(cur._connection)
-        finally:
-            self._cursors.clear()
+        self._cascade_cursors()
         if self._finalizer is not None:
             self._finalizer.detach()
             self._finalizer = None
