@@ -1097,7 +1097,7 @@ class Cursor:
         self._row_index = 0
         self._rowcount = -1
 
-    def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> Self:
+    def execute(self, operation: str, parameters: Sequence[Any] | None = None, /) -> Self:
         """Execute a database operation (query or command).
 
         Returns ``self`` so callers can chain ``.fetchall()`` etc.
@@ -1233,7 +1233,7 @@ class Cursor:
             # from a clean state.
             self._row_index = 0
 
-    def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]) -> Self:
+    def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]], /) -> Self:
         """Execute a database operation multiple times.
 
         Cancellation atomicity: this driver runs in autocommit-by-default

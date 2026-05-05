@@ -320,7 +320,7 @@ class AsyncCursor:
             # iterator starts from a clean state.
             self._row_index = 0
 
-    async def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> Self:
+    async def execute(self, operation: str, parameters: Sequence[Any] | None = None, /) -> Self:
         """Execute a database operation (query or command).
 
         Returns ``self`` so callers can chain ``.fetchall()`` etc.
@@ -365,7 +365,9 @@ class AsyncCursor:
 
         return self
 
-    async def executemany(self, operation: str, seq_of_parameters: Iterable[Sequence[Any]]) -> Self:
+    async def executemany(
+        self, operation: str, seq_of_parameters: Iterable[Sequence[Any]], /
+    ) -> Self:
         """Execute a database operation multiple times.
 
         An empty ``seq_of_parameters`` must not leave stale SELECT
