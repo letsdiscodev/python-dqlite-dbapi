@@ -1442,7 +1442,27 @@ class Connection:
                     inner = self._async_conn
                     proto = getattr(inner, "_protocol", None)
                     writer = getattr(proto, "_writer", None) if proto is not None else None
-                    if writer is not None:
+                    if writer is not None and self._loop is not None and not self._loop.is_closed():
+                        # ``StreamWriter.close()`` mutates transport
+                        # state (calls ``self._loop._remove_reader(...)``
+                        # under the hood) and is documented as not
+                        # thread-safe by stdlib asyncio — touching
+                        # the selector from the calling thread while
+                        # the loop is still running on its own thread
+                        # races with the selector's transport-state
+                        # bookkeeping. Schedule via
+                        # ``call_soon_threadsafe`` like the sibling
+                        # ``force_close_transport`` does (see
+                        # ``connection.py:1554-1555``). FIFO discipline
+                        # of the ready queue with the subsequent
+                        # ``loop.stop`` queue ensures FIN goes out
+                        # before ``run_forever`` exits.
+                        with contextlib.suppress(RuntimeError):
+                            self._loop.call_soon_threadsafe(_safe_writer_close, writer)
+                    elif writer is not None:
+                        # Loop is closed / unavailable — the
+                        # ``_safe_writer_close`` synchronous call
+                        # is the best we can do to flush FIN.
                         with contextlib.suppress(Exception):
                             writer.close()
                     self._async_conn = None
