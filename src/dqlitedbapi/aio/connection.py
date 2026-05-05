@@ -1042,6 +1042,18 @@ class AsyncConnection:
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        # Loop-binding check matches the sibling entry points
+        # (``cursor`` / ``commit`` / ``rollback`` all go through
+        # ``_ensure_locks`` whose first call binds the loop). On the
+        # already-connected fast path, ``_ensure_connection`` short-
+        # circuits BEFORE ``_ensure_locks`` runs — without this
+        # explicit check, a caller who established the connection on
+        # loop A and later does ``async with conn.transaction():`` on
+        # loop B got the cross-loop diagnostic from the underlying
+        # ``asyncio.Lock`` ("bound to a different event loop") rather
+        # than the dbapi-level ``ProgrammingError`` shape produced by
+        # every sibling entry point.
+        self._check_loop_binding()
         # Materialise the underlying client connection if we haven't
         # yet — ``transaction()`` is an entry point on its own.
         async_conn = await self._ensure_connection()
