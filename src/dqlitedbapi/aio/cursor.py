@@ -614,6 +614,46 @@ class AsyncCursor:
             return [self._row_factory(self, row) for row in result]
         return result
 
+    def drain_rows(self) -> list[tuple[Any, ...]]:
+        """Transfer ownership of the row buffer to the caller.
+
+        Returns the in-memory row list and clears it on the cursor.
+        Synchronous (no ``await``) and does not honour
+        ``_row_factory`` — the caller takes the raw tuples.
+
+        Intended for adapter layers (the SQLAlchemy async adapter
+        in particular) that rebuffer the rows into their own
+        container immediately and would otherwise pay 2× memory
+        for the duration of the transfer:
+
+            # Naive adapter: 2× memory peak (cursor list AND deque).
+            buffered = await cursor.fetchall()  # makes a copy
+            self._rows = collections.deque(buffered)
+
+            # With drain: ownership transfer, single allocation.
+            self._rows = collections.deque(cursor.drain_rows())
+
+        The cursor is unusable for fetch* afterward (the buffer is
+        empty, so a follow-up ``fetchone`` returns None / ``fetchall``
+        returns []) and the caller is expected to close it shortly
+        afterward — the typical pattern in a SA-style ``execute /
+        fetchall / close`` sequence.
+
+        ``rowcount`` / ``lastrowid`` / ``description`` reads MUST
+        come BEFORE the drain — they are independent of ``_rows``
+        but reading them after a drain when downstream code might
+        also have closed the cursor is a footgun. The adapter at
+        ``sqlalchemy-dqlite/aio.py`` calls drain_rows last (after
+        capturing the metadata fields) for that reason.
+        """
+        rows = self._rows
+        self._rows = []
+        # Position the index at the (now empty) end so any
+        # subsequent fetch* call returns the no-rows result instead
+        # of indexing into the empty buffer with a stale index.
+        self._row_index = 0
+        return rows
+
     async def close(self) -> None:
         """Close the cursor.
 
