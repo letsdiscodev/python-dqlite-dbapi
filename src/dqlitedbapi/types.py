@@ -37,9 +37,23 @@ _Description = tuple[_DescriptionTuple, ...] | None
 
 
 # Type constructors
+#
+# PEP 249 §7 mandates every error from a driver call subclass ``Error``.
+# Stdlib's ``datetime.{date,time,datetime}.__init__`` raise bare
+# ``ValueError`` / ``TypeError`` on invalid inputs (month=13, hour=25,
+# non-numeric arguments). Wrap each constructor to translate those into
+# ``DataError`` so cross-driver code patterns
+# (``try: dqlitedbapi.Date(...) except dqlitedbapi.Error: ...``) are
+# closed-form. Mirrors the discipline already in ``DateFromTicks`` /
+# ``TimeFromTicks`` / ``TimestampFromTicks``.
+
+
 def Date(year: int, month: int, day: int) -> datetime.date:
     """Construct a date value."""
-    return datetime.date(year, month, day)
+    try:
+        return datetime.date(year, month, day)
+    except (TypeError, ValueError) as e:
+        raise DataError(f"Date({year!r}, {month!r}, {day!r}) invalid: {e}") from e
 
 
 def Time(
@@ -56,7 +70,12 @@ def Time(
     but mixing the driver's ``Time()`` with ``datetime.time`` would
     otherwise drop sub-second precision silently.
     """
-    return datetime.time(hour, minute, second, microsecond, tzinfo=tzinfo)
+    try:
+        return datetime.time(hour, minute, second, microsecond, tzinfo=tzinfo)
+    except (TypeError, ValueError) as e:
+        raise DataError(
+            f"Time({hour!r}, {minute!r}, {second!r}, {microsecond!r}) invalid: {e}"
+        ) from e
 
 
 def Timestamp(
@@ -70,7 +89,13 @@ def Timestamp(
     tzinfo: datetime.tzinfo | None = None,
 ) -> datetime.datetime:
     """Construct a timestamp value."""
-    return datetime.datetime(year, month, day, hour, minute, second, microsecond, tzinfo=tzinfo)
+    try:
+        return datetime.datetime(year, month, day, hour, minute, second, microsecond, tzinfo=tzinfo)
+    except (TypeError, ValueError) as e:
+        raise DataError(
+            f"Timestamp({year!r}, {month!r}, {day!r}, {hour!r}, "
+            f"{minute!r}, {second!r}) invalid: {e}"
+        ) from e
 
 
 def _validate_ticks(ticks: float) -> float:
