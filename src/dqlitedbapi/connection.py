@@ -1163,6 +1163,26 @@ class Connection:
                 # calling thread — those must propagate to the caller
                 # via the standard exception path, NOT trigger
                 # invalidation.
+                #
+                # Race-recovery (mirror of the timeout-arm at line
+                # 1008): if the coroutine resolved the future
+                # successfully (or with its own real exception)
+                # between ``Future.result(...)`` raising the signal
+                # and our cleanup, there is no wedged in-flight op
+                # to poison. Skip the ``_invalidate`` schedule and
+                # the synchronous ``_async_conn`` null-out so the
+                # connection stays reusable on the next call. The
+                # KI signal still re-raises below.
+                if future.done() and not future.cancelled():
+                    # ``future.cancel()`` on a done future is a no-op
+                    # but still call it to keep state consistent
+                    # with the wedge path below.
+                    future.cancel()
+                    # Drain any captured exception so asyncio doesn't
+                    # log "Future exception was never retrieved".
+                    with contextlib.suppress(BaseException):
+                        future.result(timeout=0)
+                    raise
                 future.cancel()
                 # Synchronously null ``self._async_conn`` from the
                 # calling thread so the next sync op gets a fresh-
