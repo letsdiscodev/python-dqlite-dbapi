@@ -129,7 +129,30 @@ class Warning(Exception):  # PEP 249 mandated class name
 class Error(Exception):
     """Base class for all database errors."""
 
-    pass
+    def __reduce__(
+        self,
+    ) -> tuple[type["Error"], tuple[object, ...], dict[str, object]]:
+        # Default ``Exception.__reduce__`` returns ``(cls, self.args)``,
+        # losing every field set on the instance after
+        # ``Exception.__init__`` — most notably ``raw_message`` and
+        # ``code`` carried by :class:`InterfaceError` /
+        # :class:`_DatabaseErrorWithCode`. SA's ``is_disconnect``
+        # reads ``raw_message`` first; without preserving it,
+        # cross-process error capture (Celery, multiprocessing pool,
+        # SA's multiprocess test harness) silently dropped the
+        # un-truncated server text and forced the substring branch
+        # of the disconnect classifier to fall back to ``str(cause)``.
+        #
+        # Mirrors the discipline applied at the client layer in
+        # ``dqliteclient.exceptions.DqliteError``.
+        return (self.__class__, self.args, self.__getstate__())
+
+    def __getstate__(self) -> dict[str, object]:
+        return self.__dict__.copy()
+
+    def __setstate__(self, state: dict[str, object] | None) -> None:
+        if state:
+            self.__dict__.update(state)
 
 
 class InterfaceError(Error):
