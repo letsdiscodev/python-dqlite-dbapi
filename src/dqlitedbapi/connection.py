@@ -4,7 +4,6 @@ import asyncio
 import concurrent.futures
 import contextlib
 import logging
-import math
 import os
 import threading
 import warnings
@@ -142,20 +141,21 @@ def _wrap_positive_int(value: int | None, name: str) -> int | None:
 def _validate_close_timeout(close_timeout: float) -> None:
     """Raise ProgrammingError if ``close_timeout`` is not a positive finite number.
 
-    The client layer raises ``ValueError`` for the same predicate; the
-    dbapi layer wraps with ``ProgrammingError`` so PEP 249 error
-    classification holds at the dbapi boundary (parallel to
-    ``_validate_timeout``). Rejects ``bool`` for the same reason as the
-    sibling ``_validate_timeout``.
+    Delegates to the client layer's ``_validate_timeout`` (the source
+    of truth for the bool / numeric-type / finite / positive predicate)
+    and translates ``TypeError`` / ``ValueError`` to PEP 249
+    ``ProgrammingError``. Sibling of ``_validate_timeout`` above.
+
+    The local re-implementation previously called ``math.isfinite`` on
+    a possibly-non-numeric value, leaking a bare ``TypeError`` past the
+    PEP 249 ``Error`` boundary for inputs like a string ``"0.5"``.
     """
-    if isinstance(close_timeout, bool):
-        raise ProgrammingError(
-            f"close_timeout must be a positive finite number, got {close_timeout!r} (bool)"
-        )
-    if not math.isfinite(close_timeout) or close_timeout <= 0:
-        raise ProgrammingError(
-            f"close_timeout must be a positive finite number, got {close_timeout}"
-        )
+    from dqliteclient.connection import _validate_timeout as _client_validate_timeout
+
+    try:
+        _client_validate_timeout(close_timeout, name="close_timeout")
+    except (TypeError, ValueError) as e:
+        raise ProgrammingError(str(e)) from e
 
 
 # Process-wide ``ClusterClient`` cache for the leader-discovery probe.

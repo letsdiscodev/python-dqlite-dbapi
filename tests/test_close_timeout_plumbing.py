@@ -56,6 +56,16 @@ class TestCloseTimeoutPlumbing:
         with pytest.raises(ProgrammingError, match="close_timeout"):
             AsyncConnection("localhost:19001", timeout=2.0, close_timeout=bad)
 
+    @pytest.mark.parametrize("bad", ["0.5", b"0.5", None, [], {}, complex(1)])
+    def test_non_numeric_close_timeout_raises_programmingerror(self, bad: object) -> None:
+        """PEP 249 §7: every input-validation failure must subclass Error.
+        Previously the close_timeout validator called math.isfinite on
+        non-numeric inputs and leaked a bare TypeError."""
+        with pytest.raises(ProgrammingError):
+            Connection("localhost:19001", timeout=2.0, close_timeout=bad)  # type: ignore[arg-type]
+        with pytest.raises(ProgrammingError):
+            AsyncConnection("localhost:19001", timeout=2.0, close_timeout=bad)  # type: ignore[arg-type]
+
     def test_module_connect_forwards(self) -> None:
         conn = dqlitedbapi.connect("localhost:19001", timeout=2.0, close_timeout=1.5)
         try:
