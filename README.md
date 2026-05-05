@@ -159,10 +159,44 @@ borrowed from one.
 ## Limitations vs. stdlib `sqlite3`
 
 - **Multi-statement SQL is rejected.** `cursor.execute("SELECT 1;
-  SELECT 2;")` raises `OperationalError` with "nonempty statement tail".
-  Split into separate `execute()` calls.
+  SELECT 2;")` raises `ProgrammingError("You can only execute one
+  statement at a time.")` (stdlib's wording, but client-side, before
+  any wire round-trip). Split into separate `execute()` calls; there
+  is no `executescript` (it raises `NotSupportedError`).
+- **`paramstyle = "qmark"` only.** stdlib accepts both `?` (qmark)
+  AND `:name` (named) within a single connection; this driver
+  advertises only `qmark` and rejects mappings with `ProgrammingError`.
 - **Autocommit-by-default at the server.** Opposite of stdlib
   `sqlite3`'s implicit-transaction model — see Transactions above.
+- **`Cursor.rowcount = len(rows)` after SELECT.** stdlib returns `-1`
+  (rowcount is undefined for queries). dqlite knows the full result
+  set at execute time, so the literal-PEP-249 reading is honoured.
+  `rowcount = -1` is preserved for true non-result paths (PRAGMA
+  write, never-executed cursor).
+- **`Cursor.executemany` clears `lastrowid` to `None`.** stdlib leaves
+  the prior INSERT's rowid sticky across executemany. The driver
+  diverges deliberately (which row's rowid is "the" rowid for a batch
+  of N inserts is ambiguous).
+- **`Cursor.close()` scrubs `description` / `lastrowid` / `_rows`.**
+  stdlib preserves `description` and `lastrowid` post-close; dqlite
+  scrubs to `None` to enforce the closed-cursor "no operation
+  performed" surface.
+- **`Cursor.fetchmany(0)` returns `[]`.** stdlib (verified 3.12.3) and
+  psycopg3 both treat `size=0` as "fetch arraysize" or "fetch all
+  remaining"; dqlite reads PEP 249 literally (size=0 → 0 rows). Pass
+  `None` or omit the argument to default to `arraysize`.
+- **`cursor.execute("")` raises `ProgrammingError("empty statement")`.**
+  stdlib silently accepts empty / whitespace-only / comment-only SQL
+  as a no-op; the driver pre-flight rejects per PEP 249 §7 to surface
+  caller bugs at the call site.
+- **`threadsafety = 1`** (stdlib reports `3`). Each Connection is
+  thread-affine: methods called from a foreign thread raise
+  `ProgrammingError`. Use one Connection per thread or use the async
+  surface for a single-thread-per-loop model.
+- **No `executescript` / `create_function` / `create_aggregate` /
+  `create_window_function` / `iterdump` / `backup` / `set_authorizer`
+  / `serialize` / `blobopen`.** stdlib-specific APIs that have no
+  server-side counterpart in dqlite. Stubs raise `NotSupportedError`.
 - **SERIALIZABLE isolation only.** Every statement is ordered by Raft;
   weaker isolation levels aren't exposed.
 - **PEP 249 type sentinels (`STRING`, `BINARY`, `NUMBER`, `DATETIME`,
