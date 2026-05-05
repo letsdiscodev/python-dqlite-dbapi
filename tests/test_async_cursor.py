@@ -80,11 +80,12 @@ class TestAsyncCursor:
             await cursor.fetchall()
 
     @pytest.mark.asyncio
-    async def test_fetchone_without_execute_raises(self) -> None:
+    async def test_fetchone_without_execute_returns_none(self) -> None:
+        """Stdlib parity: fetchone on a never-executed cursor returns
+        None rather than raising. See sync sibling for rationale."""
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        with pytest.raises(ProgrammingError, match="no results to fetch"):
-            await cursor.fetchone()
+        assert await cursor.fetchone() is None
 
     @pytest.mark.asyncio
     async def test_fetchmany_without_execute_raises(self) -> None:

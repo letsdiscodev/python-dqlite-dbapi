@@ -74,11 +74,13 @@ class TestCursor:
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             cursor.fetchall()
 
-    def test_fetchone_without_execute_raises(self) -> None:
+    def test_fetchone_without_execute_returns_none(self) -> None:
+        """Stdlib parity: fetchone on a never-executed / DML-only
+        cursor returns None rather than raising. fetchmany / fetchall
+        still raise (they use ``_check_result_set``)."""
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        with pytest.raises(ProgrammingError, match="no results to fetch"):
-            cursor.fetchone()
+        assert cursor.fetchone() is None
 
     def test_fetchall_without_execute_raises(self) -> None:
         conn = Connection("localhost:9001")

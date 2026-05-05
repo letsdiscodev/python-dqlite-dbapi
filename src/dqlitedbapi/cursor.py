@@ -524,6 +524,65 @@ def _is_multi_statement(sql: str) -> bool:
     return False
 
 
+def _classify_caller_sql(
+    operation: str,
+    parameters: Sequence[Any] | None,
+) -> None:
+    """Pre-flight classification of caller-supplied SQL.
+
+    Raises ``ProgrammingError`` for three caller-side mistakes that
+    would otherwise produce either silent data loss or a misleading
+    error class from the server:
+
+    - **Empty / whitespace / comment-only SQL**. Server emits
+      ``failure(code=0, "empty statement")``, classified as
+      ``OperationalError`` by the wire-mapping table. PEP 249 §7
+      requires caller-side errors to be ``ProgrammingError``.
+    - **Multi-statement SQL**. Server's prepare path returns only
+      the first statement; without this guard, ``"INSERT ...;
+      INSERT ..."`` silently drops everything past the first ``;``
+      with no diagnostic. Use ``executescript`` for multi-
+      statement intent.
+    - **Wrong ``?`` count vs ``len(parameters)``**. Server rejects
+      with ``SQLITE_RANGE (25)`` after a wire round-trip; pre-
+      flighting saves the RTT and matches stdlib's
+      ``ProgrammingError("Incorrect number of bindings supplied.
+      The current statement uses N, and there are M supplied.")``.
+
+    Each detector neutralises string literals, identifiers, and
+    comments via ``_strip_sql_noise`` first so a ``;`` / ``?``
+    inside a quoted token / comment is not treated as syntactically
+    significant.
+    """
+    # Empty-SQL: ``_strip_leading_comments`` returns "" if the SQL
+    # is blank, whitespace, or comment-only. Stdlib raises
+    # ``ProgrammingError`` for ``""``; match.
+    if not _strip_leading_comments(operation):
+        raise ProgrammingError("empty statement")
+    # Multi-statement: stdlib raises with this exact wording.
+    if _is_multi_statement(operation):
+        raise ProgrammingError("You can only execute one statement at a time.")
+    # ``?``-count vs len(parameters). Only validate when parameters
+    # is provided (``None`` / ``()`` are valid for parameterless SQL).
+    if parameters is not None:
+        # Mappings, str, bytes are rejected by the binding layer
+        # later — skip the count check for them since len() doesn't
+        # mean what we want.
+        try:
+            param_count = len(parameters)
+        except TypeError:
+            return  # caller will trip the binding-layer rejection
+        # Count ``?`` placeholders in the noise-stripped SQL.
+        cleaned = _strip_sql_noise(operation)
+        placeholder_count = cleaned.count("?")
+        if placeholder_count != param_count:
+            raise ProgrammingError(
+                f"Incorrect number of bindings supplied. The current "
+                f"statement uses {placeholder_count}, and there are "
+                f"{param_count} supplied."
+            )
+
+
 class _ExecuteManyCursor(Protocol):
     """Structural shape of :class:`Cursor` / :class:`AsyncCursor` as
     consumed by :class:`_ExecuteManyAccumulator`.
@@ -1047,14 +1106,14 @@ class Cursor:
         # previous query's description / rows.
         self._reset_execute_state()
 
-        # Match stdlib ``sqlite3.Cursor.execute``: a multi-statement
-        # SQL string is rejected as ``ProgrammingError``. dqlite's
-        # server prepare path returns only the first statement; without
-        # this guard, ``"INSERT ...; INSERT ..."`` silently drops
-        # everything past the first ``;``. Use ``executescript`` for
-        # multi-statement intent (we stub it as ``NotSupportedError``).
-        if _is_multi_statement(operation):
-            raise ProgrammingError("You can only execute one statement at a time.")
+        # Pre-flight classification pass: empty SQL → ProgrammingError
+        # (PEP 249 §7), multi-statement → ProgrammingError (stdlib
+        # parity), wrong ``?``-count vs ``len(parameters)`` →
+        # ProgrammingError. All three skip the wire round-trip so a
+        # caller bug surfaces with the right class at the user's
+        # call site rather than as ``OperationalError`` (server
+        # rejection) or silent data loss (multi-statement drop).
+        _classify_caller_sql(operation, parameters)
 
         self._connection._run_sync(self._execute_async(operation, parameters))
         return self
@@ -1323,13 +1382,29 @@ class Cursor:
     def fetchone(self) -> tuple[Any, ...] | None:
         """Fetch the next row of a query result set.
 
-        Returns ``None`` when no more rows are available.
+        Returns ``None`` when no more rows are available, or when no
+        result set is active (DML-only / never-executed cursor).
+
+        Stdlib parity: ``sqlite3.Cursor.fetchone()`` after a DML
+        returns ``None`` rather than raising. PEP 249 §6 is silent on
+        the case; stdlib's choice is the de facto contract for
+        cross-driver portable code (``if cur.fetchone(): ...`` after
+        DML works against stdlib, psycopg, MySQL drivers).
+
+        ``fetchmany`` / ``fetchall`` continue to use
+        ``_check_result_set`` and raise on no-result-set, matching
+        stdlib's distinction.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
         self._connection._check_thread()
-        self._check_result_set()
+        if self._description is None:
+            # No result set active (DML-only / never-executed). Match
+            # stdlib by returning None rather than raising. The
+            # closed-cursor case is already covered by _check_closed
+            # above (raises InterfaceError per PEP 249).
+            return None
 
         if self._row_index >= len(self._rows):
             return None

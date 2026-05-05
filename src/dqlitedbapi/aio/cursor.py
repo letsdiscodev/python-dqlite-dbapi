@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, Any, NoReturn, Self
 from dqlitedbapi.cursor import (
     _EXECUTEMANY_REJECT_VERBS,
     _call_client,
+    _classify_caller_sql,
     _convert_params,
     _convert_row,
     _ExecuteManyAccumulator,
     _is_dml_with_returning,
     _is_insert_or_replace,
-    _is_multi_statement,
     _is_row_returning,
     _strip_leading_comments,
     _to_signed_int64,
@@ -338,14 +338,10 @@ class AsyncCursor:
         # query's description.
         self._reset_execute_state()
 
-        # Match stdlib ``sqlite3.Cursor.execute``: a multi-statement
-        # SQL string is rejected as ``ProgrammingError``. dqlite's
-        # server prepare path returns only the first statement; without
-        # this guard, ``"INSERT ...; INSERT ..."`` silently drops
-        # everything past the first ``;``. Use ``executescript`` for
-        # multi-statement intent (we stub it as ``NotSupportedError``).
-        if _is_multi_statement(operation):
-            raise ProgrammingError("You can only execute one statement at a time.")
+        # Pre-flight classification of caller-supplied SQL — empty /
+        # multi-statement / wrong ``?``-count. Mirrors the sync sibling
+        # at cursor.py. See ``_classify_caller_sql`` docstring.
+        _classify_caller_sql(operation, parameters)
 
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:
@@ -512,7 +508,11 @@ class AsyncCursor:
     async def fetchone(self) -> tuple[Any, ...] | None:
         """Fetch the next row of a query result set.
 
-        Returns ``None`` when no more rows are available.
+        Returns ``None`` when no more rows are available, or when no
+        result set is active (DML-only / never-executed cursor).
+        Stdlib parity — see sync sibling at ``cursor.py``.
+        ``fetchmany`` / ``fetchall`` continue to use
+        ``_check_result_set`` and raise.
         """
         del self.messages[:]
         self._check_closed()
@@ -527,7 +527,10 @@ class AsyncCursor:
         # ``setoutputsize`` / ``callproc`` / ``nextset`` / ``scroll``)
         # already adopted.
         self._connection._check_loop_binding()
-        self._check_result_set()
+        if self._description is None:
+            # Match stdlib: no-result-set returns None rather than
+            # raising. See sync sibling for full rationale.
+            return None
 
         if self._row_index >= len(self._rows):
             return None

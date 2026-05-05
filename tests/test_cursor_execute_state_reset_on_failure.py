@@ -148,8 +148,9 @@ class TestSyncCursorStateResetOnFailure:
             assert cur.rowcount == -1
             with pytest.raises(ProgrammingError, match="no results to fetch"):
                 cur.fetchall()
-            with pytest.raises(ProgrammingError, match="no results to fetch"):
-                cur.fetchone()
+            # fetchone on no-result-set returns None (stdlib parity);
+            # fetchall / fetchmany still raise.
+            assert cur.fetchone() is None
         finally:
             conn.close()
 
@@ -289,8 +290,9 @@ class TestAsyncCursorStateResetOnFailure:
             assert cur.rowcount == -1
             with pytest.raises(ProgrammingError, match="no results to fetch"):
                 await cur.fetchall()
-            with pytest.raises(ProgrammingError, match="no results to fetch"):
-                await cur.fetchone()
+            # fetchone on no-result-set returns None (stdlib parity);
+            # fetchall / fetchmany still raise.
+            assert await cur.fetchone() is None
         finally:
             await aconn.close()
 

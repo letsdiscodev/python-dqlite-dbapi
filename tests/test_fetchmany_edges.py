@@ -57,9 +57,16 @@ class TestFetchmanyEdges:
         c.fetchone()
         assert c.fetchall() == [(2,), (3,)]
 
-    def test_fetch_on_no_result_set_raises(self) -> None:
+    def test_fetchone_on_no_result_set_returns_none(self) -> None:
+        """Stdlib parity: fetchone on a never-executed / DML-only
+        cursor returns None. fetchmany / fetchall still raise."""
         conn = MagicMock()
         c = Cursor(conn)
         # No execute called → description is None.
+        assert c.fetchone() is None
+
+    def test_fetchmany_on_no_result_set_raises(self) -> None:
+        conn = MagicMock()
+        c = Cursor(conn)
         with pytest.raises(Exception, match="no results to fetch"):
-            c.fetchone()
+            c.fetchmany(5)

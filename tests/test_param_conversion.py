@@ -29,11 +29,15 @@ def _make_mock_connection() -> tuple[MagicMock, AsyncMock]:
 
 class TestParameterConversion:
     def test_empty_list_not_converted_to_none(self) -> None:
-        """Passing parameters=[] should not convert to None."""
+        """Passing parameters=[] should not convert to None.
+
+        Use parameterless SQL so the new ``?``-count pre-flight
+        does not reject the empty list as a binding-count mismatch.
+        """
         mock_conn, mock_async_conn = _make_mock_connection()
         cursor = Cursor(mock_conn)
 
-        cursor.execute("INSERT INTO t VALUES (?)", [])
+        cursor.execute("INSERT INTO t VALUES (1)", [])
 
         mock_async_conn.execute.assert_called_once()
         call_args = mock_async_conn.execute.call_args
