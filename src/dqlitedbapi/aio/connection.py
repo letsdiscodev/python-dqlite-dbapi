@@ -1048,7 +1048,7 @@ class AsyncConnection:
         async with async_conn.transaction():
             yield
 
-    def cursor(self) -> AsyncCursor:
+    def cursor(self, **unknown_kwargs: object) -> AsyncCursor:
         """Return a new AsyncCursor object.
 
         This is intentionally sync — SQLAlchemy calls cursor() from
@@ -1072,6 +1072,13 @@ class AsyncConnection:
         ``_check_thread``).
         """
         del self.messages[:]
+        if unknown_kwargs:
+            raise NotSupportedError(
+                f"dqlitedbapi cursor() rejects stdlib sqlite3 kwargs not "
+                f"supported by this driver: {sorted(unknown_kwargs)}. "
+                f"(stdlib's factory= is not honoured here — Cursor "
+                f"subclassing is not supported.)"
+            )
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         if _client_conn_mod._current_pid != self._creator_pid:
@@ -1162,6 +1169,7 @@ class AsyncConnection:
         self,
         operation: str,
         parameters: Sequence[Any] | None = None,
+        /,
     ) -> AsyncCursor:
         """PEP 249 optional extension — open a cursor, run ``execute``,
         return the cursor.
@@ -1192,6 +1200,7 @@ class AsyncConnection:
         self,
         operation: str,
         seq_of_parameters: Iterable[Sequence[Any]],
+        /,
     ) -> AsyncCursor:
         """PEP 249 optional extension — open a cursor, run
         ``executemany``, return the cursor. Mirrors stdlib
@@ -1328,7 +1337,13 @@ class AsyncConnection:
     def load_extension(self, path: str, *, entrypoint: str | None = None) -> NoReturn:
         raise NotSupportedError("dqlite-server does not support runtime extension loading")
 
-    async def backup(self, *args: object, **kwargs: object) -> NoReturn:
+    def backup(self, *args: object, **kwargs: object) -> NoReturn:
+        # Plain ``def`` (NOT ``async def``) so a forgotten ``await
+        # aconn.backup(target)`` raises ``NotSupportedError`` on the
+        # call line rather than producing a discarded coroutine that
+        # warns "coroutine was never awaited" at GC. Mirrors the
+        # discipline applied to ``executescript`` / ``interrupt`` /
+        # ``tpc_*`` and the rationale spelled out by ISSUE-Sym4.
         raise NotSupportedError(
             "dqlite does not support the stdlib sqlite3 online backup API; "
             "use the dqlite-server dump/restore mechanism instead"
