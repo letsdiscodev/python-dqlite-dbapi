@@ -14,6 +14,7 @@ from dqlitedbapi.cursor import (
     _ExecuteManyAccumulator,
     _is_dml_with_returning,
     _is_insert_or_replace,
+    _is_multi_statement,
     _is_row_returning,
     _strip_leading_comments,
     _to_signed_int64,
@@ -336,6 +337,15 @@ class AsyncCursor:
         # "no result set" baseline rather than reporting the prior
         # query's description.
         self._reset_execute_state()
+
+        # Match stdlib ``sqlite3.Cursor.execute``: a multi-statement
+        # SQL string is rejected as ``ProgrammingError``. dqlite's
+        # server prepare path returns only the first statement; without
+        # this guard, ``"INSERT ...; INSERT ..."`` silently drops
+        # everything past the first ``;``. Use ``executescript`` for
+        # multi-statement intent (we stub it as ``NotSupportedError``).
+        if _is_multi_statement(operation):
+            raise ProgrammingError("You can only execute one statement at a time.")
 
         _, op_lock = self._connection._ensure_locks()
         async with op_lock:

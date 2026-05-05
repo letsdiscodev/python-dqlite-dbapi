@@ -5,6 +5,7 @@ surface must too. Without it, users learning the API via
 though calling it from either namespace mutates the same registry.
 """
 
+
 def test_aio_exports_register_adapter() -> None:
     from dqlitedbapi.aio import register_adapter
 

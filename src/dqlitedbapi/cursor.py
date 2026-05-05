@@ -492,6 +492,38 @@ def _strip_sql_noise(sql: str) -> str:
     return _SQL_NOISE_RE.sub(" ", sql)
 
 
+def _is_multi_statement(sql: str) -> bool:
+    """Return ``True`` if ``sql`` contains more than one statement.
+
+    The dqlite server's prepare path returns a single statement
+    (the wire protocol's ``PrepareRequest`` ignores trailing text
+    after the first ``;``). A user passing
+    ``"INSERT ...; INSERT ..."`` would otherwise get only the first
+    INSERT executed with no diagnostic.
+
+    A trailing ``;`` is fine; whitespace and comments after the final
+    ``;`` are fine. Any non-whitespace, non-comment content past a
+    ``;`` is rejected as a multi-statement.
+
+    String literals and comments are neutralised first (via
+    ``_strip_sql_noise``) so a ``;`` inside a string or comment is
+    not detected as a statement boundary.
+    """
+    cleaned = _strip_sql_noise(sql)
+    semicolon = cleaned.find(";")
+    while semicolon != -1:
+        # The character past the ``;`` and everything after must
+        # reduce to whitespace / comments / nothing.
+        tail = _strip_leading_comments(cleaned[semicolon + 1 :])
+        if tail:
+            return True
+        next_idx = cleaned.find(";", semicolon + 1)
+        if next_idx == -1:
+            return False
+        semicolon = next_idx
+    return False
+
+
 class _ExecuteManyCursor(Protocol):
     """Structural shape of :class:`Cursor` / :class:`AsyncCursor` as
     consumed by :class:`_ExecuteManyAccumulator`.
@@ -1014,6 +1046,15 @@ class Cursor:
         # cursor in the "no result set" baseline, not one reporting the
         # previous query's description / rows.
         self._reset_execute_state()
+
+        # Match stdlib ``sqlite3.Cursor.execute``: a multi-statement
+        # SQL string is rejected as ``ProgrammingError``. dqlite's
+        # server prepare path returns only the first statement; without
+        # this guard, ``"INSERT ...; INSERT ..."`` silently drops
+        # everything past the first ``;``. Use ``executescript`` for
+        # multi-statement intent (we stub it as ``NotSupportedError``).
+        if _is_multi_statement(operation):
+            raise ProgrammingError("You can only execute one statement at a time.")
 
         self._connection._run_sync(self._execute_async(operation, parameters))
         return self
