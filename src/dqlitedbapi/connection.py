@@ -174,6 +174,20 @@ def _validate_close_timeout(close_timeout: float) -> None:
 _RESOLVE_LEADER_CACHE: dict[tuple[object, ...], ClusterClient] = {}
 _RESOLVE_LEADER_CACHE_PID: int = os.getpid()
 _RESOLVE_LEADER_CACHE_MAX: Final[int] = 32
+# Module-level lock serialising the read-check-construct-insert
+# composite. Each individual dict op is GIL-atomic on CPython, but
+# the composite is not — without serialisation, two threads that
+# both observe ``cluster is None`` for the same key construct
+# distinct ClusterClient instances and race on the dict insert,
+# orphaning whichever loses (and defeating the single-flight
+# collapse the cache is for). The lock is held across
+# ``ClusterClient.__init__``; that constructor must NOT block on
+# async I/O (it doesn't today — wire I/O happens lazily inside
+# ``find_leader``). If a future change adds async work to the
+# ``__init__`` path, the lock-while-awaiting becomes a deadlock
+# risk and this gate must be reshaped (e.g. construct outside the
+# lock, then check-and-insert under the lock).
+_RESOLVE_LEADER_CACHE_LOCK: Final[threading.Lock] = threading.Lock()
 
 
 def _get_resolve_leader_cluster(
@@ -185,49 +199,83 @@ def _get_resolve_leader_cluster(
     trust_server_heartbeat: bool,
 ) -> ClusterClient:
     """Return a process-shared :class:`ClusterClient` for the
-    leader-discovery probe, keyed by the (address, governor) tuple.
+    leader-discovery probe, keyed by the (loop, address, governor)
+    tuple.
 
     The single-flight collapse and ``_last_known_leader`` fast-path
     inside ``ClusterClient`` only amortise across callers of the
     *same* instance. Constructing a fresh client per ``connect()``
     defeats both. A process-wide cache restores the invariant.
 
+    **Loop isolation**: keyed additionally by ``id(running_loop)``
+    so a sync ``Connection`` running on a worker-thread loop does
+    not reuse a ``ClusterClient`` whose ``_find_leader_tasks`` were
+    created on a different loop. ``await asyncio.shield(<foreign-
+    loop task>)`` raises ``RuntimeError`` which escapes the
+    ``dbapi.Error`` hierarchy and SA's ``is_disconnect``
+    classifier; without per-loop keying, multi-thread sync dbapi
+    callers (Flask/Django handlers each opening their own
+    Connection) would non-deterministically hit that path. The
+    ``id(loop)`` key is paired with LRU eviction at cap so closed
+    loops do not leak entries indefinitely; under churn, stale
+    entries get evicted naturally. ``id`` recycling after loop GC
+    is a residual risk bounded by the 32-slot cap — the recycled
+    loop's predecessor's tasks would already be GC-eligible by
+    that point.
+
     Cleared wholesale on fork: ``ClusterClient`` instances inherit
     parent ``asyncio.Lock`` / pending ``asyncio.Task`` references
     that are bound to the parent's event loop and cannot make
     progress in the child. The pid check is cheap (Python int
     equality) and runs only on the cache-lookup path.
+
+    Async-only: must be called from inside a running event loop.
+    The function raises ``InterfaceError`` if no running loop is
+    found — fail loud rather than silently caching against a
+    sentinel ``loop_id``. Today the only callers are
+    ``_resolve_leader`` (async) and the cross-loop test fixtures.
     """
     global _RESOLVE_LEADER_CACHE_PID
-    pid = _client_conn_mod._current_pid
-    if pid != _RESOLVE_LEADER_CACHE_PID:
-        _RESOLVE_LEADER_CACHE.clear()
-        _RESOLVE_LEADER_CACHE_PID = pid
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError as e:
+        raise InterfaceError(
+            "_get_resolve_leader_cluster called outside a running event loop; "
+            "the cache key requires a loop identity to keep ClusterClient "
+            "tasks from leaking across loops."
+        ) from e
 
-    key: tuple[object, ...] = (
-        address,
-        timeout,
-        max_total_rows,
-        max_continuation_frames,
-        trust_server_heartbeat,
-    )
-    cluster = _RESOLVE_LEADER_CACHE.get(key)
-    if cluster is None:
-        if len(_RESOLVE_LEADER_CACHE) >= _RESOLVE_LEADER_CACHE_MAX:
-            # Evict an arbitrary oldest entry. Worst case: the
-            # evicted client's fast-path cache is lost; the next
-            # ``find_leader`` against that key rediscovers in one
-            # sweep. Acceptable bound on the cache size.
-            _RESOLVE_LEADER_CACHE.pop(next(iter(_RESOLVE_LEADER_CACHE)))
-        cluster = ClusterClient(
-            MemoryNodeStore([address]),
-            timeout=timeout,
-            max_total_rows=max_total_rows,
-            max_continuation_frames=max_continuation_frames,
-            trust_server_heartbeat=trust_server_heartbeat,
+    with _RESOLVE_LEADER_CACHE_LOCK:
+        pid = _client_conn_mod._current_pid
+        if pid != _RESOLVE_LEADER_CACHE_PID:
+            _RESOLVE_LEADER_CACHE.clear()
+            _RESOLVE_LEADER_CACHE_PID = pid
+
+        key: tuple[object, ...] = (
+            loop_id,
+            address,
+            timeout,
+            max_total_rows,
+            max_continuation_frames,
+            trust_server_heartbeat,
         )
-        _RESOLVE_LEADER_CACHE[key] = cluster
-    return cluster
+        cluster = _RESOLVE_LEADER_CACHE.get(key)
+        if cluster is None:
+            if len(_RESOLVE_LEADER_CACHE) >= _RESOLVE_LEADER_CACHE_MAX:
+                # Evict an arbitrary oldest entry. Worst case: the
+                # evicted client's fast-path cache is lost; the next
+                # ``find_leader`` against that key rediscovers in one
+                # sweep. Acceptable bound on the cache size.
+                _RESOLVE_LEADER_CACHE.pop(next(iter(_RESOLVE_LEADER_CACHE)))
+            cluster = ClusterClient(
+                MemoryNodeStore([address]),
+                timeout=timeout,
+                max_total_rows=max_total_rows,
+                max_continuation_frames=max_continuation_frames,
+                trust_server_heartbeat=trust_server_heartbeat,
+            )
+            _RESOLVE_LEADER_CACHE[key] = cluster
+        return cluster
 
 
 async def _resolve_leader(
