@@ -104,9 +104,21 @@ Connection-level `commit()` / `rollback()` semantics:
 ## Differences from `aiosqlite`
 
 This driver is PEP 249-shaped (sync) and exposes an async surface
-under `dqlitedbapi.aio` that mirrors aiosqlite's module-level shape
-(`apilevel`, `paramstyle`, `connect`, `aconnect`, `AsyncConnection`,
-`AsyncCursor`). One notable deviation:
+under `dqlitedbapi.aio` that mirrors the sync `dqlitedbapi` surface
+plus async-specific `aconnect` / `AsyncConnection` / `AsyncCursor`.
+
+The full PEP 249 module attributes (`apilevel`, `threadsafety`,
+`paramstyle`, `sqlite_version`, `sqlite_version_info`), exception
+hierarchy (`Warning`, `Error`, `InterfaceError`, `DatabaseError`,
+`DataError`, `OperationalError`, `IntegrityError`, `InternalError`,
+`ProgrammingError`, `NotSupportedError`), type constructors
+(`Date`, `Time`, `Timestamp`, `DateFromTicks`, `TimeFromTicks`,
+`TimestampFromTicks`, `Binary`), type sentinels (`STRING`, `BINARY`,
+`NUMBER`, `DATETIME`, `ROWID`), and stdlib-sqlite3-parity stubs
+(`register_adapter`, `register_converter`, `complete_statement`,
+`enable_callback_tracebacks`) are all re-exported under
+`dqlitedbapi.aio` so cross-driver code porting from aiosqlite
+imports them from one namespace. One notable deviation:
 
 - **`AsyncConnection.__aexit__` does NOT close the connection.** It
   commits / rolls back per the body outcome and leaves the
