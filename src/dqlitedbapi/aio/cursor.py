@@ -536,10 +536,17 @@ class AsyncCursor:
             return None
 
         row = self._rows[self._row_index]
-        self._row_index += 1
+        # Apply row_factory BEFORE advancing ``_row_index`` so a raise
+        # inside a custom factory leaves the index unchanged. Without
+        # this ordering, ``fetchmany``'s snapshot/restore at
+        # ``snapshot + len(result)`` underestimates by 1 for
+        # factory-raised rows — silently REPLAYING a row on the next
+        # call. Mirrors the sync sibling at ``cursor.py``'s fetchone.
         if self._row_factory is not None:
             transformed: tuple[Any, ...] = self._row_factory(self, row)
+            self._row_index += 1
             return transformed
+        self._row_index += 1
         return row
 
     async def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
