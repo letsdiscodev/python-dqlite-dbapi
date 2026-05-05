@@ -1355,6 +1355,14 @@ class Cursor:
 
         if size is None:
             size = self._arraysize
+        elif not isinstance(size, int) or isinstance(size, bool):
+            # Non-int / bool slip past stdlib's C-level
+            # ``PyLong_AsLongAndOverflow`` and produce a bare TypeError
+            # outside the dbapi.Error hierarchy. PEP 249 §7 requires
+            # cursor methods to raise Error subclasses; bool is
+            # rejected explicitly because ``True`` silently coerces
+            # to 1 (a common caller-bug trap, not a useful affordance).
+            raise ProgrammingError(f"fetchmany expects an int or None, got {type(size).__name__}")
         if size < 0:
             # Stdlib ``sqlite3.Cursor.fetchmany`` documents negative
             # ``size`` as "fetch all remaining rows"; mirror that

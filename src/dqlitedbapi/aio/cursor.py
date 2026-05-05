@@ -553,6 +553,13 @@ class AsyncCursor:
 
         if size is None:
             size = self._arraysize
+        elif not isinstance(size, int) or isinstance(size, bool):
+            # PEP 249 §7: cursor methods must raise dbapi.Error.
+            # Non-int / bool slip past stdlib's C-level int coerce
+            # and produce a bare TypeError otherwise. bool is rejected
+            # because ``True`` silently coerces to 1 (caller-bug trap).
+            # See sync sibling at cursor.py for matching guard.
+            raise ProgrammingError(f"fetchmany expects an int or None, got {type(size).__name__}")
         if size < 0:
             # Stdlib parity: ``sqlite3.Cursor.fetchmany`` documents
             # negative ``size`` as "fetch all remaining rows". Mirror
