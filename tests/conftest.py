@@ -1,7 +1,26 @@
 """Pytest configuration for dqlite-dbapi tests."""
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_resolve_leader_cache() -> Iterator[None]:
+    """Clear the process-wide ``_resolve_leader`` ClusterClient cache
+    between tests. The cache is keyed by (address, governors) so two
+    tests that mock ``ClusterClient`` against the same seed address
+    would otherwise share a stale cached instance from the first
+    test's patch context.
+    """
+    from dqlitedbapi import connection as _conn_mod
+
+    _conn_mod._RESOLVE_LEADER_CACHE.clear()
+    yield
+    _conn_mod._RESOLVE_LEADER_CACHE.clear()
+
 
 # Add python-dqlite-dev's testlib to sys.path so tests (in particular
 # the leader-redirect integration suite) can import shared utilities

@@ -222,6 +222,40 @@ async def test_build_and_connect_mid_flip_leader_change_propagates() -> None:
             )
 
 
+@pytest.mark.asyncio
+async def test_resolve_leader_threads_governors_to_cluster_client() -> None:
+    """``_resolve_leader`` must forward ``trust_server_heartbeat`` /
+    ``max_total_rows`` / ``max_continuation_frames`` to the
+    ``ClusterClient`` it constructs. Without forwarding, the FIRST
+    round-trip — leader discovery — runs with default governors
+    even when the operator opted into different ones, defeating
+    the per-connection setting at exactly the path the security
+    audit flagged.
+    """
+    captured: dict[str, object] = {}
+
+    def fake_cluster_client(store: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        client = MagicMock()
+        client.find_leader = AsyncMock(return_value="leader:9999")
+        return client
+
+    with patch("dqlitedbapi.connection.ClusterClient", fake_cluster_client):
+        result = await _resolve_leader(
+            "seed:9001",
+            timeout=5.0,
+            max_total_rows=None,
+            max_continuation_frames=42,
+            trust_server_heartbeat=True,
+        )
+
+    assert result == "leader:9999"
+    assert captured["timeout"] == 5.0
+    assert captured["max_total_rows"] is None
+    assert captured["max_continuation_frames"] == 42
+    assert captured["trust_server_heartbeat"] is True
+
+
 # --- end-to-end via Connection (sync surface) ---
 
 
@@ -231,7 +265,7 @@ def test_connection_connect_uses_leader_address(monkeypatch: pytest.MonkeyPatch)
     inner ``DqliteConnection``."""
     captured_addresses: list[str] = []
 
-    async def fake_resolve(address: str, *, timeout: float) -> str:
+    async def fake_resolve(address: str, *, timeout: float, **_kw: object) -> str:
         return "leader:9999"
 
     def capture_dqlite_connection(address: str, *args: object, **kwargs: object) -> AsyncMock:

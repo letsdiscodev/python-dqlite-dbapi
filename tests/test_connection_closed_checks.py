@@ -195,7 +195,7 @@ class TestSyncConnectWrapsClusterPolicyRejection:
         # ``DqliteConnection.connect`` arm. Then patch
         # ``DqliteConnection.connect`` to raise the policy error this
         # test pins.
-        async def _identity_resolve(address: str, *, timeout: float) -> str:
+        async def _identity_resolve(address: str, *, timeout: float, **_kw: object) -> str:
             return address
 
         monkeypatch.setattr(

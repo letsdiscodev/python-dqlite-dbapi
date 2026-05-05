@@ -34,7 +34,7 @@ async def test_close_waits_for_in_flight_execute() -> None:
     with (
         patch(
             "dqlitedbapi.connection._resolve_leader",
-            new=AsyncMock(side_effect=lambda address, *, timeout: address),
+            new=AsyncMock(side_effect=lambda address, *, timeout, **_kw: address),
         ),
         patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn,
     ):

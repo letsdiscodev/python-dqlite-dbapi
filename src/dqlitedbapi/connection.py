@@ -147,7 +147,97 @@ def _validate_close_timeout(close_timeout: float) -> None:
         )
 
 
-async def _resolve_leader(address: str, *, timeout: float) -> str:
+# Process-wide ``ClusterClient`` cache for the leader-discovery probe.
+# Keyed by the full ``(address, governor)`` tuple so two configurations
+# never share state. Without the cache, every dbapi ``connect()`` /
+# every SA pool slot warm-up constructs a fresh ``ClusterClient`` —
+# discarding both the single-flight ``_find_leader_tasks`` slot map
+# AND the ``_last_known_leader`` fast-path cache. Under N concurrent
+# SA pool checkouts after a leader flip, the cluster sees N
+# independent leader-discovery sweeps where one would suffice.
+#
+# Fork-safety: the cache is wholesale-invalidated on fork via the same
+# ``_current_pid`` token that ``DqliteConnection`` uses (see
+# ``dqliteclient.connection`` lines 45-78). The first ``_resolve_leader``
+# call in a child process observes the pid mismatch and clears the
+# inherited cache; the parent's ``ClusterClient`` instances would
+# otherwise carry parent-allocated ``asyncio.Lock`` / ``asyncio.Task``
+# references that the child's event loop cannot make progress on.
+#
+# Strong-reference (``dict``, not ``WeakValueDictionary``): the
+# ClusterClient must outlive a single ``find_leader`` call so the
+# fast-path cache survives across calls; nothing else holds a
+# reference. The cap (``_RESOLVE_LEADER_CACHE_MAX``) bounds the worst
+# case to a single distinct configuration per dbapi ``connect()`` call;
+# typical SA deployments use one config per Engine, so the cap is
+# only reached by adversarial / highly-fragmented usage.
+_RESOLVE_LEADER_CACHE: dict[tuple[object, ...], ClusterClient] = {}
+_RESOLVE_LEADER_CACHE_PID: int = os.getpid()
+_RESOLVE_LEADER_CACHE_MAX: Final[int] = 32
+
+
+def _get_resolve_leader_cluster(
+    *,
+    address: str,
+    timeout: float,
+    max_total_rows: int | None,
+    max_continuation_frames: int | None,
+    trust_server_heartbeat: bool,
+) -> ClusterClient:
+    """Return a process-shared :class:`ClusterClient` for the
+    leader-discovery probe, keyed by the (address, governor) tuple.
+
+    The single-flight collapse and ``_last_known_leader`` fast-path
+    inside ``ClusterClient`` only amortise across callers of the
+    *same* instance. Constructing a fresh client per ``connect()``
+    defeats both. A process-wide cache restores the invariant.
+
+    Cleared wholesale on fork: ``ClusterClient`` instances inherit
+    parent ``asyncio.Lock`` / pending ``asyncio.Task`` references
+    that are bound to the parent's event loop and cannot make
+    progress in the child. The pid check is cheap (Python int
+    equality) and runs only on the cache-lookup path.
+    """
+    global _RESOLVE_LEADER_CACHE_PID
+    pid = _client_conn_mod._current_pid
+    if pid != _RESOLVE_LEADER_CACHE_PID:
+        _RESOLVE_LEADER_CACHE.clear()
+        _RESOLVE_LEADER_CACHE_PID = pid
+
+    key: tuple[object, ...] = (
+        address,
+        timeout,
+        max_total_rows,
+        max_continuation_frames,
+        trust_server_heartbeat,
+    )
+    cluster = _RESOLVE_LEADER_CACHE.get(key)
+    if cluster is None:
+        if len(_RESOLVE_LEADER_CACHE) >= _RESOLVE_LEADER_CACHE_MAX:
+            # Evict an arbitrary oldest entry. Worst case: the
+            # evicted client's fast-path cache is lost; the next
+            # ``find_leader`` against that key rediscovers in one
+            # sweep. Acceptable bound on the cache size.
+            _RESOLVE_LEADER_CACHE.pop(next(iter(_RESOLVE_LEADER_CACHE)))
+        cluster = ClusterClient(
+            MemoryNodeStore([address]),
+            timeout=timeout,
+            max_total_rows=max_total_rows,
+            max_continuation_frames=max_continuation_frames,
+            trust_server_heartbeat=trust_server_heartbeat,
+        )
+        _RESOLVE_LEADER_CACHE[key] = cluster
+    return cluster
+
+
+async def _resolve_leader(
+    address: str,
+    *,
+    timeout: float,
+    max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
+    max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
+    trust_server_heartbeat: bool = False,
+) -> str:
     """Resolve the cluster's current leader address from a seed.
 
     Bootstraps from the user-supplied ``address`` (the URL host:port
@@ -160,14 +250,29 @@ async def _resolve_leader(address: str, *, timeout: float) -> str:
     cluster has a healthy leader at a different address; the SA
     pool's reconnect-after-pre-ping path cannot recover.
 
+    Threads the governor set used by the subsequent
+    :class:`DqliteConnection` so the leader-discovery probe runs
+    with the same configuration as the eventual data session. Without
+    forwarding, an operator who set ``trust_server_heartbeat=True``
+    finds the *first* round-trip — leader discovery — running with
+    the default opt-out, defeating the very setting they enabled.
+    Likewise ``max_total_rows`` / ``max_continuation_frames`` matter
+    for admin paths (``cluster_info`` / ``dump``) reachable through
+    the resolved client.
+
     Wraps the seed in a single-node :class:`MemoryNodeStore` and
     delegates to :meth:`ClusterClient.find_leader`. Returns the
     leader's address on success; raises the underlying
     ``ClusterError`` / ``ClusterPolicyError`` for the surrounding
     error-translation arms in :func:`_build_and_connect` to handle.
     """
-    store = MemoryNodeStore([address])
-    cluster = ClusterClient(store, timeout=timeout)
+    cluster = _get_resolve_leader_cluster(
+        address=address,
+        timeout=timeout,
+        max_total_rows=max_total_rows,
+        max_continuation_frames=max_continuation_frames,
+        trust_server_heartbeat=trust_server_heartbeat,
+    )
     return await cluster.find_leader()
 
 
@@ -202,7 +307,13 @@ async def _build_and_connect(
     connections; the dbapi handles the redirect transparently.
     """
     try:
-        leader_address = await _resolve_leader(address, timeout=timeout)
+        leader_address = await _resolve_leader(
+            address,
+            timeout=timeout,
+            max_total_rows=max_total_rows,
+            max_continuation_frames=max_continuation_frames,
+            trust_server_heartbeat=trust_server_heartbeat,
+        )
     except _client_exc.ClusterPolicyError as e:
         # Operator allowlist rejected a redirect target. Surface as
         # InterfaceError with the canonical prefix — symmetric with

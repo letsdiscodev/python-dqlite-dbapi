@@ -83,7 +83,7 @@ class TestCloseTimeoutPlumbing:
         with (
             patch(
                 "dqlitedbapi.connection._resolve_leader",
-                new=AsyncMock(side_effect=lambda address, *, timeout: address),
+                new=AsyncMock(side_effect=lambda address, *, timeout, **_kw: address),
             ),
             patch("dqlitedbapi.connection.DqliteConnection") as MockConn,
         ):
