@@ -23,8 +23,6 @@ the server rejects on the first query. The integration test
 this constant is ahead of what the server reports.
 """
 
-from __future__ import annotations
-
 from typing import Final
 
 SQLITE_VERSION_INFO: Final[tuple[int, int, int]] = (3, 35, 0)
