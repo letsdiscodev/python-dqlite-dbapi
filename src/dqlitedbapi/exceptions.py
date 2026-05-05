@@ -126,6 +126,23 @@ class Warning(Exception):  # PEP 249 mandated class name
     pass
 
 
+# Cap on ``raw_message`` carried by any code-bearing dbapi Error.
+# Mirrors ``dqliteclient.exceptions.DqliteError._MAX_RAW_MESSAGE``.
+# The wire layer caps a single FailureResponse at ~64 KiB; combined
+# with BaseExceptionGroup chains and cross-process pickling, an
+# unbounded ``raw_message`` can produce multi-MB pickled exception
+# payloads. 4 KiB is well above any realistic SQLite error string
+# while bounding the worst-case fan-out.
+_MAX_RAW_MESSAGE: int = 4 * 1024
+
+
+def _cap_raw_message(raw_message: str) -> str:
+    if len(raw_message) <= _MAX_RAW_MESSAGE:
+        return raw_message
+    overflow = len(raw_message) - _MAX_RAW_MESSAGE
+    return raw_message[:_MAX_RAW_MESSAGE] + f"... [raw_message truncated, {overflow} codepoints]"
+
+
 class Error(Exception):
     """Base class for all database errors."""
 
@@ -182,7 +199,8 @@ class InterfaceError(Error):
     ) -> None:
         super().__init__(message)
         self.code = code
-        self.raw_message = str(message) if raw_message is None else raw_message
+        resolved = str(message) if raw_message is None else raw_message
+        self.raw_message = _cap_raw_message(resolved)
 
     @property
     def sqlite_errorcode(self) -> int | None:
@@ -237,7 +255,8 @@ class DatabaseError(Error):
     ) -> None:
         super().__init__(message)
         self.code = code
-        self.raw_message = str(message) if raw_message is None else raw_message
+        resolved = str(message) if raw_message is None else raw_message
+        self.raw_message = _cap_raw_message(resolved)
 
     @property
     def sqlite_errorcode(self) -> int | None:
