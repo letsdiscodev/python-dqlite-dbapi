@@ -225,7 +225,7 @@ def test_sync_executemany_shortcut_closes_cursor_on_raise() -> None:
         cursors_seen.append(cur)
         return cur
 
-    conn.cursor = fake_cursor
+    conn.cursor = fake_cursor  # type: ignore[assignment]
     conn.messages = []
 
     with pytest.raises(OperationalError, match="boom"):
@@ -250,7 +250,7 @@ async def test_async_execute_shortcut_closes_cursor_on_raise() -> None:
         cursors_seen.append(cur)
         return cur
 
-    aconn.cursor = fake_cursor
+    aconn.cursor = fake_cursor  # type: ignore[assignment]
     aconn.messages = []
 
     with pytest.raises(OperationalError, match="boom"):
@@ -275,7 +275,7 @@ async def test_async_executemany_shortcut_closes_cursor_on_raise() -> None:
         cursors_seen.append(cur)
         return cur
 
-    aconn.cursor = fake_cursor
+    aconn.cursor = fake_cursor  # type: ignore[assignment]
     aconn.messages = []
 
     with pytest.raises(OperationalError, match="boom"):

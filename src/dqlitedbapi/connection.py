@@ -1748,9 +1748,24 @@ class Connection:
             if not _is_no_transaction_error(e):
                 raise
 
-    def cursor(self) -> Cursor:
-        """Return a new Cursor object."""
+    def cursor(self, **unknown_kwargs: object) -> Cursor:
+        """Return a new Cursor object.
+
+        Reject unknown kwargs (notably stdlib's ``factory=`` Cursor-
+        subclass hook) with ``NotSupportedError`` so cross-driver
+        porting code's ``except dbapi.Error:`` catches the rejection
+        rather than the bare ``TypeError`` Python raises for an
+        unexpected kwarg. Symmetric with ``connect()``'s
+        ``**unknown_kwargs`` pattern (ISSUE-Q4/Q5/Q6).
+        """
         del self.messages[:]
+        if unknown_kwargs:
+            raise NotSupportedError(
+                f"dqlitedbapi cursor() rejects stdlib sqlite3 kwargs not "
+                f"supported by this driver: {sorted(unknown_kwargs)}. "
+                f"(stdlib's factory= is not honoured here — Cursor "
+                f"subclassing is not supported.)"
+            )
         self._check_thread()
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
@@ -1762,6 +1777,7 @@ class Connection:
         self,
         operation: str,
         parameters: Sequence[Any] | None = None,
+        /,
     ) -> Cursor:
         """PEP 249 optional extension — open a cursor, run ``execute``,
         return the cursor.
@@ -1802,6 +1818,7 @@ class Connection:
         self,
         operation: str,
         seq_of_parameters: Iterable[Sequence[Any]],
+        /,
     ) -> Cursor:
         """PEP 249 optional extension — open a cursor, run
         ``executemany``, return the cursor.
