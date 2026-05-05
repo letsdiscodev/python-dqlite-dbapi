@@ -104,13 +104,6 @@ _SQLITE_NOMEM: Final[int] = 7
 # SA dialect, the dbapi, and any future caller all reference the
 # same source of truth.
 
-# SQLITE_PROTOCOL (15) — file-locking protocol error inside SQLite's
-# WAL machinery. CPython routes to ``OperationalError``; we already
-# default unmapped codes to OperationalError so this entry is
-# documentary — it pins the contract so a future audit shows the
-# code was considered.
-_SQLITE_PROTOCOL: Final[int] = 15
-
 # Primary codes that CPython stdlib routes to bare ``DatabaseError``
 # via ``util.c::get_exception_class``'s ``default:`` arm. Each of
 # these conveys a deterministic / non-transient condition (NOLFS:
@@ -150,7 +143,13 @@ _CODE_TO_EXCEPTION: dict[
     _SQLITE_CORRUPT: DatabaseError,
     _SQLITE_FORMAT: DatabaseError,
     _SQLITE_NOTADB: DatabaseError,
-    _SQLITE_PROTOCOL: OperationalError,
+    # Codes that intentionally fall through to the OperationalError
+    # default (no explicit entry needed): BUSY, LOCKED, READONLY,
+    # IOERR, FULL, CANTOPEN, EMPTY, SCHEMA, PROTOCOL (15), PERM,
+    # ABORT, INTERRUPT, ERROR. These are stdlib's OperationalError
+    # codes; we used to enumerate PROTOCOL explicitly as
+    # "documentary" but that just invited symmetry pressure to add
+    # 12 more no-op entries.
     # CPython stdlib parity — see the primary-code constants above.
     _SQLITE_NOLFS: DatabaseError,
     _SQLITE_AUTH: DatabaseError,
@@ -1533,6 +1532,21 @@ class Cursor:
         cursor without masking the body's original exception under a
         thread-check ``ProgrammingError``. Matches stdlib
         ``sqlite3.Cursor.close`` — close is always safe to call.
+
+        **Divergence from stdlib sqlite3 on post-close attribute
+        state**: this implementation scrubs ``description`` /
+        ``rowcount`` / ``lastrowid`` / ``_rows`` / ``_row_index``
+        for a consistent "no operation performed" surface (per
+        ISSUE-446's rationale: avoid stale-state reads on a closed
+        cursor). Stdlib ``sqlite3.Cursor.close()`` leaves
+        ``description`` populated (the last query's tuple-of-7-tuples)
+        and leaves ``lastrowid`` at its prior value; only ``rowcount``
+        is reset to ``-1`` there. Cross-driver code that introspects
+        ``cur.description`` AFTER ``close()`` (e.g. relying on
+        context-manager exit to close before reading metadata) sees
+        ``None`` here vs the populated tuple on stdlib. PEP 249 is
+        silent on post-close attribute state; the scrub-for-consistency
+        choice is deliberate and documented.
         """
         # PEP 249 §6.1.2: ``Cursor.messages`` is cleared "prior to
         # executing the call" on every standard cursor method. Every
