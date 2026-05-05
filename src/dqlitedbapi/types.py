@@ -559,6 +559,23 @@ def register_adapter(type_: type, adapter: "Any") -> None:
     dispatched on read. Callers wanting per-row decoding can use
     ``Cursor.row_factory`` (when implemented) or post-fetch
     coercion in user code.
+
+    **Scope: process-global.** Adapters live in a single module-
+    level dict shared by every sync and async connection in the
+    process — registering on either ``dqlitedbapi`` or
+    ``dqlitedbapi.aio`` mutates the same dict. This matches stdlib
+    ``sqlite3.register_adapter`` pre-3.12 semantics. psycopg3-style
+    per-connection scoping (``Connection.adapters``) is NOT
+    supported: registering here affects every connection in the
+    process. Tests that register adapters should clean up by
+    explicitly removing the entry afterwards. Note that calling
+    ``register_adapter(type_, None)`` does NOT unregister — it
+    raises ``TypeError`` because ``None`` fails the
+    callable-check above. To remove an adapter, access the
+    private registry directly:
+    ``from dqlitedbapi.types import _ADAPTERS;
+    _ADAPTERS.pop(type_, None)``. This is internal and acceptable
+    for test cleanup; production code should not rely on it.
     """
     if not callable(adapter):
         raise TypeError(f"adapter must be callable, got {type(adapter).__name__}")
