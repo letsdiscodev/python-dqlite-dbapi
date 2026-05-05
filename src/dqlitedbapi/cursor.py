@@ -1250,14 +1250,18 @@ class Cursor:
         the ``Connection`` class docstring for the autocommit-by-
         default rationale.
 
-        ``lastrowid`` semantics match stdlib ``sqlite3.Cursor`` —
-        executemany resets ``lastrowid`` to None on entry and does
-        NOT update it across iterations (stdlib explicitly says
-        ``lastrowid`` is "left unchanged after executemany"; the
-        interpretation here is that the prior cursor's lastrowid is
-        cleared because the batch's outcome makes it stale, and not
-        updated again because the batch can have many INSERTs and
-        no single row id is the canonical answer).
+        ``lastrowid`` semantics: **divergence from stdlib
+        ``sqlite3.Cursor``.** stdlib's documented contract is
+        "``lastrowid`` is left unchanged after executemany" — the
+        prior INSERT's id stays sticky across the batch. This driver
+        clears ``lastrowid`` to ``None`` on executemany entry AND
+        after success: the batch's ambiguity (which of N inserts is
+        "the" rowid?) makes any sticky value misleading, so we surface
+        ``None`` to force callers to read the rowid from a single-row
+        INSERT before the batch. Cross-driver code that relies on the
+        stdlib "left unchanged" contract should not call executemany
+        on this driver to obtain a rowid; use a single-row execute
+        instead, or read the id from RETURNING rows.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
