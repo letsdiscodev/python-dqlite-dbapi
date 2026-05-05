@@ -13,8 +13,7 @@ from types import TracebackType
 from typing import Any, Final, NoReturn, Self
 
 import dqliteclient.exceptions as _client_exc
-from dqliteclient import DqliteConnection, validate_positive_int_or_none
-from dqliteclient import connection as _client_conn_mod
+from dqliteclient import DqliteConnection, get_current_pid, validate_positive_int_or_none
 from dqliteclient.cluster import ClusterClient
 from dqliteclient.connection import parse_address as _client_parse_address
 from dqliteclient.node_store import MemoryNodeStore
@@ -257,7 +256,7 @@ def _get_resolve_leader_cluster(
         ) from e
 
     with _RESOLVE_LEADER_CACHE_LOCK:
-        pid = _client_conn_mod._current_pid
+        pid = get_current_pid()
         if pid != _RESOLVE_LEADER_CACHE_PID:
             _RESOLVE_LEADER_CACHE.clear()
             _RESOLVE_LEADER_CACHE_PID = pid
@@ -843,7 +842,7 @@ class Connection:
         - InterfaceError if called from a forked child (pid mismatch).
         - ProgrammingError if called from a different thread than the creator.
         """
-        if _client_conn_mod._current_pid != self._creator_pid:
+        if get_current_pid() != self._creator_pid:
             raise InterfaceError(
                 "Connection used after fork; reconstruct from configuration in the target process."
             )
@@ -1354,7 +1353,7 @@ class Connection:
         # closed inputs — quiet no-op preserves that contract for
         # the GC / atexit path that commonly drives close in a
         # forked worker.
-        if _client_conn_mod._current_pid != self._creator_pid:
+        if get_current_pid() != self._creator_pid:
             self._closed = True
             self._closed_flag[0] = True
             # Cascade to tracked cursors so buffered fetches on them
@@ -1544,7 +1543,7 @@ class Connection:
         self._closed_flag[0] = True
         # Fork-after-init: same shape as close()'s pid guard. Drop
         # local refs and skip touching the wire / dead loop.
-        if _client_conn_mod._current_pid != self._creator_pid:
+        if get_current_pid() != self._creator_pid:
             self._cascade_cursors()
             if self._finalizer is not None:
                 self._finalizer.detach()

@@ -10,8 +10,7 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from types import TracebackType
 from typing import Any, NoReturn, Self
 
-from dqliteclient import DqliteConnection
-from dqliteclient import connection as _client_conn_mod
+from dqliteclient import DqliteConnection, get_current_pid
 from dqliteclient.connection import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
@@ -288,7 +287,7 @@ class AsyncConnection:
         # layer use, so a forked worker sees a clear "reconstruct in
         # the child" message instead of a confusing
         # "Connection bound to a different event loop" error.
-        if _client_conn_mod._current_pid != self._creator_pid:
+        if get_current_pid() != self._creator_pid:
             raise InterfaceError(
                 "Connection used after fork; reconstruct from configuration in the target process."
             )
@@ -325,7 +324,7 @@ class AsyncConnection:
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        if _client_conn_mod._current_pid != self._creator_pid:
+        if get_current_pid() != self._creator_pid:
             raise InterfaceError(
                 "Connection used after fork; reconstruct from configuration in the target process."
             )
@@ -436,7 +435,7 @@ class AsyncConnection:
         # state to closed and drop references quietly. Symmetric with
         # the sync ``Connection.close`` and ``DqliteConnection.close``
         # fork short-circuits.
-        if _client_conn_mod._current_pid != self._creator_pid:
+        if get_current_pid() != self._creator_pid:
             self._closed = True
             self._closed_flag[0] = True
             # Walk the inner client conn's own fork-close path
@@ -751,7 +750,7 @@ class AsyncConnection:
         # ``DqliteConnection.close`` and ``Connection.close`` fork
         # short-circuits; this synchronous force-close path completes
         # the symmetric pid-guard discipline.
-        if _client_conn_mod._current_pid != self._creator_pid:
+        if get_current_pid() != self._creator_pid:
             self._async_conn = None
             return
         # Close the transport writer if one exists; the cleanup tail
@@ -1093,7 +1092,7 @@ class AsyncConnection:
             )
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        if _client_conn_mod._current_pid != self._creator_pid:
+        if get_current_pid() != self._creator_pid:
             raise InterfaceError(
                 "AsyncConnection used after fork; reconstruct from configuration "
                 "in the target process."
