@@ -3,7 +3,18 @@
 import logging
 from typing import Final, Literal
 
-from dqlitedbapi import __version__
+# Re-export the stdlib-sqlite3-parity NotSupportedError stubs from
+# the sync surface so cross-driver code porting from aiosqlite (which
+# mirrors stdlib's full register_* / complete_statement /
+# enable_callback_tracebacks surface) gets a clean
+# ``dbapi.NotSupportedError`` rather than ``AttributeError`` —
+# matching the discipline applied to ``register_adapter`` (ISSUE-Q8).
+from dqlitedbapi import (  # noqa: E402 — module-level re-export
+    __version__,
+    complete_statement,
+    enable_callback_tracebacks,
+    register_converter,
+)
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
 )
@@ -116,6 +127,13 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     # Type-adapter registry (shared module-global with the sync
     # surface; calling on either namespace mutates the same dict)
     "register_adapter",
+    # NotSupportedError stubs mirroring stdlib sqlite3 — symmetric
+    # with the sync surface so cross-driver code porting from
+    # aiosqlite / stdlib gets a dbapi.Error rather than
+    # AttributeError.
+    "register_converter",
+    "complete_statement",
+    "enable_callback_tracebacks",
 ]
 
 
