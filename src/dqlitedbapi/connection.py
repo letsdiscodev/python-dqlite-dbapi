@@ -2224,8 +2224,26 @@ class Connection:
             return
         if exc_type is None:
             # Clean exit: commit. Let exceptions propagate; silent
-            # data loss is worse than a noisy failure.
-            self.commit()
+            # data loss is worse than a noisy failure. A KI / SystemExit
+            # landing inside the COMMIT round-trip is partial-commit-
+            # ambiguous (the COMMIT may or may not have reached the
+            # leader); log a DEBUG breadcrumb so operators can correlate
+            # the cancelled close with the source signal — symmetric
+            # with the async sibling at ``aio/connection.py:1586-1604``
+            # and with this method's own rollback arm below.
+            try:
+                self.commit()
+            except (KeyboardInterrupt, SystemExit):
+                logger.debug(
+                    "Connection.__exit__ (address=%s, id=%s): "
+                    "clean-exit commit interrupted by signal; "
+                    "transaction state may be ambiguous (commit-or-not "
+                    "on the leader)",
+                    self._address,
+                    id(self),
+                    exc_info=True,
+                )
+                raise
         else:
             # Body already raised; attempt rollback but don't mask
             # the original exception. Narrow except so programming
