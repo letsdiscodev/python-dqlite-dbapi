@@ -957,6 +957,21 @@ class AsyncConnection:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._async_conn is None:
             return
+        # Cancel-after-invalidate contract: a prior commit/rollback that
+        # was cancelled mid-flight invalidates the inner client conn
+        # AND clears its ``in_transaction`` flag. A naive retry would
+        # then short-circuit on the False flag and silently return —
+        # hiding partial-commit ambiguity (the cancelled commit may or
+        # may not have reached the leader). Detect the invalidated
+        # inner state up front and raise InterfaceError so retry
+        # middleware sees the ambiguity instead of a clean success.
+        if getattr(self._async_conn, "_protocol", "_sentinel") is None:
+            raise InterfaceError(
+                f"Connection invalidated (id={id(self)}); reconnect before "
+                "retrying commit / rollback. The prior call may have "
+                "reached the leader before cancel landed; server-side "
+                "transaction state is ambiguous."
+            )
         _, op_lock = self._ensure_locks()
         async with op_lock:
             # Re-check under the lock: a concurrent close() may have
@@ -1002,6 +1017,12 @@ class AsyncConnection:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._async_conn is None:
             return
+        # Same invalidated-inner detection as commit() above.
+        if getattr(self._async_conn, "_protocol", "_sentinel") is None:
+            raise InterfaceError(
+                f"Connection invalidated (id={id(self)}); reconnect before "
+                "retrying commit / rollback."
+            )
         _, op_lock = self._ensure_locks()
         async with op_lock:
             # Re-check under the lock for the same race as commit().
