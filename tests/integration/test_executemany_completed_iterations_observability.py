@@ -63,9 +63,7 @@ async def test_async_completed_iterations_after_success(cluster_address: str) ->
         await cur.execute("DROP TABLE IF EXISTS exec_iter_async")
         await cur.execute("CREATE TABLE exec_iter_async (id INTEGER)")
         await conn.commit()
-        await cur.executemany(
-            "INSERT INTO exec_iter_async VALUES (?)", [(i,) for i in range(7)]
-        )
+        await cur.executemany("INSERT INTO exec_iter_async VALUES (?)", [(i,) for i in range(7)])
         await conn.commit()
         assert cur.completed_iterations == 7
     finally:

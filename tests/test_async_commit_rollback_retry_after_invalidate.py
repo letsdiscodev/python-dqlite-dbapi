@@ -24,6 +24,7 @@ def _prime_invalidated() -> AsyncConnection:
     ``_protocol`` is None (the sentinel for invalidated state)."""
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
+    conn._transaction_owner = None
     conn.messages = []
     conn._async_conn = MagicMock()
     conn._async_conn._protocol = None  # invalidated
@@ -56,6 +57,7 @@ async def test_commit_with_alive_inner_does_not_raise_invalidated_error() -> Non
     on the documented happy path."""
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
+    conn._transaction_owner = None
     conn.messages = []
     conn._async_conn = MagicMock()
     conn._async_conn._protocol = object()  # alive

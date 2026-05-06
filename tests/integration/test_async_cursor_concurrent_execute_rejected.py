@@ -54,15 +54,11 @@ async def test_concurrent_execute_on_one_cursor_raises(cluster_address: str) -> 
         results = await asyncio.gather(first(), second(), return_exceptions=True)
         # At least one of the two tasks must have hit the guard. Both
         # may also raise (if they collided exactly); accept either.
-        raised = [
-            r for r in results if isinstance(r, dqlitedbapi.InterfaceError)
-        ]
-        assert raised, (
-            f"expected at least one InterfaceError on concurrent execute; got {results}"
+        raised = [r for r in results if isinstance(r, dqlitedbapi.InterfaceError)]
+        assert raised, f"expected at least one InterfaceError on concurrent execute; got {results}"
+        assert any("already executing" in str(r) for r in raised), (
+            f"InterfaceError messages: {[str(r) for r in raised]}"
         )
-        assert any(
-            "already executing" in str(r) for r in raised
-        ), f"InterfaceError messages: {[str(r) for r in raised]}"
     finally:
         await conn.close()
 
