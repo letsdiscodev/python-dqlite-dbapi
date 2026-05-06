@@ -1067,51 +1067,76 @@ class AsyncConnection:
                 "transaction state is ambiguous."
             )
         _, op_lock = self._ensure_locks()
-        async with op_lock:
-            # Re-check under the lock: a concurrent close() may have
-            # acquired op_lock before us, closed the connection, and
-            # released. The ``_protocol is None`` check is repeated
-            # here so a sibling-task ``_invalidate`` racing the
-            # ``async with op_lock`` acquire (after our pre-lock
-            # fast-path passed) does not slip through into the
-            # ``in_transaction``-False short-circuit and silently
-            # mask partial-commit ambiguity.
-            if (
-                self._closed
-                or self._async_conn is None
-                or getattr(self._async_conn, "_protocol", "_sentinel") is None
-            ):
-                if self._async_conn is not None and self._closed is False:
-                    raise InterfaceError(
-                        f"Connection invalidated (id={id(self)}); reconnect "
-                        "before retrying commit / rollback. The prior call "
-                        "may have reached the leader before cancel landed; "
-                        "server-side transaction state is ambiguous."
-                    )
-                raise InterfaceError(f"Connection is closed (id={id(self)})")
-            # Clear ``messages`` under the lock so the PEP 249
-            # contract "messages cleared by every method call" is
-            # atomic with the operation. Clearing only pre-lock leaves
-            # a window where a sibling task could append between
-            # this clear and the COMMIT.
-            del self.messages[:]
-            # Read ``in_transaction`` under the lock so the value is
-            # fresh against any sibling task that may have just
-            # committed/rolled back. Reading outside the lock left a
-            # window where a stale ``True`` would route us into a
-            # redundant COMMIT round-trip whose "no transaction" error
-            # is silenced below — correct, but a wasted RTT and a
-            # structural race. ``in_transaction`` already ORs in the
-            # untracked-savepoint flag at the client layer.
-            if not getattr(self._async_conn, "in_transaction", False):
-                return
-            try:
-                # Parity with ``Connection._commit_async``; ``_call_client``
-                # maps raw client errors onto PEP 249 ``Error`` subclasses.
-                await _call_client(self._async_conn.execute("COMMIT"))
-            except OperationalError as e:
-                if not _is_no_transaction_error(e):
-                    raise
+        # Bound the op_lock acquire by ``self._timeout`` — the sync
+        # sibling at ``connection.py:947`` and ``close()`` above (lines
+        # 569-570) have the same discipline. Without the bound,
+        # ``commit()`` waits indefinitely on a sibling task parked on a
+        # slow ``reader.read()`` (especially under
+        # ``trust_server_heartbeat=True`` widening the per-read
+        # deadline up to 300 s). Under shutdown — SA
+        # ``engine.dispose()`` or app SIGTERM with a budget — the
+        # caller would otherwise hang for the full per-read deadline.
+        try:
+            async with asyncio.timeout(self._timeout):
+                async with op_lock:
+                    # Re-check under the lock: a concurrent close() may have
+                    # acquired op_lock before us, closed the connection, and
+                    # released. The ``_protocol is None`` check is repeated
+                    # here so a sibling-task ``_invalidate`` racing the
+                    # ``async with op_lock`` acquire (after our pre-lock
+                    # fast-path passed) does not slip through into the
+                    # ``in_transaction``-False short-circuit and silently
+                    # mask partial-commit ambiguity.
+                    if (
+                        self._closed
+                        or self._async_conn is None
+                        or getattr(self._async_conn, "_protocol", "_sentinel") is None
+                    ):
+                        if self._async_conn is not None and self._closed is False:
+                            raise InterfaceError(
+                                f"Connection invalidated (id={id(self)}); reconnect "
+                                "before retrying commit / rollback. The prior call "
+                                "may have reached the leader before cancel landed; "
+                                "server-side transaction state is ambiguous."
+                            )
+                        raise InterfaceError(f"Connection is closed (id={id(self)})")
+                    # Clear ``messages`` under the lock so the PEP 249
+                    # contract "messages cleared by every method call" is
+                    # atomic with the operation. Clearing only pre-lock leaves
+                    # a window where a sibling task could append between
+                    # this clear and the COMMIT.
+                    del self.messages[:]
+                    # Read ``in_transaction`` under the lock so the value is
+                    # fresh against any sibling task that may have just
+                    # committed/rolled back. Reading outside the lock left a
+                    # window where a stale ``True`` would route us into a
+                    # redundant COMMIT round-trip whose "no transaction" error
+                    # is silenced below — correct, but a wasted RTT and a
+                    # structural race. ``in_transaction`` already ORs in the
+                    # untracked-savepoint flag at the client layer.
+                    if not getattr(self._async_conn, "in_transaction", False):
+                        return
+                    try:
+                        # Parity with ``Connection._commit_async``;
+                        # ``_call_client`` maps raw client errors onto
+                        # PEP 249 ``Error`` subclasses.
+                        await _call_client(self._async_conn.execute("COMMIT"))
+                    except OperationalError as e:
+                        if not _is_no_transaction_error(e):
+                            raise
+        except TimeoutError as e:
+            # Sibling held op_lock past ``self._timeout``. Surface as
+            # ``OperationalError`` so SA's ``is_disconnect`` classifies
+            # the failure and the pool invalidates the slot. Connection
+            # state is ambiguous from the caller's perspective: the
+            # sibling may still be in flight or may have completed —
+            # the safe response is to drop and reconnect.
+            raise OperationalError(
+                f"commit op_lock acquire timed out after {self._timeout}s "
+                f"(id={id(self)}); a sibling task held the lock past the "
+                f"bound. Connection state ambiguous; reconnect.",
+                code=None,
+            ) from e
 
     async def rollback(self) -> None:
         """Roll back any pending transaction.
@@ -1147,31 +1172,44 @@ class AsyncConnection:
                 "retrying commit / rollback."
             )
         _, op_lock = self._ensure_locks()
-        async with op_lock:
-            # Re-check under the lock for the same race as commit().
-            if (
-                self._closed
-                or self._async_conn is None
-                or getattr(self._async_conn, "_protocol", "_sentinel") is None
-            ):
-                if self._async_conn is not None and self._closed is False:
-                    raise InterfaceError(
-                        f"Connection invalidated (id={id(self)}); reconnect "
-                        "before retrying commit / rollback."
-                    )
-                raise InterfaceError(f"Connection is closed (id={id(self)})")
-            # Clear ``messages`` under the lock; see ``commit`` rationale.
-            del self.messages[:]
-            # Read ``in_transaction`` under the lock; see commit() for
-            # the rationale (avoid stale-True wasted ROLLBACK-RTT).
-            if not getattr(self._async_conn, "in_transaction", False):
-                return
-            try:
-                # Parity with ``Connection._rollback_async``; see ``commit``.
-                await _call_client(self._async_conn.execute("ROLLBACK"))
-            except OperationalError as e:
-                if not _is_no_transaction_error(e):
-                    raise
+        # Bound the op_lock acquire by ``self._timeout`` — same
+        # rationale as ``commit()``: avoid an unbounded shutdown hang
+        # under partition + ``trust_server_heartbeat=True``.
+        try:
+            async with asyncio.timeout(self._timeout):
+                async with op_lock:
+                    # Re-check under the lock for the same race as commit().
+                    if (
+                        self._closed
+                        or self._async_conn is None
+                        or getattr(self._async_conn, "_protocol", "_sentinel") is None
+                    ):
+                        if self._async_conn is not None and self._closed is False:
+                            raise InterfaceError(
+                                f"Connection invalidated (id={id(self)}); reconnect "
+                                "before retrying commit / rollback."
+                            )
+                        raise InterfaceError(f"Connection is closed (id={id(self)})")
+                    # Clear ``messages`` under the lock; see ``commit`` rationale.
+                    del self.messages[:]
+                    # Read ``in_transaction`` under the lock; see commit() for
+                    # the rationale (avoid stale-True wasted ROLLBACK-RTT).
+                    if not getattr(self._async_conn, "in_transaction", False):
+                        return
+                    try:
+                        # Parity with ``Connection._rollback_async``;
+                        # see ``commit``.
+                        await _call_client(self._async_conn.execute("ROLLBACK"))
+                    except OperationalError as e:
+                        if not _is_no_transaction_error(e):
+                            raise
+        except TimeoutError as e:
+            raise OperationalError(
+                f"rollback op_lock acquire timed out after {self._timeout}s "
+                f"(id={id(self)}); a sibling task held the lock past the "
+                f"bound. Connection state ambiguous; reconnect.",
+                code=None,
+            ) from e
 
     @contextlib.asynccontextmanager
     async def transaction(self) -> "AsyncIterator[None]":

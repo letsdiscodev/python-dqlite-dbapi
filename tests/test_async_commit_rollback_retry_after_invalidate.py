@@ -25,6 +25,7 @@ def _prime_invalidated() -> AsyncConnection:
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
     conn._transaction_owner = None
+    conn._timeout = 5.0
     conn.messages = []
     conn._async_conn = MagicMock()
     conn._async_conn._protocol = None  # invalidated
@@ -58,6 +59,7 @@ async def test_commit_with_alive_inner_does_not_raise_invalidated_error() -> Non
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
     conn._transaction_owner = None
+    conn._timeout = 5.0
     conn.messages = []
     conn._async_conn = MagicMock()
     conn._async_conn._protocol = object()  # alive
@@ -92,6 +94,7 @@ async def test_commit_invalidate_during_lock_acquire_raises_interface_error() ->
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
     conn._transaction_owner = None
+    conn._timeout = 5.0
     conn.messages = []
     conn._async_conn = MagicMock()
     conn._async_conn._protocol = object()  # initially alive
@@ -126,6 +129,7 @@ async def test_rollback_invalidate_during_lock_acquire_raises_interface_error() 
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
     conn._transaction_owner = None
+    conn._timeout = 5.0
     conn.messages = []
     conn._async_conn = MagicMock()
     conn._async_conn._protocol = object()
