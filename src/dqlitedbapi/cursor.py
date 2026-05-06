@@ -204,22 +204,32 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
     """Await a client-layer coroutine, mapping its exceptions into the
     PEP 249 hierarchy. Preserves the original via ``from``.
 
-    Mapping:
+    Mapping (rows in match-order — ClusterPolicyError is matched
+    before ClusterError because it is the more specific subclass;
+    wire.EncodeError is matched before InterfaceError because the
+    code path-checks it before falling through to InterfaceError):
       client.OperationalError (constraint code) → dbapi.IntegrityError
       client.OperationalError (other codes)     → dbapi.OperationalError
       client.DqliteConnectionError → dbapi.OperationalError (network flavor)
+      client.ClusterPolicyError    → dbapi.InterfaceError
       client.ClusterError          → dbapi.OperationalError
       client.ProtocolError         → dbapi.OperationalError
       client.DataError             → dbapi.DataError
+      wire.EncodeError             → dbapi.DataError
       client.InterfaceError        → dbapi.InterfaceError
-      any other DqliteError        → dbapi.InterfaceError
+      any other DqliteError        → dbapi.DatabaseError
 
     Every ``dqliteclient`` exception is a subclass of ``DqliteError``;
     the trailing catch-all ensures a new client exception class cannot
     bypass PEP 249 wrapping. PEP 249 requires all database-sourced
-    errors to surface as ``Error`` subclasses — without the fallback, a
-    future ``dqliteclient.CircuitOpenError`` or similar would leak past
-    ``except dqlitedbapi.Error`` boundaries.
+    errors to surface as ``Error`` subclasses. ``DatabaseError`` is the
+    conservative fallback (rather than ``InterfaceError``) so that a
+    future ``dqliteclient.CircuitOpenError`` or similar — which is a
+    server / cluster-state condition rather than a driver-interface
+    misuse — is classified correctly: cross-driver code using
+    ``except DatabaseError:`` for server-sourced failures catches
+    future error classes; ``InterfaceError`` is reserved for driver-
+    misuse shapes (closed cursor, wrong-type args, etc.).
     """
     try:
         return await coro
