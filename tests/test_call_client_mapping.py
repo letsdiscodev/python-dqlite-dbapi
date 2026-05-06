@@ -78,16 +78,20 @@ class TestCallClientInterfaceErrorMapping:
         """The dbapi InterfaceError is a DatabaseError sibling, not a
         subclass of OperationalError. Verify the mapping preserves the
         PEP 249 taxonomy boundary.
+
+        Use ``pytest.raises`` so a regression where ``_call_client``
+        silently swallows ``client.InterfaceError`` (returning ``None``
+        instead of re-raising) is caught — a bare ``try/except``
+        without an enforced raise would silently pass on the
+        no-exception branch.
         """
 
         async def raiser() -> None:
             raise _client_exc.InterfaceError("closed")
 
-        try:
+        with pytest.raises(InterfaceError) as exc_info:
             asyncio.run(_call_client(raiser()))
-        except Exception as exc:
-            assert isinstance(exc, InterfaceError)
-            assert not isinstance(exc, OperationalError)
+        assert not isinstance(exc_info.value, OperationalError)
 
 
 class TestCallClientClusterPolicyErrorMapping:
