@@ -2096,6 +2096,25 @@ class Connection:
     def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
         raise NotSupportedError("dqlite does not support two-phase commit")
 
+    def _stub_unsupported(self, msg: str) -> NoReturn:
+        """Shared helper for ``NotSupportedError`` stubs: clear
+        ``self.messages`` per PEP 249 §6.4 messages-clear contract,
+        check closed-state per stdlib ``sqlite3`` precedence, then
+        raise. ``_check_thread()`` is intentionally NOT applied —
+        these are universally-unsupported regardless of state, and
+        bleeding thread-affinity into a pure rejection contract
+        would be discipline creep beyond what the stub represents.
+
+        ``contextlib.suppress(AttributeError)`` tolerates
+        ``__new__``-built fixtures that bypass ``__init__`` and so
+        lack ``_closed`` / ``messages``."""
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
+        with contextlib.suppress(AttributeError):
+            if self._closed:
+                raise InterfaceError(f"Connection is closed (id={id(self)})")
+        raise NotSupportedError(msg)
+
     def executescript(self, sql_script: str, /) -> NoReturn:
         """stdlib ``sqlite3``-parity stub. dqlite has no
         multi-statement-script primitive on the wire (each statement
@@ -2103,7 +2122,7 @@ class Connection:
         this raises ``NotSupportedError`` rather than escaping
         ``dbapi.Error`` as ``AttributeError``. Callers should split
         the script and ``execute`` each statement individually."""
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite does not support stdlib sqlite3 executescript; "
             "split the script and execute each statement individually"
         )
@@ -2114,7 +2133,7 @@ class Connection:
         this driver. Callers needing cross-thread cancellation
         should wrap calls in ``asyncio.timeout`` (async surface)
         or rely on the configured per-RPC timeout."""
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite does not surface interrupt() at the dbapi layer; "
             "use asyncio.timeout(...) on the async surface or rely "
             "on the per-RPC timeout"
@@ -2127,87 +2146,85 @@ class Connection:
     # rejection stays inside the ``dbapi.Error`` hierarchy instead
     # of leaking ``AttributeError``. Same family as the existing
     # ``load_extension`` / ``backup`` / ``iterdump`` / ``create_*``
-    # stubs.
+    # stubs. Each stub routes through ``_stub_unsupported`` which
+    # performs the messages-clear and closed-check prelude per
+    # PEP 249 §6.4 + stdlib precedence.
 
     def set_authorizer(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError(
-            "dqlite-server does not expose a per-prepare authorization callback"
-        )
+        self._stub_unsupported("dqlite-server does not expose a per-prepare authorization callback")
 
     def set_progress_handler(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError("dqlite-server does not expose a VDBE progress callback")
+        self._stub_unsupported("dqlite-server does not expose a VDBE progress callback")
 
     def set_trace_callback(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError("dqlite-server does not expose a per-statement trace callback")
+        self._stub_unsupported("dqlite-server does not expose a per-statement trace callback")
 
     @property
     def total_changes(self) -> NoReturn:
-        raise NotSupportedError(
-            "dqlite-server does not surface a total_changes counter on the wire"
-        )
+        self._stub_unsupported("dqlite-server does not surface a total_changes counter on the wire")
 
     def getlimit(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite-server does not expose sqlite3_db_status getlimit/setlimit on the wire"
         )
 
     def setlimit(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite-server does not expose sqlite3_db_status getlimit/setlimit on the wire"
         )
 
     def getconfig(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite-server does not expose sqlite3_db_config getconfig/setconfig on the wire"
         )
 
     def setconfig(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite-server does not expose sqlite3_db_config getconfig/setconfig on the wire"
         )
 
     def serialize(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite does not support sqlite3_serialize; conflicts with the distributed Raft model"
         )
 
     def deserialize(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite does not support sqlite3_deserialize; conflicts with the distributed Raft model"
         )
 
     def blobopen(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError("dqlite does not expose sqlite3_blob_open on the wire")
+        self._stub_unsupported("dqlite does not expose sqlite3_blob_open on the wire")
 
     def enable_load_extension(self, enabled: bool) -> NoReturn:
-        raise NotSupportedError("dqlite-server does not support runtime extension loading")
+        self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
     def load_extension(self, path: str, *, entrypoint: str | None = None) -> NoReturn:
-        raise NotSupportedError("dqlite-server does not support runtime extension loading")
+        self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
     def backup(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite does not support the stdlib sqlite3 online backup API; "
             "use the dqlite-server dump/restore mechanism instead"
         )
 
     def iterdump(self) -> NoReturn:
-        raise NotSupportedError(
+        self._stub_unsupported(
             "dqlite does not support stdlib sqlite3 iterdump; "
             "use the dqlite-server dump/restore mechanism instead"
         )
 
     def create_function(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError("dqlite-server does not support user-defined SQL functions")
+        self._stub_unsupported("dqlite-server does not support user-defined SQL functions")
 
     def create_aggregate(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError("dqlite-server does not support user-defined SQL aggregates")
+        self._stub_unsupported("dqlite-server does not support user-defined SQL aggregates")
 
     def create_collation(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError("dqlite-server does not support user-defined SQL collations")
+        self._stub_unsupported("dqlite-server does not support user-defined SQL collations")
 
     def create_window_function(self, *args: object, **kwargs: object) -> NoReturn:
-        raise NotSupportedError("dqlite-server does not support user-defined SQL window functions")
+        self._stub_unsupported("dqlite-server does not support user-defined SQL window functions")
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
