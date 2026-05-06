@@ -1073,6 +1073,28 @@ class Connection:
                         # failure instead of an opaque "timed out"
                         # diagnostic.
                         recovered_error = recovered
+                # If the coroutine actually completed (success branch
+                # returned via line 1064 above; exception branch caught
+                # ``recovered_error`` here), the connection is healthy:
+                # ``_run_protocol``'s ``finally`` already cleared
+                # ``_in_use``. Re-raise the recovered exception
+                # immediately, skipping the null-out + invalidate +
+                # bounded-cancel-wait blocks below — invalidating a
+                # connection whose coroutine just finished cleanly
+                # forces an unnecessary reconnect on every subsequent
+                # sync call (silent reconnect storm under tight sync-
+                # timeout tuning + slow-server / leader-flip churn).
+                # The KI/SystemExit arm below has the same discipline.
+                if recovered_error is not None:
+                    if isinstance(recovered_error, asyncio.CancelledError):
+                        raise OperationalError(
+                            "Operation cancelled in async context (no meaning in sync caller)"
+                        ) from recovered_error
+                    # See the trailing ``recovered_error`` arm below
+                    # for the ``noqa: B904`` rationale (bare ``raise``
+                    # preserves causality vs the calling-thread
+                    # timer).
+                    raise recovered_error  # noqa: B904
                 future.cancel()
                 # Synchronously null ``self._async_conn`` from the
                 # calling thread, mirroring the
@@ -1096,11 +1118,15 @@ class Connection:
                 #
                 # The null-out is placed AFTER the
                 # ``recovered_error`` race-recovery branch above so a
-                # coroutine that actually completed (success or
-                # late server-side exception) does not get its
-                # connection state torn out from under it — the
-                # recovery branch returns / raises directly without
-                # falling through to here.
+                # coroutine that actually completed (success or late
+                # server-side exception) does not get its connection
+                # state torn out from under it. The success branch
+                # returns at line 1064; the exception branch raises
+                # immediately via the early-raise block (just above
+                # ``future.cancel()``), so this null-out and the
+                # subsequent ``_invalidate`` schedule fire only on a
+                # genuine timeout where the coroutine is still in
+                # flight.
                 dying = self._async_conn
                 self._async_conn = None
                 # Poison the underlying connection. The coroutine may have
@@ -1143,54 +1169,14 @@ class Connection:
                         "sync timeout: unexpected error during bounded cancel-wait",
                         exc_info=True,
                     )
-                if recovered_error is not None:
-                    # Operation actually completed on the server (the
-                    # race-recovery branch above caught a real
-                    # exception from ``future.result(timeout=0)``).
-                    # Re-raise it directly instead of wrapping in
-                    # ``OperationalError("timed out")``: the
-                    # type-of-truth is the recovered exception, and a
-                    # wrap here misleads caller-side type-based
-                    # dispatch (``except IntegrityError:`` no longer
-                    # matches a constraint violation; ``except
-                    # OperationalError:`` triggers a redundant retry
-                    # against an autocommit DML that already
-                    # persisted server-side, double-writing).
-                    #
-                    # EXCEPT for ``asyncio.CancelledError``: it is a
-                    # ``BaseException`` (not ``Exception``), so
-                    # caller code doing ``except dbapi.Error:``
-                    # would NOT catch it and the cancellation signal
-                    # would propagate as a bare BaseException into
-                    # sync context — outside the PEP 249 hierarchy
-                    # and surprising to sync callers (asyncio
-                    # cancellation has no meaning in sync context).
-                    # Wrap it as ``OperationalError`` so the failure
-                    # stays inside ``dbapi.Error`` while preserving
-                    # the cause chain via ``__cause__``.
-                    if isinstance(recovered_error, asyncio.CancelledError):
-                        raise OperationalError(
-                            "Operation cancelled in async context (no meaning in sync caller)"
-                        ) from recovered_error
-                    #
-                    # The original ``TimeoutError`` is still reachable
-                    # via ``__context__`` — Python sets it
-                    # automatically when raising inside an except —
-                    # so callers that need the timeout signal for
-                    # diagnostics can walk the chain. The trade-off
-                    # against the legacy "sync-timeout always
-                    # surfaces as OperationalError" contract is
-                    # deliberate: faithful exception class wins over
-                    # contract preservation.
-                    #
-                    # ``noqa: B904`` — bare ``raise recovered_error``
-                    # is intentional. ``from e`` would force-set
-                    # ``__cause__`` to the TimeoutError, mis-stating
-                    # causality (the server-side error wasn't caused
-                    # by the calling-thread timer); ``from None``
-                    # would suppress the chain entirely, hiding the
-                    # timeout signal that callers may need.
-                    raise recovered_error  # noqa: B904
+                # ``recovered_error`` is guaranteed None here: the
+                # early-raise block immediately after the recovery
+                # capture above re-raises the recovered exception
+                # without falling through, so this point is reached
+                # only on a genuine timeout (coroutine still in
+                # flight; sync caller's ``Future.result(timeout=...)``
+                # fired). Connection state is now ambiguous, hence
+                # the unconditional ``OperationalError``.
                 raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
             except (KeyboardInterrupt, SystemExit):
                 # KeyboardInterrupt / SystemExit raised inside the
