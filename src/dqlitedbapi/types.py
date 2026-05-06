@@ -2,7 +2,7 @@
 
 import datetime
 import math
-from typing import Any, Final
+from typing import Any, Final, final
 
 from dqlitedbapi.exceptions import DataError
 from dqlitewire.constants import ValueType
@@ -216,6 +216,7 @@ Binary = memoryview
 # (e.g. 10 for ISO8601). The type objects below compare equal to both
 # the uppercase SQL type name strings (for declared-type matching) and
 # the matching ``ValueType`` ints.
+@final
 class _DBAPIType:
     """Base type for DB-API type objects. Compares equal to matching
     uppercase SQL type names (str) and wire-level ``ValueType`` codes
