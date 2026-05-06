@@ -14,7 +14,6 @@ so cross-driver code that wraps the call in
 
 from __future__ import annotations
 
-import asyncio
 import os
 import threading
 from typing import Any, cast
@@ -42,6 +41,28 @@ def _sync_cursor() -> Any:
     return cur
 
 
+def _bare_async_cursor() -> Any:
+    """Construct an AsyncConnection / AsyncCursor without dialing.
+    Production attribute names are ``_loop_ref`` (a weakref) and
+    ``_creator_pid`` — the original test fixture used ``_bound_loop_ref``
+    (which is the CLIENT-layer DqliteConnection attribute, not the
+    dbapi-layer AsyncConnection attribute) and ``_loop`` (also wrong).
+    Both names existed on neither layer of AsyncConnection's actual
+    implementation; production never read either one. The test passed
+    only because the None-rejection check fires before any binding-
+    check would AttributeError on the wrong-name attribute."""
+    aconn = cast(Any, dqlitedbapi.aio.AsyncConnection.__new__(dqlitedbapi.aio.AsyncConnection))
+    aconn._closed = False
+    aconn._creator_pid = os.getpid()
+    aconn._loop_ref = None
+    acur = cast(Any, dqlitedbapi.aio.AsyncCursor.__new__(dqlitedbapi.aio.AsyncCursor))
+    acur._closed = False
+    acur._connection = aconn
+    acur._executing_task = None
+    acur.messages = []
+    return acur
+
+
 def test_sync_executemany_none_raises_programming_error() -> None:
     cur = _sync_cursor()
     with pytest.raises(ProgrammingError, match="None") as ei:
@@ -52,15 +73,7 @@ def test_sync_executemany_none_raises_programming_error() -> None:
 
 @pytest.mark.asyncio
 async def test_async_executemany_none_raises_programming_error() -> None:
-    aconn = cast(Any, dqlitedbapi.aio.AsyncConnection.__new__(dqlitedbapi.aio.AsyncConnection))
-    aconn._closed = False
-    aconn._bound_loop_ref = None
-    aconn._loop = asyncio.get_running_loop()
-    acur = cast(Any, dqlitedbapi.aio.AsyncCursor.__new__(dqlitedbapi.aio.AsyncCursor))
-    acur._closed = False
-    acur._connection = aconn
-    acur._executing_task = None
-    acur.messages = []
+    acur = _bare_async_cursor()
     with pytest.raises(ProgrammingError, match="None") as ei:
         await acur.executemany("INSERT INTO t VALUES (?)", None)
     assert isinstance(ei.value, Error)
