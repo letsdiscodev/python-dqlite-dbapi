@@ -1357,6 +1357,14 @@ class AsyncConnection:
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
+        # Loop-affinity check: the sync sibling's ``row_factory.setter``
+        # at ``connection.py:1972-1985`` calls ``self._check_thread()``
+        # to enforce the documented "every state-mutating method
+        # enforces affinity" claim. The async sibling needs the
+        # equivalent loop-binding check so a foreign-loop caller
+        # cannot mutate ``_row_factory`` and silently affect cursors
+        # spawned on the legitimate loop.
+        self._check_loop_binding()
         if value is not None and not callable(value):
             raise ProgrammingError(
                 f"row_factory must be callable or None, got {type(value).__name__}"
