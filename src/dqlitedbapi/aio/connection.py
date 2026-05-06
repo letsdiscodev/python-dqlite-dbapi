@@ -259,7 +259,17 @@ class AsyncConnection:
         # del conn``, common in early-error and test-fixture flows)
         # doesn't emit a misleading "GC'd without close" warning.
         self._connected_flag: list[bool] = [False]
-        weakref.finalize(
+        # Save the finalize handle so ``close()`` and
+        # ``force_close_transport()`` can ``detach()`` it on orderly
+        # shutdown — otherwise the registered finalizer plus its
+        # captured ``(closed_flag, connected_flag, address)`` cells
+        # stay on the ``weakref`` global table for the lifetime of
+        # ``self`` even after the user closed the connection.
+        # Symmetric with the sync sibling at
+        # ``connection.py:1399-1401, 1417-1419, 1581-1589`` and
+        # ``DqliteConnection`` / ``ConnectionPool`` finalizer
+        # discipline.
+        self._finalizer: weakref.finalize[Any, Any] | None = weakref.finalize(
             self,
             _async_unclosed_warning,
             self._closed_flag,
@@ -444,6 +454,13 @@ class AsyncConnection:
         if get_current_pid() != self._creator_pid:
             self._closed = True
             self._closed_flag[0] = True
+            # Detach the finalizer — symmetric with sync sibling at
+            # ``connection.py:1420-1422``. Keeps the ``weakref``
+            # global table free of stale entries after orderly
+            # close.
+            if self._finalizer is not None:
+                self._finalizer.detach()
+                self._finalizer = None
             # Walk the inner client conn's own fork-close path
             # before dropping the reference. The inner client's
             # ``DqliteConnection.close()`` fork short-circuit nulls
@@ -485,6 +502,13 @@ class AsyncConnection:
         # in-flight op (if any) under the lock.
         self._closed = True
         self._closed_flag[0] = True
+        # Detach the finalizer — symmetric with sync sibling at
+        # ``connection.py:1438-1440``. Keeps the ``weakref`` global
+        # table free of stale entries after orderly close.
+        finalizer = getattr(self, "_finalizer", None)
+        if finalizer is not None:
+            finalizer.detach()
+            self._finalizer = None
 
         def _cascade_cursors() -> None:
             """Run the cursor cascade. Direct attribute writes —
@@ -745,6 +769,14 @@ class AsyncConnection:
         # against a dead transport and a follow-up close() drove the
         # full async teardown again on already-closed primitives.
         self._closed = True
+        # Detach the finalizer — symmetric with sync sibling at
+        # ``connection.py:1603-1604, 1609-1610``. Keeps the
+        # ``weakref`` global table free of stale entries after the
+        # transport-level force-close path.
+        finalizer = getattr(self, "_finalizer", None)
+        if finalizer is not None:
+            finalizer.detach()
+            self._finalizer = None
         inner = self._async_conn
         if inner is None:
             self._async_conn = None
