@@ -12,6 +12,7 @@ import dqlitewire.exceptions as _wire_exc
 from dqlitedbapi.exceptions import (
     DatabaseError,
     DataError,
+    Error,
     IntegrityError,
     InterfaceError,
     InternalError,
@@ -428,11 +429,39 @@ def _reject_non_sequence_params(params: Any) -> None:
 
 
 def _convert_params(params: Sequence[Any] | None) -> list[Any] | None:
-    """Convert driver-level bind parameters (e.g. datetime) to wire primitives."""
+    """Convert driver-level bind parameters (e.g. datetime) to wire primitives.
+
+    A user-registered adapter (via ``register_adapter``) may raise
+    arbitrary exceptions on a malformed input. PEP 249 §7 mandates
+    every database-related failure surfaces as an ``Error`` subclass
+    so cross-driver code can write ``except dbapi.Error:`` blocks.
+    Wrap any non-``Error`` exception escaping ``_convert_bind_param``
+    as ``DataError`` (the right PEP 249 class for "problems with the
+    processed data"). Adapters that already raise an ``Error``
+    subclass directly (e.g. ``DataError`` for an invalid binding
+    shape) pass through unchanged — no double-wrap, the cause-chain
+    stays clean.
+
+    Mirrors the wire-encode wrap discipline at ``_call_client``'s
+    ``except (TypeError, ValueError)`` arm.
+    """
     _reject_non_sequence_params(params)
     if params is None:
         return None
-    return [_convert_bind_param(p) for p in params]
+    converted: list[Any] = []
+    for p in params:
+        try:
+            converted.append(_convert_bind_param(p))
+        except Error:
+            # Already a PEP 249 Error subclass — propagate unchanged
+            # (no double-wrap).
+            raise
+        except Exception as e:
+            raise DataError(
+                f"adapter for {type(p).__name__} failed: {e}",
+                code=None,
+            ) from e
+    return converted
 
 
 def _strip_leading_comments(sql: str) -> str:
