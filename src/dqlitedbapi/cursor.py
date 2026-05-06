@@ -1287,25 +1287,35 @@ class Cursor:
         ``sqlite3.Cursor``.** stdlib's documented contract is
         "``lastrowid`` is left unchanged after executemany" — the
         prior INSERT's id stays sticky across the batch. This driver
-        clears ``lastrowid`` to ``None`` on executemany entry AND
-        after success: the batch's ambiguity (which of N inserts is
-        "the" rowid?) makes any sticky value misleading, so we surface
-        ``None`` to force callers to read the rowid from a single-row
-        INSERT before the batch. Cross-driver code that relies on the
-        stdlib "left unchanged" contract should not call executemany
-        on this driver to obtain a rowid; use a single-row execute
-        instead, or read the id from RETURNING rows.
+        clears ``lastrowid`` to ``None`` after a successful batch
+        (including empty batches): the batch's ambiguity (which of N
+        inserts is "the" rowid?) makes any sticky value misleading,
+        so we surface ``None`` to force callers to read the rowid from
+        a single-row INSERT before the batch. Cross-driver code that
+        relies on the stdlib "left unchanged" contract should not call
+        executemany on this driver to obtain a rowid; use a single-row
+        execute instead, or read the id from RETURNING rows.
+
+        Rejected calls (transaction-control verbs, non-DML row-returning
+        shapes) preserve the prior ``lastrowid`` — no batch ran, so the
+        cursor docstring's lifecycle contract holds (only ``close()``
+        scrubs ``lastrowid``). This matches the async sibling's rejection
+        path.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
         self._connection._check_thread()
-        # Stdlib parity: clear lastrowid at executemany entry. Without
-        # this, a prior INSERT's lastrowid leaks into the post-batch
-        # cursor state, making cross-driver code that reads
-        # ``cur.lastrowid`` after executemany observe the previous
-        # statement's value.
-        self._lastrowid = None
+        # ``_lastrowid`` clear is intentionally deferred until AFTER the
+        # verb-rejection guards below. A rejected ``executemany`` (a
+        # transaction-control verb, a row-returning shape) means no
+        # batch ran — clearing here would clobber the prior INSERT's
+        # rowid, violating both the cursor docstring contract
+        # ("ROLLBACK / UPDATE / DELETE / DDL do NOT clear it... close()
+        # is the single lifecycle event that scrubs it") and parity with
+        # the async sibling's rejection path. The post-loop clear at the
+        # end of ``_executemany_async`` handles the documented "clear
+        # after success" contract for the admitted-verb path.
         # Reject transaction-control verbs and pure queries up front so
         # the caller's frame sees the ProgrammingError rather than
         # having it surface deep inside the async helper. stdlib
@@ -1404,12 +1414,14 @@ class Cursor:
                 self._completed_iterations += 1
             # stdlib ``sqlite3.Cursor.executemany`` does NOT update
             # ``lastrowid`` — the value reflects no single row across
-            # the batch and is "left unchanged" per the docs. The
-            # sync wrapper cleared lastrowid at entry; clear again
-            # after a successful loop so per-iteration writes inside
-            # ``_execute_async`` don't leak the last batch row's id
-            # to the caller. Keeps cross-driver code that reads
-            # ``cur.lastrowid`` after executemany observing ``None``.
+            # the batch and is "left unchanged" per the docs. We clear
+            # after a successful loop (including the empty-batch case)
+            # so per-iteration writes inside ``_execute_async`` don't
+            # leak the last batch row's id to the caller. Keeps cross-
+            # driver code that reads ``cur.lastrowid`` after executemany
+            # observing ``None``. Rejection paths in the sync wrapper
+            # short-circuit before reaching this point and preserve the
+            # prior ``lastrowid`` per the docstring contract.
             self._lastrowid = None
         except BaseException:
             # Mid-batch failure leaves _rowcount at the last

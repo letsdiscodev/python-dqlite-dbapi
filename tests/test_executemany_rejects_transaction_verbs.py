@@ -198,3 +198,96 @@ async def test_async_executemany_rejects_semicolon_then_comment_verb(
     cursor = AsyncCursor(conn)
     with pytest.raises(ProgrammingError, match="executemany.*not supported for"):
         await cursor.executemany(statement, [(1,)])
+
+
+def test_sync_executemany_rejection_preserves_prior_lastrowid() -> None:
+    """A rejected ``executemany`` (transaction-control verb, row-
+    returning, etc.) means no execute happened. The ``lastrowid``
+    cursor-scoped property must therefore preserve its prior value —
+    matching stdlib ``sqlite3`` behaviour, the documented driver
+    contract at the cursor module's top docstring ("ROLLBACK / UPDATE /
+    DELETE / DDL do NOT clear it... close() is the single lifecycle
+    event that scrubs it"), AND the async sibling's behaviour (which
+    never clears at entry).
+
+    Without this pin, a ``cur.execute("INSERT ..."); rid =
+    cur.lastrowid; try: cur.executemany("BEGIN", ...) except:
+    pass; assert cur.lastrowid == rid`` shape silently fails on the
+    sync surface but passes on async — a sync/async drift on a
+    public-surface lifecycle property.
+    """
+    cursor = Cursor.__new__(Cursor)
+    cursor._closed = False
+    cursor._description = None
+    cursor._rowcount = -1
+    cursor._row_factory = None
+    cursor._rows = []
+    cursor._row_index = 0
+    cursor._arraysize = 1
+    cursor.messages = []
+    # Wire a connection that would never be reached on the rejection path.
+    conn = MagicMock(spec=Connection)
+    conn._check_thread = MagicMock()
+    conn._run_sync = MagicMock(
+        side_effect=AssertionError("rejection must short-circuit before _run_sync")
+    )
+    cursor._connection = conn
+    # Prior INSERT's rowid sits on the cursor.
+    cursor._lastrowid = 4242
+
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for BEGIN"):
+        cursor.executemany("BEGIN", [(1,)])
+    assert cursor.lastrowid == 4242, (
+        f"rejected executemany must preserve prior lastrowid; got {cursor.lastrowid}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_executemany_rejection_preserves_prior_lastrowid() -> None:
+    """Async sibling pin — already correct today; locks in parity with
+    the sync sibling fix so both surfaces share the same contract."""
+    cursor = AsyncCursor.__new__(AsyncCursor)
+    cursor._closed = False
+    cursor._description = None
+    cursor._rowcount = -1
+    cursor._row_factory = None
+    cursor._rows = []
+    cursor._row_index = 0
+    cursor._arraysize = 1
+    cursor.messages = []
+    cursor._executing_task = None
+    cursor._completed_iterations = 0
+    cursor._connection = MagicMock(spec=AsyncConnection)
+    # Prior INSERT's rowid sits on the cursor.
+    cursor._lastrowid = 4242
+
+    with pytest.raises(ProgrammingError, match="executemany.*not supported for BEGIN"):
+        await cursor.executemany("BEGIN", [(1,)])
+    assert cursor.lastrowid == 4242
+
+
+def test_sync_executemany_row_returning_rejection_preserves_prior_lastrowid() -> None:
+    """Row-returning rejection (SELECT, PRAGMA) is a separate guard
+    from the verb-rejection but must follow the same lastrowid
+    contract — no batch ran, prior value preserved.
+    """
+    cursor = Cursor.__new__(Cursor)
+    cursor._closed = False
+    cursor._description = None
+    cursor._rowcount = -1
+    cursor._row_factory = None
+    cursor._rows = []
+    cursor._row_index = 0
+    cursor._arraysize = 1
+    cursor.messages = []
+    conn = MagicMock(spec=Connection)
+    conn._check_thread = MagicMock()
+    conn._run_sync = MagicMock(
+        side_effect=AssertionError("rejection must short-circuit before _run_sync")
+    )
+    cursor._connection = conn
+    cursor._lastrowid = 4242
+
+    with pytest.raises(ProgrammingError, match="executemany.*can only execute DML"):
+        cursor.executemany("SELECT 1", [(1,)])
+    assert cursor.lastrowid == 4242
