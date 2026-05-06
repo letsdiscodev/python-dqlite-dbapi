@@ -327,7 +327,7 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # NOT a ``_client_exc.ProtocolError`` — the inheritance runs
         # the other direction). Pre-fix the bare wire exception
         # leaked past ``except dbapi.Error:`` blocks.
-        raise DataError(f"wire encode failed: {e}", code=None) from e
+        raise DataError(f"wire encode failed: {e}", code=None, raw_message=str(e)) from e
     except _client_exc.InterfaceError as e:
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(str(e), code=None, raw_message=raw_msg) from e
@@ -357,7 +357,7 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # UUID, Path, Enum, arbitrary user classes — reaches the wire
         # encoder and lands here. Callers who want to support those
         # types should register an adapter (stdlib sqlite3 convention).
-        raise DataError(f"cannot bind parameter: {e}") from e
+        raise DataError(f"cannot bind parameter: {e}", code=None, raw_message=str(e)) from e
 
 
 if TYPE_CHECKING:
