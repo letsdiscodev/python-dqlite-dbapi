@@ -34,18 +34,15 @@ class TestCallClientClusterErrorMapping:
         async def raiser() -> None:
             raise _client_exc.ClusterError("no leader")
 
-        with pytest.raises(OperationalError):
-            asyncio.run(_call_client(raiser()))
-
         # Also: it must NOT be an InterfaceError (which would mask the
-        # disconnect signal from the dialect's is_disconnect).
-        async def raiser2() -> None:
-            raise _client_exc.ClusterError("no leader")
-
-        try:
-            asyncio.run(_call_client(raiser2()))
-        except OperationalError as exc:
-            assert not isinstance(exc, InterfaceError)
+        # disconnect signal from the dialect's is_disconnect). Chain
+        # the negative assertion off ``exc_info.value`` so a regression
+        # where ``_call_client`` returns normally fails the
+        # ``pytest.raises`` upfront — earlier shape used a bare
+        # ``try/except`` which would silently pass on no-raise.
+        with pytest.raises(OperationalError) as exc_info:
+            asyncio.run(_call_client(raiser()))
+        assert not isinstance(exc_info.value, InterfaceError)
 
     def test_cluster_error_wraps_with_code_none(self) -> None:
         """Signature parity with the sibling DqliteConnectionError arm
@@ -148,23 +145,11 @@ class TestCallClientReturnType:
         result = asyncio.run(_call_client(produce_tuple()))
         assert result == (7, 3)
 
-    def test_return_type_narrows_to_coroutine_type(self) -> None:
-        """Pin the TypeVar narrowing: ``_call_client(coro)`` must
-        declare the same return type as ``coro`` so type-checkers can
-        verify tuple destructures and attribute access at call-sites.
-        A regression widening the signature back to ``Any`` silently
-        erases this guarantee and would not fail a runtime test,
-        so we use ``typing.assert_type`` (evaluated at type-check
-        time; a no-op at runtime that still documents the contract).
-        """
-        from typing import assert_type
-
-        async def produce_int() -> int:
-            return 42
-
-        async def probe() -> None:
-            v = await _call_client(produce_int())
-            assert_type(v, int)
-            assert v == 42
-
-        asyncio.run(probe())
+    # Note: TypeVar narrowing of ``_call_client(coro)`` is verified
+    # statically by mypy on the project's type-checking pass — the
+    # signature ``_call_client(coro: Coroutine[Any, Any, T]) -> T``
+    # is a static contract. A runtime test using ``typing.assert_type``
+    # was previously included here; ``assert_type`` is a no-op at
+    # runtime, so the runtime portion was redundant with
+    # ``test_returns_value_unchanged`` above. The static contract
+    # remains pinned by mypy's coverage of the dbapi sources.
