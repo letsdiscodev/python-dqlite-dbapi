@@ -8,6 +8,8 @@ either silent data loss or a misleading server-classified error:
 - wrong ``?`` count vs ``len(parameters)`` → ProgrammingError
 """
 
+from collections.abc import Iterator
+
 import pytest
 
 from dqlitedbapi.cursor import _classify_caller_sql
@@ -77,3 +79,21 @@ def test_question_mark_inside_comment_not_counted() -> None:
 def test_semicolon_inside_string_literal_not_counted() -> None:
     """``;`` inside a string is not a statement boundary."""
     _classify_caller_sql("INSERT INTO t VALUES (';')", [])
+
+
+def test_non_sized_iterable_silently_skips_count_check() -> None:
+    """``len()`` on a generator raises ``TypeError``; the classifier
+    catches that and returns silently, deferring rejection to the
+    binding layer (which produces a ``ProgrammingError`` — a member of
+    the PEP 249 ``Error`` hierarchy). A regression letting ``TypeError``
+    escape would convert a hierarchy-member rejection into a bare
+    ``TypeError`` that ``except dqlitedbapi.Error:`` clauses would miss.
+    """
+
+    def gen() -> Iterator[int]:
+        yield 1
+        yield 2
+
+    # Must not raise — placeholder count check is silently skipped.
+    _classify_caller_sql("SELECT ?, ?", gen())  # type: ignore[arg-type]
+    _classify_caller_sql("SELECT ?", iter([1]))  # type: ignore[arg-type]
