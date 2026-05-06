@@ -437,6 +437,21 @@ class AsyncCursor:
         """
         del self.messages[:]
         self._check_closed()
+        # PEP 249 §7: errors raised by the module subclass ``Error``.
+        # ``seq_of_parameters=None`` would later leak a bare ``TypeError``
+        # ("'NoneType' object is not iterable") from the iteration site
+        # below, escaping the dbapi exception hierarchy. ``None`` for
+        # the outer iterable has no defensible "no params" reading
+        # (unlike ``execute(sql, None)``); mirror the project's
+        # existing strict input-validation discipline (str/bytes/Mapping/
+        # set rejection in ``_reject_non_sequence_params``) and surface
+        # ``ProgrammingError`` up front. Same treatment in the sync
+        # sibling.
+        if seq_of_parameters is None:
+            raise ProgrammingError(
+                "executemany() seq_of_parameters must be a sequence/iterable, not None",
+                code=None,
+            )
         # Reject concurrent execute/executemany on the same cursor
         # — see ``execute`` for full rationale.
         cur_task = asyncio.current_task()

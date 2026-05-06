@@ -1345,6 +1345,20 @@ class Cursor:
         # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
         self._connection._check_thread()
+        # PEP 249 §7: errors raised by the module subclass ``Error``.
+        # ``seq_of_parameters=None`` would later leak a bare ``TypeError``
+        # ("'NoneType' object is not iterable") from the iteration site,
+        # escaping the dbapi exception hierarchy. ``None`` for the outer
+        # iterable has no defensible "no params" reading (unlike
+        # ``execute(sql, None)``); mirror the project's existing strict
+        # input-validation discipline (str/bytes/Mapping/set rejection)
+        # and surface ``ProgrammingError`` up front. Same treatment in
+        # the async sibling.
+        if seq_of_parameters is None:
+            raise ProgrammingError(
+                "executemany() seq_of_parameters must be a sequence/iterable, not None",
+                code=None,
+            )
         # ``_lastrowid`` clear is intentionally deferred until AFTER the
         # verb-rejection guards below. A rejected ``executemany`` (a
         # transaction-control verb, a row-returning shape) means no
