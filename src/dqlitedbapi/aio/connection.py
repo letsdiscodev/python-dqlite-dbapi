@@ -797,8 +797,23 @@ class AsyncConnection:
         # ahead" path. Wrapped suppress because attribute writes on
         # the inner conn could in principle raise (e.g. __slots__
         # violations on a custom subclass).
-        pending = getattr(inner, "_pending_drain", None)
-        if pending is not None and not pending.done():
+        # Bounded re-snapshot loop: a concurrent ``_invalidate``
+        # callback queued via ``loop.call_soon_threadsafe`` from the
+        # loop thread can run between our snapshot and our null-out
+        # and CREATE a NEW ``_pending_drain`` task on the same inner
+        # conn. Without re-snapshotting, that fresh drain task is
+        # orphaned — surfacing as "Task was destroyed but it is
+        # pending" at GC under SA finalize-from-foreign-thread paths.
+        # Mirrors the in-thread re-snapshot loop in
+        # ``DqliteConnection._close_impl`` (cycle 27 R27_1 cap-and-
+        # fail-loud discipline).
+        _RESNAPSHOT_CAP = 3
+        for _attempt in range(_RESNAPSHOT_CAP):
+            pending = getattr(inner, "_pending_drain", None)
+            with contextlib.suppress(Exception):
+                inner._pending_drain = None
+            if pending is None or pending.done():
+                break
             with contextlib.suppress(Exception):
                 # Determine whether the task's owning loop is alive
                 # AND owned by this thread. Only the
@@ -845,8 +860,23 @@ class AsyncConnection:
                         target.add_done_callback(_observe)
 
                     pending_loop.call_soon_threadsafe(_cancel_and_observe, pending)
-        with contextlib.suppress(Exception):
-            inner._pending_drain = None
+        else:
+            # Cap exhausted: a racing ``_invalidate`` keeps creating
+            # fresh ``_pending_drain`` tasks each iteration. Final
+            # defensive null-out + WARNING so operators see the
+            # pathological feedback loop. The last iteration's
+            # null-out at the top of the body is redundantly applied
+            # here for symmetry with the cap-exhausted branch in
+            # ``DqliteConnection._close_impl``.
+            with contextlib.suppress(Exception):
+                inner._pending_drain = None
+            logger.warning(
+                "AsyncConnection.force_close_transport: inner._pending_drain still "
+                "set after %d re-snapshot iterations; cancelling residual task to "
+                "avoid 'Task was destroyed but it is pending' at GC. This indicates "
+                "a pathological _invalidate feedback loop on inner conn.",
+                _RESNAPSHOT_CAP,
+            )
         # Mirror the fork branch's null-out so the AsyncConnection
         # does not keep claiming to reference a live inner conn
         # after force-close. The fork branch above (line 638)
