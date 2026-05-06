@@ -1697,6 +1697,12 @@ class Connection:
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
+        # Threadsafety=1 affinity contract — even the no-op accept-path
+        # is an attempt that must surface as a contract violation if
+        # invoked cross-thread. Sibling ``row_factory.setter`` calls
+        # ``_check_thread()`` for the same reason; the no-op-accept
+        # arms here previously bypassed it.
+        self._check_thread()
         # Accept ``True`` (acknowledges the existing mode) and the
         # stdlib sentinel ``sqlite3.LEGACY_TRANSACTION_CONTROL``
         # (numerically ``-1``) — stdlib's 3.12+ surface uses the
@@ -1737,6 +1743,9 @@ class Connection:
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
+        # Threadsafety=1 affinity contract — see ``autocommit.setter``
+        # for the rationale (no-op accept-path is still an attempt).
+        self._check_thread()
         if value is None:
             return
         raise NotSupportedError(
@@ -2017,6 +2026,9 @@ class Connection:
 
     @text_factory.setter
     def text_factory(self, value: object) -> None:
+        # Threadsafety=1 affinity contract — see ``autocommit.setter``
+        # for the rationale.
+        self._check_thread()
         if value is str:
             return
         raise NotSupportedError(

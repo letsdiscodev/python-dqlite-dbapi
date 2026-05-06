@@ -120,12 +120,18 @@ class TestConnectionTextFactoryRejection:
         from dqlitedbapi.connection import Connection
 
         conn = Connection.__new__(Connection)
+        # text_factory.setter calls _check_thread(); seed the affinity
+        # fields so this unit test exercises the value-validation arm.
+        conn._creator_pid = os.getpid()
+        conn._creator_thread = threading.get_ident()
         conn.text_factory = str  # no error
 
     def test_sync_connection_text_factory_set_non_str_rejected(self) -> None:
         from dqlitedbapi.connection import Connection
 
         conn = Connection.__new__(Connection)
+        conn._creator_pid = os.getpid()
+        conn._creator_thread = threading.get_ident()
         with pytest.raises(NotSupportedError):
             conn.text_factory = bytes
 

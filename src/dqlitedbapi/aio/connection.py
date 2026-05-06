@@ -968,6 +968,11 @@ class AsyncConnection:
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
+        # Loop-binding affinity contract — even the no-op accept-path
+        # is an attempt that must surface as a contract violation if
+        # invoked from a foreign loop. Sibling sync setter calls
+        # ``_check_thread()`` for the same reason.
+        self._check_loop_binding()
         # See sync sibling for full rationale: accept True or
         # ``sqlite3.LEGACY_TRANSACTION_CONTROL`` (==-1); reject
         # everything else.
@@ -989,6 +994,8 @@ class AsyncConnection:
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
+        # Loop-binding affinity contract — see ``autocommit.setter``.
+        self._check_loop_binding()
         if value is None:
             return
         raise NotSupportedError(
@@ -1379,6 +1386,8 @@ class AsyncConnection:
 
     @text_factory.setter
     def text_factory(self, value: object) -> None:
+        # Loop-binding affinity contract — see ``autocommit.setter``.
+        self._check_loop_binding()
         if value is str:
             return
         raise NotSupportedError(

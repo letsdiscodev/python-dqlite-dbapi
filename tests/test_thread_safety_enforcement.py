@@ -142,6 +142,65 @@ class TestThreadIdentityCheck:
 
         assert isinstance(error, ProgrammingError)
 
+    def test_autocommit_setter_from_wrong_thread_raises(self) -> None:
+        """Setting Connection.autocommit from a different thread must
+        raise ProgrammingError, even on the no-op accept-path
+        (``True`` / ``-1``). The class docstring's universal affinity
+        claim covers any state-mutating setter attempt."""
+        conn = Connection("localhost:9001")
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                conn.autocommit = True  # no-op accept-path; must still raise
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
+    def test_isolation_level_setter_from_wrong_thread_raises(self) -> None:
+        """Setting Connection.isolation_level from a different thread
+        must raise ProgrammingError, even for the ``None`` accept-path."""
+        conn = Connection("localhost:9001")
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                conn.isolation_level = None  # no-op accept-path; must still raise
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
+    def test_text_factory_setter_from_wrong_thread_raises(self) -> None:
+        """Setting Connection.text_factory from a different thread must
+        raise ProgrammingError, even for the ``str`` accept-path."""
+        conn = Connection("localhost:9001")
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                conn.text_factory = str  # no-op accept-path; must still raise
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
     def test_cursor_arraysize_setter_from_wrong_thread_raises(self) -> None:
         """Setting Cursor.arraysize from a different thread must raise
         ProgrammingError. The Connection-class docstring's universal

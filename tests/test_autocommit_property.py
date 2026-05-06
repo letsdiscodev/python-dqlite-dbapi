@@ -16,6 +16,9 @@ the autocommit mode is fixed by the dqlite server.
 
 from __future__ import annotations
 
+import os
+import threading
+
 import pytest
 
 from dqlitedbapi import NotSupportedError
@@ -23,33 +26,55 @@ from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.connection import Connection
 
 
+def _bare_sync_conn() -> Connection:
+    """Construct a Connection without dialing — used by setter unit
+    tests that don't need transport. Sets the threadsafety affinity
+    fields so the setters' ``_check_thread()`` guard passes."""
+    conn = Connection.__new__(Connection)
+    conn._creator_thread = threading.get_ident()
+    conn._creator_pid = os.getpid()
+    return conn
+
+
+def _bare_async_conn() -> AsyncConnection:
+    """Construct an AsyncConnection without dialing. ``_check_loop_binding``
+    requires ``_closed``, ``_creator_pid``, and ``_loop_ref``; the
+    loop-bound check is a no-op when ``_loop_ref`` is None (binding not
+    yet established)."""
+    conn = AsyncConnection.__new__(AsyncConnection)
+    conn._closed = False
+    conn._creator_pid = os.getpid()
+    conn._loop_ref = None
+    return conn
+
+
 class TestSyncAutocommitProperty:
     def test_autocommit_returns_true(self) -> None:
-        conn = Connection.__new__(Connection)
+        conn = _bare_sync_conn()
         assert conn.autocommit is True
 
     def test_setting_true_is_noop(self) -> None:
-        conn = Connection.__new__(Connection)
+        conn = _bare_sync_conn()
         conn.autocommit = True
         assert conn.autocommit is True
 
     def test_setting_false_raises_not_supported(self) -> None:
-        conn = Connection.__new__(Connection)
+        conn = _bare_sync_conn()
         with pytest.raises(NotSupportedError, match="autocommit-by-default"):
             conn.autocommit = False
 
 
 class TestAsyncAutocommitProperty:
     def test_autocommit_returns_true(self) -> None:
-        conn = AsyncConnection.__new__(AsyncConnection)
+        conn = _bare_async_conn()
         assert conn.autocommit is True
 
     def test_setting_true_is_noop(self) -> None:
-        conn = AsyncConnection.__new__(AsyncConnection)
+        conn = _bare_async_conn()
         conn.autocommit = True
         assert conn.autocommit is True
 
     def test_setting_false_raises_not_supported(self) -> None:
-        conn = AsyncConnection.__new__(AsyncConnection)
+        conn = _bare_async_conn()
         with pytest.raises(NotSupportedError, match="autocommit-by-default"):
             conn.autocommit = False
