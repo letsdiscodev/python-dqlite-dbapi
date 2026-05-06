@@ -207,6 +207,12 @@ class AsyncConnection:
         self._close_timeout = close_timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
+        # Tracks the asyncio.Task that currently owns the
+        # ``conn.transaction()`` context manager body; used by
+        # commit() / rollback() to reject stray transaction-control
+        # calls from inside the ctxmgr body (which would otherwise
+        # silently exit the surrounding transaction).
+        self._transaction_owner: asyncio.Task[Any] | None = None
         # stdlib ``sqlite3.Connection.row_factory`` parity. None
         # means "return plain tuples". New cursors inherit this default.
         self._row_factory: Any = None
@@ -957,6 +963,23 @@ class AsyncConnection:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._async_conn is None:
             return
+        # Reject stray ``await conn.commit()`` from inside a
+        # ``conn.transaction()`` body. The ctxmgr owns transaction
+        # boundaries; a body's explicit commit silently ends the
+        # transaction (subsequent body statements run in autocommit;
+        # the surrounding rollback-at-exit no-ops because
+        # in_transaction is already False), an asymmetric data-
+        # correctness hazard. asyncpg / psycopg both reject nested
+        # explicit transaction control on the same shape.
+        if (
+            self._transaction_owner is not None
+            and self._transaction_owner is asyncio.current_task()
+        ):
+            raise InterfaceError(
+                "commit() cannot be issued inside conn.transaction(); "
+                "the context manager owns transaction boundaries — "
+                "exit the ``async with`` block first."
+            )
         # Cancel-after-invalidate contract: a prior commit/rollback that
         # was cancelled mid-flight invalidates the inner client conn
         # AND clears its ``in_transaction`` flag. A naive retry would
@@ -1017,6 +1040,16 @@ class AsyncConnection:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._async_conn is None:
             return
+        # Same conn.transaction() ctxmgr-owns-boundaries gate as commit().
+        if (
+            self._transaction_owner is not None
+            and self._transaction_owner is asyncio.current_task()
+        ):
+            raise InterfaceError(
+                "rollback() cannot be issued inside conn.transaction(); "
+                "the context manager owns transaction boundaries — "
+                "exit the ``async with`` block first."
+            )
         # Same invalidated-inner detection as commit() above.
         if getattr(self._async_conn, "_protocol", "_sentinel") is None:
             raise InterfaceError(
@@ -1077,8 +1110,32 @@ class AsyncConnection:
         # Materialise the underlying client connection if we haven't
         # yet — ``transaction()`` is an entry point on its own.
         async_conn = await self._ensure_connection()
-        async with async_conn.transaction():
-            yield
+        # Track the owning task while the body runs so explicit
+        # ``await conn.commit()`` / ``await conn.rollback()`` calls
+        # from the SAME task inside the body raise instead of
+        # silently exiting the transaction. asyncpg / psycopg both
+        # reject nested explicit transaction control; this driver
+        # used to silently route the body's stray commit through to
+        # the client, ending the transaction without exiting the
+        # context manager — subsequent body statements then ran in
+        # autocommit mode and the surrounding ``async with`` rollback-
+        # at-exit no-op'd because in_transaction was already False.
+        if self._transaction_owner is not None:
+            raise InterfaceError(
+                f"Nested conn.transaction() not supported (id={id(self)}); "
+                "exit the outer block before opening a new one."
+            )
+        token = asyncio.current_task()
+        self._transaction_owner = token
+        try:
+            async with async_conn.transaction():
+                yield
+        finally:
+            # Only clear if we still own the slot — a sibling task
+            # that somehow re-entered (shouldn't happen given the
+            # guard above) would otherwise have its slot wiped.
+            if self._transaction_owner is token:
+                self._transaction_owner = None
 
     def cursor(self, **unknown_kwargs: object) -> AsyncCursor:
         """Return a new AsyncCursor object.
