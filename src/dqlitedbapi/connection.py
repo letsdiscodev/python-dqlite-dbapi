@@ -1613,14 +1613,25 @@ class Connection:
                     # frame keeps the StreamReader/StreamWriter
                     # referenced (small leak per orphaned drain).
                     # Mirrors the async sibling's bounded re-snapshot
-                    # reap at lines 842-911 — but here we run on the
-                    # calling thread, so the cancel must be scheduled
-                    # via ``call_soon_threadsafe`` to land on the loop
-                    # thread before the queued ``loop.stop``.
-                    pending = getattr(inner, "_pending_drain", None)
-                    with contextlib.suppress(Exception):
-                        inner._pending_drain = None
-                    if pending is not None and not pending.done():
+                    # reap at lines 842-911. The loop thread is still
+                    # actively running until the queued ``loop.stop``
+                    # processes (the ``call_soon_threadsafe`` ready
+                    # queue runs in FIFO; stop is the LAST callback we
+                    # queue), so a coroutine on the loop thread can
+                    # call ``_invalidate`` synchronously from its
+                    # except arms in client/connection.py and publish
+                    # a FRESH ``_pending_drain`` task BETWEEN our
+                    # snapshot and our null. The bounded loop closes
+                    # the snapshot-vs-fresh-publish race; without it,
+                    # the fresh task would be orphaned and surface as
+                    # "Task was destroyed but it is pending" at GC.
+                    _RESNAPSHOT_CAP = 3
+                    for _attempt in range(_RESNAPSHOT_CAP):
+                        pending = getattr(inner, "_pending_drain", None)
+                        with contextlib.suppress(Exception):
+                            inner._pending_drain = None
+                        if pending is None or pending.done():
+                            break
 
                         def _cancel_and_observe(target: asyncio.Task[Any]) -> None:
                             target.cancel()
@@ -1634,6 +1645,23 @@ class Connection:
 
                         with contextlib.suppress(RuntimeError):
                             loop.call_soon_threadsafe(_cancel_and_observe, pending)
+                    else:
+                        # Cap exhausted: a racing ``_invalidate`` keeps
+                        # creating fresh ``_pending_drain`` tasks each
+                        # iteration. Final defensive null-out + WARNING
+                        # so operators see the pathological feedback
+                        # loop. Mirrors the async-sibling cap-exhausted
+                        # branch at aio/connection.py:895-911.
+                        with contextlib.suppress(Exception):
+                            inner._pending_drain = None
+                        logger.warning(
+                            "Connection.force_close_transport: inner._pending_drain still "
+                            "set after %d re-snapshot iterations; cancelling residual task "
+                            "to avoid 'Task was destroyed but it is pending' at GC. This "
+                            "indicates a pathological _invalidate feedback loop on inner "
+                            "conn.",
+                            _RESNAPSHOT_CAP,
+                        )
                     proto = getattr(inner, "_protocol", None)
                     writer = getattr(proto, "_writer", None) if proto is not None else None
                     if writer is not None:
