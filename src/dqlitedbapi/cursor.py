@@ -1772,8 +1772,11 @@ class Cursor:
         # outside the PEP 249 ``Error`` hierarchy. The documented
         # intent is "free to do nothing on closed", so an early return
         # preserves both the no-raise contract and the GC'd-proxy
-        # safety.
-        if self._closed:
+        # safety. Also short-circuit on a closed parent connection
+        # so the ``_check_thread`` call doesn't run against a
+        # connection mid-tear-down — symmetric with the async
+        # sibling at ``aio/cursor.py:808-817``.
+        if self._closed or self._connection._closed:
             return
         self._connection._check_thread()
 
@@ -1789,8 +1792,10 @@ class Cursor:
             raise ProgrammingError(
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
-        # PEP 249 §6.2 — see ``setinputsizes`` rationale.
-        if self._closed:
+        # PEP 249 §6.2 — see ``setinputsizes`` rationale. Symmetric
+        # with the async sibling: short-circuit on closed cursor OR
+        # closed parent connection.
+        if self._closed or self._connection._closed:
             return
         self._connection._check_thread()
 
