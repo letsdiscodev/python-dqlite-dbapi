@@ -888,6 +888,7 @@ class Cursor:
         "__weakref__",
         "_arraysize",
         "_closed",
+        "_completed_iterations",
         "_connection",
         "_description",
         "_lastrowid",
@@ -907,6 +908,16 @@ class Cursor:
         self._row_index = 0
         self._closed = False
         self._lastrowid: int | None = None
+        # Count of executemany() iterations that completed
+        # successfully on the most recent call. After a normal
+        # successful executemany, equals len(seq_of_parameters); after
+        # a cancel / error mid-batch, equals the number of iterations
+        # that had already committed server-side (since each iteration
+        # autocommits when there's no surrounding BEGIN). Lets callers
+        # write idempotent compensation after cancel — observability-
+        # complement to ``_rowcount`` which resets to PEP 249's
+        # "undetermined" sentinel on the cancel path.
+        self._completed_iterations: int = 0
         # stdlib ``sqlite3.Cursor.row_factory`` parity. None means
         # "return plain tuples" (PEP 249 default). New cursors inherit
         # the parent Connection's default factory if set. The class-
@@ -975,6 +986,28 @@ class Cursor:
         Returns -1 if not applicable or unknown.
         """
         return self._rowcount
+
+    @property
+    def completed_iterations(self) -> int:
+        """Count of executemany() iterations that completed
+        successfully on the most recent call.
+
+        After a normal successful executemany, equals
+        ``len(seq_of_parameters)``. After a cancel / error mid-batch,
+        retains the count of iterations that already committed
+        server-side (since each iteration auto-commits when there is
+        no surrounding ``BEGIN``). 0 after a never-executed cursor or
+        a single-row execute.
+
+        Observability hook for idempotent compensation: a caller
+        recovering from a cancelled executemany can read this to know
+        which prefix of ``seq_of_parameters`` already persisted.
+        Complements ``rowcount`` which resets to PEP 249's
+        "undetermined" sentinel (-1) on the cancel path.
+
+        Resets to 0 at the start of every new executemany call.
+        """
+        return self._completed_iterations
 
     @property
     def lastrowid(self) -> int | None:
@@ -1357,11 +1390,18 @@ class Cursor:
         # an empty ``seq_of_parameters`` ends with the same
         # ``rowcount`` shape as empty ``execute``.
         self._reset_execute_state()
+        # Reset the per-call completed-iteration counter. After a
+        # successful executemany, equals len(seq_of_parameters).
+        # After cancel / mid-batch raise, retains the count of
+        # iterations that already committed server-side — observability
+        # signal for idempotent compensation.
+        self._completed_iterations = 0
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         try:
             for params in seq_of_parameters:
                 await self._execute_async(operation, params)
                 acc.push(self)
+                self._completed_iterations += 1
             # stdlib ``sqlite3.Cursor.executemany`` does NOT update
             # ``lastrowid`` — the value reflects no single row across
             # the batch and is "left unchanged" per the docs. The
@@ -1389,6 +1429,10 @@ class Cursor:
             # scrubs it"). PEP 249 §6.1.1 also requires messages be
             # cleared by every cursor method call; clear here so the
             # contract holds even on the BaseException re-raise.
+            # ``_completed_iterations`` is intentionally PRESERVED
+            # — it's the observability signal for "how many iterations
+            # committed before the failure"; callers reading it after
+            # cancel get the count for idempotent compensation.
             self._rowcount = -1
             self._rows = []
             self._description = None

@@ -46,6 +46,7 @@ class AsyncCursor:
         "__weakref__",
         "_arraysize",
         "_closed",
+        "_completed_iterations",
         "_connection",
         "_description",
         "_executing_task",
@@ -70,6 +71,10 @@ class AsyncCursor:
         # calls from different tasks. ``op_lock`` serialises the wire
         # but not the cursor's per-execute state mutations.
         self._executing_task: asyncio.Task[Any] | None = None
+        # See sync sibling for full docs. Tracks the count of
+        # executemany iterations that completed successfully; preserved
+        # across cancel for idempotent-compensation observability.
+        self._completed_iterations: int = 0
         # Inherit parent connection's default row_factory (stdlib
         # parity). Class-name check restricts inheritance to real
         # AsyncConnection instances — MagicMock-typed test fakes
@@ -120,6 +125,13 @@ class AsyncCursor:
         internal state safe from caller mutation.
         """
         return self._description
+
+    @property
+    def completed_iterations(self) -> int:
+        """Count of executemany() iterations that completed
+        successfully on the most recent call. See sync sibling
+        ``Cursor.completed_iterations`` for full docs."""
+        return self._completed_iterations
 
     @property
     def rowcount(self) -> int:
@@ -481,6 +493,10 @@ class AsyncCursor:
         # an empty ``seq_of_parameters`` ends with the same
         # ``rowcount`` shape as empty ``execute``.
         self._reset_execute_state()
+        # Reset the per-call completed-iteration counter. Preserved
+        # across the BaseException re-raise so callers can observe how
+        # many iterations committed before the cancel / failure.
+        self._completed_iterations = 0
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         # Hold ``op_lock`` once for the entire loop. Previously each
         # iteration called ``self.execute(...)`` which re-acquired the
@@ -510,6 +526,7 @@ class AsyncCursor:
                         await self._execute_unlocked(operation, params)
                         self._check_closed()
                         acc.push(self)
+                        self._completed_iterations += 1
                 except BaseException:
                     # Mid-batch failure leaves _rowcount at the last
                     # iteration's value (misleading), so reset to
