@@ -67,3 +67,78 @@ async def test_commit_with_alive_inner_does_not_raise_invalidated_error() -> Non
     op_lock.__aexit__ = AsyncMock(return_value=False)
     with patch.object(conn, "_ensure_locks", return_value=(None, op_lock)):
         await conn.commit()  # silent no-op
+
+
+@pytest.mark.asyncio
+async def test_commit_invalidate_during_lock_acquire_raises_interface_error() -> None:
+    """Pin: a sibling-task ``_invalidate`` racing with ``commit()``'s
+    ``async with op_lock`` acquire must NOT slip through the
+    in_transaction-False short-circuit. The pre-lock ``_protocol is None``
+    gate fires only on retry-after-invalidate; it cannot guard the
+    invalidate-during-acquire window. The under-lock recheck must
+    consult ``_async_conn._protocol`` (not just ``_closed`` /
+    ``_async_conn``) so the partial-commit ambiguity discipline holds
+    across the sibling-task cancel shape too.
+
+    Repro shape: hold ``op_lock`` from a fixture-task, schedule the
+    real ``commit()`` so it parks on the lock, then mutate
+    ``_async_conn._protocol = None`` (simulating a sibling task's
+    ``_invalidate``) while commit is parked. Release the lock. The
+    commit must observe the invalidated state and raise InterfaceError.
+    """
+    import asyncio
+
+    # Build an AsyncConnection with a live _protocol initially.
+    conn = AsyncConnection.__new__(AsyncConnection)
+    conn._closed = False
+    conn._transaction_owner = None
+    conn.messages = []
+    conn._async_conn = MagicMock()
+    conn._async_conn._protocol = object()  # initially alive
+    conn._async_conn.in_transaction = False  # invalidate clears this too
+    # Real asyncio.Lock so the parking semantics match production.
+    real_lock = asyncio.Lock()
+
+    with patch.object(conn, "_ensure_locks", return_value=(None, real_lock)):
+        # Hold the lock from a fixture-task; commit() will park on it.
+        await real_lock.acquire()
+
+        commit_task = asyncio.create_task(conn.commit())
+        # Yield once so commit() runs through its pre-lock checks
+        # (which see _protocol alive) and parks on op_lock.
+        await asyncio.sleep(0)
+        # Sibling task's invalidate fires now: protocol gone,
+        # in_transaction cleared.
+        conn._async_conn._protocol = None
+        conn._async_conn.in_transaction = False
+        # Release the lock so commit() can proceed under-lock.
+        real_lock.release()
+
+        with pytest.raises(_dbapi_exc.InterfaceError, match="invalidated"):
+            await commit_task
+
+
+@pytest.mark.asyncio
+async def test_rollback_invalidate_during_lock_acquire_raises_interface_error() -> None:
+    """Sibling pin for rollback() — same race shape as commit()."""
+    import asyncio
+
+    conn = AsyncConnection.__new__(AsyncConnection)
+    conn._closed = False
+    conn._transaction_owner = None
+    conn.messages = []
+    conn._async_conn = MagicMock()
+    conn._async_conn._protocol = object()
+    conn._async_conn.in_transaction = False
+    real_lock = asyncio.Lock()
+
+    with patch.object(conn, "_ensure_locks", return_value=(None, real_lock)):
+        await real_lock.acquire()
+        rollback_task = asyncio.create_task(conn.rollback())
+        await asyncio.sleep(0)
+        conn._async_conn._protocol = None
+        conn._async_conn.in_transaction = False
+        real_lock.release()
+
+        with pytest.raises(_dbapi_exc.InterfaceError, match="invalidated"):
+            await rollback_task
