@@ -1452,6 +1452,14 @@ class AsyncConnection:
         exception path doesn't leak an unowned cursor with loop-
         bound state.
         """
+        # PEP 249 §6.4 messages-clear contract; eager-clear mirrors
+        # sync sibling ``Connection.execute`` at connection.py:1937.
+        # ``self.cursor()`` would clear it as a side-effect, but the
+        # contract is explicitly "the next method call clears" — not
+        # "the cursor created on the next line clears". The eager-
+        # clear discipline also defends against future refactors that
+        # move ``self.cursor()`` later in the body.
+        del self.messages[:]
         cur = self.cursor()
         try:
             if parameters is None:
@@ -1474,6 +1482,8 @@ class AsyncConnection:
         ``executemany``, return the cursor. Mirrors stdlib
         ``sqlite3.Connection.executemany`` and aiosqlite's
         ``Connection.executemany``."""
+        # PEP 249 §6.4 messages-clear; see ``execute`` above.
+        del self.messages[:]
         cur = self.cursor()
         try:
             await cur.executemany(operation, seq_of_parameters)
