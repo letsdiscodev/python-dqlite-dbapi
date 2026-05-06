@@ -1,5 +1,6 @@
 """Async cursor implementation for dqlite."""
 
+import asyncio
 import contextlib
 import weakref
 from collections.abc import Iterable, Sequence
@@ -47,6 +48,7 @@ class AsyncCursor:
         "_closed",
         "_connection",
         "_description",
+        "_executing_task",
         "_lastrowid",
         "_row_factory",
         "_row_index",
@@ -64,6 +66,10 @@ class AsyncCursor:
         self._row_index = 0
         self._closed = False
         self._lastrowid: int | None = None
+        # Per-cursor task token used to reject concurrent execute()
+        # calls from different tasks. ``op_lock`` serialises the wire
+        # but not the cursor's per-execute state mutations.
+        self._executing_task: asyncio.Task[Any] | None = None
         # Inherit parent connection's default row_factory (stdlib
         # parity). Class-name check restricts inheritance to real
         # AsyncConnection instances — MagicMock-typed test fakes
@@ -329,6 +335,15 @@ class AsyncCursor:
         """Execute a database operation (query or command).
 
         Returns ``self`` so callers can chain ``.fetchall()`` etc.
+
+        Concurrency: a single ``AsyncCursor`` is a single-task
+        primitive. Two tasks issuing ``await cur.execute(...)``
+        concurrently on the same cursor would otherwise silently
+        clobber each other's per-execute state (``_description``,
+        ``_rows``, ``_rowcount``) — the connection's ``op_lock``
+        serialises the wire but not the cursor instance. asyncpg
+        rejects the same shape with ``InterfaceError("cursor is
+        already executing")``; this driver matches.
         """
         # PEP 249 §6.1.2: ``messages`` is cleared by every standard
         # cursor method before the call runs.
@@ -336,37 +351,45 @@ class AsyncCursor:
         # Fast-path guard outside the lock so we fail quickly on an
         # already-closed cursor without taking the lock.
         self._check_closed()
-        # Clear state after the closed guard and before taking the
-        # lock: matches stdlib sqlite3 semantics so a mid-execute
-        # failure (including CancelledError) leaves the cursor in the
-        # "no result set" baseline rather than reporting the prior
-        # query's description.
-        self._reset_execute_state()
+        # Reject concurrent execute on the same cursor. ``op_lock``
+        # below serialises the wire calls, but the cursor's
+        # per-execute state is mutated outside that lock (the
+        # ``_reset_execute_state`` call AND the result population in
+        # ``_execute_unlocked``) — two concurrent execute() calls on
+        # the same cursor object see different result-set state at
+        # different times. Use a per-cursor task token; reject any
+        # concurrent entry from a foreign task.
+        cur_task = asyncio.current_task()
+        if self._executing_task is not None and self._executing_task is not cur_task:
+            raise InterfaceError(
+                f"cursor is already executing in another task (id={id(self)}); "
+                "use one cursor per task"
+            )
+        self._executing_task = cur_task
+        try:
+            # Clear state after the closed guard and before taking
+            # the lock: matches stdlib sqlite3 semantics so a mid-
+            # execute failure (including CancelledError) leaves the
+            # cursor in the "no result set" baseline rather than
+            # reporting the prior query's description.
+            self._reset_execute_state()
 
-        # Pre-flight classification of caller-supplied SQL — empty /
-        # multi-statement / wrong ``?``-count. Mirrors the sync sibling
-        # at cursor.py. See ``_classify_caller_sql`` docstring.
-        _classify_caller_sql(operation, parameters)
+            # Pre-flight classification of caller-supplied SQL — empty /
+            # multi-statement / wrong ``?``-count. Mirrors the sync
+            # sibling at cursor.py. See ``_classify_caller_sql`` docstring.
+            _classify_caller_sql(operation, parameters)
 
-        _, op_lock = self._connection._ensure_locks()
-        async with op_lock:
-            # PEP 249 §6.1.1 — clear messages under the lock so the
-            # contract "messages cleared by every method call" is
-            # atomic with the operation. Clearing only pre-lock leaves
-            # a window where a sibling task could append between this
-            # clear and the EXEC. Mirrors the commit/rollback
-            # discipline.
-            del self.messages[:]
-            # Re-check after acquiring the lock so that a concurrent
-            # ``cursor.close()`` / ``connection.close()`` that reaches the
-            # closed flag first wins deterministically. Without the
-            # re-check, a cursor closed between the fast-path guard and
-            # the lock acquisition reports the race as
-            # "connection has been invalidated" or "protocol is None"
-            # rather than the sharper "Cursor is closed" / "Connection
-            # is closed" that the caller expects.
-            self._check_closed()
-            await self._execute_unlocked(operation, parameters)
+            _, op_lock = self._connection._ensure_locks()
+            async with op_lock:
+                del self.messages[:]
+                self._check_closed()
+                await self._execute_unlocked(operation, parameters)
+        finally:
+            # Clear the slot only if WE put it there — same-task
+            # nesting (someone calling cur.execute() inside a row
+            # factory) shouldn't trip this guard.
+            if self._executing_task is cur_task:
+                self._executing_task = None
 
         return self
 
@@ -402,6 +425,15 @@ class AsyncCursor:
         """
         del self.messages[:]
         self._check_closed()
+        # Reject concurrent execute/executemany on the same cursor
+        # — see ``execute`` for full rationale.
+        cur_task = asyncio.current_task()
+        if self._executing_task is not None and self._executing_task is not cur_task:
+            raise InterfaceError(
+                f"cursor is already executing in another task (id={id(self)}); "
+                "use one cursor per task"
+            )
+        self._executing_task = cur_task
         # Reject transaction-control verbs and pure queries up front
         # (mirror of the sync sibling).
         # See sync sibling for the leading ``;``-stripping loop and the
@@ -458,54 +490,58 @@ class AsyncCursor:
         # batch. The sync path is already atomic because ``_run_sync``
         # holds ``_op_lock`` for the outer coroutine; this restores
         # parity.
-        _, op_lock = self._connection._ensure_locks()
-        async with op_lock:
-            # PEP 249 §6.1.1 — clear messages under the lock; see
-            # ``execute`` and ``commit`` for the under-lock-clear
-            # rationale.
-            del self.messages[:]
-            self._check_closed()
-            try:
-                for params in seq_of_parameters:
-                    # Re-check before each iteration so a concurrent
-                    # ``cursor.close()`` landing between iterations
-                    # surfaces as "Cursor is closed" rather than being
-                    # observed only on the next iteration's nested execute
-                    # entry (or not at all for a single-iteration
-                    # remainder).
-                    self._check_closed()
-                    await self._execute_unlocked(operation, params)
-                    self._check_closed()
-                    acc.push(self)
-            except BaseException:
-                # Mid-batch failure leaves _rowcount at the last
-                # iteration's value (misleading), so reset to
-                # PEP 249's "undetermined" sentinel and clear the
-                # other state fields. Mirrors the sync sibling.
-                # ``_lastrowid`` is intentionally NOT reset — stdlib
-                # ``sqlite3.Cursor.lastrowid`` is documented as
-                # "the rowid of the last row inserted" and is NOT
-                # cleared by a failed/cancelled subsequent operation.
-                # A user who did ``cur.execute("INSERT ...")``, saw
-                # ``cur.lastrowid``, then ran an ``executemany`` that
-                # failed mid-batch should still see the prior INSERT's
-                # rowid (per the cursor docstring at module top:
-                # "ROLLBACK / UPDATE / DELETE / DDL do NOT clear it
-                # (mirroring stdlib), but close() scrubs it").
-                # PEP 249 §6.1.1 also requires messages be cleared
-                # by every cursor method call; clear here so the
-                # contract holds even on the BaseException re-raise
-                # path.
-                self._rowcount = -1
-                self._rows = []
-                self._description = None
-                self._row_index = 0
+        try:
+            _, op_lock = self._connection._ensure_locks()
+            async with op_lock:
+                # PEP 249 §6.1.1 — clear messages under the lock; see
+                # ``execute`` and ``commit`` for the under-lock-clear
+                # rationale.
                 del self.messages[:]
-                raise
-            # Final guard before apply; pairs with the ``_closed``
-            # check inside ``_ExecuteManyAccumulator.apply``.
-            self._check_closed()
-            acc.apply(self)
+                self._check_closed()
+                try:
+                    for params in seq_of_parameters:
+                        # Re-check before each iteration so a concurrent
+                        # ``cursor.close()`` landing between iterations
+                        # surfaces as "Cursor is closed" rather than being
+                        # observed only on the next iteration's nested execute
+                        # entry (or not at all for a single-iteration
+                        # remainder).
+                        self._check_closed()
+                        await self._execute_unlocked(operation, params)
+                        self._check_closed()
+                        acc.push(self)
+                except BaseException:
+                    # Mid-batch failure leaves _rowcount at the last
+                    # iteration's value (misleading), so reset to
+                    # PEP 249's "undetermined" sentinel and clear the
+                    # other state fields. Mirrors the sync sibling.
+                    # ``_lastrowid`` is intentionally NOT reset — stdlib
+                    # ``sqlite3.Cursor.lastrowid`` is documented as
+                    # "the rowid of the last row inserted" and is NOT
+                    # cleared by a failed/cancelled subsequent operation.
+                    # A user who did ``cur.execute("INSERT ...")``, saw
+                    # ``cur.lastrowid``, then ran an ``executemany`` that
+                    # failed mid-batch should still see the prior INSERT's
+                    # rowid (per the cursor docstring at module top:
+                    # "ROLLBACK / UPDATE / DELETE / DDL do NOT clear it
+                    # (mirroring stdlib), but close() scrubs it").
+                    # PEP 249 §6.1.1 also requires messages be cleared
+                    # by every cursor method call; clear here so the
+                    # contract holds even on the BaseException re-raise
+                    # path.
+                    self._rowcount = -1
+                    self._rows = []
+                    self._description = None
+                    self._row_index = 0
+                    del self.messages[:]
+                    raise
+                # Final guard before apply; pairs with the ``_closed``
+                # check inside ``_ExecuteManyAccumulator.apply``.
+                self._check_closed()
+                acc.apply(self)
+        finally:
+            if self._executing_task is cur_task:
+                self._executing_task = None
         return self
 
     def _check_result_set(self) -> None:
