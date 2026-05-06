@@ -30,7 +30,7 @@ class TestAsyncCommitNoTxSwallow:
         conn = _prime()
         assert conn._async_conn is not None
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
-            1, "cannot commit - no transaction is active"
+            "cannot commit - no transaction is active", 1
         )
         await conn.commit()  # silent no-op
 
@@ -38,7 +38,7 @@ class TestAsyncCommitNoTxSwallow:
         conn = _prime()
         assert conn._async_conn is not None
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
-            1, "cannot rollback - no transaction is active"
+            "cannot rollback - no transaction is active", 1
         )
         await conn.rollback()  # silent no-op
 
@@ -46,7 +46,7 @@ class TestAsyncCommitNoTxSwallow:
         conn = _prime()
         assert conn._async_conn is not None
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
-            10, "some unrelated error"
+            "some unrelated error", 10
         )
         # The client-layer OperationalError is wrapped into the PEP 249
         # dbapi OperationalError (via ``_call_client``); the code and
@@ -60,7 +60,7 @@ class TestAsyncCommitNoTxSwallow:
         conn = _prime()
         assert conn._async_conn is not None
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
-            10, "some unrelated error"
+            "some unrelated error", 10
         )
         with pytest.raises(_dbapi_exc.OperationalError, match="some unrelated error"):
             await conn.rollback()
@@ -72,5 +72,5 @@ class TestAsyncCommitNoTxSwallow:
         """
         from dqlitedbapi.connection import _is_no_transaction_error
 
-        exc = _client_exc.OperationalError(1, "cannot commit - no transaction is active")
+        exc = _client_exc.OperationalError("cannot commit - no transaction is active", 1)
         assert _is_no_transaction_error(exc) is True

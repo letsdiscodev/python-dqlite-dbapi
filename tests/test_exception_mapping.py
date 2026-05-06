@@ -40,7 +40,7 @@ def _cursor_with_async_conn_raising(exc: Exception) -> Cursor:
 
 class TestExceptionWrapping:
     def test_client_operational_error_becomes_dbapi_operational_error(self) -> None:
-        c = _cursor_with_async_conn_raising(client_exc.OperationalError(1, "boom"))
+        c = _cursor_with_async_conn_raising(client_exc.OperationalError("boom", 1))
         with pytest.raises(dbapi_exc.OperationalError, match="boom"):
             c.execute("SELECT 1")
 
@@ -64,7 +64,7 @@ class TestExceptionWrapping:
             c.execute("INSERT INTO t VALUES (?)", [object()])
 
     def test_chained_cause_preserved(self) -> None:
-        original = client_exc.OperationalError(1, "original")
+        original = client_exc.OperationalError("original", 1)
         c = _cursor_with_async_conn_raising(original)
         try:
             c.execute("SELECT 1")

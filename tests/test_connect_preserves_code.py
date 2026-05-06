@@ -33,7 +33,7 @@ async def test_connect_forwards_operational_error_code() -> None:
     with the same ``.code`` — sqlalchemy's ``is_disconnect`` can then
     classify it via the code-based branch.
     """
-    client_err = _client_exc.OperationalError(_SQLITE_IOERR_NOT_LEADER_FALLBACK, "not leader")
+    client_err = _client_exc.OperationalError("not leader", _SQLITE_IOERR_NOT_LEADER_FALLBACK)
 
     async def fake_connect() -> None:
         raise client_err

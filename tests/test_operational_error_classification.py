@@ -37,7 +37,7 @@ async def test_primary_code_classifies_to_pep249_class(
     code: int, exc_class: type[Exception]
 ) -> None:
     async def _raise() -> None:
-        raise _client_exc.OperationalError(code, f"primary {code}")
+        raise _client_exc.OperationalError(f"primary {code}", code)
 
     with pytest.raises(exc_class) as ei:
         await _call_client(_raise())
@@ -60,7 +60,7 @@ async def test_extended_corrupt_codes_classify_to_database_error(
     primary_sqlite_code; verify they reach DatabaseError too."""
 
     async def _raise() -> None:
-        raise _client_exc.OperationalError(extended, f"extended {extended}")
+        raise _client_exc.OperationalError(f"extended {extended}", extended)
 
     with pytest.raises(exc_class) as ei:
         await _call_client(_raise())

@@ -61,7 +61,7 @@ class TestSyncCommitLeaderFlipPropagates:
         conn = _make_sync_with_inner()
         try:
             conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
-                code, "leadership lost"
+                "leadership lost", code
             )
             with pytest.raises(OperationalError) as ei:
                 conn.commit()
@@ -73,7 +73,7 @@ class TestSyncCommitLeaderFlipPropagates:
         conn = _make_sync_with_inner()
         try:
             conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
-                code, "not leader"
+                "not leader", code
             )
             with pytest.raises(OperationalError) as ei:
                 conn.rollback()
@@ -93,7 +93,7 @@ class TestSyncCommitLeaderFlipPropagates:
         conn = _make_sync_with_inner()
         try:
             conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
-                code, "leadership lost"
+                "leadership lost", code
             )
             with pytest.raises(OperationalError) as ei:
                 conn.__exit__(None, None, None)
@@ -107,7 +107,7 @@ class TestAsyncCommitLeaderFlipPropagates:
     async def test_commit_leader_flip_raises(self, code: int) -> None:
         conn = _make_async_with_inner()
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
-            code, "leadership lost"
+            "leadership lost", code
         )
         with pytest.raises(OperationalError) as ei:
             await conn.commit()
@@ -116,7 +116,7 @@ class TestAsyncCommitLeaderFlipPropagates:
     async def test_rollback_leader_flip_raises(self, code: int) -> None:
         conn = _make_async_with_inner()
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
-            code, "not leader"
+            "not leader", code
         )
         with pytest.raises(OperationalError) as ei:
             await conn.rollback()
@@ -129,7 +129,7 @@ class TestAsyncCommitLeaderFlipPropagates:
         comment for the cross-reference)."""
         conn = _make_async_with_inner()
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
-            code, "leadership lost"
+            "leadership lost", code
         )
         with pytest.raises(OperationalError) as ei:
             await conn.__aexit__(None, None, None)

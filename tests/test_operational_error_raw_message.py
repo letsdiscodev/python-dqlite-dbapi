@@ -25,7 +25,7 @@ async def test_operational_error_preserves_raw_message_through_call_client() -> 
     long_msg = "x" * 5000
 
     async def _raise() -> None:
-        raise _client_exc.OperationalError(1, long_msg)
+        raise _client_exc.OperationalError(long_msg, 1)
 
     with pytest.raises(OperationalError) as ei:
         await _call_client(_raise())

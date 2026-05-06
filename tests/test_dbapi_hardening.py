@@ -353,13 +353,13 @@ class TestIsNoTransactionError:
         from dqlitedbapi.connection import _is_no_transaction_error
 
         # code=1 (SQLITE_ERROR) + substring → true
-        err = ClientOpError(1, "cannot commit - no transaction is active")
+        err = ClientOpError("cannot commit - no transaction is active", 1)
         assert _is_no_transaction_error(err)
 
         # code=21 (SQLITE_MISUSE) is NOT in the whitelist — the dqlite
         # server never returns it on the COMMIT/ROLLBACK path. A real
         # misuse must surface as a real error, not a silent no-op.
-        err = ClientOpError(21, "misuse: no transaction is active")
+        err = ClientOpError("misuse: no transaction is active", 21)
         assert not _is_no_transaction_error(err)
 
     def test_disk_full_with_matching_substring_is_not_silenced(self) -> None:
@@ -368,14 +368,14 @@ class TestIsNoTransactionError:
 
         # Code 13 (SQLITE_FULL) must NOT be silenced even if the message
         # happens to contain the magic substring (attacker-controlled).
-        err = ClientOpError(13, "disk full — but no transaction is active")
+        err = ClientOpError("disk full — but no transaction is active", 13)
         assert not _is_no_transaction_error(err)
 
     def test_constraint_violation_is_not_silenced(self) -> None:
         from dqliteclient.exceptions import OperationalError as ClientOpError
         from dqlitedbapi.connection import _is_no_transaction_error
 
-        err = ClientOpError(19, "constraint: no transaction is active anywhere")
+        err = ClientOpError("constraint: no transaction is active anywhere", 19)
         assert not _is_no_transaction_error(err)
 
 
@@ -537,7 +537,7 @@ class TestOperationalErrorCode:
         from dqlitedbapi.exceptions import OperationalError
 
         async def raiser() -> None:
-            raise _client_exc.OperationalError(10250, "not the leader")
+            raise _client_exc.OperationalError("not the leader", 10250)
 
         with pytest.raises(OperationalError) as excinfo:
             asyncio.run(_call_client(raiser()))

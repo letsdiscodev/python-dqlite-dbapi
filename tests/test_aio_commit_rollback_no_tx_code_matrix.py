@@ -21,7 +21,7 @@ from dqlitedbapi.exceptions import Error
 
 def _build_fake_inner(code: int, message: str) -> Any:
     async def fake_execute(sql: str) -> object:
-        raise _client_exc.OperationalError(code, message)
+        raise _client_exc.OperationalError(message, code)
 
     fake = type("_FakeInner", (), {})()
     fake.execute = fake_execute

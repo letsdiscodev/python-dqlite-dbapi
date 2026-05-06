@@ -61,12 +61,12 @@ _WRAPPING_CASES = [
         id="interface-error",
     ),
     pytest.param(
-        _client_exc.OperationalError(19, "UNIQUE failed"),
+        _client_exc.OperationalError("UNIQUE failed", 19),
         _dbapi_exc.IntegrityError,
         id="operational-error-constraint",
     ),
     pytest.param(
-        _client_exc.OperationalError(2, "internal"),
+        _client_exc.OperationalError("internal", 2),
         _dbapi_exc.InternalError,
         id="operational-error-internal",
     ),
@@ -102,7 +102,7 @@ class TestAsyncCommitWrapping:
         conn = _prime()
         assert conn._async_conn is not None
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
-            19, "UNIQUE constraint failed"
+            "UNIQUE constraint failed", 19
         )
         with pytest.raises(_dbapi_exc.IntegrityError) as exc_info:
             await conn.commit()
@@ -136,7 +136,7 @@ class TestAsyncNoTxSwallowSurvivesWrapping:
         conn = _prime()
         assert conn._async_conn is not None
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
-            1, "cannot commit - no transaction is active"
+            "cannot commit - no transaction is active", 1
         )
         await conn.commit()  # silent no-op
 
@@ -144,6 +144,6 @@ class TestAsyncNoTxSwallowSurvivesWrapping:
         conn = _prime()
         assert conn._async_conn is not None
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
-            1, "cannot rollback - no transaction is active"
+            "cannot rollback - no transaction is active", 1
         )
         await conn.rollback()  # silent no-op

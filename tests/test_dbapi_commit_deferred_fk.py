@@ -29,7 +29,7 @@ async def test_aio_commit_deferred_fk_violation_raises_integrity_clears_inflight
     async def fake_execute(sql: str) -> object:
         # Mimic the real client path: tracker cleared THEN exception raised.
         fake_inner.in_transaction = False
-        raise _client_exc.OperationalError(19, "FOREIGN KEY constraint failed")
+        raise _client_exc.OperationalError("FOREIGN KEY constraint failed", 19)
 
     fake_inner.execute = fake_execute
     conn._async_conn = fake_inner

@@ -82,7 +82,7 @@ async def test_call_client_maps_code(code: int | None, expected_cls: type) -> No
     """
 
     async def raise_op() -> None:
-        raise _client_exc.OperationalError(code or 0, "boom")
+        raise _client_exc.OperationalError("boom", code or 0)
 
     with pytest.raises(expected_cls) as exc_info:
         await _call_client(raise_op())
