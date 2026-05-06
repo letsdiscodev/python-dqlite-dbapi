@@ -463,75 +463,88 @@ class AsyncCursor:
                 code=None,
             )
         # Reject concurrent execute/executemany on the same cursor
-        # — see ``execute`` for full rationale.
+        # — see ``execute`` for full rationale. The slot-state check
+        # observes the existing slot BEFORE the slot is set; the
+        # set itself moves inside the try/finally below so a
+        # validation-rejected executemany clears the slot on raise
+        # (sibling ``execute`` already follows this pattern).
         cur_task = asyncio.current_task()
         if self._executing_task is not None and self._executing_task is not cur_task:
             raise InterfaceError(
                 f"cursor is already executing in another task (id={id(self)}); "
                 "use one cursor per task"
             )
-        self._executing_task = cur_task
-        # Reject transaction-control verbs and pure queries up front
-        # (mirror of the sync sibling).
-        # See sync sibling for the leading ``;``-stripping loop and the
-        # trailing ``rstrip(";")`` rationale.
-        # Loop comment-strip + ;-strip together so a leading ``;``
-        # followed by a comment does not bypass the reject-list. See
-        # the sync sibling for full rationale.
-        head_normalised = operation
-        while True:
-            stripped = _strip_leading_comments(head_normalised).lstrip()
-            if stripped.startswith(";"):
-                head_normalised = stripped[1:]
-                continue
-            if stripped == head_normalised:
-                break
-            head_normalised = stripped
-        head_normalised = head_normalised.upper()
-        first_verb = head_normalised.split(maxsplit=1)[0].rstrip(";") if head_normalised else ""
-        if first_verb in _EXECUTEMANY_REJECT_VERBS:
-            raise ProgrammingError(
-                f"executemany() not supported for {first_verb}; "
-                "use execute() instead — transaction-control statements "
-                "take no parameters and cannot be batched."
-            )
-        if _is_row_returning(operation) and not _is_dml_with_returning(operation):
-            head_upper = operation.lstrip().upper()
-            if head_upper.startswith("PRAGMA"):
-                # See sync sibling: PRAGMA has per-call semantics and
-                # is never meaningfully batchable; surface the
-                # PRAGMA-specific guidance so the caller does not
-                # wonder whether a different PRAGMA would be
-                # acceptable.
-                raise ProgrammingError(
-                    "executemany() does not accept PRAGMA; PRAGMAs have "
-                    "per-call semantics and are not batchable. Use "
-                    "execute() for each PRAGMA."
-                )
-            raise ProgrammingError(
-                "executemany() can only execute DML statements; "
-                "use execute() for SELECT / VALUES / PRAGMA / EXPLAIN / WITH."
-            )
-
-        # Single source of truth for per-execute reset; see
-        # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
-        # an empty ``seq_of_parameters`` ends with the same
-        # ``rowcount`` shape as empty ``execute``.
-        self._reset_execute_state()
-        # Reset the per-call completed-iteration counter. Preserved
-        # across the BaseException re-raise so callers can observe how
-        # many iterations committed before the cancel / failure.
-        self._completed_iterations = 0
-        acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
-        # Hold ``op_lock`` once for the entire loop. Previously each
-        # iteration called ``self.execute(...)`` which re-acquired the
-        # lock, so a concurrent task on the same connection could slip
-        # arbitrary statements — including ``COMMIT`` / ``ROLLBACK`` /
-        # DDL — between iterations of a RETURNING / insertmanyvalues
-        # batch. The sync path is already atomic because ``_run_sync``
-        # holds ``_op_lock`` for the outer coroutine; this restores
-        # parity.
+        # Set the slot INSIDE the try/finally so any non-success exit
+        # path (validation reject, mid-loop raise, cancel) clears it.
+        # Previously the slot was set BEFORE the verb-reject /
+        # PRAGMA-reject / row-returning-reject checks; a validation-
+        # rejected executemany pinned ``_executing_task`` to a
+        # completed task, then a cross-task ``cur.execute(...)``
+        # observed the stale slot and raised
+        # ``InterfaceError("cursor is already executing in another task")``
+        # on a cursor that was NOT actually executing.
         try:
+            self._executing_task = cur_task
+            # Reject transaction-control verbs and pure queries up front
+            # (mirror of the sync sibling).
+            # See sync sibling for the leading ``;``-stripping loop and the
+            # trailing ``rstrip(";")`` rationale.
+            # Loop comment-strip + ;-strip together so a leading ``;``
+            # followed by a comment does not bypass the reject-list. See
+            # the sync sibling for full rationale.
+            head_normalised = operation
+            while True:
+                stripped = _strip_leading_comments(head_normalised).lstrip()
+                if stripped.startswith(";"):
+                    head_normalised = stripped[1:]
+                    continue
+                if stripped == head_normalised:
+                    break
+                head_normalised = stripped
+            head_normalised = head_normalised.upper()
+            first_verb = head_normalised.split(maxsplit=1)[0].rstrip(";") if head_normalised else ""
+            if first_verb in _EXECUTEMANY_REJECT_VERBS:
+                raise ProgrammingError(
+                    f"executemany() not supported for {first_verb}; "
+                    "use execute() instead — transaction-control statements "
+                    "take no parameters and cannot be batched."
+                )
+            if _is_row_returning(operation) and not _is_dml_with_returning(operation):
+                head_upper = operation.lstrip().upper()
+                if head_upper.startswith("PRAGMA"):
+                    # See sync sibling: PRAGMA has per-call semantics and
+                    # is never meaningfully batchable; surface the
+                    # PRAGMA-specific guidance so the caller does not
+                    # wonder whether a different PRAGMA would be
+                    # acceptable.
+                    raise ProgrammingError(
+                        "executemany() does not accept PRAGMA; PRAGMAs have "
+                        "per-call semantics and are not batchable. Use "
+                        "execute() for each PRAGMA."
+                    )
+                raise ProgrammingError(
+                    "executemany() can only execute DML statements; "
+                    "use execute() for SELECT / VALUES / PRAGMA / EXPLAIN / WITH."
+                )
+
+            # Single source of truth for per-execute reset; see
+            # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
+            # an empty ``seq_of_parameters`` ends with the same
+            # ``rowcount`` shape as empty ``execute``.
+            self._reset_execute_state()
+            # Reset the per-call completed-iteration counter. Preserved
+            # across the BaseException re-raise so callers can observe how
+            # many iterations committed before the cancel / failure.
+            self._completed_iterations = 0
+            acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
+            # Hold ``op_lock`` once for the entire loop. Previously each
+            # iteration called ``self.execute(...)`` which re-acquired the
+            # lock, so a concurrent task on the same connection could slip
+            # arbitrary statements — including ``COMMIT`` / ``ROLLBACK`` /
+            # DDL — between iterations of a RETURNING / insertmanyvalues
+            # batch. The sync path is already atomic because ``_run_sync``
+            # holds ``_op_lock`` for the outer coroutine; this restores
+            # parity.
             _, op_lock = self._connection._ensure_locks()
             async with op_lock:
                 # PEP 249 §6.1.1 — clear messages under the lock; see
