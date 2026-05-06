@@ -12,6 +12,7 @@ warning was supposed to surface.
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import warnings
 
@@ -46,7 +47,7 @@ def test_cleanup_runs_even_when_resource_warning_escalates() -> None:
         # via sys.unraisablehook; we let it surface and continue here
         # — the contract under test is "cleanup ran regardless."
         with contextlib.suppress(ResourceWarning):
-            _cleanup_loop_thread(loop, t, [False], "localhost:9001")
+            _cleanup_loop_thread(loop, t, [False], "localhost:9001", os.getpid())
 
     assert stopped.wait(timeout=2), "loop thread did not terminate"
     assert loop.is_closed(), "event loop was not closed"

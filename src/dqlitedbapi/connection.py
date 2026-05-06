@@ -614,6 +614,7 @@ def _cleanup_loop_thread(
     thread: threading.Thread,
     closed_flag: list[bool],
     address: str,
+    creator_pid: int,
 ) -> None:
     """Stop the background event loop and join its thread.
 
@@ -622,7 +623,26 @@ def _cleanup_loop_thread(
     the Connection mutates when ``close()`` is called — we use that
     rather than a direct reference to self to decide whether to emit
     a ``ResourceWarning``.
+
+    Fork-safety: ``creator_pid`` is the pid of the process that
+    constructed the Connection; the finalizer fires in BOTH parent
+    and child after ``os.fork`` (each frees the inherited
+    Connection independently). In the child the captured ``loop`` /
+    ``thread`` are parent-owned — calling ``loop.close()`` would
+    close inherited selector FDs the parent still uses;
+    ``thread.join`` blocks for up to 5 s on a non-existent OS
+    thread (only the calling thread crosses ``fork``);
+    ``ResourceWarning`` based on the parent's frozen ``closed_flag``
+    is a false positive (the parent may close after fork). Mirror
+    the discipline of ``Connection._check_thread`` /
+    ``DqliteConnection.close`` / ``Pool.close``: pid-mismatch →
+    no-op.
     """
+    if get_current_pid() != creator_pid:
+        # Forked child. The captured loop/thread/closed_flag belong
+        # to the parent process. Skip cleanup entirely — both the
+        # warning emission and the loop/thread teardown.
+        return
     # Wrap the entire body in try/finally so the loop/thread teardown
     # ALWAYS runs, regardless of whether the warning emission raises.
     # Under ``pytest -W error::ResourceWarning`` the
@@ -883,6 +903,7 @@ class Connection:
                     self._thread,
                     self._closed_flag,
                     self._address,
+                    self._creator_pid,
                 )
         return self._loop
 
