@@ -1600,6 +1600,40 @@ class Connection:
             loop = self._loop
             if loop is not None and not loop.is_closed():
                 if inner is not None:
+                    # Reap any pending invalidation-drain task on the
+                    # inner conn before stopping the loop. A prior
+                    # ``_invalidate`` (e.g. scheduled by ``_run_sync``
+                    # on a sync timeout) may have created an
+                    # ``inner._pending_drain`` Task that is still in
+                    # flight; without an explicit cancel queued before
+                    # ``loop.stop``, ``inner`` falls out of scope after
+                    # ``loop.close()`` and ``Task.__del__`` emits
+                    # "Task was destroyed but it is pending" via
+                    # asyncio's exception handler, plus the coroutine
+                    # frame keeps the StreamReader/StreamWriter
+                    # referenced (small leak per orphaned drain).
+                    # Mirrors the async sibling's bounded re-snapshot
+                    # reap at lines 842-911 — but here we run on the
+                    # calling thread, so the cancel must be scheduled
+                    # via ``call_soon_threadsafe`` to land on the loop
+                    # thread before the queued ``loop.stop``.
+                    pending = getattr(inner, "_pending_drain", None)
+                    with contextlib.suppress(Exception):
+                        inner._pending_drain = None
+                    if pending is not None and not pending.done():
+
+                        def _cancel_and_observe(target: asyncio.Task[Any]) -> None:
+                            target.cancel()
+
+                            def _observe(t: asyncio.Task[Any]) -> None:
+                                if not t.cancelled():
+                                    with contextlib.suppress(BaseException):
+                                        t.exception()
+
+                            target.add_done_callback(_observe)
+
+                        with contextlib.suppress(RuntimeError):
+                            loop.call_soon_threadsafe(_cancel_and_observe, pending)
                     proto = getattr(inner, "_protocol", None)
                     writer = getattr(proto, "_writer", None) if proto is not None else None
                     if writer is not None:
