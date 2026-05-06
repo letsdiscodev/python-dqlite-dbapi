@@ -987,7 +987,40 @@ class Connection:
                     "use from another thread)"
                 )
             loop = self._ensure_loop()
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            try:
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+            except RuntimeError as e:
+                # ``asyncio.run_coroutine_threadsafe`` raises bare
+                # ``RuntimeError("Event loop is closed")`` when the
+                # loop is closed between ``_ensure_loop()`` returning
+                # and the schedule call landing — the canonical race
+                # is a sibling thread (``do_terminate`` from a
+                # finalizer thread, manual ``loop.close()``, SIGTERM-
+                # with-budget shutdown). Without this catch the bare
+                # RuntimeError escapes the PEP 249 ``Error`` hierarchy
+                # (SA's ``is_disconnect`` is gated on ``DatabaseError``
+                # so it cannot classify the failure correctly), AND
+                # the unscheduled coroutine emits
+                # ``RuntimeWarning("coroutine was never awaited")`` at
+                # GC — a warning whose traceback does not point at
+                # dqlite, sending operators chasing the wrong layer.
+                # Close the coroutine and remap to ``OperationalError``
+                # (a ``DatabaseError`` subclass) with the original
+                # RuntimeError chained for diagnostics. Narrow the
+                # remap to the closed-loop substring so unrelated
+                # RuntimeErrors ("Non-thread-safe operation invoked on
+                # an event loop other than the current one" — a
+                # programmer-bug shape) propagate as themselves
+                # rather than being silently classified as a database
+                # connection failure. Close the coroutine on every
+                # arm so neither path leaks the unawaited-coroutine
+                # warning.
+                coro.close()
+                if "Event loop is closed" not in str(e):
+                    raise
+                raise OperationalError(
+                    f"event loop closed before coroutine could be scheduled: {e}"
+                ) from e
             try:
                 # Future.result() provides a happens-before memory barrier,
                 # ensuring all writes by the event loop thread are visible here.
