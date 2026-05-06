@@ -21,6 +21,11 @@ def test_register_adapter_is_callable_stdlib_parity() -> None:
     stdlib ``sqlite3.register_adapter``). Common uses: ``Decimal``,
     ``UUID``, ``Path``, ``Enum`` binding. Verify the basic shape.
 
+    Bad-shape rejection raises ``ProgrammingError`` (a PEP 249
+    ``Error`` subclass) rather than a bare ``TypeError`` — cross-
+    driver code that wraps registry mutations in
+    ``except dbapi.Error:`` blocks classifies uniformly.
+
     Use a test-only sentinel class to avoid polluting the
     module-level ``_ADAPTERS`` dict for ``int`` / ``str`` /
     ``bytes`` etc. that other tests rely on.
@@ -29,17 +34,21 @@ def test_register_adapter_is_callable_stdlib_parity() -> None:
     class _RegAdapterSentinel:
         pass
 
+    from dqlitedbapi.exceptions import Error, ProgrammingError
     from dqlitedbapi.types import _ADAPTERS
 
     # Should not raise:
     dqlitedbapi.register_adapter(_RegAdapterSentinel, str)
     try:
         assert _RegAdapterSentinel in _ADAPTERS
-        # Bad shape still fails fast.
-        with pytest.raises(TypeError, match="callable"):
+        # Bad shape still fails fast — and raises a PEP 249 Error
+        # subclass (ProgrammingError), not bare TypeError.
+        with pytest.raises(ProgrammingError, match="callable") as ei:
             dqlitedbapi.register_adapter(_RegAdapterSentinel, "not callable")
-        with pytest.raises(TypeError, match="class"):
+        assert isinstance(ei.value, Error)
+        with pytest.raises(ProgrammingError, match="class") as ei:
             dqlitedbapi.register_adapter("not a type", str)  # type: ignore[arg-type]
+        assert isinstance(ei.value, Error)
     finally:
         _ADAPTERS.pop(_RegAdapterSentinel, None)
 

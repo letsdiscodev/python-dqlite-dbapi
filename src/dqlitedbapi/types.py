@@ -4,7 +4,7 @@ import datetime
 import math
 from typing import Any, Final, final
 
-from dqlitedbapi.exceptions import DataError
+from dqlitedbapi.exceptions import DataError, ProgrammingError
 from dqlitewire.constants import ValueType
 
 # PEP 249 §3: type objects + constructors. Private helpers
@@ -598,10 +598,22 @@ def register_adapter(type_: type, adapter: "Any") -> None:
     process. Tests that register adapters should clean up via
     :func:`unregister_adapter`.
     """
+    # PEP 249 §3 / §7: errors raised by the module subclass ``Error``
+    # so cross-driver code's ``except dbapi.Error:`` catches uniformly.
+    # Stdlib's ``sqlite3.register_adapter`` accepts anything silently;
+    # this driver tightens validation but keeps the rejection inside
+    # the PEP 249 hierarchy via ``ProgrammingError`` (the canonical
+    # class for "wrong argument shape").
     if not callable(adapter):
-        raise TypeError(f"adapter must be callable, got {type(adapter).__name__}")
+        raise ProgrammingError(
+            f"adapter must be callable, got {type(adapter).__name__}",
+            code=None,
+        )
     if not isinstance(type_, type):
-        raise TypeError(f"type_ must be a class, got {type(type_).__name__}")
+        raise ProgrammingError(
+            f"type_ must be a class, got {type(type_).__name__}",
+            code=None,
+        )
     _ADAPTERS[type_] = adapter
 
 
