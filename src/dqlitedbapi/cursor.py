@@ -3,7 +3,7 @@
 import contextlib
 import re
 import weakref
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence, Sized
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, Self
 
@@ -425,6 +425,26 @@ def _reject_non_sequence_params(params: Any) -> None:
         raise ProgrammingError(
             "qmark paramstyle requires an ordered sequence; got a set. "
             "Use a list or tuple positionally matching the ? placeholders."
+        )
+    # Reject generators / iterators / any non-Sized iterable. Stdlib
+    # ``sqlite3`` raises ``ProgrammingError("parameters are of
+    # unsupported type")`` for these; cross-driver portability argues
+    # for matching the behaviour. The substantive correctness reason
+    # is the leader-flip retry path: ``connect()``'s retry-with-backoff
+    # may need to re-issue the same statement after a leader flip, but
+    # a single-pass iterable can be drained only once. The current
+    # ``_convert_params`` materialise-into-list side effect masks this
+    # for the happy path, but the rejection at the boundary makes the
+    # constraint visible to callers (with an actionable diagnostic)
+    # rather than buried inside the wire-layer parameter-count check.
+    if not isinstance(params, Sized):
+        raise ProgrammingError(
+            f"qmark paramstyle requires a sized sequence (tuple/list); got "
+            f"{type(params).__name__!r}. Generators and other non-sized "
+            f"iterables are rejected because the driver may need to "
+            f"re-execute on leader-flip retry, which a single-pass "
+            f"iterable cannot satisfy. Materialise into a tuple/list "
+            f"explicitly."
         )
 
 
