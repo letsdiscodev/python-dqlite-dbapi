@@ -142,6 +142,52 @@ class TestThreadIdentityCheck:
 
         assert isinstance(error, ProgrammingError)
 
+    def test_cursor_arraysize_setter_from_wrong_thread_raises(self) -> None:
+        """Setting Cursor.arraysize from a different thread must raise
+        ProgrammingError. The Connection-class docstring's universal
+        affinity claim extends to Connection-allocated cursors —
+        ``cur.arraysize = N`` mid-batch from a foreign thread silently
+        changes the creator thread's next ``fetchmany`` size."""
+        conn = Connection("localhost:9001")
+        cursor = conn.cursor()
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                cursor.arraysize = 1
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
+    def test_cursor_row_factory_setter_from_wrong_thread_raises(self) -> None:
+        """Setting Cursor.row_factory from a different thread must raise
+        ProgrammingError. Cross-thread mutation could otherwise swap the
+        creator thread's per-row materialisation hook mid-fetch."""
+        conn = Connection("localhost:9001")
+        cursor = conn.cursor()
+        error: Exception | None = None
+
+        def wrong_thread() -> None:
+            nonlocal error
+            try:
+                cursor.row_factory = lambda c, r: dict(
+                    zip([d[0] for d in c.description], r, strict=False)
+                )
+            except Exception as e:
+                error = e
+
+        t = threading.Thread(target=wrong_thread)
+        t.start()
+        t.join()
+
+        assert isinstance(error, ProgrammingError)
+
     def test_setinputsizes_from_wrong_thread_raises(self) -> None:
         """setinputsizes() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")

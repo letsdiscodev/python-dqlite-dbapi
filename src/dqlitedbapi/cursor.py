@@ -1103,6 +1103,14 @@ class Cursor:
         # GETTER permissive — peer drivers (sqlite3, psycopg) also
         # let the read pass on a closed cursor as a defensive accessor.
         self._check_closed()
+        # State-mutating setter on a Connection-allocated cursor —
+        # enforce the threadsafety=1 affinity contract documented on
+        # the parent ``Connection`` class. Sibling ``Connection.row_factory.setter``
+        # already does this; mirror here so a foreign-thread
+        # ``cur.arraysize = 1`` mid-batch is caught at the boundary
+        # rather than silently changing the creator-thread's next
+        # ``fetchmany`` size.
+        self._connection._check_thread()
         if not isinstance(value, int) or isinstance(value, bool):
             raise ProgrammingError(f"arraysize must be a positive int, got {type(value).__name__}")
         if value < 1:
@@ -1140,6 +1148,10 @@ class Cursor:
     def row_factory(self, value: object) -> None:
         # PEP 249 §6.1.2: state-mutating ops on a closed cursor raise.
         self._check_closed()
+        # Threadsafety=1 affinity contract — see ``arraysize.setter``
+        # for the rationale (cross-thread mutation can silently swap
+        # the creator-thread's per-row materialisation hook).
+        self._connection._check_thread()
         if value is not None and not callable(value):
             raise ProgrammingError(
                 f"row_factory must be callable or None, got {type(value).__name__}"

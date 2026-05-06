@@ -193,6 +193,13 @@ class AsyncCursor:
         # the closed-cursor error. Mirrors the sync sibling at
         # ``cursor.py:920-935``.
         self._check_closed()
+        # Loop-binding affinity contract — a state-mutating setter on
+        # a Connection-allocated cursor must be invoked from the
+        # owning loop. Without this, a foreign-loop
+        # ``cur.arraysize = 1`` mid-batch silently swaps the creator
+        # loop's next ``fetchmany`` size. Sibling sync setter calls
+        # ``_check_thread()`` for the same reason.
+        self._connection._check_loop_binding()
         # Reject bools explicitly even though ``bool`` is an ``int``
         # subclass: ``arraysize = True`` silently coercing to 1 is a
         # caller-bug trap, not a useful affordance.
@@ -220,6 +227,9 @@ class AsyncCursor:
     @row_factory.setter
     def row_factory(self, value: object) -> None:
         self._check_closed()
+        # Loop-binding affinity contract — see ``arraysize.setter``
+        # for rationale.
+        self._connection._check_loop_binding()
         if value is not None and not callable(value):
             raise ProgrammingError(
                 f"row_factory must be callable or None, got {type(value).__name__}"
