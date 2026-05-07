@@ -387,8 +387,12 @@ class AsyncCursor:
                 f"cursor is already executing in another task (id={id(self)}); "
                 "use one cursor per task"
             )
-        self._executing_task = cur_task
+        # Set the slot INSIDE the try/finally so a KeyboardInterrupt /
+        # SystemExit delivered at the bytecode boundary between the
+        # STORE_ATTR and the SETUP_FINALLY cannot leave the slot pinned
+        # to a now-completed task. Mirrors the executemany sibling.
         try:
+            self._executing_task = cur_task
             # Clear state after the closed guard and before taking
             # the lock: matches stdlib sqlite3 semantics so a mid-
             # execute failure (including CancelledError) leaves the
