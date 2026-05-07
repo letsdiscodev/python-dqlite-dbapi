@@ -53,6 +53,7 @@ from dqlitedbapi.types import (
     Binary,
     Date,
     DateFromTicks,
+    DescriptionTuple,
     Time,
     TimeFromTicks,
     Timestamp,
@@ -134,6 +135,8 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "NUMBER",
     "DATETIME",
     "ROWID",
+    # Type aliases
+    "DescriptionTuple",
 ]
 
 

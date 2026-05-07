@@ -7,10 +7,10 @@ from typing import Any, Final, final
 from dqlitedbapi.exceptions import DataError, ProgrammingError
 from dqlitewire.constants import ValueType
 
-# PEP 249 §3: type objects + constructors. Private helpers
-# (``_DescriptionTuple``, ``_Description``, encoder/decoder helpers)
-# are deliberately NOT exported — they are consumed by sibling
-# modules via the already-tightened import surface.
+# PEP 249 §3: type objects + constructors. ``DescriptionTuple`` is
+# the public alias for the cursor.description row shape — exported so
+# downstream typed wrappers (``sqlalchemy-dqlite``) don't have to
+# import the underscore-prefixed alias across a package boundary.
 __all__ = [
     "BINARY",
     "DATETIME",
@@ -20,6 +20,7 @@ __all__ = [
     "Binary",
     "Date",
     "DateFromTicks",
+    "DescriptionTuple",
     "Time",
     "TimeFromTicks",
     "Timestamp",
@@ -34,8 +35,14 @@ __all__ = [
 # (the wire ``ValueType`` int); the other five are always ``None``.
 # Live here so sync/async cursors and the sqlalchemy adapter share one
 # shape instead of repeating the inline tuple at every site.
-_DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
-_Description = tuple[_DescriptionTuple, ...] | None
+DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
+# ``_DescriptionTuple`` retained as an internal alias for back-compat
+# with existing call sites inside this package; new code (especially
+# downstream packages) should use ``DescriptionTuple``. Kept as a
+# direct alias rather than a deprecated re-export so static-type
+# tooling sees them as identical types.
+_DescriptionTuple = DescriptionTuple
+_Description = tuple[DescriptionTuple, ...] | None
 
 
 # Type constructors
