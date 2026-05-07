@@ -131,3 +131,62 @@ async def test_post_yield_close_completes_under_outer_cancel() -> None:
         "close body is interrupted and the freshly-built transport leaks. "
         "Mirrors the pool's asyncio.shield(conn.close()) discipline."
     )
+
+
+@pytest.mark.asyncio
+async def test_outer_cancel_during_post_yield_close_propagates_as_cancellederror() -> None:
+    """The outer cancel that lands during the shielded close must
+    propagate as ``CancelledError`` to the caller — not be swallowed
+    and reborn as ``InterfaceError``.
+
+    With ``asyncio.shield``, the inner close runs in the background
+    while the outer awaiter re-raises ``CancelledError``. The post-
+    close branch's ``with contextlib.suppress(...)`` MUST NOT include
+    ``CancelledError`` in its catch set; otherwise the cancel is
+    silently swallowed and the next line ``raise InterfaceError(...)``
+    runs, breaking the cancellation contract for callers using
+    ``task.cancel()`` / ``asyncio.timeout(...)`` / TaskGroup siblings.
+    """
+    aconn = _bare_async_connection()
+    gate = asyncio.Event()
+    synthetic = _SyntheticBuilt(gate)
+
+    async def _fake_build_and_connect(*args: Any, **kwargs: Any) -> Any:
+        aconn._closed = True
+        return synthetic
+
+    captured: list[BaseException] = []
+
+    async def _runner() -> None:
+        with patch(
+            "dqlitedbapi.aio.connection._build_and_connect",
+            new=_fake_build_and_connect,
+        ):
+            try:
+                await aconn._ensure_connection()
+            except BaseException as e:
+                captured.append(e)
+                raise
+
+    runner_task = asyncio.create_task(_runner())
+    while not (synthetic._gate is gate and not synthetic.close_completed):
+        await asyncio.sleep(0.001)
+        if runner_task.done():
+            break
+    await asyncio.sleep(0.01)
+    runner_task.cancel()
+    gate.set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await runner_task
+
+    # The runner's except arm must have captured CancelledError, NOT
+    # InterfaceError. Without this assertion the test passes vacuously
+    # because the close completes in the background regardless.
+    assert len(captured) == 1, f"expected exactly one captured exception, got {captured}"
+    assert isinstance(captured[0], asyncio.CancelledError), (
+        f"outer cancel during shielded close must propagate as CancelledError, "
+        f"not {type(captured[0]).__name__}: {captured[0]}. The post-close "
+        f"suppress MUST NOT include asyncio.CancelledError."
+    )
+    # And the close still completed in the background (shield contract).
+    assert synthetic.close_completed

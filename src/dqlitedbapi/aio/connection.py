@@ -400,12 +400,24 @@ class AsyncConnection:
             # socket that nobody will close. Close the fresh connection
             # and signal the caller instead. Shield the close so an
             # outer cancellation cascade (engine.dispose() racing
-            # acquires) cannot interrupt it mid-await and leak the
-            # freshly-built transport. Mirrors the pool's
+            # acquires) cannot interrupt the inner close mid-await and
+            # leak the freshly-built transport. Mirrors the pool's
             # ``asyncio.shield(conn.close())`` discipline at every
             # cleanup site.
+            #
+            # The suppress catches non-cancel ``Exception``s from the
+            # close (e.g., ``OSError`` on a stale transport) so the
+            # diagnostic ``InterfaceError`` below is the user-visible
+            # signal. ``CancelledError`` is NOT in the catch set: with
+            # ``asyncio.shield``, the inner close runs in the background
+            # while the outer ``await`` re-raises ``CancelledError``;
+            # suppressing that re-raise would swallow the cancel and
+            # surface ``InterfaceError`` instead, breaking the
+            # cooperative-cancellation contract for callers using
+            # ``task.cancel()`` / ``asyncio.timeout(...)`` / TaskGroup
+            # siblings.
             if self._closed:
-                with contextlib.suppress(asyncio.CancelledError, Exception):
+                with contextlib.suppress(Exception):
                     await asyncio.shield(built.close())
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
             self._async_conn = built
