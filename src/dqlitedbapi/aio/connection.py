@@ -398,10 +398,15 @@ class AsyncConnection:
             # _async_conn is None at that point and early-returns, so if
             # we published ``built`` now the caller would hold a live
             # socket that nobody will close. Close the fresh connection
-            # and signal the caller instead.
+            # and signal the caller instead. Shield the close so an
+            # outer cancellation cascade (engine.dispose() racing
+            # acquires) cannot interrupt it mid-await and leak the
+            # freshly-built transport. Mirrors the pool's
+            # ``asyncio.shield(conn.close())`` discipline at every
+            # cleanup site.
             if self._closed:
-                with contextlib.suppress(Exception):
-                    await built.close()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.shield(built.close())
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
             self._async_conn = built
             # Flip the finalizer's "anything to clean up" gate. From
