@@ -97,19 +97,19 @@ _LOOP_THREAD_JOIN_TIMEOUT_SECONDS: Final[float] = 5.0
 def _validate_timeout(timeout: float) -> None:
     """Raise ProgrammingError if ``timeout`` is not a positive finite number.
 
-    Delegates to the client layer's ``_validate_timeout`` (the source
-    of truth for the bool/finite/positive predicate) and translates
-    its ``TypeError`` / ``ValueError`` to PEP 249 ``ProgrammingError``.
-    Sibling pattern to ``_wrap_positive_int`` below — both wrap
-    client-layer validators that deliberately use Python-convention
-    exceptions for the client-only path.
+    Delegates to the client layer's public ``validate_timeout`` (the
+    source of truth for the bool/finite/positive predicate) and
+    translates its ``TypeError`` / ``ValueError`` to PEP 249
+    ``ProgrammingError``. Sibling pattern to ``_wrap_positive_int``
+    below — both wrap client-layer validators that deliberately use
+    Python-convention exceptions for the client-only path.
 
     Previously this function re-implemented the predicate, which
     risked silent drift from the client layer (e.g. accepting
     ``Decimal`` in one but not the other). The shared validator
     keeps the contract single-source-of-truth.
     """
-    from dqliteclient.connection import _validate_timeout as _client_validate_timeout
+    from dqliteclient import validate_timeout as _client_validate_timeout
 
     try:
         _client_validate_timeout(timeout)
@@ -140,16 +140,17 @@ def _wrap_positive_int(value: int | None, name: str) -> int | None:
 def _validate_close_timeout(close_timeout: float) -> None:
     """Raise ProgrammingError if ``close_timeout`` is not a positive finite number.
 
-    Delegates to the client layer's ``_validate_timeout`` (the source
-    of truth for the bool / numeric-type / finite / positive predicate)
-    and translates ``TypeError`` / ``ValueError`` to PEP 249
-    ``ProgrammingError``. Sibling of ``_validate_timeout`` above.
+    Delegates to the client layer's public ``validate_timeout`` (the
+    source of truth for the bool / numeric-type / finite / positive
+    predicate) and translates ``TypeError`` / ``ValueError`` to
+    PEP 249 ``ProgrammingError``. Sibling of ``_validate_timeout``
+    above.
 
     The local re-implementation previously called ``math.isfinite`` on
     a possibly-non-numeric value, leaking a bare ``TypeError`` past the
     PEP 249 ``Error`` boundary for inputs like a string ``"0.5"``.
     """
-    from dqliteclient.connection import _validate_timeout as _client_validate_timeout
+    from dqliteclient import validate_timeout as _client_validate_timeout
 
     try:
         _client_validate_timeout(close_timeout, name="close_timeout")

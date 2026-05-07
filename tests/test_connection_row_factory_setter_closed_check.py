@@ -26,8 +26,7 @@ def test_sync_row_factory_setter_closed_raises_interface_error() -> None:
     with pytest.raises(InterfaceError, match="closed"):
         c.row_factory = lambda cur, row: row
     assert c._row_factory is sentinel, (
-        "closed-conn row_factory.setter must reject the write before "
-        "mutating state"
+        "closed-conn row_factory.setter must reject the write before mutating state"
     )
 
 
