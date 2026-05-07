@@ -2070,12 +2070,22 @@ class Connection:
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
-        # State-mutating setter — enforce thread-affinity discipline
-        # (the class docstring claims every public method does). The
+        # State-mutating setter — enforce the same closed-then-thread
+        # discipline as every other public method on this class. The
         # getter intentionally bypasses the check (read-only / GIL-
-        # atomic), but a cross-thread setter mutation would let a
+        # atomic), but a closed-conn setter mutation would silently
+        # succeed and a cross-thread setter mutation would let a
         # foreign thread override the row_factory for cursors created
-        # by the creator thread. Mirror ``arraysize.setter`` etc.
+        # by the creator thread. Mirrors ``Cursor.row_factory.setter``
+        # which has both checks. ``del self.messages[:]`` mirrors the
+        # PEP 249 §6.4 + project discipline applied to every public
+        # state-mutating method. ``contextlib.suppress(AttributeError)``
+        # tolerates ``__new__``-built fixtures that bypass ``__init__``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
+        with contextlib.suppress(AttributeError):
+            if self._closed:
+                raise InterfaceError(f"Connection is closed (id={id(self)})")
         self._check_thread()
         if value is not None and not callable(value):
             raise ProgrammingError(
