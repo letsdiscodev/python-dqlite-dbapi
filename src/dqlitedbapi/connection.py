@@ -1838,9 +1838,14 @@ class Connection:
         commit.
         """
         del self.messages[:]
-        self._check_thread()
+        # Closed-state precedence: closed-conn diagnostic is more
+        # salient than thread-affinity. Async sibling at
+        # ``aio/connection.py`` orders closed-first; sync siblings
+        # historically diverged. Stdlib sqlite3 also raises closed-
+        # first regardless of thread.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        self._check_thread()
         if self._async_conn is None:
             return
         # Local short-circuit when no transaction is active. Mirrors
@@ -1889,9 +1894,10 @@ class Connection:
         by-default contract.
         """
         del self.messages[:]
-        self._check_thread()
+        # Closed-state precedence — see ``commit`` for full rationale.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        self._check_thread()
         if self._async_conn is None:
             return
         # See commit() — same local short-circuit applies. Saves a
