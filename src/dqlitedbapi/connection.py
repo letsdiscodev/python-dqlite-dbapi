@@ -2107,22 +2107,22 @@ class Connection:
     # ``callproc`` / ``nextset`` / ``scroll`` on the cursor side.
 
     def tpc_begin(self, xid: object) -> NoReturn:
-        raise NotSupportedError("dqlite does not support two-phase commit")
+        self._stub_unsupported("dqlite does not support two-phase commit")
 
     def tpc_prepare(self) -> NoReturn:
-        raise NotSupportedError("dqlite does not support two-phase commit")
+        self._stub_unsupported("dqlite does not support two-phase commit")
 
     def tpc_commit(self, xid: object | None = None) -> NoReturn:
-        raise NotSupportedError("dqlite does not support two-phase commit")
+        self._stub_unsupported("dqlite does not support two-phase commit")
 
     def tpc_rollback(self, xid: object | None = None) -> NoReturn:
-        raise NotSupportedError("dqlite does not support two-phase commit")
+        self._stub_unsupported("dqlite does not support two-phase commit")
 
     def tpc_recover(self) -> NoReturn:
-        raise NotSupportedError("dqlite does not support two-phase commit")
+        self._stub_unsupported("dqlite does not support two-phase commit")
 
     def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
-        raise NotSupportedError("dqlite does not support two-phase commit")
+        self._stub_unsupported("dqlite does not support two-phase commit")
 
     def _stub_unsupported(self, msg: str) -> NoReturn:
         """Shared helper for ``NotSupportedError`` stubs: clear

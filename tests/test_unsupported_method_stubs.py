@@ -22,13 +22,14 @@ permanent rejections, not "not yet."
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
 
 import dqlitedbapi
 from dqlitedbapi.aio import AsyncConnection
-from dqlitedbapi.exceptions import NotSupportedError
+from dqlitedbapi.exceptions import InterfaceError, NotSupportedError
 
 
 @pytest.fixture
@@ -292,6 +293,95 @@ class TestAsyncCycle22StubFamily:
     def test_blobopen(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError, match="blob_open"):
             aconn.blobopen("main", "t", "data", 1)
+
+
+_TPC_INVOCATIONS: list[Callable[[Any], None]] = [
+    lambda c: c.tpc_begin(("g", "b", 0)),
+    lambda c: c.tpc_prepare(),
+    lambda c: c.tpc_commit(),
+    lambda c: c.tpc_rollback(),
+    lambda c: c.tpc_recover(),
+    lambda c: c.xid(1, "g", "b"),
+]
+_TPC_IDS = ["tpc_begin", "tpc_prepare", "tpc_commit", "tpc_rollback", "tpc_recover", "xid"]
+
+
+class TestTpcStubsRouteThroughHelper:
+    """Pin: the six TPC stubs on both sync and async ``Connection``
+    route through the shared ``_stub_unsupported`` helper, which
+    enforces PEP 249 §6.4 ``messages`` clear and the stdlib precedence
+    of raising ``InterfaceError`` (closed) before ``NotSupportedError``
+    (capability gap).
+
+    Round 30 introduced ``_stub_unsupported`` and retrofitted the
+    eighteen-plus stdlib-parity stubs (executescript, interrupt,
+    serialize/deserialize, blobopen, create_function,
+    set_authorizer, ...) but silently omitted the six TPC stubs that
+    sit immediately above the helper definition in source order.
+    Without this pin a regression that re-introduces a direct ``raise
+    NotSupportedError`` in any TPC stub silently re-opens the same
+    contract gap.
+    """
+
+    @pytest.mark.parametrize("invoke", _TPC_INVOCATIONS, ids=_TPC_IDS)
+    def test_sync_tpc_clears_messages_before_raise(
+        self,
+        conn: dqlitedbapi.Connection,
+        invoke: Callable[[dqlitedbapi.Connection], None],
+    ) -> None:
+        # Pre-load a stale message so the clear-or-not is observable.
+        conn.messages.append((Exception, "stale"))
+        with pytest.raises(NotSupportedError):
+            invoke(conn)
+        assert conn.messages == [], (
+            "TPC stub must clear conn.messages per PEP 249 §6.4 before raising; "
+            "route through _stub_unsupported helper"
+        )
+
+    @pytest.mark.parametrize("invoke", _TPC_INVOCATIONS, ids=_TPC_IDS)
+    def test_sync_tpc_closed_raises_interface_error_not_notsupported(
+        self,
+        invoke: Callable[[dqlitedbapi.Connection], None],
+    ) -> None:
+        c = dqlitedbapi.connect("127.0.0.1:9999")
+        # Mark closed without invoking close() (which would touch the
+        # event loop / executor). Set the helper-checked attribute
+        # ``_closed`` plus the finalizer-checked ``_closed_flag`` so
+        # the GC suppression at fixture teardown stays consistent.
+        c._closed = True
+        c._closed_flag[0] = True
+        # Stdlib precedence: closed-state diagnostic wins over the
+        # capability-gap diagnostic. Without the helper, the stub
+        # raises NotSupportedError regardless of state — masking the
+        # closed-connection signal a cross-driver caller relies on.
+        with pytest.raises(InterfaceError, match="closed"):
+            invoke(c)
+
+    @pytest.mark.parametrize("invoke", _TPC_INVOCATIONS, ids=_TPC_IDS)
+    def test_async_tpc_clears_messages_before_raise(
+        self,
+        aconn: AsyncConnection,
+        invoke: Callable[[AsyncConnection], None],
+    ) -> None:
+        # All six async stubs are plain ``def`` (the call-line raise
+        # discipline) so no ``await`` is needed for the raise.
+        aconn.messages.append((Exception, "stale"))
+        with pytest.raises(NotSupportedError):
+            invoke(aconn)
+        assert aconn.messages == [], (
+            "Async TPC stub must clear conn.messages per PEP 249 §6.4 before raising; "
+            "route through _stub_unsupported helper"
+        )
+
+    @pytest.mark.parametrize("invoke", _TPC_INVOCATIONS, ids=_TPC_IDS)
+    def test_async_tpc_closed_raises_interface_error_not_notsupported(
+        self,
+        invoke: Callable[[AsyncConnection], None],
+    ) -> None:
+        c = AsyncConnection("127.0.0.1:9999")
+        c._closed = True
+        with pytest.raises(InterfaceError, match="closed"):
+            invoke(c)
 
 
 def test_close_clears_messages() -> None:
