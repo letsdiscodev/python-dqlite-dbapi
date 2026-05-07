@@ -821,13 +821,23 @@ class AsyncCursor:
         # PEP 249 §6.1.1 — clear "prior to executing the call" so the
         # contract holds even on the cross-loop rejection path.
         del self.messages[:]
+        # PEP 249 §6.2 says implementations are "free to have this
+        # method do nothing" — including on closed cursors. The
+        # closed short-circuit runs BEFORE the input-shape validators
+        # so closed-state behaviour is independent of argument shape.
+        # Mirror the sync sibling's documented permissive-on-closed
+        # contract: a closed-cursor cleanup helper can call
+        # setinputsizes / setoutputsize without a raise regardless of
+        # argument shape. Without this short-circuit,
+        # ``_check_loop_binding`` would raise
+        # ``InterfaceError("Connection is closed")``, diverging from
+        # the sync sibling and from the documented intent.
+        if self._closed or self._connection._closed:
+            return
         # Validate input shape symmetric with the sync sibling so a
         # caller-side bug (e.g. passing a string) surfaces at the call
         # site rather than being silently absorbed. PEP 249 §7 keeps
         # the failure inside the ``dbapi.Error`` hierarchy.
-        # ``str`` and ``bytes`` are ``Sequence`` instances at the ABC
-        # level but are caller-bug shapes (passing a single string for
-        # an N-element sizes list). Reject explicitly.
         if isinstance(sizes, (str, bytes, bytearray)):
             raise ProgrammingError(
                 f"setinputsizes expects a sequence of size hints, got {type(sizes).__name__}"
@@ -839,16 +849,6 @@ class AsyncCursor:
             # ``deque`` / ``range`` / custom Sequence subclass —
             # accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
-        # PEP 249 §6.2 says implementations are "free to have this
-        # method do nothing" — including on closed cursors. Mirror
-        # the sync sibling's documented permissive-on-closed
-        # behaviour: a closed-cursor cleanup helper can call
-        # setinputsizes / setoutputsize without a raise. Without
-        # this short-circuit, ``_check_loop_binding`` would raise
-        # ``InterfaceError("Connection is closed")``, diverging from
-        # the sync sibling and from the documented intent.
-        if self._closed or self._connection._closed:
-            return
         # Surface a loop-binding mismatch up front so callers see the
         # same ``ProgrammingError`` they'd get from ``execute`` /
         # ``fetchone``. Without this, a sync no-op on a cursor bound
@@ -861,6 +861,10 @@ class AsyncCursor:
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
+        # PEP 249 §6.2 — closed short-circuit before validators. See
+        # ``setinputsizes`` rationale.
+        if self._closed or self._connection._closed:
+            return
         # Validate input shape symmetric with sync sibling.
         if not isinstance(size, int) or isinstance(size, bool):
             raise ProgrammingError(f"setoutputsize expects an int, got {type(size).__name__}")
@@ -868,9 +872,6 @@ class AsyncCursor:
             raise ProgrammingError(
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
-        # PEP 249 §6.2 — see ``setinputsizes`` rationale.
-        if self._closed or self._connection._closed:
-            return
         self._connection._check_loop_binding()
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:

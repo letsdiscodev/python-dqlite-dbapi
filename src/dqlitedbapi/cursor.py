@@ -1794,6 +1794,28 @@ class Cursor:
         # level but are caller-bug shapes (passing a single string for
         # an N-element sizes list is the canonical mistake). Reject
         # them explicitly.
+        # PEP 249 §6.2 says implementations are "free to have this
+        # method do nothing" — including on closed cursors. The
+        # closed short-circuit MUST run BEFORE the input-shape
+        # validators so closed-state behaviour does not depend on
+        # argument shape. Pre-fix, a closed cursor + good arg
+        # returned silently while a closed cursor + bad arg raised
+        # ``ProgrammingError`` — surprising contract.
+        # Skip BOTH the closed-cursor check AND the thread check on a
+        # closed cursor: ``Cursor.close()`` swaps ``self._connection``
+        # for a ``weakref.proxy``; once the parent ``Connection`` is
+        # GC'd, ``_connection._check_thread()`` raises
+        # ``ReferenceError`` — outside the PEP 249 ``Error`` hierarchy.
+        # Also short-circuit on a closed parent connection so the
+        # ``_check_thread`` call doesn't run against a connection
+        # mid-tear-down — symmetric with the async sibling.
+        if self._closed or self._connection._closed:
+            return
+        # Validate input shape symmetric with the call sites that DO
+        # exercise the no-op (open cursor) — the validators run only
+        # after the closed-cursor short-circuit so a closed-cursor
+        # cleanup helper can call setinputsizes / setoutputsize without
+        # a raise regardless of argument shape.
         if isinstance(sizes, (str, bytes, bytearray)):
             raise ProgrammingError(
                 f"setinputsizes expects a sequence of size hints, got {type(sizes).__name__}"
@@ -1809,26 +1831,17 @@ class Cursor:
             # callers passing a ``deque`` / ``range`` / custom Sequence
             # subclass — accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
-        # PEP 249 §6.2 says implementations are "free to have this
-        # method do nothing" — including on closed cursors. Skip BOTH
-        # the closed-cursor check AND the thread check on a closed
-        # cursor: ``Cursor.close()`` swaps ``self._connection`` for a
-        # ``weakref.proxy``; once the parent ``Connection`` is GC'd,
-        # ``_connection._check_thread()`` raises ``ReferenceError`` —
-        # outside the PEP 249 ``Error`` hierarchy. The documented
-        # intent is "free to do nothing on closed", so an early return
-        # preserves both the no-raise contract and the GC'd-proxy
-        # safety. Also short-circuit on a closed parent connection
-        # so the ``_check_thread`` call doesn't run against a
-        # connection mid-tear-down — symmetric with the async
-        # sibling at ``aio/cursor.py:808-817``.
-        if self._closed or self._connection._closed:
-            return
         self._connection._check_thread()
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
+        # PEP 249 §6.2 — see ``setinputsizes`` rationale. Closed
+        # short-circuit runs BEFORE the validators so closed-state
+        # behaviour is independent of argument shape. Symmetric with
+        # the async sibling.
+        if self._closed or self._connection._closed:
+            return
         # Validate input shape — see ``setinputsizes`` rationale.
         # ``ProgrammingError`` keeps the failure inside the
         # ``dbapi.Error`` hierarchy per PEP 249 §7.
@@ -1838,11 +1851,6 @@ class Cursor:
             raise ProgrammingError(
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
-        # PEP 249 §6.2 — see ``setinputsizes`` rationale. Symmetric
-        # with the async sibling: short-circuit on closed cursor OR
-        # closed parent connection.
-        if self._closed or self._connection._closed:
-            return
         self._connection._check_thread()
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
