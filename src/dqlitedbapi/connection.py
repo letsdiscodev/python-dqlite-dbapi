@@ -1577,6 +1577,13 @@ class Connection:
         - No ``_check_thread`` / no ``_op_lock`` acquire — terminate
           must work from finalize threads and signal handlers.
         """
+        # PEP 249 §6.4 + project discipline: every public Connection
+        # method clears ``messages`` as the first statement so a stale
+        # entry from a prior call does not survive across the call
+        # boundary. ``contextlib.suppress(AttributeError)`` tolerates
+        # ``__new__``-built fixtures that bypass ``__init__``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         if self._closed:
             return
         self._closed = True

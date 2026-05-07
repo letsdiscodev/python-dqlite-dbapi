@@ -758,6 +758,12 @@ class AsyncConnection:
         is scheduled via ``call_soon_threadsafe`` so the ready-queue
         is not mutated cross-thread.
         """
+        # PEP 249 §6.4 + project discipline: every public Connection
+        # method clears ``messages`` as the first statement.
+        # ``contextlib.suppress(AttributeError)`` tolerates
+        # ``__new__``-built fixtures that bypass ``__init__``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         # Set the finalizer's closed_flag so a subsequent GC sweep
         # does not emit a misleading "GC'd without close()" warning
         # — the user (or SA's terminate()) explicitly cleaned up via

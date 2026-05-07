@@ -95,10 +95,13 @@ async def test_post_yield_close_completes_under_outer_cancel() -> None:
     # while it's awaiting the gate). Then set the gate so the close
     # body runs to completion under the shield.
     async def _runner() -> None:
-        with patch(
-            "dqlitedbapi.aio.connection._build_and_connect",
-            new=_fake_build_and_connect,
-        ), contextlib.suppress(InterfaceError, asyncio.CancelledError):
+        with (
+            patch(
+                "dqlitedbapi.aio.connection._build_and_connect",
+                new=_fake_build_and_connect,
+            ),
+            contextlib.suppress(InterfaceError, asyncio.CancelledError),
+        ):
             await aconn._ensure_connection()
 
     runner_task = asyncio.create_task(_runner())
