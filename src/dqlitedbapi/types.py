@@ -36,12 +36,6 @@ __all__ = [
 # Live here so sync/async cursors and the sqlalchemy adapter share one
 # shape instead of repeating the inline tuple at every site.
 DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
-# ``_DescriptionTuple`` retained as an internal alias for back-compat
-# with existing call sites inside this package; new code (especially
-# downstream packages) should use ``DescriptionTuple``. Kept as a
-# direct alias rather than a deprecated re-export so static-type
-# tooling sees them as identical types.
-_DescriptionTuple = DescriptionTuple
 _Description = tuple[DescriptionTuple, ...] | None
 
 

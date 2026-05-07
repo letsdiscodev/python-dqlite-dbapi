@@ -171,7 +171,7 @@ class TestExceptionsModuleAll:
 class TestTypesModuleAll:
     """``dqlitedbapi.types`` re-exports PEP 249 type constructors and
     type objects. Pin the ``__all__`` list so private helpers
-    (``_iso8601_from_datetime``, ``_DescriptionTuple``, ...) stay
+    (``_iso8601_from_datetime``, ``_Description``, ...) stay
     private.
     """
 
@@ -210,7 +210,6 @@ class TestTypesModuleAll:
         # Sanity: the private alias lives on the module but stays out of __all__.
         assert hasattr(types_mod, "_Description")
         assert "_Description" not in types_mod.__all__
-        assert "_DescriptionTuple" not in types_mod.__all__
         assert "_iso8601_from_datetime" not in types_mod.__all__
 
 

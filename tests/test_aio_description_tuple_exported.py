@@ -3,8 +3,8 @@ matching the sync ``dqlitedbapi`` surface.
 
 The async surface re-exports the type aliases the sync surface
 exports (Date / Time / Binary / STRING / etc.). ``DescriptionTuple``
-was promoted from ``_DescriptionTuple`` to public in a prior
-round but the async-side ``__all__`` was missed.
+was promoted to public earlier but the async-side ``__all__`` was
+missed.
 """
 
 from __future__ import annotations

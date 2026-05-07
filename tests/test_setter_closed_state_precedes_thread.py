@@ -29,9 +29,7 @@ from dqlitedbapi.exceptions import InterfaceError
         ("text_factory", str),
     ],
 )
-def test_setter_on_closed_from_foreign_thread_raises_interface_error(
-    name: str, value: Any
-) -> None:
+def test_setter_on_closed_from_foreign_thread_raises_interface_error(name: str, value: Any) -> None:
     c = dqlitedbapi.connect("127.0.0.1:9999")
     c._closed = True
     c._closed_flag[0] = True
