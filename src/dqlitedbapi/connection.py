@@ -1927,6 +1927,16 @@ class Connection:
         ``**unknown_kwargs`` pattern (ISSUE-Q4/Q5/Q6).
         """
         del self.messages[:]
+        # Closed-state precedence: surface the most-salient diagnostic
+        # first. Stdlib sqlite3 and the in-package ``Cursor.execute``
+        # rationale (cursor.py) both order closed-state ahead of
+        # input-shape rejection. Without this, a closed-conn caller
+        # using a bogus kwarg sees ``NotSupportedError`` and cannot
+        # tell whether the connection is alive — a cross-driver
+        # porting trap. Thread check fires after closed (the
+        # ``_stub_unsupported`` helper establishes the same order).
+        if self._closed:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if unknown_kwargs:
             raise NotSupportedError(
                 f"dqlitedbapi cursor() rejects stdlib sqlite3 kwargs not "
@@ -1935,8 +1945,6 @@ class Connection:
                 f"subclassing is not supported.)"
             )
         self._check_thread()
-        if self._closed:
-            raise InterfaceError(f"Connection is closed (id={id(self)})")
         cur = Cursor(self)
         self._cursors.add(cur)
         return cur

@@ -1309,6 +1309,10 @@ class AsyncConnection:
         ``_check_thread``).
         """
         del self.messages[:]
+        # Closed-state precedence — see sync sibling at
+        # ``connection.py:Connection.cursor`` for the full rationale.
+        if self._closed:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if unknown_kwargs:
             raise NotSupportedError(
                 f"dqlitedbapi cursor() rejects stdlib sqlite3 kwargs not "
@@ -1316,8 +1320,6 @@ class AsyncConnection:
                 f"(stdlib's factory= is not honoured here — Cursor "
                 f"subclassing is not supported.)"
             )
-        if self._closed:
-            raise InterfaceError(f"Connection is closed (id={id(self)})")
         if get_current_pid() != self._creator_pid:
             raise InterfaceError(
                 "AsyncConnection used after fork; reconstruct from configuration "
