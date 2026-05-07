@@ -1753,6 +1753,18 @@ class Connection:
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
+        # PEP 249 §6.4 + project discipline: every public state-
+        # mutating method clears ``messages`` first. Closed-state
+        # precedence: closed-conn diagnostic is more salient than
+        # thread-affinity (matches ``row_factory.setter``,
+        # ``commit``/``rollback``, ``cursor()`` discipline).
+        # ``contextlib.suppress(AttributeError)`` tolerates
+        # ``__new__``-built fixtures that bypass ``__init__``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
+        with contextlib.suppress(AttributeError):
+            if self._closed:
+                raise InterfaceError(f"Connection is closed (id={id(self)})")
         # Threadsafety=1 affinity contract — even the no-op accept-path
         # is an attempt that must surface as a contract violation if
         # invoked cross-thread. Sibling ``row_factory.setter`` calls
@@ -1799,6 +1811,15 @@ class Connection:
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
+        # PEP 249 §6.4 + closed-first precedence — see
+        # ``autocommit.setter`` for the rationale.
+        # ``contextlib.suppress(AttributeError)`` tolerates
+        # ``__new__``-built fixtures that bypass ``__init__``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
+        with contextlib.suppress(AttributeError):
+            if self._closed:
+                raise InterfaceError(f"Connection is closed (id={id(self)})")
         # Threadsafety=1 affinity contract — see ``autocommit.setter``
         # for the rationale (no-op accept-path is still an attempt).
         self._check_thread()
@@ -2106,6 +2127,15 @@ class Connection:
 
     @text_factory.setter
     def text_factory(self, value: object) -> None:
+        # PEP 249 §6.4 + closed-first precedence — see
+        # ``autocommit.setter`` for the rationale.
+        # ``contextlib.suppress(AttributeError)`` tolerates
+        # ``__new__``-built fixtures that bypass ``__init__``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
+        with contextlib.suppress(AttributeError):
+            if self._closed:
+                raise InterfaceError(f"Connection is closed (id={id(self)})")
         # Threadsafety=1 affinity contract — see ``autocommit.setter``
         # for the rationale.
         self._check_thread()
