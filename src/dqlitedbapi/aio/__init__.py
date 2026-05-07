@@ -44,6 +44,7 @@ from dqlitedbapi.types import (
     Binary,
     Date,
     DateFromTicks,
+    DescriptionTuple,
     Time,
     TimeFromTicks,
     Timestamp,
@@ -125,6 +126,8 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "NUMBER",
     "DATETIME",
     "ROWID",
+    # Type aliases
+    "DescriptionTuple",
     # Type-adapter registry (shared module-global with the sync
     # surface; calling on either namespace mutates the same dict)
     "register_adapter",
