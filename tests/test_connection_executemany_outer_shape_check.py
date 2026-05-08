@@ -1,13 +1,16 @@
 """Pin: ``Connection.executemany`` and ``AsyncConnection.executemany``
 shortcuts reject ``dict`` / ``str`` / ``bytes`` / ``bytearray`` /
-``memoryview`` outer ``seq_of_parameters`` with ``ProgrammingError``.
+``memoryview`` / ``set`` / ``frozenset`` outer ``seq_of_parameters``
+with ``ProgrammingError``.
 
 Without this pin a caller passing a single mapping or a string would
 silently iterate over keys / characters, treating each as a parameter
-set — almost certainly a caller bug. Stdlib has the same hazard;
-this driver is stricter than stdlib at the connection-shortcut layer
-(matching the existing ``_reject_non_sequence_params`` precedent at
-the inner level).
+set — almost certainly a caller bug. ``set`` and ``frozenset`` iterate
+in non-deterministic order, so e.g. ``executemany({(1,), (2,)}, ...)``
+would produce non-deterministic insert order. Stdlib has the same
+hazard; this driver is stricter than stdlib at the connection-shortcut
+layer (matching the existing ``_reject_non_sequence_params`` precedent
+at the inner level).
 
 The Mapping ABC at large is NOT rejected so a future user passing
 ``OrderedDict([(0, params0), (1, params1)])`` to iterate over values
@@ -52,6 +55,31 @@ def test_sync_executemany_rejects_bytes_outer_shape() -> None:
         conn.cursor().execute("CREATE TABLE exm_outer3 (n INTEGER)")
         with pytest.raises(dqlitedbapi.ProgrammingError, match="must be an iterable"):
             conn.executemany("INSERT INTO exm_outer3 VALUES (?)", b"abc")  # type: ignore[arg-type]
+    finally:
+        conn.close()
+
+
+def test_sync_executemany_rejects_set_outer_shape() -> None:
+    conn = dqlitedbapi.connect("localhost:9001")
+    try:
+        conn.cursor().execute("DROP TABLE IF EXISTS exm_set")
+        conn.cursor().execute("CREATE TABLE exm_set (n INTEGER)")
+        with pytest.raises(dqlitedbapi.ProgrammingError, match="must be an iterable"):
+            conn.executemany("INSERT INTO exm_set VALUES (?)", {(1,), (2,)})
+    finally:
+        conn.close()
+
+
+def test_sync_executemany_rejects_frozenset_outer_shape() -> None:
+    conn = dqlitedbapi.connect("localhost:9001")
+    try:
+        conn.cursor().execute("DROP TABLE IF EXISTS exm_fset")
+        conn.cursor().execute("CREATE TABLE exm_fset (n INTEGER)")
+        with pytest.raises(dqlitedbapi.ProgrammingError, match="must be an iterable"):
+            conn.executemany(
+                "INSERT INTO exm_fset VALUES (?)",
+                frozenset({(1,), (2,)}),
+            )
     finally:
         conn.close()
 
@@ -105,6 +133,40 @@ async def test_async_executemany_rejects_memoryview_outer_shape() -> None:
         await cur.close()
         with pytest.raises(dqlitedbapi.ProgrammingError, match="must be an iterable"):
             await conn.executemany("INSERT INTO aexm_outer3 VALUES (?)", memoryview(b"abc"))
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_async_executemany_rejects_set_outer_shape() -> None:
+    conn = AsyncConnection("localhost:9001")
+    try:
+        cur = conn.cursor()
+        await cur.execute("DROP TABLE IF EXISTS aexm_set")
+        await cur.execute("CREATE TABLE aexm_set (n INTEGER)")
+        await cur.close()
+        with pytest.raises(dqlitedbapi.ProgrammingError, match="must be an iterable"):
+            await conn.executemany(
+                "INSERT INTO aexm_set VALUES (?)",
+                {(1,), (2,)},
+            )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_async_executemany_rejects_frozenset_outer_shape() -> None:
+    conn = AsyncConnection("localhost:9001")
+    try:
+        cur = conn.cursor()
+        await cur.execute("DROP TABLE IF EXISTS aexm_fset")
+        await cur.execute("CREATE TABLE aexm_fset (n INTEGER)")
+        await cur.close()
+        with pytest.raises(dqlitedbapi.ProgrammingError, match="must be an iterable"):
+            await conn.executemany(
+                "INSERT INTO aexm_fset VALUES (?)",
+                frozenset({(1,), (2,)}),
+            )
     finally:
         await conn.close()
 
