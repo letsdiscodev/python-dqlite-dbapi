@@ -370,6 +370,18 @@ class AsyncCursor:
         # PEP 249 §6.1.2: ``messages`` is cleared by every standard
         # cursor method before the call runs.
         del self.messages[:]
+        # PEP 249 §7: errors raised by the module subclass ``Error``.
+        # A non-str ``operation`` would later raise bare ``AttributeError``
+        # (``None.lstrip``) or ``TypeError`` (``bytes.lstrip("﻿")``)
+        # from ``_strip_leading_comments`` inside ``_classify_caller_sql``,
+        # escaping the dbapi exception hierarchy. Symmetric with the
+        # sync sibling and with the ``executemany`` ``seq_of_parameters=None``
+        # guard.
+        if not isinstance(operation, str):
+            raise ProgrammingError(
+                f"operation must be a str SQL statement, got {type(operation).__name__}",
+                code=None,
+            )
         # Fast-path guard outside the lock so we fail quickly on an
         # already-closed cursor without taking the lock.
         self._check_closed()

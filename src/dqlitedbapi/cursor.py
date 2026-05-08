@@ -1206,6 +1206,19 @@ class Cursor:
         Returns ``self`` so callers can chain ``.fetchall()`` etc.
         """
         del self.messages[:]
+        # PEP 249 §7: errors raised by the module subclass ``Error``.
+        # A non-str ``operation`` would later raise bare ``AttributeError``
+        # (``None.lstrip``) or ``TypeError`` (``bytes.lstrip("﻿")``)
+        # from ``_strip_leading_comments`` inside ``_classify_caller_sql``,
+        # escaping the dbapi exception hierarchy. Symmetric with the
+        # ``executemany() seq_of_parameters=None`` guard below: surface
+        # ``ProgrammingError`` up front so cross-driver
+        # ``except dbapi.Error`` clauses catch the misuse.
+        if not isinstance(operation, str):
+            raise ProgrammingError(
+                f"operation must be a str SQL statement, got {type(operation).__name__}",
+                code=None,
+            )
         # ``_check_closed`` BEFORE ``_check_thread``: ``Cursor.close()``
         # swaps ``self._connection`` for a ``weakref.proxy``; once the
         # parent ``Connection`` is GC'd, ``_connection._check_thread()``
