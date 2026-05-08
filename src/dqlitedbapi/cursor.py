@@ -1768,7 +1768,7 @@ class Cursor:
         state**: this implementation scrubs ``description`` /
         ``rowcount`` / ``lastrowid`` / ``_rows`` / ``_row_index``
         for a consistent "no operation performed" surface (per
-        ISSUE-446's rationale: avoid stale-state reads on a closed
+        the project rationale: avoid stale-state reads on a closed
         cursor). Stdlib ``sqlite3.Cursor.close()`` leaves
         ``description`` populated (the last query's tuple-of-7-tuples)
         and leaves ``lastrowid`` at its prior value; only ``rowcount``

@@ -1954,7 +1954,8 @@ class Connection:
         porting code's ``except dbapi.Error:`` catches the rejection
         rather than the bare ``TypeError`` Python raises for an
         unexpected kwarg. Symmetric with ``connect()``'s
-        ``**unknown_kwargs`` pattern (ISSUE-Q4/Q5/Q6).
+        ``**unknown_kwargs`` pattern that rejects stdlib-only kwargs
+        with ``NotSupportedError`` rather than silently ignoring them.
         """
         del self.messages[:]
         # Closed-state precedence: surface the most-salient diagnostic

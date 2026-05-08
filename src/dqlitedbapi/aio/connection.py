@@ -1751,7 +1751,8 @@ class AsyncConnection:
         # call line rather than producing a discarded coroutine that
         # warns "coroutine was never awaited" at GC. Mirrors the
         # discipline applied to ``executescript`` / ``interrupt`` /
-        # ``tpc_*`` and the rationale spelled out by ISSUE-Sym4.
+        # ``tpc_*``: a non-async stub gives a sharp diagnostic at the
+        # call site instead of a delayed "never awaited" warning.
         self._stub_unsupported(
             "dqlite does not support the stdlib sqlite3 online backup API; "
             "use the dqlite-server dump/restore mechanism instead"
@@ -1814,8 +1815,8 @@ class AsyncConnection:
             # mid-cleanup raises a NEW ``CancelledError`` from
             # ``close()``, which Python then propagates instead of the
             # original — operators see the cleanup-cleanup site, not
-            # the connect failure that triggered cleanup. Sister fix
-            # to ``done/ISSUE-313``'s SA-adapter discipline.
+            # the connect failure that triggered cleanup. Mirrors the
+            # SA-adapter cleanup-on-failure discipline.
             try:
                 await asyncio.shield(self.close())
             except Exception:

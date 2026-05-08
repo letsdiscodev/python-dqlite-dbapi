@@ -8,7 +8,8 @@ from typing import Final, Literal
 # mirrors stdlib's full register_* / complete_statement /
 # enable_callback_tracebacks surface) gets a clean
 # ``dbapi.NotSupportedError`` rather than ``AttributeError`` —
-# matching the discipline applied to ``register_adapter`` (ISSUE-Q8).
+# matching the discipline already applied to ``register_adapter``
+# (re-exported from the sync surface for the same reason).
 from dqlitedbapi import (  # noqa: E402 — module-level re-export
     __version__,
     complete_statement,
