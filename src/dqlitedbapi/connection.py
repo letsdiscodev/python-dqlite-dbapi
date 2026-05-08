@@ -592,7 +592,7 @@ def _is_no_transaction_error(exc: Exception) -> bool:
     return any(s in lowered for s in _NO_TX_SUBSTRINGS)
 
 
-def _safe_writer_close(writer: Any) -> None:
+def _safe_writer_close(writer: asyncio.StreamWriter) -> None:
     """``StreamWriter.close()`` last-resort: callable scheduled on the
     owning loop via ``call_soon_threadsafe`` to drive FIN out of a
     transport without awaiting the protocol-level drain.
