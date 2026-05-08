@@ -2,6 +2,7 @@
 
 import datetime
 import math
+from collections.abc import Callable
 from typing import Any, Final, final
 
 from dqlitedbapi.exceptions import DataError, ProgrammingError
@@ -565,7 +566,7 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
 # semantics (per-Connection scope was added in stdlib 3.12 but
 # requires more state plumbing — the module-scope shape is the more
 # common ergonomic on the existing ecosystem).
-_ADAPTERS: dict[type, "Any"] = {}
+_ADAPTERS: dict[type, Callable[[Any], Any]] = {}
 
 
 class PrepareProtocol:
@@ -582,7 +583,7 @@ class PrepareProtocol:
     pass
 
 
-def register_adapter(type_: type, adapter: "Any") -> None:
+def register_adapter(type_: type, adapter: Callable[[Any], Any]) -> None:
     """Register a Python-side adapter callable for ``type_``.
 
     Mirrors stdlib ``sqlite3.register_adapter``: when a parameter of

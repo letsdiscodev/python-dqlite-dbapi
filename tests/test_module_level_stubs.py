@@ -44,7 +44,7 @@ def test_register_adapter_is_callable_stdlib_parity() -> None:
         # Bad shape still fails fast — and raises a PEP 249 Error
         # subclass (ProgrammingError), not bare TypeError.
         with pytest.raises(ProgrammingError, match="callable") as ei:
-            dqlitedbapi.register_adapter(_RegAdapterSentinel, "not callable")
+            dqlitedbapi.register_adapter(_RegAdapterSentinel, "not callable")  # type: ignore[arg-type]
         assert isinstance(ei.value, Error)
         with pytest.raises(ProgrammingError, match="class") as ei:
             dqlitedbapi.register_adapter("not a type", str)  # type: ignore[arg-type]
