@@ -991,6 +991,14 @@ class AsyncConnection:
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
+        # PEP 249 §6.4: ``Connection.messages`` is cleared by every
+        # standard connection method before the call runs. Sync sibling
+        # clears unconditionally as the first statement; mirror that
+        # here so the contract holds on the async surface too. Wrap
+        # in ``suppress`` because ``messages`` may not exist yet on a
+        # partially-constructed instance.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         # Loop-binding affinity contract — even the no-op accept-path
         # is an attempt that must surface as a contract violation if
         # invoked from a foreign loop. Sibling sync setter calls
@@ -1017,6 +1025,9 @@ class AsyncConnection:
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
+        # PEP 249 §6.4 messages-clear; see ``autocommit.setter``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         # Loop-binding affinity contract — see ``autocommit.setter``.
         self._check_loop_binding()
         if value is None:
@@ -1456,6 +1467,9 @@ class AsyncConnection:
 
     @text_factory.setter
     def text_factory(self, value: object) -> None:
+        # PEP 249 §6.4 messages-clear; see ``autocommit.setter``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         # Loop-binding affinity contract — see ``autocommit.setter``.
         self._check_loop_binding()
         if value is str:
