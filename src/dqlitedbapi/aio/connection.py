@@ -1544,6 +1544,17 @@ class AsyncConnection:
         ``Connection.executemany``."""
         # PEP 249 §6.4 messages-clear; see ``execute`` above.
         del self.messages[:]
+        # Reject the outer shapes that would silently iterate over keys
+        # (dict) / characters (str / bytes / bytearray / memoryview),
+        # treating each as a parameter set — almost certainly a caller
+        # bug. Stricter than stdlib; consistent with the inner-level
+        # ``_reject_non_sequence_params`` discipline. ``Mapping`` at
+        # large is NOT rejected so OrderedDict-of-rows still works.
+        if isinstance(seq_of_parameters, dict | str | bytes | bytearray | memoryview):
+            raise ProgrammingError(
+                f"executemany seq_of_parameters must be an iterable of "
+                f"parameter sets, not {type(seq_of_parameters).__name__}"
+            )
         cur = self.cursor()
         try:
             await cur.executemany(operation, seq_of_parameters)

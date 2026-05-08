@@ -2044,6 +2044,18 @@ class Connection:
         # PEP 249 §6.4: see ``execute`` shortcut for the eager-clear
         # rationale.
         del self.messages[:]
+        # Reject the outer shapes that would silently iterate over keys
+        # (dict) / characters (str / bytes / bytearray / memoryview),
+        # treating each as a parameter set — almost certainly a caller
+        # bug. Stricter than stdlib ``sqlite3.Connection.executemany``,
+        # consistent with the project's ``_reject_non_sequence_params``
+        # discipline at the inner level. ``Mapping`` at large is NOT
+        # rejected so an OrderedDict-of-rows pattern still works.
+        if isinstance(seq_of_parameters, dict | str | bytes | bytearray | memoryview):
+            raise ProgrammingError(
+                f"executemany seq_of_parameters must be an iterable of "
+                f"parameter sets, not {type(seq_of_parameters).__name__}"
+            )
         cur = self.cursor()
         try:
             cur.executemany(operation, seq_of_parameters)
