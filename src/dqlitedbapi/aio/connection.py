@@ -462,13 +462,6 @@ class AsyncConnection:
         # so the contract is uniform across the four required
         # methods.
         del self.messages[:]
-        # Clear the transaction-owner slot as a defensive backstop.
-        # The set-inside-try discipline in ``transaction()`` already
-        # prevents BaseException-window leaks under normal flow, but
-        # an instance-reuse path that somehow inherited a stale token
-        # (test fixtures, signal-window edge cases) recovers cleanly
-        # after close().
-        self._transaction_owner = None
         # Fork-after-init: the inherited socket FD is shared with the
         # parent and the asyncio op_lock is bound to the parent's
         # loop. Driving the async teardown here would either send FIN
@@ -522,6 +515,12 @@ class AsyncConnection:
             self._op_lock = None
             self._loop_ref = None
             self._cursors.clear()
+            # Clear the transaction-owner slot as a defensive backstop —
+            # see comment at the bottom of close() for rationale. Run
+            # AFTER the protocol/locks are torn down so a concurrent
+            # task in transaction() retains its slot ownership for as
+            # long as the connection remained operable.
+            self._transaction_owner = None
             return
         # Set _closed first so any task waiting on the lock sees the
         # closed state as soon as it acquires. Then drain the current
@@ -570,6 +569,9 @@ class AsyncConnection:
             self._connect_lock = None
             self._op_lock = None
             self._loop_ref = None
+            # Clear the transaction-owner slot as a defensive backstop —
+            # see comment at the bottom of close() for rationale.
+            self._transaction_owner = None
             return
         # Use the already-bound op_lock directly; calling
         # ``_ensure_locks`` now raises because ``_closed`` is True.
@@ -711,6 +713,9 @@ class AsyncConnection:
                     self._connect_lock = None
                     self._op_lock = None
                     self._loop_ref = None
+                    # Defensive backstop clear — see the trailing
+                    # comment in this method's normal path.
+                    self._transaction_owner = None
                     raise
                 except Exception:
                     logger.debug(
@@ -726,6 +731,20 @@ class AsyncConnection:
             self._connect_lock = None
             self._op_lock = None
             self._loop_ref = None
+            # Clear the transaction-owner slot as a defensive backstop.
+            # The set-inside-try discipline in ``transaction()`` already
+            # prevents BaseException-window leaks under normal flow, but
+            # an instance-reuse path that somehow inherited a stale
+            # token (test fixtures, signal-window edge cases) recovers
+            # cleanly after close(). Deferred until AFTER the underlying
+            # close has completed so a concurrent task that is mid-
+            # ``transaction()`` is not deprived of its slot ownership
+            # by a foreign-task close() — the in-flight transaction
+            # task retains the slot for as long as the connection was
+            # operable; once the protocol is gone, no future
+            # ``transaction()`` call can succeed and the slot value is
+            # purely cosmetic.
+            self._transaction_owner = None
         if op_lock_timed_out:
             # Surface the timed-out wait to the caller so SIGTERM/
             # dispose handlers can log the unclean shutdown. The
