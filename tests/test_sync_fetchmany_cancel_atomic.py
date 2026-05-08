@@ -1,6 +1,6 @@
-"""Pin: sync ``Cursor.fetchmany``'s per-iteration ``fetchone()``
-loop preserves ``_row_index`` on cancel/exception so partially-
-iterated rows are not silently consumed.
+"""Pin: sync ``Cursor.fetchmany``'s per-iteration row loop preserves
+``_row_index`` on cancel/exception so partially-iterated rows are not
+silently consumed.
 
 Mirrors the async sibling pin
 (``tests/aio/test_fetchmany_cancel_atomic.py``) — the BaseException
@@ -8,7 +8,7 @@ restore arm in sync ``Cursor.fetchmany`` was uncovered while the
 async sibling had a dedicated pin. Real KI / SystemExit-mid-
 fetchmany footgun if the arm regresses to ``except Exception:``.
 
-The override raises *after* ``super().fetchone()`` advances
+The override raises *after* ``super()._next_row_unlocked()`` advances
 ``_row_index``, so the snapshot/restore arm has actual work to do —
 without the restore, the next ``fetchall()`` would skip exactly the
 row whose retrieval was interrupted. A regression that drops the
@@ -27,15 +27,15 @@ from dqlitedbapi.cursor import Cursor
 
 
 class _CountingCursor(Cursor):
-    """Test-only cursor that raises on the Nth fetchone call AFTER the
+    """Test-only cursor that raises on the Nth row-advance AFTER the
     parent has advanced ``_row_index``."""
 
     raise_after_advance: int = 0
 
-    def fetchone(self) -> Any:
-        row = super().fetchone()
-        # Raise AFTER ``super().fetchone()`` increments ``_row_index``
-        # so the production restore line has real work to do.
+    def _next_row_unlocked(self) -> Any:
+        row = super()._next_row_unlocked()
+        # Raise AFTER ``super()._next_row_unlocked()`` increments
+        # ``_row_index`` so the production restore line has real work.
         if self._row_index == self.raise_after_advance:
             raise BaseException("simulated cancel post-advance")
         return row

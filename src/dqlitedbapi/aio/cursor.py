@@ -652,16 +652,27 @@ class AsyncCursor:
             # raising. See sync sibling for full rationale.
             return None
 
+        return self._next_row_unlocked()
+
+    def _next_row_unlocked(self) -> tuple[Any, ...] | None:
+        """Advance one row + apply ``row_factory`` without clearing
+        ``messages`` or re-running guards.
+
+        Mirrors the sync sibling. Used by both ``fetchone`` (after ITS
+        prelude clear/guards) and ``fetchmany`` (after ITS single
+        prelude clear/guards). PEP 249 §6.1.1 requires the messages
+        clear once per top-level method invocation, NOT once per
+        inner row delivery.
+        """
         if self._row_index >= len(self._rows):
             return None
-
         row = self._rows[self._row_index]
         # Apply row_factory BEFORE advancing ``_row_index`` so a raise
         # inside a custom factory leaves the index unchanged. Without
         # this ordering, ``fetchmany``'s snapshot/restore at
         # ``snapshot + len(result)`` underestimates by 1 for
         # factory-raised rows — silently REPLAYING a row on the next
-        # call. Mirrors the sync sibling at ``cursor.py``'s fetchone.
+        # call.
         if self._row_factory is not None:
             transformed: tuple[Any, ...] = self._row_factory(self, row)
             self._row_index += 1
@@ -706,17 +717,22 @@ class AsyncCursor:
             # the sync sibling.
             return await self.fetchall()
 
-        # Snapshot ``_row_index`` BEFORE the per-iteration ``fetchone()``
-        # loop. On cancel/exception mid-loop, restore to (snapshot +
-        # delivered count) so rows that were "consumed" (advanced
-        # ``_row_index``) but never made it into the caller's
-        # ``result`` are not silently lost. Without the restore, a
-        # subsequent ``fetchmany()`` would skip those rows.
+        # Snapshot ``_row_index`` BEFORE the loop. On cancel/exception
+        # mid-loop, restore to (snapshot + delivered count) so rows
+        # that were "consumed" (advanced ``_row_index``) but never made
+        # it into the caller's ``result`` are not silently lost.
+        # Without the restore, a subsequent ``fetchmany()`` would skip
+        # those rows.
+        # Use the ``_next_row_unlocked`` helper so the per-row path
+        # does not re-clear ``messages`` (PEP 249 §6.1.1: once per
+        # top-level call, not once per row) or re-run the closed /
+        # loop-binding guards already validated in this method's
+        # prelude.
         snapshot = self._row_index
         result: list[tuple[Any, ...]] = []
         try:
             for _ in range(size):
-                row = await self.fetchone()
+                row = self._next_row_unlocked()
                 if row is None:
                     break
                 result.append(row)

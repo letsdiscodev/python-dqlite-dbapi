@@ -1,4 +1,4 @@
-"""Pin: ``fetchmany``'s per-iteration ``fetchone()`` loop preserves
+"""Pin: ``fetchmany``'s per-iteration row loop preserves
 ``_row_index`` on cancel/exception so partially-iterated rows are not
 silently consumed.
 
@@ -11,7 +11,7 @@ The fix snapshots ``_row_index`` before the loop; on
 cancel/exception, restores ``_row_index`` to ``snapshot + len(result)``
 so the un-delivered rows are visible to the next fetch.
 
-The override raises *after* ``super().fetchone()`` advances
+The override raises *after* ``super()._next_row_unlocked()`` advances
 ``_row_index``, so the snapshot/restore arm has actual work to do —
 without the restore, the next ``fetchall()`` would skip exactly the
 row whose retrieval was interrupted. A regression that drops the
@@ -30,15 +30,15 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 
 
 class _CountingCursor(AsyncCursor):
-    """Test-only cursor that raises on the Nth fetchone call AFTER the
+    """Test-only cursor that raises on the Nth row-advance AFTER the
     parent has advanced ``_row_index``."""
 
     raise_after_advance: int = 0
 
-    async def fetchone(self) -> Any:
-        row = await super().fetchone()
-        # Raise AFTER ``super().fetchone()`` increments ``_row_index``
-        # so the production restore line has real work to do.
+    def _next_row_unlocked(self) -> Any:
+        row = super()._next_row_unlocked()
+        # Raise AFTER ``super()._next_row_unlocked()`` increments
+        # ``_row_index`` so the production restore line has real work.
         if self._row_index == self.raise_after_advance:
             raise BaseException("simulated cancel post-advance")
         return row
