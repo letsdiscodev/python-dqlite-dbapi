@@ -2,6 +2,7 @@
 
 import sqlite3 as _stdlib_sqlite3
 from functools import lru_cache
+from typing import Final
 
 __all__ = [
     "DataError",
@@ -133,7 +134,7 @@ class Warning(Exception):  # PEP 249 mandated class name
 # unbounded ``raw_message`` can produce multi-MB pickled exception
 # payloads. 4 KiB is well above any realistic SQLite error string
 # while bounding the worst-case fan-out.
-_MAX_RAW_MESSAGE: int = 4 * 1024
+_MAX_RAW_MESSAGE: Final[int] = 4 * 1024
 
 
 def _cap_raw_message(raw_message: str) -> str:
