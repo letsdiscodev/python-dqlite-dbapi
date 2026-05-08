@@ -991,6 +991,24 @@ class AsyncCursor:
             "rows before crossing a process boundary"
         )
 
+    def _check_parent_loop_only(self) -> None:
+        # Shared helper used by ``__aiter__`` and ``__aenter__``.
+        #
+        # ``Cursor.close()`` swaps ``self._connection`` for a
+        # ``weakref.proxy``. Once the parent ``AsyncConnection`` is
+        # GC'd, attribute access through the proxy raises
+        # ``ReferenceError`` — outside the PEP 249 ``Error``
+        # hierarchy. Translate to ``InterfaceError`` so cross-driver
+        # code wrapping ``async with cur:`` / ``async for cur:`` in
+        # ``except dbapi.Error:`` continues to match. Mirrors the
+        # ``connection`` property's discipline.
+        try:
+            self._connection._check_loop_only()
+        except ReferenceError as e:
+            raise InterfaceError(
+                f"Cursor's parent AsyncConnection has been garbage-collected (id={id(self)})"
+            ) from e
+
     def __aiter__(self) -> Self:
         # Surface a loop-mismatch at the ``async for cursor:`` site
         # rather than one await deeper inside ``__anext__``'s
@@ -1003,20 +1021,7 @@ class AsyncCursor:
         # The closed-state diagnostic is deferred to the first
         # ``__anext__`` / ``fetchone``, matching the synchronous
         # pin's documented design.
-        try:
-            self._connection._check_loop_only()
-        except ReferenceError as e:
-            # ``Cursor.close()`` swaps ``self._connection`` for a
-            # ``weakref.proxy``. Once the parent ``AsyncConnection``
-            # is GC'd, attribute access through the proxy raises
-            # ``ReferenceError`` — outside the PEP 249 ``Error``
-            # hierarchy. Translate to ``InterfaceError`` so cross-
-            # driver code wrapping iteration in ``except dbapi.Error:``
-            # continues to match. Mirrors the ``connection`` property's
-            # discipline.
-            raise InterfaceError(
-                f"Cursor's parent AsyncConnection has been garbage-collected (id={id(self)})"
-            ) from e
+        self._check_parent_loop_only()
         return self
 
     async def __anext__(self) -> tuple[Any, ...]:
@@ -1032,7 +1037,9 @@ class AsyncCursor:
         # line rather than silently delaying the diagnostic to the
         # first body await. Non-binding so a never-used cursor on a
         # fresh connection doesn't lazy-bind from ``__aenter__``.
-        self._connection._check_loop_only()
+        # ``_check_parent_loop_only`` translates ``ReferenceError``
+        # from a GC'd proxy parent into ``InterfaceError`` (PEP 249).
+        self._check_parent_loop_only()
         return self
 
     async def __aexit__(
