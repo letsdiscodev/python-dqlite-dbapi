@@ -22,6 +22,27 @@ def _clear_resolve_leader_cache() -> Iterator[None]:
     _conn_mod._RESOLVE_LEADER_CACHE.clear()
 
 
+@pytest.fixture(autouse=True)
+def _restore_adapters() -> Iterator[None]:
+    """Snapshot and restore the process-global ``_ADAPTERS`` dict
+    between tests.
+
+    The registry mirrors stdlib ``sqlite3.register_adapter`` semantics
+    (process-global), but tests that mutate it via ``register_adapter``
+    / ``unregister_adapter`` and rely on manual cleanups can leak state
+    if a body asserts mid-test. Snapshot/restore keeps the production
+    module-global semantics while preventing test-pollution leakage.
+    """
+    from dqlitedbapi.types import _ADAPTERS
+
+    snapshot = dict(_ADAPTERS)
+    try:
+        yield
+    finally:
+        _ADAPTERS.clear()
+        _ADAPTERS.update(snapshot)
+
+
 # Add python-dqlite-dev's testlib to sys.path so tests (in particular
 # the leader-redirect integration suite) can import shared utilities
 # from ``dqlitetestlib``. ``python-dqlite-dev`` is expected as a
