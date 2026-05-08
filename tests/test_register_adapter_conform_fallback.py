@@ -97,3 +97,50 @@ def test_no_conform_method_passes_through_unchanged() -> None:
     obj = Plain()
     out = _convert_bind_param(obj)
     assert out is obj
+
+
+def test_instance_level_conform_is_honoured() -> None:
+    """Stdlib parity: ``__conform__`` set on an instance (not the
+    class) is honoured. CPython's
+    ``Modules/_sqlite/microprotocols.c`` calls
+    ``PyObject_GetAttrString(obj, "__conform__")`` which consults
+    the instance first; the dqlite implementation must match."""
+
+    class Plain:
+        pass
+
+    obj = Plain()
+    obj.__conform__ = lambda protocol: "instance-bound" if protocol is PrepareProtocol else None  # type: ignore[attr-defined]
+    out = _convert_bind_param(obj)
+    assert out == "instance-bound"
+
+
+def test_class_level_conform_still_honoured_after_instance_lookup_change() -> None:
+    """Regression guard: class-side ``__conform__`` continues to work
+    after the lookup change to instance-level ``getattr(value, ...)``.
+    ``getattr`` walks the descriptor protocol so a class-defined
+    method is bound and called as ``method(PrepareProtocol)``."""
+
+    class WithClassConform:
+        def __conform__(self, protocol: type) -> object:
+            if protocol is PrepareProtocol:
+                return "class-bound"
+            return None
+
+    out = _convert_bind_param(WithClassConform())
+    assert out == "class-bound"
+
+
+def test_raising_conform_falls_through_silently() -> None:
+    """A ``__conform__`` that raises is swallowed and the value is
+    left unchanged so the wire encoder's normal type rejection runs.
+    Matches stdlib's silent-fallthrough disposition."""
+
+    class Boom:
+        def __conform__(self, protocol: type) -> object:
+            raise RuntimeError("conform exploded")
+
+    obj = Boom()
+    out = _convert_bind_param(obj)
+    # The exception is swallowed; the value is left unchanged.
+    assert out is obj

@@ -669,14 +669,22 @@ def _convert_bind_param(value: Any) -> Any:
     else:
         # Stdlib parity: fall back to the value's ``__conform__``
         # hook with ``PrepareProtocol`` as the requested protocol
-        # (CPython ``Modules/_sqlite/microprotocols.c``). Resolved on
-        # the type, not the instance, so a class-side method is
-        # picked up correctly. ``__conform__`` may legitimately
-        # return ``None`` to decline; in that case the value is left
-        # unchanged so the wire encoder's normal type rejection runs.
-        proto_method = getattr(type(value), "__conform__", None)
+        # (CPython ``Modules/_sqlite/microprotocols.c`` calls
+        # ``PyObject_GetAttrString(obj, "__conform__")``, which
+        # consults the instance first and then walks the class via
+        # the descriptor protocol). Use ``getattr(value, ...)`` so
+        # an instance-bound ``__conform__`` is honoured (matches
+        # stdlib). ``__conform__`` may legitimately return ``None``
+        # to decline; in that case the value is left unchanged so
+        # the wire encoder's normal type rejection runs. A raising
+        # ``__conform__`` is swallowed and the fallthrough proceeds
+        # — stdlib's silent-fallthrough disposition.
+        proto_method = getattr(value, "__conform__", None)
         if proto_method is not None:
-            adapted = proto_method(value, PrepareProtocol)
+            try:
+                adapted = proto_method(PrepareProtocol)
+            except Exception:  # noqa: BLE001 - stdlib-parity fallthrough
+                adapted = None
             if adapted is not None:
                 value = adapted
     # ``datetime.datetime`` is a subclass of ``datetime.date`` but not
