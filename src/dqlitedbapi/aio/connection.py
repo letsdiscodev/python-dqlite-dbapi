@@ -192,6 +192,8 @@ class AsyncConnection:
             raise InterfaceError(
                 f"address must be a 'host:port' string, got {type(address).__name__}"
             )
+        if not isinstance(database, str):
+            raise InterfaceError(f"database must be a str, got {type(database).__name__}")
         try:
             _client_parse_address(address)
         except ValueError as e:
