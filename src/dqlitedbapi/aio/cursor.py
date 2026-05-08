@@ -423,11 +423,15 @@ class AsyncCursor:
                 self._check_closed()
                 await self._execute_unlocked(operation, parameters)
         finally:
-            # Clear the slot only if WE put it there — same-task
-            # nesting (someone calling cur.execute() inside a row
-            # factory) shouldn't trip this guard.
-            if self._executing_task is cur_task:
-                self._executing_task = None
+            # Clear unconditionally to close the bytecode-tight signal
+            # window between the read and write of a guarded clear: a
+            # BaseException between ``is`` and ``STORE_ATTR`` would
+            # otherwise leave the slot pinned to a now-completed task.
+            # Safe because ``row_factory`` runs only in fetch*; execute*
+            # never re-enters the same cursor's execute path from a
+            # row callback. The cross-task rejection above remains the
+            # primary guard against concurrent execute on one cursor.
+            self._executing_task = None
 
         return self
 
@@ -611,8 +615,10 @@ class AsyncCursor:
                 self._check_closed()
                 acc.apply(self)
         finally:
-            if self._executing_task is cur_task:
-                self._executing_task = None
+            # Clear unconditionally — see ``execute`` finally for the
+            # rationale (closes the bytecode-tight signal window
+            # between the ``is`` read and the ``STORE_ATTR`` write).
+            self._executing_task = None
         return self
 
     def _check_result_set(self) -> None:
