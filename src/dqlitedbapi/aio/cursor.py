@@ -312,7 +312,7 @@ class AsyncCursor:
                 # but short → ``DataError`` so the anomaly surfaces
                 # loudly.
                 if len(column_types) == 0 and len(rows) == 0:
-                    type_codes: list[Any] = [None] * len(columns)
+                    type_codes: list[int | None] = [None] * len(columns)
                 elif len(column_types) != len(columns):
                     raise DataError(
                         f"Wire response has {len(columns)} columns but "
@@ -324,7 +324,7 @@ class AsyncCursor:
                     # Type Objects"). See sync sibling rationale.
                     from dqlitewire.constants import ValueType as _VT
 
-                    type_codes = [None if c == _VT.NULL else c for c in column_types]
+                    type_codes = [None if c == _VT.NULL else int(c) for c in column_types]
                 self._description = tuple(
                     (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)
