@@ -1493,6 +1493,18 @@ class Cursor:
         Pure queries (SELECT / VALUES / PRAGMA) are rejected in the
         sync ``executemany`` wrapper before this helper is scheduled.
         """
+        # Hoist ``_classify_caller_sql`` ONCE at the top: empty SQL,
+        # multi-statement, and the SQL parsing/scanning are all
+        # invariant across iterations. The placeholder count derived
+        # here is then compared per-iteration against ``len(params)``
+        # — a cheap O(1) check vs the per-iteration regex traversal
+        # that calling the full classifier per row would cost.
+        # Passing ``None`` for parameters skips the placeholder
+        # length-check on the first call (the classifier still runs
+        # the empty/multi guards, which are pure SQL parses).
+        _classify_caller_sql(operation, None)
+        cleaned = _strip_sql_noise(operation)
+        placeholder_count = cleaned.count("?")
         # Single source of truth for per-execute reset; see
         # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
         # an empty ``seq_of_parameters`` ends with the same
@@ -1507,6 +1519,22 @@ class Cursor:
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         try:
             for params in seq_of_parameters:
+                # Per-iteration ``?``-count vs ``len(params)``. Mappings,
+                # str, bytes are rejected by the binding layer later —
+                # skip the count check for them since len() doesn't
+                # mean what we want. Mirrors ``_classify_caller_sql``'s
+                # late check on a per-row basis.
+                if params is not None:
+                    try:
+                        param_count = len(params)
+                    except TypeError:
+                        param_count = -1
+                    if param_count >= 0 and param_count != placeholder_count:
+                        raise ProgrammingError(
+                            f"Incorrect number of bindings supplied. The "
+                            f"current statement uses {placeholder_count}, "
+                            f"and there are {param_count} supplied."
+                        )
                 await self._execute_async(operation, params)
                 acc.push(self)
                 self._completed_iterations += 1
