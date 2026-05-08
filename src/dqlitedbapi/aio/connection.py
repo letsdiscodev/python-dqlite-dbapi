@@ -462,6 +462,13 @@ class AsyncConnection:
         # so the contract is uniform across the four required
         # methods.
         del self.messages[:]
+        # Clear the transaction-owner slot as a defensive backstop.
+        # The set-inside-try discipline in ``transaction()`` already
+        # prevents BaseException-window leaks under normal flow, but
+        # an instance-reuse path that somehow inherited a stale token
+        # (test fixtures, signal-window edge cases) recovers cleanly
+        # after close().
+        self._transaction_owner = None
         # Fork-after-init: the inherited socket FD is shared with the
         # parent and the asyncio op_lock is bound to the parent's
         # loop. Driving the async teardown here would either send FIN
@@ -1299,8 +1306,13 @@ class AsyncConnection:
                 "exit the outer block before opening a new one."
             )
         token = asyncio.current_task()
-        self._transaction_owner = token
+        # Set the owner slot INSIDE the try frame so a BaseException
+        # (KeyboardInterrupt / SystemExit) at the bytecode boundary
+        # between the assignment and the try-setup cannot leak the
+        # slot pinned to a now-dying task. Mirrors the cursor's
+        # ``_executing_task`` set-inside-try discipline.
         try:
+            self._transaction_owner = token
             async with async_conn.transaction():
                 yield
         finally:
