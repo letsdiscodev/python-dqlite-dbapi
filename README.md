@@ -134,7 +134,7 @@ async with aiosqlite.connect(":memory:") as conn:
     ...
 
 # dqlitedbapi.aio-style (does NOT close on aexit, matches stdlib sqlite3):
-async with await dqlitedbapi.aio.connect(...) as conn:
+async with await dqlitedbapi.aio.aconnect(...) as conn:
     ...
     await conn.close()  # explicit
 ```
