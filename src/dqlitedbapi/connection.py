@@ -2382,8 +2382,9 @@ class Connection:
             # ambiguous (the COMMIT may or may not have reached the
             # leader); log a DEBUG breadcrumb so operators can correlate
             # the cancelled close with the source signal — symmetric
-            # with the async sibling at ``aio/connection.py:1586-1604``
-            # and with this method's own rollback arm below.
+            # with the async sibling (see ``AsyncConnection.__aexit__``'s
+            # rollback breadcrumb arm in ``aio/connection.py``) and with
+            # this method's own rollback arm below.
             try:
                 self.commit()
             except (KeyboardInterrupt, SystemExit):
