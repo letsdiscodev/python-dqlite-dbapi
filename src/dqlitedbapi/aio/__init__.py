@@ -45,6 +45,7 @@ from dqlitedbapi.types import (
     Date,
     DateFromTicks,
     DescriptionTuple,
+    PrepareProtocol,
     Time,
     TimeFromTicks,
     Timestamp,
@@ -132,6 +133,7 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     # surface; calling on either namespace mutates the same dict)
     "register_adapter",
     "unregister_adapter",
+    "PrepareProtocol",
     # NotSupportedError stubs mirroring stdlib sqlite3 — symmetric
     # with the sync surface so cross-driver code porting from
     # aiosqlite / stdlib gets a dbapi.Error rather than

@@ -104,6 +104,7 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "connect",
     "register_adapter",
     "unregister_adapter",
+    "PrepareProtocol",
     "register_converter",
     "complete_statement",
     "enable_callback_tracebacks",
@@ -219,8 +220,14 @@ def connect(
 # NotSupportedError stubs.
 
 # Re-export the implementation from ``dqlitedbapi.types`` where
-# ``_convert_bind_param`` consults the registry.
-from dqlitedbapi.types import register_adapter, unregister_adapter  # noqa: E402, F401
+# ``_convert_bind_param`` consults the registry. ``PrepareProtocol``
+# is the stdlib-parity sentinel passed to ``__conform__`` for the
+# adapter-discovery fallback path.
+from dqlitedbapi.types import (  # noqa: E402, F401
+    PrepareProtocol,
+    register_adapter,
+    unregister_adapter,
+)
 
 
 def register_converter(*args: object, **kwargs: object) -> NoReturn:

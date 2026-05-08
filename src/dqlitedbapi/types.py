@@ -568,6 +568,20 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
 _ADAPTERS: dict[type, "Any"] = {}
 
 
+class PrepareProtocol:
+    """Stdlib ``sqlite3.PrepareProtocol`` parity sentinel.
+
+    A value's ``__conform__(self, protocol)`` hook is consulted with
+    this class as the second argument when ``_convert_bind_param``
+    cannot find a matching ``register_adapter`` entry. Mirrors the
+    stdlib lookup order: explicit registration first, then the value's
+    own ``__conform__``. The class itself carries no behaviour; it is
+    used purely as the protocol identity object.
+    """
+
+    pass
+
+
 def register_adapter(type_: type, adapter: "Any") -> None:
     """Register a Python-side adapter callable for ``type_``.
 
@@ -651,6 +665,19 @@ def _convert_bind_param(value: Any) -> Any:
     adapter = _ADAPTERS.get(type(value))
     if adapter is not None:
         value = adapter(value)
+    else:
+        # Stdlib parity: fall back to the value's ``__conform__``
+        # hook with ``PrepareProtocol`` as the requested protocol
+        # (CPython ``Modules/_sqlite/microprotocols.c``). Resolved on
+        # the type, not the instance, so a class-side method is
+        # picked up correctly. ``__conform__`` may legitimately
+        # return ``None`` to decline; in that case the value is left
+        # unchanged so the wire encoder's normal type rejection runs.
+        proto_method = getattr(type(value), "__conform__", None)
+        if proto_method is not None:
+            adapted = proto_method(value, PrepareProtocol)
+            if adapted is not None:
+                value = adapted
     # ``datetime.datetime`` is a subclass of ``datetime.date`` but not
     # of ``datetime.time``, so the datetime/date check must fire first
     # for datetime inputs. ``datetime.time`` falls through to its own
