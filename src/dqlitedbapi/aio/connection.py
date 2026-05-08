@@ -1511,6 +1511,20 @@ class AsyncConnection:
         freshly-opened cursor before re-raising so the caller's
         exception path doesn't leak an unowned cursor with loop-
         bound state.
+
+        **Porting note (aiosqlite chained-CM idiom is NOT supported)**:
+        aiosqlite's ``Connection.execute`` returns a ``Result`` object
+        that's awaitable AND an async context manager, allowing
+        ``async with conn.execute(sql) as cur:``. dqlite's
+        ``AsyncConnection.execute`` is a plain coroutine; the chained
+        form raises ``TypeError`` ('coroutine' object does not support
+        the asynchronous context manager protocol). Use::
+
+            cur = await conn.execute(sql)
+            async with cur:
+                ...
+
+        instead. Same applies to ``executemany``.
         """
         # PEP 249 §6.4 messages-clear contract; eager-clear mirrors
         # sync sibling ``Connection.execute`` at connection.py:1937.
@@ -1541,7 +1555,21 @@ class AsyncConnection:
         """PEP 249 optional extension — open a cursor, run
         ``executemany``, return the cursor. Mirrors stdlib
         ``sqlite3.Connection.executemany`` and aiosqlite's
-        ``Connection.executemany``."""
+        ``Connection.executemany``.
+
+        **Porting note (aiosqlite chained-CM idiom is NOT supported)**:
+        aiosqlite's ``Connection.executemany`` returns an awaitable
+        async context manager, allowing
+        ``async with conn.executemany(sql, seq) as cur:``. dqlite's
+        ``AsyncConnection.executemany`` is a plain coroutine; the
+        chained form raises ``TypeError``. Use::
+
+            cur = await conn.executemany(sql, seq)
+            async with cur:
+                ...
+
+        instead. Same applies to ``execute``.
+        """
         # PEP 249 §6.4 messages-clear; see ``execute`` above.
         del self.messages[:]
         # Reject the outer shapes that would silently iterate over keys
