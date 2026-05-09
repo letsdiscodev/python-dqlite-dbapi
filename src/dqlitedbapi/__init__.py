@@ -97,6 +97,17 @@ sqlite_version: Final[str] = _SQLITE_VERSION
 # falling back to ``getattr(dbapi, "LEGACY_TRANSACTION_CONTROL", -1)``.
 LEGACY_TRANSACTION_CONTROL: Final[int] = -1
 
+# Stdlib ``sqlite3.PARSE_DECLTYPES = 1`` / ``PARSE_COLNAMES = 2``
+# parity. The values are exposed for cross-driver porting code that
+# composes ``detect_types=`` flag values; the ``detect_types=`` connect
+# kwarg itself is still rejected at the ``unknown_kwargs`` gate in
+# ``connect()`` (this driver has no converter machinery — see the
+# stubbed ``register_converter`` below). Exposing the constants only
+# closes the AttributeError-outside-Error-hierarchy footgun; it does
+# NOT enable any converter behaviour.
+PARSE_DECLTYPES: Final[int] = 1
+PARSE_COLNAMES: Final[int] = 2
+
 __version__: Final[str] = "0.1.4"
 
 __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
@@ -108,6 +119,8 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "sqlite_version",
     "sqlite_version_info",
     "LEGACY_TRANSACTION_CONTROL",
+    "PARSE_DECLTYPES",
+    "PARSE_COLNAMES",
     # Functions
     "connect",
     "register_adapter",

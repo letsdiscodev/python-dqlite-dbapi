@@ -12,6 +12,8 @@ from typing import Final, Literal
 # (re-exported from the sync surface for the same reason).
 from dqlitedbapi import (  # noqa: E402 — module-level re-export
     LEGACY_TRANSACTION_CONTROL,
+    PARSE_COLNAMES,
+    PARSE_DECLTYPES,
     __version__,
     complete_statement,
     enable_callback_tracebacks,
@@ -99,6 +101,8 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "sqlite_version",
     "sqlite_version_info",
     "LEGACY_TRANSACTION_CONTROL",
+    "PARSE_DECLTYPES",
+    "PARSE_COLNAMES",
     # Functions
     "connect",
     "aconnect",
