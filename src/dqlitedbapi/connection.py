@@ -824,6 +824,8 @@ class Connection:
             )
         if not isinstance(database, str):
             raise InterfaceError(f"database must be a str, got {type(database).__name__}")
+        if not database:
+            raise InterfaceError("database must be a non-empty string")
         try:
             _client_parse_address(address)
         except ValueError as e:
