@@ -143,34 +143,22 @@ _CLOSE_TIMEOUT_FLOOR: Final[float] = 0.01
 def _validate_close_timeout(close_timeout: float) -> None:
     """Raise ProgrammingError if ``close_timeout`` is not a positive finite number ≥ 0.01.
 
-    Delegates to the client layer's public ``validate_timeout`` (the
-    source of truth for the bool / numeric-type / finite / positive
-    predicate) and translates ``TypeError`` / ``ValueError`` to
-    PEP 249 ``ProgrammingError``. Sibling of ``_validate_timeout``
-    above.
-
-    Additionally enforces a 0.01 s floor: below this floor, the
-    dispose-time writer-close (scheduled via ``call_soon_threadsafe``
-    and joined with a bounded thread.join) gives the loop too few
-    ticks to flush FIN, leaving connections lingering in TIME_WAIT.
-    The SA URL parser previously enforced this floor at the dialect
-    boundary; centralising it here means direct dbapi callers see
-    the same diagnostic, and SA's URL parser stays a thin wrapper
-    over this validator.
+    Delegates to the client layer's public ``validate_timeout`` with
+    ``min_value=_CLOSE_TIMEOUT_FLOOR`` so the floor is enforced
+    uniformly across direct dqliteclient callers, the dbapi entry
+    points, and the SA URL parser. Translates the client's
+    ``TypeError`` / ``ValueError`` to PEP 249 ``ProgrammingError``.
     """
     from dqliteclient import validate_timeout as _client_validate_timeout
 
     try:
-        _client_validate_timeout(close_timeout, name="close_timeout")
+        _client_validate_timeout(
+            close_timeout,
+            name="close_timeout",
+            min_value=_CLOSE_TIMEOUT_FLOOR,
+        )
     except (TypeError, ValueError) as e:
         raise ProgrammingError(str(e)) from e
-    if close_timeout < _CLOSE_TIMEOUT_FLOOR:
-        raise ProgrammingError(
-            f"close_timeout must be >= {_CLOSE_TIMEOUT_FLOOR} seconds; "
-            f"got {close_timeout}. Below this floor, the dispose-time "
-            f"writer-close may complete before FIN flushes, leaving "
-            f"connections lingering in TIME_WAIT."
-        )
 
 
 # Process-wide ``ClusterClient`` cache for the leader-discovery probe.
