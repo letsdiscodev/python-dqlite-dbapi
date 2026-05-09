@@ -2409,10 +2409,18 @@ class Connection:
     def blobopen(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not expose sqlite3_blob_open on the wire")
 
-    def enable_load_extension(self, enabled: bool) -> NoReturn:
+    def enable_load_extension(self, *args: object, **kwargs: object) -> NoReturn:
+        # ``*args/**kwargs`` shape so any caller signature — including
+        # the zero-arg form a typing-confused operator might write —
+        # reaches ``_stub_unsupported`` and surfaces a
+        # ``NotSupportedError`` inside the ``dqlitedbapi.Error``
+        # hierarchy. Tightly-typed signatures leak bare ``TypeError``
+        # outside the hierarchy, breaking cross-driver feature-probe
+        # code (``except dbapi.Error: ...``).
         self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
-    def load_extension(self, path: str, *, entrypoint: str | None = None) -> NoReturn:
+    def load_extension(self, *args: object, **kwargs: object) -> NoReturn:
+        # See ``enable_load_extension`` rationale.
         self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
     def backup(self, *args: object, **kwargs: object) -> NoReturn:
@@ -2421,7 +2429,11 @@ class Connection:
             "use the dqlite-server dump/restore mechanism instead"
         )
 
-    def iterdump(self) -> NoReturn:
+    def iterdump(self, *args: object, **kwargs: object) -> NoReturn:
+        # ``*args/**kwargs`` so Python 3.13's new ``filter=`` kwarg (and
+        # any future additions) routes through ``_stub_unsupported``
+        # rather than leaking a bare ``TypeError`` outside the
+        # ``dqlitedbapi.Error`` hierarchy.
         self._stub_unsupported(
             "dqlite does not support stdlib sqlite3 iterdump; "
             "use the dqlite-server dump/restore mechanism instead"

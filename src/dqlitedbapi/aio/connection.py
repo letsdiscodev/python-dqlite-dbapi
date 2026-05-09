@@ -1768,10 +1768,13 @@ class AsyncConnection:
     def blobopen(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not expose sqlite3_blob_open on the wire")
 
-    def enable_load_extension(self, enabled: bool) -> NoReturn:
+    def enable_load_extension(self, *args: object, **kwargs: object) -> NoReturn:
+        # ``*args/**kwargs`` shape so any caller signature reaches
+        # ``_stub_unsupported`` rather than leaking ``TypeError``
+        # outside ``dqlitedbapi.Error``. See sync sibling.
         self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
-    def load_extension(self, path: str, *, entrypoint: str | None = None) -> NoReturn:
+    def load_extension(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
     def backup(self, *args: object, **kwargs: object) -> NoReturn:
@@ -1787,7 +1790,9 @@ class AsyncConnection:
             "use the dqlite-server dump/restore mechanism instead"
         )
 
-    def iterdump(self) -> NoReturn:
+    def iterdump(self, *args: object, **kwargs: object) -> NoReturn:
+        # ``*args/**kwargs`` so Python 3.13's ``filter=`` (and any
+        # future additions) reach ``_stub_unsupported``.
         self._stub_unsupported(
             "dqlite does not support stdlib sqlite3 iterdump; "
             "use the dqlite-server dump/restore mechanism instead"
