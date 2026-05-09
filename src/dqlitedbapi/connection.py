@@ -2119,7 +2119,9 @@ class Connection:
 
     @property
     def closed(self) -> bool:
-        """``True`` once :meth:`close` has been called.
+        """``True`` once :meth:`close` has been called OR the inner
+        client connection has been invalidated (cancel-mid-execute,
+        leader-flip, transport reset).
 
         Mirrors the psycopg / asyncpg convention so callers porting
         idempotent-close patterns (``if not conn.closed: conn.close()``)
@@ -2127,8 +2129,38 @@ class Connection:
         property; stdlib ``sqlite3`` famously omits it. The underlying
         flag is already maintained by every method that mutates
         closed-ness.
+
+        Peer-driver parity (psycopg, asyncpg) — both return True for
+        invalidated connections so cross-driver code branching on
+        ``conn.closed`` to drive reconnect heuristics works correctly.
+        Use :attr:`invalidated` if you specifically need to distinguish
+        the two states. Mirrors the async sibling at
+        ``aio/connection.py``'s ``AsyncConnection.closed``.
         """
-        return self._closed
+        return self._closed or self.invalidated
+
+    @property
+    def invalidated(self) -> bool:
+        """``True`` if the inner client connection has been invalidated
+        but :meth:`close` has not yet been called explicitly.
+
+        Invalidation happens on cancel-mid-execute / leader-flip /
+        transport reset. Returns ``False`` if the connection has been
+        explicitly closed (``closed`` is the canonical signal then),
+        if it was never connected, or if it is alive and well.
+
+        asyncpg returns True from ``is_closed()`` for the same state;
+        psycopg exposes ``connection.broken``. This driver splits the
+        two: ``closed`` ORs both states (peer-driver parity);
+        ``invalidated`` lets callers distinguish. Mirrors the async
+        sibling ``AsyncConnection.invalidated``.
+        """
+        if self._closed:
+            return False
+        inner = self._async_conn
+        if inner is None:
+            return False
+        return getattr(inner, "_protocol", "_sentinel") is None
 
     @property
     def row_factory(self) -> Any:

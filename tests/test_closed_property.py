@@ -22,11 +22,16 @@ class TestSyncClosedProperty:
     def test_connection_closed_property_starts_false(self) -> None:
         conn = Connection.__new__(Connection)
         conn._closed = False
+        # ``closed`` ORs invalidated; seed _async_conn so the
+        # invalidation arm sees a never-connected state and returns
+        # False. Mirrors the async sibling test.
+        conn._async_conn = None
         assert conn.closed is False
 
     def test_connection_closed_property_reflects_close_state(self) -> None:
         conn = Connection.__new__(Connection)
         conn._closed = False
+        conn._async_conn = None
         assert conn.closed is False
         conn._closed = True
         assert conn.closed is True
