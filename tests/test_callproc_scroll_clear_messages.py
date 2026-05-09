@@ -6,6 +6,8 @@ clear for sibling consistency).
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 from dqlitedbapi import Connection, NotSupportedError
@@ -22,7 +24,13 @@ def cursor():
     # Seed messages so we can observe the clear.
     conn.messages.append((Warning, "stale"))
     cur.messages.append((Warning, "stale"))
-    yield cur, conn
+    try:
+        yield cur, conn
+    finally:
+        with contextlib.suppress(Exception):
+            cur.close()
+        with contextlib.suppress(Exception):
+            conn.close()
 
 
 def test_sync_callproc_clears_messages(cursor) -> None:

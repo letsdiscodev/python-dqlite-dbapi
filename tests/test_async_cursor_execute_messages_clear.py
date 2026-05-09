@@ -14,6 +14,7 @@ side is symmetrically covered against future drift.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import weakref
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
@@ -39,7 +40,16 @@ async def cursor() -> AsyncIterator[AsyncCursor]:
     fake.close = AsyncMock()
     fake.in_transaction = False
     conn._async_conn = fake
-    yield AsyncCursor(conn)
+    cur = AsyncCursor(conn)
+    try:
+        yield cur
+    finally:
+        # Wrap in suppress: tests deliberately set ``_closed = True``
+        # ahead of close-path probes; the close call must still run
+        # to release the cursor's parent-connection back-reference
+        # (project discipline).
+        with contextlib.suppress(Exception):
+            await cur.close()
 
 
 async def test_execute_clears_messages_on_closed_path(cursor: AsyncCursor) -> None:
