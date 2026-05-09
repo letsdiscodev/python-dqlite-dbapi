@@ -60,6 +60,17 @@ async def test_aio_commit_swallow_matrix(code: int, should_swallow: bool) -> Non
     if should_swallow:
         await conn.commit()
     else:
+        # Deliberate broad catch: this matrix spans multiple primary
+        # codes that map to DIFFERENT PEP 249 subclasses
+        # (``code=19`` -> ``IntegrityError``, ``code=10/21`` ->
+        # ``OperationalError``, ``code=0`` -> ``OperationalError`` /
+        # ``DatabaseError`` depending on classifier mapping). The
+        # contract under test is "the no-tx swallow does NOT engage
+        # for this code" — i.e. the call surfaces as some
+        # ``dbapi.Error`` rather than being silently swallowed. The
+        # exact subclass for each row is pinned separately by the
+        # ``_classify_operational`` unit tests; here we only pin the
+        # swallow gate.
         with pytest.raises(Error):
             await conn.commit()
 
@@ -85,5 +96,8 @@ async def test_aio_rollback_swallow_matrix(code: int, should_swallow: bool) -> N
     if should_swallow:
         await conn.rollback()
     else:
+        # See sibling commit-matrix comment: deliberate broad catch
+        # because this matrix spans subclasses; the per-code subclass
+        # mapping is pinned separately by classifier unit tests.
         with pytest.raises(Error):
             await conn.rollback()

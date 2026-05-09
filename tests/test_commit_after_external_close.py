@@ -14,7 +14,7 @@ import pytest
 
 from dqliteclient.exceptions import DqliteConnectionError
 from dqlitedbapi import Connection
-from dqlitedbapi.exceptions import Error, OperationalError
+from dqlitedbapi.exceptions import OperationalError
 
 
 def _make_connection_with_invalidated_async() -> Connection:
@@ -32,9 +32,14 @@ def _make_connection_with_invalidated_async() -> Connection:
 
 
 def test_commit_on_invalidated_connection_raises_dbapi_error() -> None:
+    """The DqliteConnectionError surfaces as ``OperationalError`` —
+    pin the exact class so a refactor that downgrades the raise to
+    a more general ``Error`` subclass breaks this test (the
+    follow-up SA-disconnect-classifier test also pins
+    ``OperationalError`` plus the ``__cause__``)."""
     conn = _make_connection_with_invalidated_async()
     try:
-        with pytest.raises(Error):
+        with pytest.raises(OperationalError):
             conn.commit()
     finally:
         # Mark closed to keep finalizer quiet.
@@ -44,7 +49,7 @@ def test_commit_on_invalidated_connection_raises_dbapi_error() -> None:
 def test_rollback_on_invalidated_connection_raises_dbapi_error() -> None:
     conn = _make_connection_with_invalidated_async()
     try:
-        with pytest.raises(Error):
+        with pytest.raises(OperationalError):
             conn.rollback()
     finally:
         conn._closed = True
