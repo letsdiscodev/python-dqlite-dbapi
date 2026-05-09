@@ -24,6 +24,20 @@ def test_close_timeout_below_floor_raises_programming_error() -> None:
         _validate_close_timeout(0.0001)
 
 
+def test_close_timeout_floor_diagnostic_carries_fin_flush_rationale() -> None:
+    """The dbapi wrapper threads ``min_value_rationale`` through to the
+    client's ``validate_timeout`` so dbapi/SA operators see the same
+    FIN-flush explanation that direct ``DqliteConnection`` /
+    ``ConnectionPool`` callers see when the floor trips."""
+    with pytest.raises(ProgrammingError) as exc:
+        _validate_close_timeout(0.0001)
+    assert "FIN flushes" in str(exc.value), (
+        "_validate_close_timeout must forward the FIN-flush rationale "
+        "to the client layer's validate_timeout so dbapi-layer and "
+        "SA-URL operators see the same operator-facing explanation."
+    )
+
+
 def test_close_timeout_at_floor_accepted() -> None:
     _validate_close_timeout(0.01)  # boundary value
 

@@ -2,17 +2,16 @@
 ``load_extension`` stubs accept any call signature and route every
 misuse through the ``dqlitedbapi.Error`` hierarchy.
 
-The stub family established by round-22 / round-30 promised that
-every un-implementable stdlib stub uses
+Every un-implementable stdlib stub uses
 ``def stub(self, *args: object, **kwargs: object) -> NoReturn`` so
-ANY caller signature — positional, keyword, novel-stdlib-3.13
+any caller signature — positional, keyword, novel-stdlib-3.13
 ``filter=`` kwarg — reaches ``_stub_unsupported`` and surfaces a
 ``NotSupportedError`` inside the dbapi exception hierarchy.
 
-The three subjects had tightly-typed signatures that leaked bare
-``TypeError`` outside ``dqlitedbapi.Error`` for any signature
-mismatch — breaking cross-driver feature-probe code. This pin
-forecloses a re-tightening regression.
+The three subjects had previously carried tightly-typed signatures
+that leaked bare ``TypeError`` outside ``dqlitedbapi.Error`` for any
+signature mismatch — breaking cross-driver feature-probe code. This
+pin forecloses a re-tightening regression.
 """
 
 from __future__ import annotations

@@ -155,14 +155,21 @@ def _validate_close_timeout(close_timeout: float) -> None:
     uniformly across direct dqliteclient callers, the dbapi entry
     points, and the SA URL parser. Translates the client's
     ``TypeError`` / ``ValueError`` to PEP 249 ``ProgrammingError``.
+
+    Forwards the close-timeout-specific FIN-flush rationale to the
+    validator so dbapi-layer / SA-URL operators see the same
+    operator-facing explanation as direct ``DqliteConnection`` /
+    ``ConnectionPool`` callers when the floor trips.
     """
     from dqliteclient import validate_timeout as _client_validate_timeout
+    from dqliteclient.connection import _CLOSE_TIMEOUT_FLOOR_RATIONALE
 
     try:
         _client_validate_timeout(
             close_timeout,
             name="close_timeout",
             min_value=_CLOSE_TIMEOUT_FLOOR,
+            min_value_rationale=_CLOSE_TIMEOUT_FLOOR_RATIONALE,
         )
     except (TypeError, ValueError) as e:
         raise ProgrammingError(str(e)) from e
