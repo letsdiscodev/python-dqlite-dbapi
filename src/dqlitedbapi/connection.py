@@ -1714,11 +1714,22 @@ class Connection:
     def in_transaction(self) -> bool:
         """Whether the connection currently has an open transaction.
 
-        Mirrors stdlib ``sqlite3.Connection.in_transaction``. Callers
-        use this in shutdown paths to decide whether to commit or
-        rollback. Never-connected or closed connections return False
-        — by definition they cannot hold an open transaction. Delegates
-        to the underlying client-layer :class:`DqliteConnection`.
+        Callers use this in shutdown paths to decide whether to commit
+        or rollback. Delegates to the underlying client-layer
+        :class:`DqliteConnection` for the live "is BEGIN in flight"
+        signal.
+
+        **Divergence from stdlib**: stdlib
+        ``sqlite3.Connection.in_transaction`` raises
+        ``ProgrammingError`` on a closed connection; this driver
+        returns ``False`` instead, by definition (a closed connection
+        cannot hold an open transaction). Never-connected connections
+        likewise return ``False``. This makes the getter safe to use
+        in shutdown paths that need to decide whether to commit or
+        rollback before close, without an extra closed-state try /
+        except scaffold. Cross-driver code that relies on stdlib's
+        raise behaviour to detect a closed connection should use the
+        ``closed``-state probe directly, not ``in_transaction``.
         """
         self._check_thread()
         # Snapshot the reference once so a concurrent close() that nulls

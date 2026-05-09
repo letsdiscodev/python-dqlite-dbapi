@@ -971,9 +971,19 @@ class AsyncConnection:
     def in_transaction(self) -> bool:
         """Whether the connection currently has an open transaction.
 
-        Mirrors stdlib ``sqlite3.Connection.in_transaction`` (and its
-        sync sibling :attr:`dqlitedbapi.Connection.in_transaction`).
-        Never-connected or closed connections return False.
+        **Divergence from stdlib**: stdlib
+        ``sqlite3.Connection.in_transaction`` raises
+        ``ProgrammingError`` on a closed connection; this driver
+        returns ``False`` instead (symmetric with the sync sibling
+        :attr:`dqlitedbapi.Connection.in_transaction`), by definition
+        (a closed connection cannot hold an open transaction). Never-
+        connected connections likewise return ``False``. This makes
+        the getter safe to use in shutdown paths that need to decide
+        whether to commit or rollback before close, without an extra
+        closed-state try / except scaffold. Cross-driver code that
+        relies on stdlib's raise behaviour to detect a closed
+        connection should use the ``closed``-state probe directly,
+        not ``in_transaction``.
 
         Raises ``ProgrammingError`` if read from a foreign event loop
         — symmetric with the sync sibling's ``_check_thread()`` raise
