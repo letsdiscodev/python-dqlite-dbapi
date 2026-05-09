@@ -162,14 +162,14 @@ def _validate_close_timeout(close_timeout: float) -> None:
     ``ConnectionPool`` callers when the floor trips.
     """
     from dqliteclient import validate_timeout as _client_validate_timeout
-    from dqliteclient.connection import _CLOSE_TIMEOUT_FLOOR_RATIONALE
+    from dqliteclient.connection import CLOSE_TIMEOUT_FLOOR_RATIONALE
 
     try:
         _client_validate_timeout(
             close_timeout,
             name="close_timeout",
             min_value=_CLOSE_TIMEOUT_FLOOR,
-            min_value_rationale=_CLOSE_TIMEOUT_FLOOR_RATIONALE,
+            min_value_rationale=CLOSE_TIMEOUT_FLOOR_RATIONALE,
         )
     except (TypeError, ValueError) as e:
         raise ProgrammingError(str(e)) from e
