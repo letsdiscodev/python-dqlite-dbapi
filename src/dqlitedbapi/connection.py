@@ -2298,22 +2298,28 @@ class Connection:
     # block instead of ``hasattr``. The same caveat applies to
     # ``callproc`` / ``nextset`` / ``scroll`` on the cursor side.
 
-    def tpc_begin(self, xid: object) -> NoReturn:
+    # ``*args, **kwargs`` shape so any caller signature — positional,
+    # keyword, novel-PEP-249-extension kwarg — reaches
+    # ``_stub_unsupported`` and surfaces ``NotSupportedError`` inside
+    # the ``dqlitedbapi.Error`` hierarchy. Tightly-typed signatures
+    # leak bare ``TypeError`` outside the hierarchy, breaking cross-
+    # driver feature-probe code (``except dbapi.Error: ...``).
+    def tpc_begin(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def tpc_prepare(self) -> NoReturn:
+    def tpc_prepare(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def tpc_commit(self, xid: object | None = None) -> NoReturn:
+    def tpc_commit(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def tpc_rollback(self, xid: object | None = None) -> NoReturn:
+    def tpc_rollback(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def tpc_recover(self) -> NoReturn:
+    def tpc_recover(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
+    def xid(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def _stub_unsupported(self, msg: str) -> NoReturn:

@@ -97,3 +97,61 @@ def test_enable_load_extension_zero_arg_does_not_leak_typeerror(
     missing positional argument. The stub must absorb the call."""
     with pytest.raises(dqlitedbapi.NotSupportedError):
         sync_conn.enable_load_extension()
+
+
+# --- TPC stubs (PEP 249 §7) -----------------------------------------------
+# Mirror the iterdump / load_extension / enable_load_extension matrix for
+# the six TPC stubs (tpc_begin / tpc_prepare / tpc_commit / tpc_rollback /
+# tpc_recover / xid). dqlite cannot support TPC (Raft is a single-cluster
+# commit log, no XA coordinator), so any caller signature must surface
+# NotSupportedError inside the dbapi.Error hierarchy.
+
+
+@pytest.mark.parametrize(
+    "method,args,kwargs",
+    [
+        ("tpc_begin", (), {}),  # missing positional in old signature
+        ("tpc_begin", (object(), object()), {}),  # too many positionals
+        ("tpc_begin", (object(),), {"format": 1}),  # novel kwarg
+        ("tpc_prepare", (object(),), {}),  # extra positional
+        ("tpc_commit", (object(), object()), {}),  # too many positionals
+        ("tpc_commit", (), {"novel": True}),  # novel kwarg
+        ("tpc_rollback", (), {"novel": True}),  # novel kwarg
+        ("tpc_recover", (), {"timeout": 5}),  # novel kwarg
+        ("xid", (), {}),  # missing 3 positionals
+        ("xid", (1, "g"), {}),  # missing 1 positional
+        ("xid", (1, "g", "b", "extra"), {}),  # too many positionals
+        ("xid", (1, "g", "b"), {"novel": True}),  # novel kwarg
+    ],
+)
+def test_sync_tpc_stub_routes_through_notsupported_error(
+    sync_conn: dqlitedbapi.Connection,
+    method: str,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(dqlitedbapi.NotSupportedError):
+        getattr(sync_conn, method)(*args, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "method,args,kwargs",
+    [
+        ("tpc_begin", (), {}),
+        ("tpc_begin", (object(),), {"format": 1}),
+        ("tpc_prepare", (object(),), {}),
+        ("tpc_commit", (), {"novel": True}),
+        ("tpc_rollback", (), {"novel": True}),
+        ("tpc_recover", (), {"timeout": 5}),
+        ("xid", (), {}),
+        ("xid", (1, "g", "b"), {"novel": True}),
+    ],
+)
+def test_async_tpc_stub_routes_through_notsupported_error(
+    async_conn: AsyncConnection,
+    method: str,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(dqlitedbapi.NotSupportedError):
+        getattr(async_conn, method)(*args, **kwargs)

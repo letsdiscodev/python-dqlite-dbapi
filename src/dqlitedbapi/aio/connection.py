@@ -1656,19 +1656,21 @@ class AsyncConnection:
     # which were converted from ``async def`` to ``def`` for the same
     # diagnostic reason.
 
-    def tpc_begin(self, xid: object) -> NoReturn:
+    # ``*args, **kwargs`` shape so any caller signature reaches
+    # ``_stub_unsupported``. See sync sibling for rationale.
+    def tpc_begin(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def tpc_prepare(self) -> NoReturn:
+    def tpc_prepare(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def tpc_commit(self, xid: object | None = None) -> NoReturn:
+    def tpc_commit(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def tpc_rollback(self, xid: object | None = None) -> NoReturn:
+    def tpc_rollback(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def tpc_recover(self) -> NoReturn:
+    def tpc_recover(self, *args: object, **kwargs: object) -> NoReturn:
         # Annotated NoReturn (always raises). PEP 249 §7 specifies
         # tpc_recover() returns list[Xid] for an actual implementation
         # — feature-detection callers should use ``hasattr(conn,
@@ -1676,7 +1678,7 @@ class AsyncConnection:
         # the return annotation, since this stub will always raise.
         self._stub_unsupported("dqlite does not support two-phase commit")
 
-    def xid(self, format_id: int, global_transaction_id: str, branch_qualifier: str) -> NoReturn:
+    def xid(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def _stub_unsupported(self, msg: str) -> NoReturn:
