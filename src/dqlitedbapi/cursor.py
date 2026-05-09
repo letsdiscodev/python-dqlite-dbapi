@@ -2028,6 +2028,16 @@ class Cursor:
         )
 
     def __iter__(self) -> Self:
+        # PEP 249 §6.4 messages-clear contract: every public cursor
+        # method clears ``messages`` "prior to executing the call".
+        # ``__iter__`` is the iter-protocol entry point; sibling no-op
+        # methods (``nextset`` / ``callproc`` / ``scroll`` /
+        # ``setinputsizes`` / ``setoutputsize``) all clear first.
+        # Without this, a future driver path that populates messages
+        # would let ``for row in cur:`` observe stale messages on an
+        # empty result set (``__next__`` raises ``StopIteration``
+        # without calling ``fetchone``'s clear).
+        del self.messages[:]
         return self
 
     def __next__(self) -> tuple[Any, ...]:

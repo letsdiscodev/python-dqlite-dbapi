@@ -1045,6 +1045,17 @@ class AsyncCursor:
             ) from e
 
     def __aiter__(self) -> Self:
+        # PEP 249 §6.4 messages-clear contract: every public cursor
+        # method clears ``messages`` "prior to executing the call".
+        # Symmetric with the sync sibling ``Cursor.__iter__``; sibling
+        # no-op cursor methods (``nextset`` / ``callproc`` /
+        # ``scroll`` / ``setinputsizes`` / ``setoutputsize``) all
+        # clear first. Without this, a future driver path that
+        # populates messages would let ``async for row in cur:``
+        # observe stale messages on an empty result set
+        # (``__anext__`` raises ``StopAsyncIteration`` without
+        # calling ``fetchone``'s clear).
+        del self.messages[:]
         # Surface a loop-mismatch at the ``async for cursor:`` site
         # rather than one await deeper inside ``__anext__``'s
         # ``fetchone``. Use the loop-only variant
