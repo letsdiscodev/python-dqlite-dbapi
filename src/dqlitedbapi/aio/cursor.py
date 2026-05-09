@@ -815,6 +815,19 @@ class AsyncCursor:
         """Close the cursor.
 
         Idempotent: a second call is a no-op.
+
+        Scrubs ``description`` / ``rowcount`` / ``lastrowid`` /
+        ``_rows`` / ``_row_index`` symmetrically with the sync sibling
+        ``Cursor.close`` (see that docstring for the full
+        "post-close state" rationale).
+
+        **``arraysize`` is deliberately NOT scrubbed**: it is a
+        caller-set configuration *hint* (PEP 249 §6.1.2 default ``1``;
+        used by ``fetchmany()`` when ``size`` is omitted), not
+        result-set state. Stdlib ``sqlite3.Cursor`` and psycopg2 both
+        retain ``arraysize`` across ``close()``; this driver matches
+        that parity. ``arraysize`` is therefore the single PEP 249
+        §6.1.2 attribute outside the scrub set above — by design.
         """
         # PEP 249 §6.1.2 messages-clear contract; see Cursor.close.
         del self.messages[:]

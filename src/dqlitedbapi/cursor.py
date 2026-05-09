@@ -1778,6 +1778,17 @@ class Cursor:
         ``None`` here vs the populated tuple on stdlib. PEP 249 is
         silent on post-close attribute state; the scrub-for-consistency
         choice is deliberate and documented.
+
+        **``arraysize`` is deliberately NOT scrubbed**: it is a
+        caller-set configuration *hint* (PEP 249 §6.1.2 default ``1``;
+        used by ``fetchmany()`` when ``size`` is omitted), not
+        result-set state. Stdlib ``sqlite3.Cursor`` and psycopg2 both
+        retain ``arraysize`` across ``close()``; this driver matches
+        that parity. ``arraysize`` is therefore the single PEP 249
+        §6.1.2 attribute outside the scrub set above. Cross-driver
+        code that re-uses a closed cursor reference for any reason
+        sees the caller-set arraysize, not the default ``1`` reset
+        — by design.
         """
         # PEP 249 §6.1.2: ``Cursor.messages`` is cleared "prior to
         # executing the call" on every standard cursor method. Every
