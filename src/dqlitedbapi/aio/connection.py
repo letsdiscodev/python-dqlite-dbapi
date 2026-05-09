@@ -315,7 +315,9 @@ class AsyncConnection:
         # "Connection bound to a different event loop" error.
         if get_current_pid() != self._creator_pid:
             raise InterfaceError(
-                "Connection used after fork; reconstruct from configuration in the target process."
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {self._creator_pid}, "
+                f"current pid {get_current_pid()})"
             )
         loop = asyncio.get_running_loop()
         if self._connect_lock is None:
@@ -352,7 +354,9 @@ class AsyncConnection:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         if get_current_pid() != self._creator_pid:
             raise InterfaceError(
-                "Connection used after fork; reconstruct from configuration in the target process."
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {self._creator_pid}, "
+                f"current pid {get_current_pid()})"
             )
         self._check_loop_only()
 
@@ -1407,8 +1411,10 @@ class AsyncConnection:
             )
         if get_current_pid() != self._creator_pid:
             raise InterfaceError(
-                "AsyncConnection used after fork; reconstruct from configuration "
-                "in the target process."
+                f"AsyncConnection used after fork; reconstruct from "
+                f"configuration in the target process. "
+                f"(created in pid {self._creator_pid}, "
+                f"current pid {get_current_pid()})"
             )
         if self._loop_ref is not None:
             try:
