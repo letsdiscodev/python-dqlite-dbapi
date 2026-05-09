@@ -27,6 +27,7 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
 )
 from dqlitedbapi.types import _Description
+from dqlitewire.constants import ValueType
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection
@@ -322,9 +323,7 @@ class AsyncCursor:
                     # Map ValueType.NULL → None to satisfy PEP 249
                     # §6.1.2 ("type_code must compare equal to one of
                     # Type Objects"). See sync sibling rationale.
-                    from dqlitewire.constants import ValueType as _VT
-
-                    type_codes = [None if c == _VT.NULL else int(c) for c in column_types]
+                    type_codes = [None if c == ValueType.NULL else int(c) for c in column_types]
                 self._description = tuple(
                     (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)
