@@ -1352,7 +1352,7 @@ class Connection:
         Called from both fork-branch and main-branch arms of
         ``close()`` and ``force_close_transport()``. Mirrors stdlib
         ``sqlite3.Connection.close()``'s implicit cursor cascade and
-        the async sibling at ``aio/connection.py:484``.
+        the async sibling ``AsyncConnection._cascade_cursors``.
 
         Always clears ``cur.messages`` per PEP 249 §6.4. Previously
         the four duplicated copies of this body diverged: the

@@ -191,8 +191,8 @@ class AsyncCursor:
         # PEP 249 §6.1.2: any state-mutating method on a closed cursor
         # must raise an ``Error`` subclass. Apply the closed-state
         # guard FIRST so a bool/int validation error doesn't shadow
-        # the closed-cursor error. Mirrors the sync sibling at
-        # ``cursor.py:920-935``.
+        # the closed-cursor error. Mirrors the sync sibling
+        # ``Cursor.arraysize`` setter.
         self._check_closed()
         # Loop-binding affinity contract — a state-mutating setter on
         # a Connection-allocated cursor must be invoked from the

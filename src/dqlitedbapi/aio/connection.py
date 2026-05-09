@@ -1569,7 +1569,7 @@ class AsyncConnection:
         instead. Same applies to ``executemany``.
         """
         # PEP 249 §6.4 messages-clear contract; eager-clear mirrors
-        # sync sibling ``Connection.execute`` at connection.py:1937.
+        # sync sibling ``Connection.execute``.
         # ``self.cursor()`` would clear it as a side-effect, but the
         # contract is explicitly "the next method call clears" — not
         # "the cursor created on the next line clears". The eager-

@@ -240,8 +240,8 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # else stays OperationalError so callers that branch on
         # leader-change / busy codes (``_is_no_transaction_error``, the
         # SQLAlchemy dialect's ``is_disconnect``) continue to work.
-        # Use ``e.message`` directly. Equivalent to ``str(e)`` post-Round-29
-        # (``OperationalError.__str__`` no longer prefixes ``[code]``); kept
+        # Use ``e.message`` directly. Equivalent to ``str(e)`` now that
+        # ``OperationalError.__str__`` no longer prefixes ``[code]``; kept
         # as ``e.message`` for explicit attribute access — the code is
         # carried separately on the ``code`` keyword and we do not want it
         # in the message text twice if ``__str__`` ever re-introduces the
