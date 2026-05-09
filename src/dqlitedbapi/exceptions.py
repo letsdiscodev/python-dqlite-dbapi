@@ -4,6 +4,8 @@ import sqlite3 as _stdlib_sqlite3
 from functools import lru_cache
 from typing import Final
 
+from dqlitewire._truncate import _cap_raw_message as _wire_cap_raw_message
+
 __all__ = [
     "DataError",
     "DatabaseError",
@@ -142,11 +144,9 @@ def _cap_raw_message(raw_message: str) -> str:
     # + suffix wording lives in one place. The non-Optional return is
     # preserved so call sites that already filtered out None don't
     # need a type-narrow.
-    from dqlitewire._truncate import _cap_raw_message as _wire_cap
-
-    capped = _wire_cap(raw_message, _MAX_RAW_MESSAGE)
-    # ``_wire_cap`` returns ``None`` only when the input is ``None``;
-    # this caller passes ``str`` so the narrow is safe.
+    capped = _wire_cap_raw_message(raw_message, _MAX_RAW_MESSAGE)
+    # ``_wire_cap_raw_message`` returns ``None`` only when the input is
+    # ``None``; this caller passes ``str`` so the narrow is safe.
     assert capped is not None
     return capped
 
