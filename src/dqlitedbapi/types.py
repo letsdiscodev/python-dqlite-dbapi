@@ -204,6 +204,22 @@ def TimestampFromTicks(ticks: float) -> datetime.datetime:
 # holds on both, zero-copy wrap on both). The wire encoder accepts
 # memoryview for BLOB columns, so no conversion is needed on the
 # bind path.
+#
+# **Limitation vs sibling type-constructors**: ``Date`` / ``Time`` /
+# ``Timestamp`` / ``*FromTicks`` wrap stdlib ``TypeError`` /
+# ``ValueError`` on bad input as ``DataError`` (per project
+# discipline that PEP 249 §3 type-constructors stay inside the
+# ``dbapi.Error`` hierarchy). ``Binary`` does NOT — bad input
+# (``Binary("not bytes")``, ``Binary(123)``, ``Binary(None)``)
+# leaks bare ``TypeError`` from the underlying ``memoryview``
+# constructor, *outside* the dbapi error hierarchy. This is a
+# **deliberate stdlib-parity tradeoff**: wrapping ``Binary`` in a
+# function would break ``isinstance(Binary(b), memoryview)``,
+# which cross-driver porting code from stdlib ``sqlite3`` and
+# aiosqlite relies on. Callers who want PEP 249 §7 hierarchy
+# purity for binary input should wrap their own ``try`` /
+# ``except (TypeError, ValueError)`` and re-raise as
+# ``dqlitedbapi.DataError``.
 Binary = memoryview
 
 

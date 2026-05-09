@@ -217,6 +217,18 @@ borrowed from one.
   Stdlib `sqlite3` doesn't export these sentinels at all, so the
   chained-equality form is the cross-driver-portable idiom.
 
+- **`Binary(value)` leaks bare `TypeError` on bad input.** `Binary` is
+  the stdlib `sqlite3.Binary = memoryview` alias, kept as a direct
+  alias so `isinstance(Binary(b), memoryview)` holds for cross-driver
+  porting code. Bad input (`Binary("not bytes")`, `Binary(123)`,
+  `Binary(None)`) raises bare `TypeError` from the underlying
+  `memoryview` constructor, *outside* the `dqlitedbapi.Error`
+  hierarchy. The sibling `Date`/`Time`/`Timestamp`/`*FromTicks`
+  constructors all wrap as `DataError`; `Binary` deliberately does
+  not. Callers who want PEP 249 §7 hierarchy purity for binary input
+  should wrap their own `try`/`except (TypeError, ValueError)` and
+  re-raise as `dqlitedbapi.DataError`.
+
 - **`WITH ... INSERT/UPDATE/DELETE` (CTE-prefixed pure DML) reports
   zero `rowcount` and no `lastrowid`.** The driver dispatches between
   the row-returning and execute paths via a prefix-based heuristic;
