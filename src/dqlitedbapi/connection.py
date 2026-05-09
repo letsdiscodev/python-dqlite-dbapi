@@ -69,12 +69,19 @@ _NO_TX_PRIMARY_CODES: Final[frozenset[int]] = frozenset({1})
 # ``primary_sqlite_code(...)`` before set membership. Adding an
 # extended code (e.g. a hypothetical ``SQLITE_ERROR_RETRY = 513``)
 # directly here would silently never match — ``513 & 0xFF == 1``,
-# set holds ``513``, no match. Asserted at module import so a
-# future contributor sees the violation immediately.
-assert all(0 <= c < 256 for c in _NO_TX_PRIMARY_CODES), (
-    "_NO_TX_PRIMARY_CODES must hold primary SQLite codes (< 256); "
-    "use primary_sqlite_code(extended) at the lookup site instead."
-)
+# set holds ``513``, no match.
+#
+# Wrapped in ``if __debug__:`` so the strip-under-``-O`` posture is
+# explicit to the reader (bare ``assert`` strips silently). The
+# runtime enforcement is the ride-along test
+# ``tests/test_no_tx_primary_codes_invariant.py`` which asserts the
+# same invariant under any Python invocation; this guard is
+# documentation for contributors editing the constant.
+if __debug__:
+    assert all(0 <= c < 256 for c in _NO_TX_PRIMARY_CODES), (
+        "_NO_TX_PRIMARY_CODES must hold primary SQLite codes (< 256); "
+        "use primary_sqlite_code(extended) at the lookup site instead."
+    )
 # Substrings that mark a benign "no transaction was active" reply.
 # Imported from ``dqlitewire`` so the dbapi recogniser and the
 # client-layer ``_is_no_tx_rollback_error`` share one source of
