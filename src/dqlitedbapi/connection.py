@@ -1909,6 +1909,24 @@ class Connection:
         self._check_thread()
         if self._async_conn is None:
             return
+        # Cancel-after-invalidate contract — see async sibling
+        # ``aio/connection.py``'s ``commit()`` for full rationale.
+        # A prior commit/rollback cancelled mid-flight invalidates
+        # the inner client conn AND clears its ``in_transaction``
+        # flag. A naive retry would then short-circuit on the False
+        # flag and silently return — hiding partial-commit
+        # ambiguity (the cancelled commit may or may not have
+        # reached the leader). Raise BEFORE the ``in_transaction``
+        # short-circuit. The sync version doesn't need the in-lock
+        # recheck (no async race window — ``_check_thread`` makes
+        # the sync caller single-threaded relative to itself).
+        if getattr(self._async_conn, "_protocol", "_sentinel") is None:
+            raise InterfaceError(
+                f"Connection invalidated (id={id(self)}); reconnect before "
+                "retrying commit / rollback. The prior call may have "
+                "reached the leader before cancel landed; server-side "
+                "transaction state is ambiguous."
+            )
         # Local short-circuit when no transaction is active. Mirrors
         # stdlib ``sqlite3.Connection.commit`` which uses
         # ``sqlite3_get_autocommit`` to skip the wire round-trip.
@@ -1961,6 +1979,17 @@ class Connection:
         self._check_thread()
         if self._async_conn is None:
             return
+        # Cancel-after-invalidate guard — see ``commit`` for the full
+        # rationale. Raise BEFORE the ``in_transaction`` short-circuit
+        # so a post-``_invalidate`` rollback surfaces as
+        # ``InterfaceError`` instead of silently no-opping.
+        if getattr(self._async_conn, "_protocol", "_sentinel") is None:
+            raise InterfaceError(
+                f"Connection invalidated (id={id(self)}); reconnect before "
+                "retrying commit / rollback. The prior call may have "
+                "reached the leader before cancel landed; server-side "
+                "transaction state is ambiguous."
+            )
         # See commit() — same local short-circuit applies. Saves a
         # wire round-trip on the autocommit-by-default common case.
         if not getattr(self._async_conn, "in_transaction", False):
