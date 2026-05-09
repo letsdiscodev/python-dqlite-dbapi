@@ -138,10 +138,17 @@ _MAX_RAW_MESSAGE: Final[int] = 4 * 1024
 
 
 def _cap_raw_message(raw_message: str) -> str:
-    if len(raw_message) <= _MAX_RAW_MESSAGE:
-        return raw_message
-    overflow = len(raw_message) - _MAX_RAW_MESSAGE
-    return raw_message[:_MAX_RAW_MESSAGE] + f"... [raw_message truncated, {overflow} codepoints]"
+    # Thin wrapper over the wire-layer helper so the truncation logic
+    # + suffix wording lives in one place. The non-Optional return is
+    # preserved so call sites that already filtered out None don't
+    # need a type-narrow.
+    from dqlitewire._truncate import _cap_raw_message as _wire_cap
+
+    capped = _wire_cap(raw_message, _MAX_RAW_MESSAGE)
+    # ``_wire_cap`` returns ``None`` only when the input is ``None``;
+    # this caller passes ``str`` so the narrow is safe.
+    assert capped is not None
+    return capped
 
 
 class Error(Exception):
