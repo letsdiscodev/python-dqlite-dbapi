@@ -1022,8 +1022,19 @@ class AsyncConnection:
         BEGIN/COMMIT control — both are accurate for their respective
         layer.
 
-        Setting to ``True`` is a no-op; setting to ``False`` raises
-        ``NotSupportedError``.
+        **Always returns** ``True`` — dqlite is fixed-mode autocommit
+        at the wire layer; the getter does not reflect what the setter
+        was last given. The setter accepts ``True`` and stdlib's
+        ``LEGACY_TRANSACTION_CONTROL`` (``-1``) for cross-driver
+        porting compatibility, but those settings are no-op'd: the
+        getter still returns ``True`` regardless. Cross-driver code
+        expecting a setter / getter round-trip
+        (``conn.autocommit = -1; assert conn.autocommit == -1``) does
+        **not** see that round-trip on this driver. Setting to
+        ``False`` (or any non-``True``, non-``-1`` value) raises
+        ``NotSupportedError``. The annotation stays ``bool`` (not
+        ``Literal[True]``) for stdlib / PEP 249 parity — callers that
+        do ``isinstance(conn.autocommit, bool)`` continue to work.
         """
         return True
 
