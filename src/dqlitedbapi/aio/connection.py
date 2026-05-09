@@ -194,13 +194,13 @@ class AsyncConnection:
             )
         if not isinstance(database, str):
             raise InterfaceError(f"database must be a str, got {type(database).__name__}")
-        if not database or database != database.strip():
-            # Reject any leading/trailing whitespace (and the empty
-            # string). See sibling discipline in
-            # ``dqlitedbapi/connection.py`` for rationale.
+        if not database:
+            raise InterfaceError("database must be a non-empty string")
+        if database != database.strip():
+            # See sibling discipline in ``dqlitedbapi/connection.py``
+            # for rationale.
             raise InterfaceError(
-                f"database must be a non-empty string with no leading or "
-                f"trailing whitespace (got {database!r})"
+                f"database must not have leading or trailing whitespace (got {database!r})"
             )
         try:
             _client_parse_address(address)

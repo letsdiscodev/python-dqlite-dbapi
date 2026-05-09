@@ -855,18 +855,19 @@ class Connection:
             )
         if not isinstance(database, str):
             raise InterfaceError(f"database must be a str, got {type(database).__name__}")
-        if not database or database != database.strip():
-            # Reject any leading/trailing whitespace (and the empty
-            # string). dqlite-server's ``OPEN(name=whitespace)`` has
-            # implementation-defined semantics: it may create a
-            # database literally named ``" "``, fail with a SQL-level
-            # filename error, or silently mismatch a future open of
-            # the same logical name written without surrounding
-            # whitespace. The dbapi layer is the right place to
-            # canonicalise — same discipline as ``_client_parse_address``.
+        if not database:
+            raise InterfaceError("database must be a non-empty string")
+        if database != database.strip():
+            # Reject any leading/trailing whitespace. dqlite-server's
+            # ``OPEN(name=whitespace)`` has implementation-defined
+            # semantics: it may create a database literally named
+            # ``" "`` / ``" default"``, fail with a SQL-level filename
+            # error, or silently mismatch a future open of the same
+            # logical name written without surrounding whitespace.
+            # The dbapi layer is the right place to canonicalise —
+            # same discipline as ``_client_parse_address``.
             raise InterfaceError(
-                f"database must be a non-empty string with no leading or "
-                f"trailing whitespace (got {database!r})"
+                f"database must not have leading or trailing whitespace (got {database!r})"
             )
         try:
             _client_parse_address(address)
