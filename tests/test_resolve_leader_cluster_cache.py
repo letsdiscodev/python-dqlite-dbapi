@@ -17,14 +17,11 @@ underlying ``DqliteConnection`` fork-safety machinery.
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from dqliteclient import connection as _client_conn_mod
 from dqlitedbapi import connection as _conn_mod
 from dqlitedbapi.connection import _resolve_leader
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_reuses_cluster_client_for_same_key() -> None:
     """Two ``_resolve_leader`` calls with the same address+governors
     must share a single ``ClusterClient`` instance — that is what
@@ -47,7 +44,6 @@ async def test_resolve_leader_reuses_cluster_client_for_same_key() -> None:
     assert construct_count == 1
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_isolates_distinct_governors() -> None:
     """Different governor tuples must produce distinct
     ClusterClient instances — sharing would cross-contaminate
@@ -73,7 +69,6 @@ async def test_resolve_leader_isolates_distinct_governors() -> None:
     assert heartbeat_settings == {False, True}
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_cache_invalidates_on_fork_pid_change() -> None:
     """Fork in a child process must wholesale-clear the cache:
     a ClusterClient inherited from the parent carries
@@ -102,7 +97,6 @@ async def test_resolve_leader_cache_invalidates_on_fork_pid_change() -> None:
     assert construct_count == 2
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_cache_evicts_at_max_size() -> None:
     """LRU-ish eviction: a cache that grew past the cap must drop
     its oldest entry rather than leak unbounded under adversarial

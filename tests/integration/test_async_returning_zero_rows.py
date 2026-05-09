@@ -12,7 +12,6 @@ import pytest
 from dqlitedbapi.aio import aconnect
 
 
-@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_async_update_returning_zero_rows(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, database="aio_upd_ret_zero")
@@ -29,7 +28,6 @@ async def test_async_update_returning_zero_rows(cluster_address: str) -> None:
         await conn.close()
 
 
-@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_async_delete_returning_zero_rows(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, database="aio_del_ret_zero")

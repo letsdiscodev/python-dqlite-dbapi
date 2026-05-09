@@ -102,7 +102,6 @@ class TestExecuteRejectsMultiStatementSync:
         )
 
 
-@pytest.mark.asyncio
 class TestExecuteRejectsMultiStatementAsync:
     async def test_rejects_two_dml(self) -> None:
         from dqlitedbapi.aio.connection import AsyncConnection

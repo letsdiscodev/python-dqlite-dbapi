@@ -169,27 +169,22 @@ class TestSyncCycle22StubFamily:
 
 
 class TestAsyncTpcStubs:
-    @pytest.mark.asyncio
     async def test_tpc_begin(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_begin(object())
 
-    @pytest.mark.asyncio
     async def test_tpc_prepare(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_prepare()
 
-    @pytest.mark.asyncio
     async def test_tpc_commit(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_commit()
 
-    @pytest.mark.asyncio
     async def test_tpc_rollback(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_rollback()
 
-    @pytest.mark.asyncio
     async def test_tpc_recover(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError):
             await aconn.tpc_recover()
@@ -208,7 +203,6 @@ class TestAsyncStdlibParityStubs:
         with pytest.raises(NotSupportedError, match="extension"):
             aconn.load_extension("foo.so")
 
-    @pytest.mark.asyncio
     async def test_backup(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError, match="backup"):
             await aconn.backup()
@@ -237,7 +231,6 @@ class TestAsyncStdlibParityStubs:
 class TestAsyncCycle22StubFamily:
     """Async sibling of ``TestSyncCycle22StubFamily``."""
 
-    @pytest.mark.asyncio
     async def test_executescript(self, aconn: AsyncConnection) -> None:
         # ``executescript`` is plain ``def`` (not ``async def``) so the
         # NotSupportedError fires on the call line — symmetric with the
@@ -398,7 +391,6 @@ def test_close_clears_messages() -> None:
     assert c.messages == []
 
 
-@pytest.mark.asyncio
 async def test_async_close_clears_messages() -> None:
     """Same as the sync sibling, for AsyncConnection."""
     import contextlib as _contextlib

@@ -23,7 +23,6 @@ from dqlitedbapi.aio import aconnect
 from dqlitedbapi.aio.connection import AsyncConnection
 
 
-@pytest.mark.asyncio
 async def test_aconnect_calls_close_on_connect_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -47,7 +46,6 @@ async def test_aconnect_calls_close_on_connect_failure(
     assert closed == [True], "aconnect must close the partial conn on connect failure"
 
 
-@pytest.mark.asyncio
 async def test_aconnect_swallows_close_error_to_preserve_original(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -69,7 +67,6 @@ async def test_aconnect_swallows_close_error_to_preserve_original(
         await aconnect("localhost:9001")
 
 
-@pytest.mark.asyncio
 async def test_aconnect_propagates_cancellederror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

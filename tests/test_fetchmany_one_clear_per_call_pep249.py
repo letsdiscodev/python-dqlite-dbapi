@@ -9,8 +9,6 @@ discipline applied symmetrically to async ``fetchmany``.
 
 from __future__ import annotations
 
-import pytest
-
 import dqlitedbapi
 from dqlitedbapi.aio import AsyncConnection
 
@@ -96,7 +94,6 @@ def test_async_fetchmany_loop_body_uses_unlocked_helper() -> None:
     assert found_unlocked_call, "AsyncCursor.fetchmany loop must call self._next_row_unlocked()."
 
 
-@pytest.mark.asyncio
 async def test_async_fetchmany_returns_correct_rows() -> None:
     """Regression guard: the refactor must not break basic delivery."""
     conn = AsyncConnection("localhost:9001")

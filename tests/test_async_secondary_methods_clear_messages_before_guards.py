@@ -73,7 +73,6 @@ def _drive_other_loop(invoke_async: Callable[[], Any]) -> list[BaseException]:
     return errors
 
 
-@pytest.mark.asyncio
 async def test_setinputsizes_closed_cursor_clears_messages_first() -> None:
     """PEP 249 §6.2 says ``setinputsizes`` is "free to do nothing"
     even on closed cursors. Pin: messages clear and the call
@@ -89,7 +88,6 @@ async def test_setinputsizes_closed_cursor_clears_messages_first() -> None:
     assert list(cur._connection.messages) == [(Warning, "stale-conn")]
 
 
-@pytest.mark.asyncio
 async def test_setoutputsize_closed_cursor_clears_messages_first() -> None:
     """Same as ``setinputsizes`` per PEP 249 §6.2."""
     conn = AsyncConnection("127.0.0.1:9001")
@@ -103,7 +101,6 @@ async def test_setoutputsize_closed_cursor_clears_messages_first() -> None:
     assert list(cur._connection.messages) == [(Warning, "stale-conn")]
 
 
-@pytest.mark.asyncio
 async def test_callproc_closed_cursor_clears_messages_first() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -111,7 +108,6 @@ async def test_callproc_closed_cursor_clears_messages_first() -> None:
     _expect_messages_cleared_after_closed_call(lambda c: c.callproc("p"), cur)
 
 
-@pytest.mark.asyncio
 async def test_nextset_closed_cursor_clears_messages_first() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -119,7 +115,6 @@ async def test_nextset_closed_cursor_clears_messages_first() -> None:
     _expect_messages_cleared_after_closed_call(lambda c: c.nextset(), cur)
 
 
-@pytest.mark.asyncio
 async def test_scroll_closed_cursor_clears_messages_first() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -127,7 +122,6 @@ async def test_scroll_closed_cursor_clears_messages_first() -> None:
     _expect_messages_cleared_after_closed_call(lambda c: c.scroll(1), cur)
 
 
-@pytest.mark.asyncio
 async def test_callproc_cross_loop_clears_messages_first() -> None:
     """Cross-loop call must clear messages before
     ``_ensure_locks()`` raises ``ProgrammingError``. Symmetric with

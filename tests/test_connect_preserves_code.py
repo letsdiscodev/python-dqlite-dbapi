@@ -26,7 +26,6 @@ _SQLITE_IOERR_NOT_LEADER = 10 | (1 << 8) | (31 << 8)  # DQLITE extended code
 _SQLITE_IOERR_NOT_LEADER_FALLBACK = 1032  # known constant from dqlite
 
 
-@pytest.mark.asyncio
 async def test_connect_forwards_operational_error_code() -> None:
     """A client-layer ``OperationalError(code, message)`` raised during
     ``conn.connect()`` is re-raised as a dbapi ``OperationalError``
@@ -60,7 +59,6 @@ async def test_connect_forwards_operational_error_code() -> None:
     assert str(exc_info.value).startswith("Failed to connect: ")
 
 
-@pytest.mark.asyncio
 async def test_connect_non_code_exception_yields_code_none() -> None:
     """Non-client exceptions (e.g. ``OSError``) should still produce a
     dbapi ``OperationalError`` — but with ``.code is None`` because

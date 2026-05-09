@@ -33,7 +33,6 @@ def _prime_invalidated() -> AsyncConnection:
     return conn
 
 
-@pytest.mark.asyncio
 async def test_commit_raises_interface_error_on_invalidated_inner() -> None:
     """A retry of commit() against an invalidated inner client conn
     must NOT silently no-op; raise InterfaceError so caller code
@@ -43,14 +42,12 @@ async def test_commit_raises_interface_error_on_invalidated_inner() -> None:
         await conn.commit()
 
 
-@pytest.mark.asyncio
 async def test_rollback_raises_interface_error_on_invalidated_inner() -> None:
     conn = _prime_invalidated()
     with pytest.raises(_dbapi_exc.InterfaceError, match="invalidated"):
         await conn.rollback()
 
 
-@pytest.mark.asyncio
 async def test_commit_with_alive_inner_does_not_raise_invalidated_error() -> None:
     """Negative pin: when the inner has a live ``_protocol`` and
     ``in_transaction=False``, commit() returns silently (PEP 249
@@ -71,7 +68,6 @@ async def test_commit_with_alive_inner_does_not_raise_invalidated_error() -> Non
         await conn.commit()  # silent no-op
 
 
-@pytest.mark.asyncio
 async def test_commit_invalidate_during_lock_acquire_raises_interface_error() -> None:
     """Pin: a sibling-task ``_invalidate`` racing with ``commit()``'s
     ``async with op_lock`` acquire must NOT slip through the
@@ -121,7 +117,6 @@ async def test_commit_invalidate_during_lock_acquire_raises_interface_error() ->
             await commit_task
 
 
-@pytest.mark.asyncio
 async def test_rollback_invalidate_during_lock_acquire_raises_interface_error() -> None:
     """Sibling pin for rollback() — same race shape as commit()."""
     import asyncio

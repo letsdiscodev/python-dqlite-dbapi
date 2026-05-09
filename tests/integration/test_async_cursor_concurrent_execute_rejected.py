@@ -15,13 +15,10 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 import dqlitedbapi
 from dqlitedbapi.aio import aconnect
 
 
-@pytest.mark.asyncio
 async def test_concurrent_execute_on_one_cursor_raises(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, database="test_concurrent_cursor")
     try:
@@ -63,7 +60,6 @@ async def test_concurrent_execute_on_one_cursor_raises(cluster_address: str) -> 
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_sequential_execute_same_task_works(cluster_address: str) -> None:
     """Negative pin: sequential execute() calls from the same task
     do NOT trip the guard — clearing the slot in the finally branch

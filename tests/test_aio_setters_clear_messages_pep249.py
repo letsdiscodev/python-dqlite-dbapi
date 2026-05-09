@@ -27,21 +27,18 @@ async def conn() -> Any:
         await c.close()
 
 
-@pytest.mark.asyncio
 async def test_autocommit_setter_clears_messages(conn: Any) -> None:
     conn.messages.append(("synthetic",))
     conn.autocommit = True
     assert conn.messages == [], "PEP 249 §6.4 messages-clear before autocommit set"
 
 
-@pytest.mark.asyncio
 async def test_isolation_level_setter_clears_messages(conn: Any) -> None:
     conn.messages.append(("synthetic",))
     conn.isolation_level = None
     assert conn.messages == [], "PEP 249 §6.4 messages-clear before isolation_level set"
 
 
-@pytest.mark.asyncio
 async def test_text_factory_setter_clears_messages(conn: Any) -> None:
     conn.messages.append(("synthetic",))
     conn.text_factory = str

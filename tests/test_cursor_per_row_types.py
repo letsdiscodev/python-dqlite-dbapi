@@ -19,8 +19,6 @@ import datetime
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
 from dqlitewire import ValueType
@@ -51,7 +49,6 @@ class _ScriptedClient:
         return _AwaitableObj(obj=self._result)
 
 
-@pytest.mark.asyncio
 async def test_sync_cursor_uses_per_row_types_iso8601_then_text() -> None:
     """Row 0 is ISO8601 → becomes datetime; row 1 is TEXT → stays str.
 
@@ -88,7 +85,6 @@ async def test_sync_cursor_uses_per_row_types_iso8601_then_text() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_sync_cursor_uses_per_row_types_text_then_iso8601() -> None:
     """Row 0 is TEXT → stays str; row 1 is ISO8601 → becomes datetime.
 
@@ -124,7 +120,6 @@ async def test_sync_cursor_uses_per_row_types_text_then_iso8601() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_uses_per_row_types() -> None:
     """Async parity of the sync test — row-level dispatch on each row."""
     import asyncio
@@ -159,7 +154,6 @@ async def test_async_cursor_uses_per_row_types() -> None:
     assert rows[1] == ("literal-string",)
 
 
-@pytest.mark.asyncio
 async def test_empty_rows_still_build_description() -> None:
     """Zero rows: ``row_types`` is empty; ``column_types`` must still
     populate ``cursor.description`` so ``description[i][1]`` is non-None.

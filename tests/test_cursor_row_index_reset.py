@@ -9,8 +9,6 @@ assumes (and that the iterator-reset tests pin).
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
 
@@ -46,7 +44,6 @@ def _cursor_with_prior_select() -> Cursor:
     return c
 
 
-@pytest.mark.asyncio
 async def test_sync_cursor_dml_resets_row_index() -> None:
     """Sync cursor's ``_execute_async`` DML branch must reset
     ``_row_index`` to 0 so that a subsequent SELECT starts iteration
@@ -65,7 +62,6 @@ async def test_sync_cursor_dml_resets_row_index() -> None:
     assert c._rows == []
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_dml_resets_row_index() -> None:
     """AsyncCursor.execute DML branch must reset ``_row_index``."""
     import asyncio

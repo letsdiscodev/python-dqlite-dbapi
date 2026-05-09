@@ -54,7 +54,6 @@ def test_fetchmany_rejects_non_int_sync(bad_size: object, bad_type: str) -> None
         cur.fetchmany(bad_size)  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_size,bad_type",
     [

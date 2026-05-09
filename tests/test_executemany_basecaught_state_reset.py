@@ -38,7 +38,6 @@ def _seed_post_iteration_state(cur: Cursor | AsyncCursor) -> None:
     cur._row_index = 1
 
 
-@pytest.mark.asyncio
 async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> None:
     conn = MagicMock()
     raised = RuntimeError("simulated mid-batch failure")
@@ -71,7 +70,6 @@ async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> N
     assert cur._row_index == 0
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_basecaught_resets_all_fields_and_reraises() -> None:
     conn = MagicMock()
     raised = RuntimeError("simulated mid-batch failure")

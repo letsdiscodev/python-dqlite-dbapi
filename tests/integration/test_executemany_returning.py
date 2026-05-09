@@ -24,7 +24,6 @@ def test_sync_executemany_returning_accumulates_rows(cluster_address: str) -> No
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_async_executemany_returning_accumulates_rows(
     cluster_address: str,
 ) -> None:

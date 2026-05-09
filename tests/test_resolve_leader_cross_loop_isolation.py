@@ -90,7 +90,6 @@ def test_two_event_loops_get_distinct_cluster_clients() -> None:
     assert results[0] is not results[1]
 
 
-@pytest.mark.asyncio
 async def test_same_loop_returns_same_cluster_client() -> None:
     """Positive regression — single loop, two calls, same args →
     same cluster (single-flight contract preserved)."""
@@ -212,7 +211,6 @@ def test_concurrent_same_loop_inserts_serialised_to_one_construct() -> None:
         loop.close()
 
 
-@pytest.mark.asyncio
 async def test_fork_pid_change_invalidates_cache() -> None:
     """Regression pin: the existing fork-pid invalidation still
     works under the new loop-keyed and thread-locked code path."""

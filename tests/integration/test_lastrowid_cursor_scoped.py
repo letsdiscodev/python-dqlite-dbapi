@@ -55,7 +55,6 @@ def test_sync_lastrowid_is_cursor_scoped_not_connection_scoped(
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_async_lastrowid_is_cursor_scoped_not_connection_scoped(
     cluster_address: str,
 ) -> None:

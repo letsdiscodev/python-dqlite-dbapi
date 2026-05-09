@@ -42,7 +42,6 @@ class _ScriptedClient:
         return _AwaitableObj(obj=(0, 0))
 
 
-@pytest.mark.asyncio
 async def test_sync_cursor_stop_iteration_repeats_after_exhaustion() -> None:
     conn = MagicMock()
     scripted = _ScriptedClient([[1], [2]])
@@ -65,7 +64,6 @@ async def test_sync_cursor_stop_iteration_repeats_after_exhaustion() -> None:
         next(it)
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_stop_async_iteration_repeats_after_exhaustion() -> None:
     import asyncio
 

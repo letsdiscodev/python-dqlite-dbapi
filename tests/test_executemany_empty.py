@@ -3,8 +3,6 @@
 from collections import deque
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
 
@@ -38,7 +36,6 @@ async def _noop(*_a: object, **_kw: object) -> None:
 
 
 class TestExecutemanyEmpty:
-    @pytest.mark.asyncio
     async def test_empty_executemany_clears_description(self) -> None:
         """After executemany([]) the cursor must not appear to hold a
         prior SELECT result."""
@@ -58,7 +55,6 @@ class TestExecutemanyEmpty:
         # ``if cur.rowcount > 0: ...`` checks.
         assert c.rowcount == 0
 
-    @pytest.mark.asyncio
     async def test_async_cursor_executemany_empty_via_public_surface(self) -> None:
         """Mirror of the sync test on the async cursor's public
         ``executemany`` entry point. The existing empty-sequence test
@@ -87,7 +83,6 @@ class TestExecutemanyEmptyIterableShape:
     future refactor that special-cased lists could regress the
     iterator path silently — pin both shapes here."""
 
-    @pytest.mark.asyncio
     async def test_sync_cursor_executemany_empty_iter(self) -> None:
         c = _cursor_with_prior_select()
         await c._executemany_async("INSERT INTO t VALUES (?)", iter([]))
@@ -95,7 +90,6 @@ class TestExecutemanyEmptyIterableShape:
         assert c._rows == []
         assert c.rowcount == 0
 
-    @pytest.mark.asyncio
     async def test_sync_cursor_executemany_empty_generator(self) -> None:
         c = _cursor_with_prior_select()
         await c._executemany_async("INSERT INTO t VALUES (?)", (x for x in []))  # type: ignore[var-annotated]
@@ -103,7 +97,6 @@ class TestExecutemanyEmptyIterableShape:
         assert c._rows == []
         assert c.rowcount == 0
 
-    @pytest.mark.asyncio
     async def test_async_cursor_executemany_empty_iter(self) -> None:
         c = _async_cursor_with_prior_select()
         await c.executemany("INSERT INTO t VALUES (?)", iter([]))
@@ -111,7 +104,6 @@ class TestExecutemanyEmptyIterableShape:
         assert list(c._rows) == []
         assert c.rowcount == 0
 
-    @pytest.mark.asyncio
     async def test_async_cursor_executemany_empty_generator(self) -> None:
         c = _async_cursor_with_prior_select()
         await c.executemany("INSERT INTO t VALUES (?)", (x for x in []))  # type: ignore[var-annotated]

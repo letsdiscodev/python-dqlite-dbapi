@@ -33,14 +33,12 @@ def test_sync_connection_executemany_rejects_keyword_operation() -> None:
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_connection_execute_rejects_keyword_operation() -> None:
     aconn = dqlitedbapi.aio.AsyncConnection("localhost:9001")
     with pytest.raises(TypeError):
         await aconn.execute(operation="SELECT 1")  # type: ignore[call-arg]
 
 
-@pytest.mark.asyncio
 async def test_async_connection_executemany_rejects_keyword_operation() -> None:
     aconn = dqlitedbapi.aio.AsyncConnection("localhost:9001")
     with pytest.raises(TypeError):

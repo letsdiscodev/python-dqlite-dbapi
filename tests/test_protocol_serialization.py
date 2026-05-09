@@ -8,8 +8,6 @@ import asyncio
 import threading
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.connection import Connection
 from dqlitedbapi.cursor import Cursor
@@ -18,7 +16,6 @@ from dqlitedbapi.cursor import Cursor
 class TestAsyncProtocolSerialization:
     """Test that concurrent async operations are serialized."""
 
-    @pytest.mark.asyncio
     async def test_concurrent_execute_is_serialized(self) -> None:
         """Two concurrent execute() calls must not overlap on the wire.
 

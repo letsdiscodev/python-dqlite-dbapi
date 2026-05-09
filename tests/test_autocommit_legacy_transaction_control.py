@@ -50,13 +50,11 @@ def test_sync_autocommit_rejects_non_true_non_sentinel(value: object) -> None:
         conn._closed = True
 
 
-@pytest.mark.asyncio
 async def test_async_autocommit_accepts_legacy_transaction_control_sentinel() -> None:
     aconn = AsyncConnection("127.0.0.1:9999", database="x")
     aconn.autocommit = sqlite3.LEGACY_TRANSACTION_CONTROL
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("value", [False, 0, 1, "yes"])
 async def test_async_autocommit_rejects_non_true_non_sentinel(value: object) -> None:
     aconn = AsyncConnection("127.0.0.1:9999", database="x")

@@ -35,7 +35,6 @@ class _ShortTypeCodesClient:
         return _Awaitable(obj=(["a", "b"], [], [[], []], [[1, 2], [3, 4]]))
 
 
-@pytest.mark.asyncio
 async def test_sync_execute_raises_dataerror_on_short_column_types() -> None:
     conn = MagicMock()
 
@@ -48,7 +47,6 @@ async def test_sync_execute_raises_dataerror_on_short_column_types() -> None:
         await cur._execute_async("SELECT a, b FROM t")
 
 
-@pytest.mark.asyncio
 async def test_async_execute_raises_dataerror_on_short_column_types() -> None:
     conn = MagicMock()
 

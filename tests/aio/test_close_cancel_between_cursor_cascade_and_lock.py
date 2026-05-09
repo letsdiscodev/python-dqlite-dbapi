@@ -18,7 +18,6 @@ import pytest
 from dqlitedbapi.aio import AsyncConnection
 
 
-@pytest.mark.asyncio
 async def test_cancel_during_op_lock_acquire_still_closes_underlying() -> None:
     conn = AsyncConnection("localhost:9001")
     # Spin up locks via _ensure_locks-equivalent (use connect path's
@@ -54,7 +53,6 @@ async def test_cancel_during_op_lock_acquire_still_closes_underlying() -> None:
     assert conn._connect_lock is None
 
 
-@pytest.mark.asyncio
 async def test_close_success_path_unchanged() -> None:
     """Negative pin: the success path still calls close exactly once
     and doesn't double-close from the finally."""

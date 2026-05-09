@@ -19,13 +19,10 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_close_completes_while_op_lock_is_held() -> None:
     conn = AsyncConnection("localhost:9001")
     # Force the connection to materialise its locks.

@@ -62,7 +62,6 @@ def _make_counting_cursor(n: int, raise_after_advance: int) -> _CountingCursor:
     return cur
 
 
-@pytest.mark.asyncio
 async def test_fetchmany_cancel_mid_iteration_does_not_silently_consume_rows() -> None:
     """With raise_after_advance=4, the parent advances _row_index to
     4 and returns row (3,); the override then raises. At raise time

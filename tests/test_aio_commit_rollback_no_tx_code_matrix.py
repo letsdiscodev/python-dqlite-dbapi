@@ -49,7 +49,6 @@ def _build_fake_inner(code: int, message: str) -> Any:
         (21, False),  # SQLITE_MISUSE — propagates
     ],
 )
-@pytest.mark.asyncio
 async def test_aio_commit_swallow_matrix(code: int, should_swallow: bool) -> None:
     # Use the empty-statement wording for the code=0 row; existing
     # rows keep the canonical no-tx wording.
@@ -87,7 +86,6 @@ async def test_aio_commit_swallow_matrix(code: int, should_swallow: bool) -> Non
         (21, False),
     ],
 )
-@pytest.mark.asyncio
 async def test_aio_rollback_swallow_matrix(code: int, should_swallow: bool) -> None:
     message = "empty statement" if code == 0 else "cannot rollback - no transaction is active"
     conn = AsyncConnection("localhost:9001")

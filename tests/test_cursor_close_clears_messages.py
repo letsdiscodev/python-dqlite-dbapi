@@ -5,8 +5,6 @@ method; pin that it clears messages.
 
 from __future__ import annotations
 
-import pytest
-
 from dqlitedbapi import connect
 from dqlitedbapi.aio import AsyncConnection
 
@@ -19,7 +17,6 @@ def test_sync_cursor_close_clears_messages() -> None:
     assert list(cur.messages) == []
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_close_clears_messages() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = conn.cursor()

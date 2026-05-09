@@ -16,7 +16,6 @@ from dqlitedbapi.aio import AsyncConnection
 from dqlitedbapi.exceptions import InterfaceError
 
 
-@pytest.mark.asyncio
 async def test_transaction_method_exists() -> None:
     """Pin: AsyncConnection has a ``transaction`` method (the
     feature itself, before behaviour). Cross-driver code that uses
@@ -26,7 +25,6 @@ async def test_transaction_method_exists() -> None:
     assert hasattr(conn, "transaction")
 
 
-@pytest.mark.asyncio
 async def test_transaction_raises_interface_error_when_closed() -> None:
     conn = AsyncConnection("localhost:9001")
     # Force-close without ever connecting.
@@ -36,7 +34,6 @@ async def test_transaction_raises_interface_error_when_closed() -> None:
             pass
 
 
-@pytest.mark.asyncio
 async def test_transaction_delegates_to_underlying_client_transaction() -> None:
     """The dbapi-async transaction() is plumbing — the cancellation-
     aware rollback discipline lives at the client layer

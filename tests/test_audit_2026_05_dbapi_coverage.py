@@ -45,7 +45,6 @@ from dqlitedbapi.exceptions import (
 # ---------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_aenter_close_failure_debug_logged(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -126,7 +125,6 @@ def _build_classifier_cases() -> list[tuple[Exception, type[Exception], str]]:
     ("client_exc", "expected_dbapi_cls", "expected_substring"),
     _build_classifier_cases(),
 )
-@pytest.mark.asyncio
 async def test_build_and_connect_classifier_arms(
     client_exc: Exception,
     expected_dbapi_cls: type[Exception],
@@ -157,7 +155,6 @@ async def test_build_and_connect_classifier_arms(
     assert expected_substring in str(exc_info.value)
 
 
-@pytest.mark.asyncio
 async def test_build_and_connect_dqlite_error_catch_all_arm() -> None:
     """Pin the ``DqliteError`` catch-all arm: a future client-layer
     subclass not enumerated in the per-class arms must surface as
@@ -237,7 +234,6 @@ def test_sync_executemany_shortcut_closes_cursor_on_raise() -> None:
     close_mock.assert_called_once()
 
 
-@pytest.mark.asyncio
 async def test_async_execute_shortcut_closes_cursor_on_raise() -> None:
     """Mirror of the sync test for ``AsyncConnection.execute``."""
     aconn = AsyncConnection.__new__(AsyncConnection)
@@ -262,7 +258,6 @@ async def test_async_execute_shortcut_closes_cursor_on_raise() -> None:
     close_mock.assert_awaited_once()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_shortcut_closes_cursor_on_raise() -> None:
     """Mirror of the sync test for ``AsyncConnection.executemany``."""
     aconn = AsyncConnection.__new__(AsyncConnection)

@@ -31,7 +31,6 @@ def test_sync_cursor_execute_rejects_non_str_operation(bad: object) -> None:
         conn.close()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("bad", [None, b"SELECT 1", 42, ["SELECT 1"]])
 async def test_async_cursor_execute_rejects_non_str_operation(bad: object) -> None:
     from dqlitedbapi.aio import aconnect

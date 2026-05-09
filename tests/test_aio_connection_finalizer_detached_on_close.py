@@ -21,8 +21,6 @@ from __future__ import annotations
 
 import weakref
 
-import pytest
-
 from dqlitedbapi.aio import AsyncConnection
 
 
@@ -41,7 +39,6 @@ def test_async_connection_init_saves_finalizer_handle() -> None:
         aconn.force_close_transport()
 
 
-@pytest.mark.asyncio
 async def test_async_close_detaches_finalizer() -> None:
     """After ``close()``, the finalize handle must be detached so
     the ``weakref`` global table no longer carries the registration.

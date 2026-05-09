@@ -33,8 +33,6 @@ import threading
 from typing import Any, cast
 from unittest.mock import patch
 
-import pytest
-
 import dqlitedbapi.aio
 from dqlitedbapi.exceptions import InterfaceError
 
@@ -78,7 +76,6 @@ class _SyntheticBuilt:
         self.close_completed = True
 
 
-@pytest.mark.asyncio
 async def test_post_yield_close_completes_under_outer_cancel() -> None:
     aconn = _bare_async_connection()
 
@@ -133,7 +130,6 @@ async def test_post_yield_close_completes_under_outer_cancel() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_outer_cancel_during_post_yield_close_propagates_as_cancellederror() -> None:
     """The outer cancel that lands during the shielded close must
     propagate as ``CancelledError`` to the caller — not be swallowed

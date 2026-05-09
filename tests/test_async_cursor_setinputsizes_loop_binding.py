@@ -7,14 +7,11 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from dqlitedbapi import ProgrammingError
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 
 
-@pytest.mark.asyncio
 async def test_setinputsizes_rejects_cross_loop_call() -> None:
     """Bind the connection on this loop, then invoke the no-op sync
     method from a fresh ``asyncio.run`` — the loop-binding check must
@@ -47,7 +44,6 @@ async def test_setinputsizes_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_setinputsizes_accepts_same_loop_call() -> None:
     """Sanity: the binding check must NOT reject a call from the same
     loop the connection was first used on."""

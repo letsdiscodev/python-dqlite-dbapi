@@ -12,13 +12,10 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import patch
 
-import pytest
-
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 
 
-@pytest.mark.asyncio
 async def test_executemany_blocks_concurrent_execute_until_loop_ends() -> None:
     conn = AsyncConnection("localhost:19001")
     conn._ensure_locks()  # bind locks to the current loop

@@ -14,7 +14,6 @@ from dqlitedbapi.exceptions import DataError
 from dqlitewire.exceptions import EncodeError as WireEncodeError
 
 
-@pytest.mark.asyncio
 async def test_wire_encode_error_wrapped_as_dataerror() -> None:
     async def raises_wire_encode() -> None:
         raise WireEncodeError("simulated bind-time encode failure")
@@ -23,7 +22,6 @@ async def test_wire_encode_error_wrapped_as_dataerror() -> None:
         await _call_client(raises_wire_encode())
 
 
-@pytest.mark.asyncio
 async def test_wire_encode_error_preserves_cause() -> None:
     original = WireEncodeError("simulated")
 

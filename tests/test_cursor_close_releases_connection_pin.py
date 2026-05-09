@@ -21,8 +21,6 @@ from __future__ import annotations
 import gc
 import weakref
 
-import pytest
-
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.connection import Connection
 
@@ -48,7 +46,6 @@ def test_sync_cursor_close_releases_connection_pin() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_close_releases_connection_pin() -> None:
     aconn = AsyncConnection("localhost:9001")
     cur = aconn.cursor()

@@ -23,8 +23,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
 from dqlitewire.constants import ValueType
@@ -57,7 +55,6 @@ class _AllNullClient:
         )
 
 
-@pytest.mark.asyncio
 async def test_sync_description_maps_null_to_none_in_mixed_row() -> None:
     conn = MagicMock()
 
@@ -74,7 +71,6 @@ async def test_sync_description_maps_null_to_none_in_mixed_row() -> None:
     assert cur.description[2][1] == ValueType.INTEGER
 
 
-@pytest.mark.asyncio
 async def test_async_description_maps_null_to_none_in_mixed_row() -> None:
     conn = MagicMock()
 
@@ -91,7 +87,6 @@ async def test_async_description_maps_null_to_none_in_mixed_row() -> None:
     assert cur.description[2][1] == ValueType.INTEGER
 
 
-@pytest.mark.asyncio
 async def test_sync_description_all_null_columns_all_none() -> None:
     conn = MagicMock()
 

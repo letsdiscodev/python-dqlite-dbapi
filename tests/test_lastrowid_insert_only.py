@@ -5,12 +5,9 @@ leave the previous INSERT's rowid in place.
 
 from __future__ import annotations
 
-import pytest
-
 from dqlitedbapi import Connection
 
 
-@pytest.mark.asyncio
 async def test_lastrowid_sticky_across_update_and_delete(monkeypatch) -> None:
     """Simulate a realistic INSERT → UPDATE → DELETE sequence where
     the wire returns 42, then 0, then 0. The cursor must expose 42

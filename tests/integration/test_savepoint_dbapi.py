@@ -8,8 +8,6 @@ break SAVEPOINT routing.
 
 from __future__ import annotations
 
-import pytest
-
 from dqlitedbapi import connect
 from dqlitedbapi.aio import aconnect
 
@@ -34,7 +32,6 @@ def test_sync_savepoint_roundtrip_partial_rollback(cluster_address: str) -> None
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_savepoint_roundtrip_release(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, timeout=2.0)
     try:
@@ -84,7 +81,6 @@ def test_sync_nested_savepoint(cluster_address: str) -> None:
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_nested_savepoint(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, timeout=2.0)
     try:
@@ -138,7 +134,6 @@ def test_sync_savepoint_autobegin_persists_on_commit(cluster_address: str) -> No
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_savepoint_autobegin_persists_on_commit(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, timeout=2.0)
     try:

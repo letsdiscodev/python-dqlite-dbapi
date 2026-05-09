@@ -158,7 +158,6 @@ def test_adapter_baseexception_passes_through_unwrapped() -> None:
         dqlitedbapi.unregister_adapter(_Marker)
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_path_uses_same_wrap_via_shared_helper() -> None:
     """The async cursor reuses the sync ``_convert_params`` helper
     via a shared import; a single fix covers both surfaces. Smoke-

@@ -40,7 +40,6 @@ def _prime() -> AsyncConnection:
     return conn
 
 
-@pytest.mark.asyncio
 async def test_close_raises_interface_error_when_op_lock_held_past_timeout() -> None:
     """Sibling holds op_lock indefinitely → close() raises
     InterfaceError after self._timeout, not after a longer wall-clock."""
@@ -80,7 +79,6 @@ async def test_close_raises_interface_error_when_op_lock_held_past_timeout() -> 
     await sibling
 
 
-@pytest.mark.asyncio
 async def test_close_force_closes_transport_on_op_lock_timeout() -> None:
     """When the bound trips, close() must force-close the transport
     so SIGTERM/dispose actually reap the writer rather than leaving
@@ -120,7 +118,6 @@ async def test_close_force_closes_transport_on_op_lock_timeout() -> None:
     await sibling
 
 
-@pytest.mark.asyncio
 async def test_close_does_not_fire_bound_when_sibling_releases_quickly() -> None:
     """A well-behaved sibling that holds the lock for less than
     self._timeout must not trip the bound — close() proceeds

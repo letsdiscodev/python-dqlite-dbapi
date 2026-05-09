@@ -51,7 +51,6 @@ _FakeFindLeader = Callable[[str], Awaitable[str]]
 # --- _resolve_leader (tests the helper directly) ---
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_returns_seed_when_seed_is_leader() -> None:
     """Happy path: ``find_leader`` returns the seed address verbatim
     (the seed-as-leader case)."""
@@ -67,7 +66,6 @@ async def test_resolve_leader_returns_seed_when_seed_is_leader() -> None:
     fake_find.assert_awaited_once()
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_returns_redirect_address() -> None:
     """Redirect: seed is a follower; ``find_leader`` returns a
     different address — that's what ``_build_and_connect`` will
@@ -83,7 +81,6 @@ async def test_resolve_leader_returns_redirect_address() -> None:
     assert result == "node2:9002"
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_propagates_cluster_error() -> None:
     """Seed unreachable / no-leader-yet: ``ClusterError`` propagates
     so ``_build_and_connect``'s arm can translate to
@@ -97,7 +94,6 @@ async def test_resolve_leader_propagates_cluster_error() -> None:
             await _resolve_leader("seed:9001", timeout=5.0)
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_propagates_cluster_policy_error() -> None:
     """Cluster-policy rejection (operator allowlist denies a
     redirect target) propagates so ``_build_and_connect``'s arm
@@ -114,7 +110,6 @@ async def test_resolve_leader_propagates_cluster_policy_error() -> None:
 # --- _build_and_connect (the wrapping connect path) ---
 
 
-@pytest.mark.asyncio
 async def test_build_and_connect_uses_leader_address_for_dqlite_connection() -> None:
     """Pin the load-bearing wiring: the address passed to
     ``DqliteConnection(...)`` is the leader's address, not the
@@ -145,7 +140,6 @@ async def test_build_and_connect_uses_leader_address_for_dqlite_connection() -> 
     assert args[0] == "leader:9999"
 
 
-@pytest.mark.asyncio
 async def test_build_and_connect_translates_cluster_error_to_operational() -> None:
     """No leader reachable at all: surface as
     ``OperationalError`` so the SA pool's retry loop classifies
@@ -165,7 +159,6 @@ async def test_build_and_connect_translates_cluster_error_to_operational() -> No
             )
 
 
-@pytest.mark.asyncio
 async def test_build_and_connect_translates_cluster_policy_to_interface() -> None:
     """Operator allowlist rejected a redirect target: surface as
     ``InterfaceError`` (permanent config mismatch — SA's
@@ -187,7 +180,6 @@ async def test_build_and_connect_translates_cluster_policy_to_interface() -> Non
             )
 
 
-@pytest.mark.asyncio
 async def test_build_and_connect_mid_flip_leader_change_propagates() -> None:
     """``find_leader`` returns X, X then steps down between the
     two round-trips: ``DqliteConnection.connect`` sees
@@ -222,7 +214,6 @@ async def test_build_and_connect_mid_flip_leader_change_propagates() -> None:
             )
 
 
-@pytest.mark.asyncio
 async def test_resolve_leader_threads_governors_to_cluster_client() -> None:
     """``_resolve_leader`` must forward ``trust_server_heartbeat`` /
     ``max_total_rows`` / ``max_continuation_frames`` to the

@@ -19,7 +19,6 @@ from dqlitedbapi.aio import AsyncConnection
 from dqlitedbapi.exceptions import IntegrityError
 
 
-@pytest.mark.asyncio
 async def test_aio_commit_deferred_fk_violation_raises_integrity_clears_inflight() -> None:
     conn = AsyncConnection("localhost:9001")
     fake_inner: Any = type("_FakeInner", (), {})()

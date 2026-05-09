@@ -16,14 +16,11 @@ from __future__ import annotations
 import asyncio
 import threading
 
-import pytest
-
 from dqlitedbapi import ProgrammingError
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 
 
-@pytest.mark.asyncio
 async def test_arraysize_setter_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -47,7 +44,6 @@ async def test_arraysize_setter_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_row_factory_setter_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -73,7 +69,6 @@ async def test_row_factory_setter_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_setters_accept_same_loop_call() -> None:
     """Sanity: the binding check must NOT reject a call from the same
     loop the connection was first used on."""

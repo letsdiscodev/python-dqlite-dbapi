@@ -32,7 +32,6 @@ def test_sync_executemany_accepts_generator(cluster_address: str) -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_async_executemany_accepts_generator(cluster_address: str) -> None:
     conn = await aconnect(cluster_address)
     try:

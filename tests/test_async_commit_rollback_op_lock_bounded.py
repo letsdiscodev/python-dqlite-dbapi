@@ -39,7 +39,6 @@ def _prime_alive_inner() -> AsyncConnection:
     return conn
 
 
-@pytest.mark.asyncio
 async def test_commit_op_lock_acquire_bounded_by_timeout() -> None:
     conn = _prime_alive_inner()
     held_lock = asyncio.Lock()
@@ -54,7 +53,6 @@ async def test_commit_op_lock_acquire_bounded_by_timeout() -> None:
     held_lock.release()
 
 
-@pytest.mark.asyncio
 async def test_rollback_op_lock_acquire_bounded_by_timeout() -> None:
     conn = _prime_alive_inner()
     held_lock = asyncio.Lock()

@@ -68,7 +68,6 @@ def test_transaction_owner_assignment_inside_try_frame_source_pin() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_transaction_owner_cleared_after_body_baseexception() -> None:
     """A BaseException out of the body must let the finally clear the
     slot."""
@@ -91,7 +90,6 @@ async def test_transaction_owner_cleared_after_body_baseexception() -> None:
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_close_clears_transaction_owner_as_backstop() -> None:
     """Defensive: even if a future bug pins the slot, close() clears
     it so an instance-reuse path (uncommon but legal in test fixtures)
@@ -107,7 +105,6 @@ async def test_close_clears_transaction_owner_as_backstop() -> None:
     assert conn._transaction_owner is None
 
 
-@pytest.mark.asyncio
 async def test_close_does_not_clear_transaction_owner_synchronously_pre_teardown() -> None:
     """Concurrent-task safety: the backstop clear in close() runs AFTER
     the underlying protocol close, not synchronously in the prologue.
@@ -175,7 +172,6 @@ def test_close_clear_runs_after_underlying_teardown_source_pin() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_nested_transaction_still_rejected_regression_guard() -> None:
     """The set-inside-try refactor must not weaken the nested-
     transaction guard."""

@@ -68,7 +68,6 @@ def test_sync_connect_rejects_bool_close_timeout(bad: bool) -> None:
         dqlitedbapi.connect("localhost:9001", close_timeout=bad)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("bad", [True, False])
 async def test_aio_aconnect_rejects_bool_timeout(bad: bool) -> None:
     with pytest.raises(ProgrammingError, match="bool"):

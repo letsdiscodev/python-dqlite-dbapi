@@ -11,12 +11,9 @@ explicit pins; the dbapi ``AsyncCursor`` did not.
 
 from __future__ import annotations
 
-import pytest
-
 from dqlitedbapi.aio.connection import AsyncConnection
 
 
-@pytest.mark.asyncio
 async def test_aiter_returns_self_invariance() -> None:
     """PEP 492: ``aiter(obj) is obj`` for an iterator that returns
     itself from ``__aiter__``. Pin against a future refactor that
@@ -27,7 +24,6 @@ async def test_aiter_returns_self_invariance() -> None:
     assert aiter(cur) is cur
 
 
-@pytest.mark.asyncio
 async def test_aiter_on_closed_cursor_does_not_raise() -> None:
     """``async for`` over a closed cursor must NOT raise at the
     ``__aiter__`` step. Sync ``Cursor.__iter__`` is bare

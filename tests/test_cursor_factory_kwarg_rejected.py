@@ -43,14 +43,12 @@ def test_sync_cursor_no_kwargs_still_works() -> None:
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_rejects_factory_kwarg() -> None:
     aconn = dqlitedbapi.aio.AsyncConnection("localhost:9001")
     with pytest.raises(NotSupportedError, match="factory"):
         aconn.cursor(factory=object)
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_no_kwargs_still_works() -> None:
     aconn = dqlitedbapi.aio.AsyncConnection("localhost:9001")
     cur = aconn.cursor()

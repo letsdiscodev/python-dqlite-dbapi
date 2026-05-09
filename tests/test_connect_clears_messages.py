@@ -30,7 +30,6 @@ def test_sync_connect_clears_messages_even_when_connect_raises() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_async_connect_clears_messages_even_when_connect_raises() -> None:
     aconn = AsyncConnection("localhost:9999", database="x")
     aconn.messages.append((RuntimeError, "stale"))

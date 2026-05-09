@@ -112,7 +112,6 @@ class TestCursorReprIncludesAddressAndId:
 
 
 class TestLoopAffinityMessageAtCallSites:
-    @pytest.mark.asyncio
     async def test_ensure_locks_raises_with_loop_ids(self) -> None:
         """Drive the actual call site: bind on loop A, attempt use on
         loop B, assert message contains the loop ids."""

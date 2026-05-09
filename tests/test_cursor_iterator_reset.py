@@ -8,8 +8,6 @@ SELECT — not from wherever the previous iteration left off.
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
 from dqlitewire.constants import ValueType
@@ -42,7 +40,6 @@ class _ScriptedClient:
         return _AwaitableObj(obj=(0, 0))
 
 
-@pytest.mark.asyncio
 async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
     """After a second ``execute``, iterating must yield the new
     result set in full — not continue from the prior index."""
@@ -70,7 +67,6 @@ async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
     assert rows == [(4,), (5,)]
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_iterator_resets_on_reexecute() -> None:
     """Async parity of the sync test. After a second ``execute``,
     ``async for`` over the cursor must yield the complete new

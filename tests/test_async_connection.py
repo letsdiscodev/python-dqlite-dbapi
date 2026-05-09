@@ -18,13 +18,11 @@ class TestAsyncConnection:
         cursor = conn.cursor()
         assert isinstance(cursor, AsyncCursor)
 
-    @pytest.mark.asyncio
     async def test_close_marks_connection_closed(self) -> None:
         conn = AsyncConnection("localhost:9001")
         await conn.close()
         assert conn._closed
 
-    @pytest.mark.asyncio
     async def test_cursor_on_closed_connection_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         await conn.close()
@@ -32,7 +30,6 @@ class TestAsyncConnection:
         with pytest.raises(InterfaceError, match="Connection is closed"):
             conn.cursor()
 
-    @pytest.mark.asyncio
     async def test_commit_on_closed_connection_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         await conn.close()
@@ -40,7 +37,6 @@ class TestAsyncConnection:
         with pytest.raises(InterfaceError, match="Connection is closed"):
             await conn.commit()
 
-    @pytest.mark.asyncio
     async def test_rollback_on_closed_connection_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         await conn.close()
@@ -55,7 +51,6 @@ class TestAsyncConnection:
         # Verify it returns directly, not a coroutine
         assert isinstance(cursor, AsyncCursor)
 
-    @pytest.mark.asyncio
     async def test_aenter_cleans_up_on_connect_failure(self) -> None:
         """If ``connect()`` raises inside ``__aenter__``, partial state
         (lazily-constructed locks, loop-ref) must be reset so the object

@@ -35,7 +35,6 @@ def test_sync_not_null_violation_raises_integrity_error(cluster_address: str) ->
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_async_unique_violation_raises_integrity_error(cluster_address: str) -> None:
     conn = await aconnect(cluster_address)
     try:

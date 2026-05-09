@@ -34,14 +34,12 @@ class TestAsyncCursor:
         cursor = AsyncCursor(conn)
         assert cursor.lastrowid is None
 
-    @pytest.mark.asyncio
     async def test_close_marks_cursor_closed(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         await cursor.close()
         assert cursor._closed
 
-    @pytest.mark.asyncio
     async def test_close_is_idempotent(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
@@ -54,7 +52,6 @@ class TestAsyncCursor:
         cursor = AsyncCursor(conn)
         assert cursor.connection is conn
 
-    @pytest.mark.asyncio
     async def test_fetchone_on_closed_cursor_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
@@ -63,7 +60,6 @@ class TestAsyncCursor:
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             await cursor.fetchone()
 
-    @pytest.mark.asyncio
     async def test_fetchmany_on_closed_cursor_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
@@ -71,7 +67,6 @@ class TestAsyncCursor:
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             await cursor.fetchmany(5)
 
-    @pytest.mark.asyncio
     async def test_fetchall_on_closed_cursor_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
@@ -79,7 +74,6 @@ class TestAsyncCursor:
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             await cursor.fetchall()
 
-    @pytest.mark.asyncio
     async def test_fetchone_without_execute_returns_none(self) -> None:
         """Stdlib parity: fetchone on a never-executed cursor returns
         None rather than raising. See sync sibling for rationale."""
@@ -87,7 +81,6 @@ class TestAsyncCursor:
         cursor = AsyncCursor(conn)
         assert await cursor.fetchone() is None
 
-    @pytest.mark.asyncio
     async def test_fetchmany_without_execute_returns_empty_list(self) -> None:
         """Stdlib parity: returns ``[]`` rather than raising —
         symmetric with ``fetchone`` returning ``None``. See sync
@@ -96,7 +89,6 @@ class TestAsyncCursor:
         cursor = AsyncCursor(conn)
         assert await cursor.fetchmany(5) == []
 
-    @pytest.mark.asyncio
     async def test_fetchall_without_execute_returns_empty_list(self) -> None:
         """Stdlib parity: returns ``[]`` rather than raising. See
         sync sibling for rationale."""
@@ -104,7 +96,6 @@ class TestAsyncCursor:
         cursor = AsyncCursor(conn)
         assert await cursor.fetchall() == []
 
-    @pytest.mark.asyncio
     async def test_fetchone_no_rows_returns_none(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
@@ -114,7 +105,6 @@ class TestAsyncCursor:
         result = await cursor.fetchone()
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_fetchall_no_rows_returns_empty(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
@@ -123,14 +113,12 @@ class TestAsyncCursor:
         result = await cursor.fetchall()
         assert result == []
 
-    @pytest.mark.asyncio
     async def test_context_manager(self) -> None:
         conn = AsyncConnection("localhost:9001")
         async with AsyncCursor(conn) as cursor:
             assert not cursor._closed
         assert cursor._closed
 
-    @pytest.mark.asyncio
     async def test_context_manager_propagates_body_exception(self) -> None:
         """PEP 343 contract: __aexit__ returning falsy must NOT suppress
         the body exception. Mirror of the sync sibling pin."""
@@ -141,7 +129,6 @@ class TestAsyncCursor:
                 raise ValueError("body raised")
         assert cursor._closed
 
-    @pytest.mark.asyncio
     async def test_async_iterator(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
@@ -151,7 +138,6 @@ class TestAsyncCursor:
         results = [row async for row in cursor]
         assert results == [(1, "a"), (2, "b"), (3, "c")]
 
-    @pytest.mark.asyncio
     async def test_setinputsizes_noop(self) -> None:
         # Runs inside a loop because ``setinputsizes`` now routes through
         # ``_ensure_locks()`` (loop-binding check).
@@ -159,7 +145,6 @@ class TestAsyncCursor:
         cursor = AsyncCursor(conn)
         cursor.setinputsizes([None, None])
 
-    @pytest.mark.asyncio
     async def test_setoutputsize_noop(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
@@ -213,7 +198,6 @@ class TestAsyncCursorDescriptionIdentity:
 
 
 class TestOptionalAsyncCursorMethodsRaise:
-    @pytest.mark.asyncio
     async def test_callproc_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError
 
@@ -235,7 +219,6 @@ class TestOptionalAsyncCursorMethodsRaise:
         assert not inspect.iscoroutinefunction(AsyncCursor.nextset)
         assert not inspect.iscoroutinefunction(AsyncCursor.scroll)
 
-    @pytest.mark.asyncio
     async def test_nextset_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError
 
@@ -244,7 +227,6 @@ class TestOptionalAsyncCursorMethodsRaise:
         with pytest.raises(NotSupportedError):
             cursor.nextset()
 
-    @pytest.mark.asyncio
     async def test_scroll_raises_not_supported(self) -> None:
         from dqlitedbapi.exceptions import NotSupportedError
 
@@ -253,7 +235,6 @@ class TestOptionalAsyncCursorMethodsRaise:
         with pytest.raises(NotSupportedError):
             cursor.scroll(0)
 
-    @pytest.mark.asyncio
     async def test_execute_rechecks_closed_inside_op_lock(self) -> None:
         """A cursor closed after the fast-path check but before the
         inner execute work must still raise ``InterfaceError`` with a

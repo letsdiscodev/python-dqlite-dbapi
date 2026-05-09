@@ -95,7 +95,6 @@ def test_sync_fetchmany_factory_raise_no_replay_no_skip() -> None:
     assert cur.fetchone() == (2,)
 
 
-@pytest.mark.asyncio
 async def test_async_fetchone_factory_raise_does_not_advance_index() -> None:
     cur = _prime_async_cursor([("a",), ("b",), ("c",)])
 
@@ -109,7 +108,6 @@ async def test_async_fetchone_factory_raise_does_not_advance_index() -> None:
     assert cur._row_index == 0
 
 
-@pytest.mark.asyncio
 async def test_async_fetchmany_factory_raise_no_replay_no_skip() -> None:
     cur = _prime_async_cursor([(0,), (1,), (2,), (3,), (4,)])
 

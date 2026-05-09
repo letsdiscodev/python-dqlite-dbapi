@@ -41,7 +41,6 @@ def test_sync_executemany_failure_clears_rowcount(cluster_address: str) -> None:
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_failure_clears_rowcount(
     cluster_address: str,
 ) -> None:

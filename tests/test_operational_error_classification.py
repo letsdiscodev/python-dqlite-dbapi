@@ -32,7 +32,6 @@ from dqlitedbapi.exceptions import (
         (26, DatabaseError),  # SQLITE_NOTADB
     ],
 )
-@pytest.mark.asyncio
 async def test_primary_code_classifies_to_pep249_class(
     code: int, exc_class: type[Exception]
 ) -> None:
@@ -52,7 +51,6 @@ async def test_primary_code_classifies_to_pep249_class(
         (11 | (2 << 8), DatabaseError),  # SQLITE_CORRUPT_SEQUENCE
     ],
 )
-@pytest.mark.asyncio
 async def test_extended_corrupt_codes_classify_to_database_error(
     extended: int, exc_class: type[Exception]
 ) -> None:

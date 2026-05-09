@@ -3,13 +3,10 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from dqlitedbapi.aio.connection import AsyncConnection
 
 
 class TestAsyncConnectionRace:
-    @pytest.mark.asyncio
     async def test_concurrent_ensure_connection_waits_for_connect(self) -> None:
         """A second _ensure_connection() call must not return before connect() finishes."""
         conn = AsyncConnection("localhost:9001")

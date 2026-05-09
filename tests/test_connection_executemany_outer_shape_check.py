@@ -130,7 +130,6 @@ def test_sync_executemany_accepts_list_of_tuples() -> None:
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_str_outer_shape() -> None:
     conn = AsyncConnection("localhost:9001")
     try:
@@ -144,7 +143,6 @@ async def test_async_executemany_rejects_str_outer_shape() -> None:
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_dict_outer_shape() -> None:
     conn = AsyncConnection("localhost:9001")
     try:
@@ -158,7 +156,6 @@ async def test_async_executemany_rejects_dict_outer_shape() -> None:
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_memoryview_outer_shape() -> None:
     conn = AsyncConnection("localhost:9001")
     try:
@@ -172,7 +169,6 @@ async def test_async_executemany_rejects_memoryview_outer_shape() -> None:
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_set_outer_shape() -> None:
     conn = AsyncConnection("localhost:9001")
     try:
@@ -189,7 +185,6 @@ async def test_async_executemany_rejects_set_outer_shape() -> None:
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_frozenset_outer_shape() -> None:
     conn = AsyncConnection("localhost:9001")
     try:
@@ -206,7 +201,6 @@ async def test_async_executemany_rejects_frozenset_outer_shape() -> None:
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_accepts_list_of_tuples() -> None:
     conn = AsyncConnection("localhost:9001")
     try:

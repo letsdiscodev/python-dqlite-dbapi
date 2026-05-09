@@ -87,7 +87,6 @@ def test_primary_key_violation_carries_extended_code(cluster_address: str) -> No
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_async_unique_violation_carries_extended_code(cluster_address: str) -> None:
     conn = await aconnect(cluster_address)
     try:

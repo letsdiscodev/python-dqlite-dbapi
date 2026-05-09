@@ -16,7 +16,6 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.exceptions import InterfaceError
 
 
-@pytest.mark.asyncio
 async def test_executemany_observes_cursor_close_cascade() -> None:
     """Drive cursor._closed=True between iterations and assert the
     next ``_check_closed`` surface."""
@@ -28,7 +27,6 @@ async def test_executemany_observes_cursor_close_cascade() -> None:
         cursor._check_closed()
 
 
-@pytest.mark.asyncio
 async def test_executemany_loop_resets_state_on_closed_cursor() -> None:
     """Drive the cursor into a 'closed mid-batch' state and verify
     that subsequent ``_check_closed`` surfaces the contract."""

@@ -20,7 +20,6 @@ import dqlitedbapi
 from dqlitedbapi.aio import AsyncConnection
 
 
-@pytest.mark.asyncio
 async def test_aiter_on_closed_cursor_with_gc_parent_raises_interface_error() -> None:
     """A weakref.proxy from a GC'd AsyncConnection must not leak
     ReferenceError past the PEP 249 boundary."""
@@ -35,7 +34,6 @@ async def test_aiter_on_closed_cursor_with_gc_parent_raises_interface_error() ->
         aiter(cur)
 
 
-@pytest.mark.asyncio
 async def test_aenter_loop_binding_check_runs_before_body() -> None:
     """``async with cur:`` must surface a foreign-loop misuse at the
     ``with`` line, not silently delay to the body's first await.

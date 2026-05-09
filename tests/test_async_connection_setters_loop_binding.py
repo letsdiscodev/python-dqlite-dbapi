@@ -14,8 +14,6 @@ from __future__ import annotations
 import asyncio
 import threading
 
-import pytest
-
 from dqlitedbapi import ProgrammingError
 from dqlitedbapi.aio.connection import AsyncConnection
 
@@ -40,7 +38,6 @@ def _run_on_other_loop_setter(
     return captured[0] if captured else None
 
 
-@pytest.mark.asyncio
 async def test_autocommit_setter_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     conn._ensure_locks()  # prime binding on this loop
@@ -48,7 +45,6 @@ async def test_autocommit_setter_rejects_cross_loop_call() -> None:
     assert isinstance(err, ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_isolation_level_setter_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     conn._ensure_locks()
@@ -56,7 +52,6 @@ async def test_isolation_level_setter_rejects_cross_loop_call() -> None:
     assert isinstance(err, ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_text_factory_setter_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     conn._ensure_locks()
@@ -64,7 +59,6 @@ async def test_text_factory_setter_rejects_cross_loop_call() -> None:
     assert isinstance(err, ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_setters_accept_same_loop_call() -> None:
     """Sanity: same-loop setter calls must NOT raise."""
     conn = AsyncConnection("127.0.0.1:9001")

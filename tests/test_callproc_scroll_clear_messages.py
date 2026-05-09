@@ -53,7 +53,6 @@ def test_sync_scroll_clears_messages(cursor) -> None:
     assert list(conn.messages) == [(Warning, "stale")]
 
 
-@pytest.mark.asyncio
 async def test_async_callproc_clears_messages() -> None:
     from dqlitedbapi.aio.connection import AsyncConnection
 
@@ -72,7 +71,6 @@ async def test_async_callproc_clears_messages() -> None:
     assert list(conn.messages) == [(Warning, "stale")]
 
 
-@pytest.mark.asyncio
 async def test_async_scroll_clears_messages() -> None:
     from dqlitedbapi.aio.connection import AsyncConnection
 

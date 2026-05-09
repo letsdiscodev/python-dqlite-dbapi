@@ -11,8 +11,6 @@ the project's discipline applies to every public cursor method.
 
 from __future__ import annotations
 
-import pytest
-
 from dqlitedbapi import Connection
 from dqlitedbapi.aio.connection import AsyncConnection
 
@@ -33,7 +31,6 @@ def test_sync_iter_clears_messages() -> None:
         conn._closed = True
 
 
-@pytest.mark.asyncio
 async def test_async_aiter_clears_messages() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = conn.cursor()

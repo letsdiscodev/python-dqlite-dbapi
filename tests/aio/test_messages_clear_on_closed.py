@@ -16,7 +16,6 @@ from dqlitedbapi import InterfaceError
 from dqlitedbapi.aio import AsyncConnection
 
 
-@pytest.mark.asyncio
 async def test_async_commit_clears_messages_when_closed() -> None:
     conn = AsyncConnection("localhost:9001")
     conn.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
@@ -28,7 +27,6 @@ async def test_async_commit_clears_messages_when_closed() -> None:
     assert list(conn.messages) == []
 
 
-@pytest.mark.asyncio
 async def test_async_rollback_clears_messages_when_closed() -> None:
     conn = AsyncConnection("localhost:9001")
     conn.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
@@ -40,7 +38,6 @@ async def test_async_rollback_clears_messages_when_closed() -> None:
     assert list(conn.messages) == []
 
 
-@pytest.mark.asyncio
 async def test_async_commit_clears_messages_when_never_connected() -> None:
     conn = AsyncConnection("localhost:9001")
     conn.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
@@ -51,7 +48,6 @@ async def test_async_commit_clears_messages_when_never_connected() -> None:
     assert list(conn.messages) == []
 
 
-@pytest.mark.asyncio
 async def test_async_rollback_clears_messages_when_never_connected() -> None:
     conn = AsyncConnection("localhost:9001")
     conn.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]

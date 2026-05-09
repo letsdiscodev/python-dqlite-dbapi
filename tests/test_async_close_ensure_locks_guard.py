@@ -20,7 +20,6 @@ from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.exceptions import InterfaceError
 
 
-@pytest.mark.asyncio
 async def test_ensure_locks_on_closed_connection_raises() -> None:
     conn = AsyncConnection("localhost:19001")
     # Simulate a post-close state: mark closed and null the lock refs
@@ -39,7 +38,6 @@ async def test_ensure_locks_on_closed_connection_raises() -> None:
     assert conn._loop_ref is None
 
 
-@pytest.mark.asyncio
 async def test_ensure_locks_on_open_connection_creates_primitives() -> None:
     conn = AsyncConnection("localhost:19001")
     connect_lock, op_lock = conn._ensure_locks()

@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from dqlitedbapi.aio.connection import AsyncConnection
 
 
@@ -92,7 +90,6 @@ def test_force_close_transport_swallows_writer_close_exception() -> None:
     writer.close.assert_called_once_with()
 
 
-@pytest.mark.asyncio
 async def test_force_close_transport_concurrent_with_async_close() -> None:
     """Pin the docstring's concurrent-safety contract: invoking the
     sync hook while an async ``close()`` is in flight on the same
@@ -147,7 +144,6 @@ async def test_force_close_transport_concurrent_with_async_close() -> None:
     assert close_task.done() and close_task.exception() is None
 
 
-@pytest.mark.asyncio
 async def test_force_close_transport_cancels_inner_pending_drain() -> None:
     """``force_close_transport`` is the synchronous fallback used by
     SA's non-greenlet finalize path. The canonical async ``close()``

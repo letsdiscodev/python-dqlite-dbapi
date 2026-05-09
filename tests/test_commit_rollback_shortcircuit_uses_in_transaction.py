@@ -90,7 +90,6 @@ def test_sync_commit_short_circuits_on_in_transaction(
 # --- Async wrapper --------------------------------------------------
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("in_transaction", "expect_wire_call"),
     [
@@ -110,7 +109,6 @@ async def test_aio_commit_short_circuits_on_in_transaction(
     assert inner_execute.await_count == (1 if expect_wire_call else 0)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("in_transaction", "expect_wire_call"),
     [
@@ -130,7 +128,6 @@ async def test_aio_rollback_short_circuits_on_in_transaction(
     assert inner_execute.await_count == (1 if expect_wire_call else 0)
 
 
-@pytest.mark.asyncio
 async def test_aio_commit_routes_via_property_when_only_untracked_flag_set() -> None:
     """When only ``_has_untracked_savepoint`` is true (and the
     underlying ``_in_transaction`` is false) the client-layer property
@@ -149,7 +146,6 @@ async def test_aio_commit_routes_via_property_when_only_untracked_flag_set() -> 
     assert inner_execute.await_count == 1
 
 
-@pytest.mark.asyncio
 async def test_aio_commit_mock_without_untracked_attr_short_circuits_cleanly() -> None:
     """Mock tolerance: a stub that lacks ``_has_untracked_savepoint``
     entirely (older test fixtures, minimal stubs) must short-circuit
@@ -170,7 +166,6 @@ async def test_aio_commit_mock_without_untracked_attr_short_circuits_cleanly() -
     assert inner.execute.await_count == 0
 
 
-@pytest.mark.asyncio
 async def test_aio_commit_mock_completely_missing_in_transaction_short_circuits() -> None:
     """Even a stub missing ``in_transaction`` itself must short-circuit
     (not raise AttributeError) — this is the layer of defence the

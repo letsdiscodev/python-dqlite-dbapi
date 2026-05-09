@@ -18,8 +18,6 @@ from __future__ import annotations
 import asyncio
 import threading
 
-import pytest
-
 from dqlitedbapi import ProgrammingError
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
@@ -45,7 +43,6 @@ def _invoke_on_fresh_loop_in_thread(coro_factory) -> list[BaseException]:
     return errors
 
 
-@pytest.mark.asyncio
 async def test_fetchone_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -62,7 +59,6 @@ async def test_fetchone_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_fetchmany_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -76,7 +72,6 @@ async def test_fetchmany_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_fetchall_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -90,7 +85,6 @@ async def test_fetchall_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_aiter_rejects_cross_loop_call() -> None:
     """``__aiter__`` is synchronous; the loop-binding check fires at
     the ``async for cursor:`` site rather than one await deeper in
@@ -120,7 +114,6 @@ async def test_aiter_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_fetch_methods_accept_same_loop_call() -> None:
     """Sanity: the binding check must NOT reject a call from the same
     loop the connection was first used on."""
@@ -139,7 +132,6 @@ async def test_fetch_methods_accept_same_loop_call() -> None:
     assert rows == [(3,)]
 
 
-@pytest.mark.asyncio
 async def test_aiter_accepts_same_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)

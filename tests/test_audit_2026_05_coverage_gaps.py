@@ -23,7 +23,6 @@ from dqlitedbapi.exceptions import (
 # ---------------- async fetchmany arraysize fallback (coverage)
 
 
-@pytest.mark.asyncio
 async def test_async_fetchmany_default_uses_arraysize() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
@@ -35,7 +34,6 @@ async def test_async_fetchmany_default_uses_arraysize() -> None:
     assert len(rows) == 3
 
 
-@pytest.mark.asyncio
 async def test_async_fetchmany_size_exceeds_remaining() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
@@ -49,7 +47,6 @@ async def test_async_fetchmany_size_exceeds_remaining() -> None:
 # ---------------- async scroll mode validation (coverage)
 
 
-@pytest.mark.asyncio
 async def test_async_scroll_bad_mode_raises_programming_error() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
@@ -79,7 +76,6 @@ def test_operational_error_sqlite_errorcode_none_default() -> None:
 # ---------------- async cursor parent-GC ReferenceError → InterfaceError
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_parent_gc_reraises_as_interface_error() -> None:
     """When the parent AsyncConnection is GC'd, the cursor's
     ``connection`` property must surface InterfaceError, not
@@ -103,7 +99,6 @@ async def test_async_cursor_parent_gc_reraises_as_interface_error() -> None:
 # ---------------- async cursor rownumber=None on no result set
 
 
-@pytest.mark.asyncio
 async def test_async_cursor_rownumber_no_result_set() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
@@ -208,7 +203,6 @@ def test_setinputsizes_rejects_non_sequence_sync() -> None:
         cur.setinputsizes("not-a-sequence")
 
 
-@pytest.mark.asyncio
 async def test_setoutputsize_rejects_non_int_async() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
@@ -216,7 +210,6 @@ async def test_setoutputsize_rejects_non_int_async() -> None:
         cur.setoutputsize("not-an-int")  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
 async def test_setinputsizes_rejects_non_sequence_async() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)

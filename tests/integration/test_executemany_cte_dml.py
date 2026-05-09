@@ -33,7 +33,6 @@ def test_sync_executemany_admits_cte_prefixed_insert(cluster_address: str) -> No
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_admits_cte_prefixed_delete(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, timeout=2.0)
     try:

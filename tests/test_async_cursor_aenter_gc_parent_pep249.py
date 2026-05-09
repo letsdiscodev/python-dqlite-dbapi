@@ -17,7 +17,6 @@ import dqlitedbapi
 from dqlitedbapi.aio import AsyncConnection
 
 
-@pytest.mark.asyncio
 async def test_aenter_on_closed_cursor_with_gc_parent_raises_interface_error() -> None:
     """A weakref.proxy from a GC'd AsyncConnection must not leak
     ``ReferenceError`` out of ``__aenter__``."""

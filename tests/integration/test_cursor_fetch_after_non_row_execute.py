@@ -89,7 +89,6 @@ def test_fetchone_after_begin_returns_none_per_stdlib(
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_async_fetchone_after_rollback_returns_none(
     cluster_address: str,
 ) -> None:

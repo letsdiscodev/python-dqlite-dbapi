@@ -24,7 +24,6 @@ from dqlitedbapi.aio import AsyncConnection
 from dqlitedbapi.exceptions import ProgrammingError
 
 
-@pytest.mark.asyncio
 async def test_row_factory_setter_succeeds_on_bound_loop() -> None:
     """Negative pin: setting from the loop the connection is bound
     to is the documented happy path; the loop-binding check must

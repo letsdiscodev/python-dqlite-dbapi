@@ -17,7 +17,6 @@ import dqlitedbapi
 from dqlitedbapi.aio import aconnect
 
 
-@pytest.mark.asyncio
 async def test_commit_inside_transaction_ctxmgr_raises(cluster_address: str) -> None:
     """Pin: a stray ``await conn.commit()`` inside the body raises
     ``InterfaceError`` — the ctxmgr owns transaction boundaries.
@@ -34,7 +33,6 @@ async def test_commit_inside_transaction_ctxmgr_raises(cluster_address: str) -> 
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_rollback_inside_transaction_ctxmgr_raises(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, database="test_tx_stray_commit")
     try:
@@ -45,7 +43,6 @@ async def test_rollback_inside_transaction_ctxmgr_raises(cluster_address: str) -
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_commit_outside_transaction_ctxmgr_still_works(
     cluster_address: str,
 ) -> None:
@@ -59,7 +56,6 @@ async def test_commit_outside_transaction_ctxmgr_still_works(
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_nested_transaction_ctxmgr_rejected(cluster_address: str) -> None:
     """Pin: nested ``async with conn.transaction()`` raises immediately.
     Two levels of ctxmgr would have ambiguous semantics — the inner

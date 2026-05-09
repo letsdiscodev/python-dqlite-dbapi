@@ -71,7 +71,6 @@ def test_sync_executemany_none_raises_programming_error() -> None:
     assert isinstance(ei.value, Error)
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_none_raises_programming_error() -> None:
     acur = _bare_async_cursor()
     with pytest.raises(ProgrammingError, match="None") as ei:

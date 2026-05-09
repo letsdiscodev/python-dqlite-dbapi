@@ -44,7 +44,6 @@ def _prime_connection_with_in_use_inner() -> AsyncConnection:
     return conn
 
 
-@pytest.mark.asyncio
 async def test_close_finally_does_not_swallow_cancelled_error_from_body() -> None:
     """Drive the production scenario: the body's
     ``await self._async_conn.close()`` raises CancelledError (an
@@ -78,7 +77,6 @@ async def test_close_finally_does_not_swallow_cancelled_error_from_body() -> Non
     assert writer.close.call_count >= 1
 
 
-@pytest.mark.asyncio
 async def test_close_finally_interface_error_arm_drains_pending_drain_task() -> None:
     """When the InterfaceError arm fires (cross-task contract violation),
     the inner client may already carry a ``_pending_drain`` task
@@ -136,7 +134,6 @@ async def test_close_finally_interface_error_arm_drains_pending_drain_task() -> 
     assert writer.close.call_count >= 1
 
 
-@pytest.mark.asyncio
 async def test_close_finally_interface_error_path_clears_lock_state() -> None:
     """When ONLY the shielded close raises InterfaceError (the body's
     close went through fine), the lock-cleanup tail still runs and

@@ -46,7 +46,6 @@ def _drive_other_loop(invoke_async: Callable[[], Any]) -> list[BaseException]:
     return errors
 
 
-@pytest.mark.asyncio
 async def test_callproc_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -58,7 +57,6 @@ async def test_callproc_rejects_cross_loop_call() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_nextset_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -68,7 +66,6 @@ async def test_nextset_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_scroll_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
@@ -78,7 +75,6 @@ async def test_scroll_rejects_cross_loop_call() -> None:
     assert isinstance(errors[0], ProgrammingError)
 
 
-@pytest.mark.asyncio
 async def test_callproc_same_loop_raises_not_supported() -> None:
     """Sanity: same-loop calls still raise ``NotSupportedError`` —
     the loop-binding check must not change well-formed behaviour."""

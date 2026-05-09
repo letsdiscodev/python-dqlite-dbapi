@@ -26,7 +26,6 @@ from dqlitedbapi.aio import aconnect
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_two_executemany_on_same_async_connection_serialized(
     cluster_address: str,
 ) -> None:
@@ -65,7 +64,6 @@ async def test_two_executemany_on_same_async_connection_serialized(
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_two_execute_loops_on_same_async_connection_serialized(
     cluster_address: str,
 ) -> None:

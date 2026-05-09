@@ -41,7 +41,6 @@ def _bare_async_cursor() -> Any:
     return acur
 
 
-@pytest.mark.asyncio
 async def test_executemany_select_reject_clears_executing_task() -> None:
     """SELECT is rejected by the row-returning guard. The slot must
     be cleared so a subsequent operation on the cursor doesn't trip
@@ -57,7 +56,6 @@ async def test_executemany_select_reject_clears_executing_task() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_executemany_pragma_reject_clears_executing_task() -> None:
     cur = _bare_async_cursor()
     with pytest.raises(ProgrammingError, match="PRAGMA"):
@@ -65,7 +63,6 @@ async def test_executemany_pragma_reject_clears_executing_task() -> None:
     assert cur._executing_task is None
 
 
-@pytest.mark.asyncio
 async def test_executemany_begin_reject_clears_executing_task() -> None:
     """Verb-reject path (BEGIN is in _EXECUTEMANY_REJECT_VERBS)."""
     cur = _bare_async_cursor()
@@ -74,7 +71,6 @@ async def test_executemany_begin_reject_clears_executing_task() -> None:
     assert cur._executing_task is None
 
 
-@pytest.mark.asyncio
 async def test_executemany_none_seq_clears_executing_task() -> None:
     """``None`` for seq_of_parameters is rejected before the slot-set
     body. Belt-and-braces — the slot must be None at exit."""
@@ -84,7 +80,6 @@ async def test_executemany_none_seq_clears_executing_task() -> None:
     assert cur._executing_task is None
 
 
-@pytest.mark.asyncio
 async def test_subsequent_execute_after_rejected_executemany_does_not_trip_cross_task_guard() -> (
     None
 ):

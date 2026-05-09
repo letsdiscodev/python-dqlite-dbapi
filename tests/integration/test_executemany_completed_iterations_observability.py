@@ -55,7 +55,6 @@ def test_completed_iterations_starts_at_zero() -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_async_completed_iterations_after_success(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, database="test_completed_iters_async")
     try:

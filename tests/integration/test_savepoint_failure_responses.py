@@ -71,7 +71,6 @@ def test_release_unknown_inside_active_tx_raises_and_keeps_tx(cluster_address: s
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_release_unknown_savepoint_raises(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, timeout=2.0)
     try:
@@ -84,7 +83,6 @@ async def test_async_release_unknown_savepoint_raises(cluster_address: str) -> N
         await conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_rollback_to_unknown_savepoint_raises(cluster_address: str) -> None:
     conn = await aconnect(cluster_address, timeout=2.0)
     try:

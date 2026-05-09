@@ -38,7 +38,6 @@ def test_sync_executemany_rejects_transaction_verb(statement: str) -> None:
 
 
 @pytest.mark.parametrize("statement", _REJECT_VERBS)
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_transaction_verb(statement: str) -> None:
     conn = AsyncConnection("localhost:9001")
     cursor = AsyncCursor(conn)
@@ -109,7 +108,6 @@ def test_sync_executemany_rejects_transaction_verb_glued_to_semicolon(
 
 
 @pytest.mark.parametrize("statement", _REJECT_VERBS_SEMICOLON_GLUED)
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_transaction_verb_glued_to_semicolon(
     statement: str,
 ) -> None:
@@ -157,7 +155,6 @@ def test_sync_executemany_rejects_leading_semicolon_verb(statement: str) -> None
 
 
 @pytest.mark.parametrize("statement", _LEADING_SEMICOLON_VERBS)
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_leading_semicolon_verb(statement: str) -> None:
     conn = AsyncConnection("localhost:9001")
     cursor = AsyncCursor(conn)
@@ -190,7 +187,6 @@ def test_sync_executemany_rejects_semicolon_then_comment_verb(statement: str) ->
 
 
 @pytest.mark.parametrize("statement", _SEMICOLON_THEN_COMMENT_VERBS)
-@pytest.mark.asyncio
 async def test_async_executemany_rejects_semicolon_then_comment_verb(
     statement: str,
 ) -> None:
@@ -242,7 +238,6 @@ def test_sync_executemany_rejection_preserves_prior_lastrowid() -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_async_executemany_rejection_preserves_prior_lastrowid() -> None:
     """Async sibling pin — already correct today; locks in parity with
     the sync sibling fix so both surfaces share the same contract."""

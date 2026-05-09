@@ -6,8 +6,6 @@ and that ROLLBACK on one cursor is observed by the other.
 
 from __future__ import annotations
 
-import pytest
-
 from dqlitedbapi import connect
 from dqlitedbapi.aio import aconnect
 
@@ -32,7 +30,6 @@ def test_sync_two_cursors_share_uncommitted_writes(cluster_address: str) -> None
         conn.close()
 
 
-@pytest.mark.asyncio
 async def test_async_two_cursors_share_uncommitted_writes(
     cluster_address: str,
 ) -> None:

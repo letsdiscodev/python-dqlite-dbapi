@@ -28,7 +28,6 @@ from dqlitedbapi.aio import AsyncConnection
 from dqlitedbapi.exceptions import InterfaceError
 
 
-@pytest.mark.asyncio
 async def test_async_connection_used_after_fork_raises_interface_error() -> None:
     conn = AsyncConnection("127.0.0.1:9999")
     fake_parent_pid = conn._creator_pid + 1
@@ -64,7 +63,6 @@ def test_force_close_transport_after_fork_short_circuits() -> None:
     assert conn._async_conn is None
 
 
-@pytest.mark.asyncio
 async def test_async_connection_close_after_fork_short_circuits() -> None:
     """``close()`` in the child must not enter the ``async with
     op_lock`` arm — the lock is bound to the parent's loop and the

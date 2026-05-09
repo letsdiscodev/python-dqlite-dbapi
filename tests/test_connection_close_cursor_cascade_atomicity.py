@@ -57,7 +57,6 @@ def test_sync_close_clears_cursors_set_even_when_scrub_raises_mid_loop() -> None
     assert len(conn._cursors) == 0
 
 
-@pytest.mark.asyncio
 async def test_async_close_clears_cursors_set_even_when_scrub_raises_mid_loop() -> None:
     conn = AsyncConnection("localhost:9001")
     cursors = [MagicMock() for _ in range(5)]

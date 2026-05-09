@@ -14,7 +14,6 @@ import pytest
 from dqlitedbapi.aio.connection import AsyncConnection
 
 
-@pytest.mark.asyncio
 async def test_close_waits_for_in_flight_execute() -> None:
     """If task A is mid-execute (holding _op_lock), task B's close
     awaits that task before tearing down the protocol."""
@@ -80,8 +79,6 @@ class TestCommitRollbackCloseRace:
     async def test_commit_parked_on_lock_sees_close_first(self) -> None:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
-
-        import pytest
 
         from dqlitedbapi.aio.connection import AsyncConnection
         from dqlitedbapi.exceptions import InterfaceError
