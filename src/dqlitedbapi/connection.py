@@ -215,7 +215,36 @@ _RESOLVE_LEADER_CACHE_MAX: Final[int] = 32
 # ``__init__`` path, the lock-while-awaiting becomes a deadlock
 # risk and this gate must be reshaped (e.g. construct outside the
 # lock, then check-and-insert under the lock).
-_RESOLVE_LEADER_CACHE_LOCK: Final[threading.Lock] = threading.Lock()
+#
+# Not ``Final`` because the after-fork hook below replaces this with
+# a fresh lock so a child that inherited the lock in a held state
+# (e.g. parent forked while another thread held it) cannot deadlock.
+# A multi-threaded parent forking is uncommon (and discouraged), but
+# the dbapi sync layer DOES start a daemon ``_loop_thread`` per
+# Connection — so any process that opens a sync connection then
+# forks is multi-threaded by definition.
+_RESOLVE_LEADER_CACHE_LOCK: threading.Lock = threading.Lock()
+
+
+def _at_fork_replace_resolve_leader_cache_lock() -> None:
+    """Replace the module-level cache lock with a fresh instance in
+    the child process so a parent that forked while a thread held
+    the lock does not leave the child with a permanently-held
+    inherited lock (deadlock on first cache access).
+
+    The cache itself is cleared inside the lock-protected composite
+    on a pid mismatch (see ``_get_resolve_leader_cluster``); this
+    callback complements that path by ensuring the lock is grabbable
+    in the first place. Without this hook, a child that inherits a
+    held lock would block forever on ``acquire`` and the pid
+    mismatch path would never run.
+    """
+    global _RESOLVE_LEADER_CACHE_LOCK
+    _RESOLVE_LEADER_CACHE_LOCK = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_at_fork_replace_resolve_leader_cache_lock)
 
 
 def _get_resolve_leader_cluster(
