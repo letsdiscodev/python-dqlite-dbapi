@@ -24,7 +24,10 @@ classifiers = [
     "Topic :: Database :: Front-Ends",
     "Typing :: Typed",
 ]
-dependencies = ["dqlite-client>=0.1.4,<0.2.0"]
+dependencies = [
+    "dqlite-client>=0.1.4,<0.2.0",
+    "dqlite-wire>=0.1.4,<0.2.0",
+]
 
 [tool.uv.sources]
 dqlite-client = { path = "../python-dqlite-client", editable = true }
