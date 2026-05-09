@@ -90,6 +90,13 @@ paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name
 sqlite_version_info: Final[tuple[int, int, int]] = _SQLITE_VERSION_INFO
 sqlite_version: Final[str] = _SQLITE_VERSION
 
+# Stdlib ``sqlite3.LEGACY_TRANSACTION_CONTROL = -1`` parity (3.12+).
+# The ``Connection.autocommit`` setter already accepts the literal
+# ``-1`` sentinel; expose the canonical name so cross-driver code can
+# do ``conn.autocommit = dbapi.LEGACY_TRANSACTION_CONTROL`` without
+# falling back to ``getattr(dbapi, "LEGACY_TRANSACTION_CONTROL", -1)``.
+LEGACY_TRANSACTION_CONTROL: Final[int] = -1
+
 __version__: Final[str] = "0.1.4"
 
 __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
@@ -100,6 +107,7 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "paramstyle",
     "sqlite_version",
     "sqlite_version_info",
+    "LEGACY_TRANSACTION_CONTROL",
     # Functions
     "connect",
     "register_adapter",

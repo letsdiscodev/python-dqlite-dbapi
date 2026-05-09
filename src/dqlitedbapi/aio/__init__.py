@@ -11,6 +11,7 @@ from typing import Final, Literal
 # matching the discipline already applied to ``register_adapter``
 # (re-exported from the sync surface for the same reason).
 from dqlitedbapi import (  # noqa: E402 — module-level re-export
+    LEGACY_TRANSACTION_CONTROL,
     __version__,
     complete_statement,
     enable_callback_tracebacks,
@@ -97,6 +98,7 @@ __all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
     "paramstyle",
     "sqlite_version",
     "sqlite_version_info",
+    "LEGACY_TRANSACTION_CONTROL",
     # Functions
     "connect",
     "aconnect",
