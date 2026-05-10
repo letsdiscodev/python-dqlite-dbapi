@@ -8,7 +8,7 @@ import os
 import threading
 import warnings
 import weakref
-from collections.abc import Coroutine, Iterable, Sequence
+from collections.abc import Coroutine, Iterable, Iterator, Sequence
 from types import TracebackType
 from typing import Any, Final, NoReturn, Self
 
@@ -908,6 +908,13 @@ class Connection:
         # PEP 249 optional extension. No driver path currently appends
         # here; callers can rely on the attribute existing.
         self.messages: list[tuple[type[Exception], Exception | str]] = []
+        # ``transaction()`` context-manager owner sentinel. Stores the
+        # OS thread id of the body owner while a ``with conn.transaction()``
+        # block is active; ``commit`` / ``rollback`` reject from inside
+        # the body so the ctxmgr keeps boundary control. Mirrors the
+        # async sibling's ``_transaction_owner`` (which stores
+        # ``asyncio.Task``); thread id is the sync equivalent identity.
+        self._transaction_owner: int | None = None
         # 1-element list (mutable, captured by the finalizer) that
         # close() flips to True. Using a list avoids the finalizer
         # closing over ``self`` and preventing GC.
@@ -1982,6 +1989,22 @@ class Connection:
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         self._check_thread()
+        # Reject explicit ``commit()`` from inside ``with
+        # conn.transaction():`` body. The ctxmgr owns transaction
+        # boundaries — a stray commit ends the transaction without
+        # exiting the block, and the surrounding rollback-at-exit
+        # then no-ops because ``in_transaction`` is already False.
+        # Mirrors the async sibling at ``aio/connection.py:1149-1157``.
+        # ``getattr`` so test helpers that build via ``Connection.__new__``
+        # (skipping ``__init__``) without seeding the slot don't crash;
+        # production paths always have the attribute from ``__init__``.
+        _tx_owner = getattr(self, "_transaction_owner", None)
+        if _tx_owner is not None and _tx_owner == threading.get_ident():
+            raise InterfaceError(
+                "commit() cannot be issued inside conn.transaction(); "
+                "the context manager owns transaction boundaries — "
+                "exit the ``with`` block first."
+            )
         if self._async_conn is None:
             return
         # Cancel-after-invalidate contract — see async sibling
@@ -2052,6 +2075,21 @@ class Connection:
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         self._check_thread()
+        # Reject stray ``rollback()`` from inside ``with
+        # conn.transaction():`` body — the ctxmgr owns boundaries.
+        # Mirrors the async sibling and the same-shape guard in
+        # ``commit()``.
+        # ``getattr`` so test helpers that build via ``Connection.__new__``
+        # (skipping ``__init__``) without seeding the slot don't crash;
+        # production paths always have the attribute from ``__init__``.
+        _tx_owner = getattr(self, "_transaction_owner", None)
+        if _tx_owner is not None and _tx_owner == threading.get_ident():
+            raise InterfaceError(
+                "rollback() cannot be issued inside conn.transaction(); "
+                "the context manager owns transaction boundaries — "
+                "raise from inside the ``with`` block to trigger "
+                "rollback-at-exit, or exit the block first."
+            )
         if self._async_conn is None:
             return
         # Cancel-after-invalidate guard — see ``commit`` for the full
@@ -2086,6 +2124,95 @@ class Connection:
         except OperationalError as e:
             if not _is_no_transaction_error(e):
                 raise
+
+    @contextlib.contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Synchronous context manager wrapping ``BEGIN`` / ``COMMIT``
+        / ``ROLLBACK``.
+
+        Mirrors :meth:`AsyncConnection.transaction` and the canonical
+        sync-DB-API pattern used by ``psycopg.Connection.transaction``
+        and ``psycopg2.connection``. Without this method,
+        ``with conn.transaction(): ...`` raised ``AttributeError``
+        outside the ``dbapi.Error`` hierarchy — cross-driver porting
+        code's ``except dbapi.Error:`` arm could not catch it.
+
+        Issues ``BEGIN`` on enter, ``COMMIT`` on clean exit,
+        ``ROLLBACK`` on exception. Stray :meth:`commit` /
+        :meth:`rollback` from inside the body raise ``InterfaceError``
+        — the ctxmgr owns boundaries. Nested ``with
+        conn.transaction()`` raises ``InterfaceError``. Closed
+        connections raise ``InterfaceError`` on enter.
+
+        The sync surface emits ``BEGIN`` / ``COMMIT`` / ``ROLLBACK``
+        directly through a cursor rather than driving the client
+        layer's task-scoped ``transaction()`` async ctxmgr — the
+        sync caller is single-threaded by ``_check_thread`` so the
+        client's task-affinity guard would gratuitously reject
+        sequential ``_run_sync`` calls inside one ``with`` block.
+        """
+        del self.messages[:]
+        if self._closed:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
+        self._check_thread()
+        if self._transaction_owner is not None:
+            raise InterfaceError(
+                f"Nested conn.transaction() not supported (id={id(self)}); "
+                "exit the outer block before opening a new one."
+            )
+        cursor = self.cursor()
+        # Set the owner slot INSIDE the try frame so a BaseException
+        # (KeyboardInterrupt / SystemExit) at the bytecode boundary
+        # between the assignment and the try-setup cannot leak the
+        # slot pinned to a now-dying thread. Mirrors the async sibling.
+        token = threading.get_ident()
+        try:
+            cursor.execute("BEGIN")
+            # Set owner AFTER BEGIN — if BEGIN itself raises, the
+            # ctxmgr never enters its body and the owner slot stays
+            # clear so the caller's error-handling can still issue
+            # commit/rollback.
+            self._transaction_owner = token
+            try:
+                yield
+            except BaseException:
+                # Best-effort rollback: emit ROLLBACK while temporarily
+                # clearing the owner slot so the cursor's commit/
+                # rollback affordance through this same connection
+                # would not trip the owner-token guard. Reset it in
+                # the outer finally regardless. Suppress any
+                # exception from ROLLBACK so the caller's original
+                # exception is what propagates — chaining via
+                # ``__context__`` is automatic.
+                self._transaction_owner = None
+                try:
+                    with contextlib.suppress(Exception):
+                        cursor.execute("ROLLBACK")
+                finally:
+                    self._transaction_owner = token
+                raise
+            else:
+                # Clear the owner slot before COMMIT so the
+                # cursor.execute("COMMIT") path doesn't trip the
+                # owner-token guard at any layer that might check it
+                # in the future. Reset in the outer finally.
+                self._transaction_owner = None
+                try:
+                    cursor.execute("COMMIT")
+                finally:
+                    self._transaction_owner = token
+        finally:
+            # Only clear if we still own the slot — defensive against
+            # a hypothetical re-entry that shouldn't be reachable
+            # given the guard above. Mirrors the async sibling, which
+            # uses ``is`` because tasks are unique objects; the sync
+            # token is a thread id (small int) so ``==`` is the right
+            # comparison (CPython interns small ints but the contract
+            # is not guaranteed at the language level).
+            if self._transaction_owner == token:
+                self._transaction_owner = None
+            with contextlib.suppress(Exception):
+                cursor.close()
 
     def cursor(self, **unknown_kwargs: object) -> Cursor:
         """Return a new Cursor object.
