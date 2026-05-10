@@ -1117,6 +1117,12 @@ class Cursor:
 
     @arraysize.setter
     def arraysize(self, value: int) -> None:
+        # PEP 249 §6.4 ``messages`` clear-on-entry: every public
+        # state-mutating method clears ``self.messages`` first,
+        # before the closed/thread guards. The suppress tolerates
+        # ``__new__``-built test fixtures that bypass ``__init__``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         # Reject bools explicitly even though ``bool`` is an ``int``
         # subclass: ``arraysize = True`` silently coercing to 1 is a
         # caller-bug trap, not a useful affordance.
@@ -1169,6 +1175,9 @@ class Cursor:
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
+        # PEP 249 §6.4 ``messages`` clear-on-entry; see ``arraysize.setter``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         # PEP 249 §6.1.2: state-mutating ops on a closed cursor raise.
         self._check_closed()
         # Threadsafety=1 affinity contract — see ``arraysize.setter``

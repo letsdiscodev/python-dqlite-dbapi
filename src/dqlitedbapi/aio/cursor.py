@@ -188,6 +188,10 @@ class AsyncCursor:
 
     @arraysize.setter
     def arraysize(self, value: int) -> None:
+        # PEP 249 §6.4 ``messages`` clear-on-entry; mirrors the sync
+        # sibling and the connection-side setters.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         # PEP 249 §6.1.2: any state-mutating method on a closed cursor
         # must raise an ``Error`` subclass. Apply the closed-state
         # guard FIRST so a bool/int validation error doesn't shadow
@@ -227,6 +231,9 @@ class AsyncCursor:
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
+        # PEP 249 §6.4 ``messages`` clear-on-entry; see ``arraysize.setter``.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         self._check_closed()
         # Loop-binding affinity contract — see ``arraysize.setter``
         # for rationale.
