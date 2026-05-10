@@ -30,94 +30,58 @@ from dqlitewire.constants import (
     DQLITE_NOTFOUND,
     DQLITE_PARSE,
     DQLITE_PROTO,
+    SQLITE_AUTH,
+    SQLITE_CONSTRAINT,
+    SQLITE_CORRUPT,
+    SQLITE_FORMAT,
+    SQLITE_INTERNAL,
+    SQLITE_MISMATCH,
+    SQLITE_MISUSE,
+    SQLITE_NOLFS,
+    SQLITE_NOMEM,
+    SQLITE_NOTADB,
+    SQLITE_NOTFOUND,
+    SQLITE_NOTICE,
+    SQLITE_RANGE,
+    SQLITE_TOOBIG,
+    SQLITE_WARNING,
     ValueType,
     primary_sqlite_code,
 )
-from dqlitewire.constants import SQLITE_CORRUPT as _SQLITE_CORRUPT
-from dqlitewire.constants import SQLITE_FORMAT as _SQLITE_FORMAT
-from dqlitewire.constants import SQLITE_NOTADB as _SQLITE_NOTADB
 
 __all__ = ["Cursor"]
 
 
-# SQLite primary error code 19 (SQLITE_CONSTRAINT) plus its extended
-# family (SQLITE_CONSTRAINT_CHECK = 275, UNIQUE = 2067, NOT_NULL = 1299,
-# FOREIGN_KEY = 787, etc.) all share ``code & 0xFF == 19``. PEP 249
-# mandates IntegrityError for these, so map them here rather than
-# leaving every caller to inspect the code themselves.
-_SQLITE_CONSTRAINT: Final[int] = 19
-
-# SQLite primary error code 2 (SQLITE_INTERNAL). stdlib ``sqlite3``
-# routes this to ``sqlite3.InternalError`` (CPython's
-# ``_pysqlite_seterror``); PEP 249 defines ``InternalError`` for exactly
-# this purpose — "internal errors of the database, e.g. the cursor is
-# not valid anymore".
-_SQLITE_INTERNAL: Final[int] = 2
-
-# SQLITE_TOOBIG (18) — "value exceeds size limit" — is the canonical
-# PEP 249 ``DataError`` case ("problems with the processed data").
-_SQLITE_TOOBIG: Final[int] = 18
-
-# SQLITE_MISMATCH (20) — datatype mismatch on STRICT tables. CPython
-# stdlib ``sqlite3`` (``Modules/_sqlite/util.c::_pysqlite_seterror``)
-# groups this with ``SQLITE_CONSTRAINT`` under ``IntegrityError``;
-# ``aiosqlite`` inherits. Both ``DataError`` and ``IntegrityError``
-# are defensible PEP 249 readings for STRICT-table datatype mismatch,
-# but callers porting between stdlib and dqlite expect the stdlib
-# grouping — so align to it.
-_SQLITE_MISMATCH: Final[int] = 20
-
-# SQLITE_RANGE (25) — "bind index out of range" — is a caller-side
-# parameter-binding error. Stdlib ``sqlite3`` maps it to
-# ``InterfaceError`` (driver-interface misuse, CPython
-# ``Modules/_sqlite/util.c::get_exception_class`` switch). Mirror
-# stdlib so cross-driver code branching on
-# ``isinstance(exc, sqlite3.InterfaceError)`` works the same way.
-_SQLITE_RANGE: Final[int] = 25
-
-# SQLITE_MISUSE (21) — "library used incorrectly" — driver-interface
-# misuse. Stdlib ``sqlite3`` maps to ``InterfaceError`` (same switch
-# as RANGE). Match for cross-driver parity.
-_SQLITE_MISUSE: Final[int] = 21
-
-# SQLITE_NOTFOUND (12) — internal lookup miss inside SQLite (the
-# server propagates this when an opcode operand is missing). Stdlib
-# ``sqlite3`` maps to ``InternalError`` (groups with INTERNAL,
-# IOERR_VNODE, IOERR_CONVPATH). The dqlite-namespace twin
-# ``DQLITE_NOTFOUND`` (1002) is a separate "server-side scratch
-# registry miss" shape that maps to ProgrammingError; the SQLite
-# primary 12 follows the stdlib mapping.
-_SQLITE_NOTFOUND: Final[int] = 12
-
-# SQLITE_NOMEM (7) — server-side allocation failure. CPython stdlib
-# ``sqlite3`` raises ``MemoryError`` (system-level, bypasses PEP 249);
-# we route through ``InternalError`` so callers stay inside the
-# PEP 249 hierarchy and ``except dbapi.Error:`` continues to catch.
-_SQLITE_NOMEM: Final[int] = 7
-
-# SQLITE_CORRUPT (11), SQLITE_FORMAT (24), SQLITE_NOTADB (26) — the
-# server-side database file is malformed / wrong format / not a
-# SQLite database. CPython routes all three to ``DatabaseError``
-# (the umbrella PEP 249 class). Callers porting between stdlib and
-# dqlite use ``except DatabaseError:`` to handle these uniformly.
-# The constants are imported from ``dqlitewire.constants`` (alongside
-# the other SQLite primaries the wire layer already exports) so the
-# SA dialect, the dbapi, and any future caller all reference the
-# same source of truth.
-
-# Primary codes that CPython stdlib routes to bare ``DatabaseError``
-# via ``util.c::get_exception_class``'s ``default:`` arm. Each of
-# these conveys a deterministic / non-transient condition (NOLFS:
-# no large-file-system; AUTH: authorizer rejection; NOTICE / WARNING:
-# informational diagnostics) that should NOT be misclassified as
-# transient ``OperationalError``. dqlite-server doesn't currently
-# emit any of these on the wire, but the routing is forward-compat
-# parity — locking it down means a future server change won't
-# silently get the wrong PEP 249 class.
-_SQLITE_NOLFS: Final[int] = 22
-_SQLITE_AUTH: Final[int] = 23
-_SQLITE_NOTICE: Final[int] = 27
-_SQLITE_WARNING: Final[int] = 28
+# Primary codes routed to specific PEP 249 classes. The constants
+# live in ``dqlitewire.constants`` alongside the rest of the SQLite
+# primary set so the wire layer is the single source of truth for
+# numeric code values. The extended ``SQLITE_CONSTRAINT_*`` family
+# (``CHECK = 275``, ``UNIQUE = 2067``, ``FOREIGNKEY = 787``, etc.)
+# share ``code & 0xFF == 19``; the lookup at the call site uses
+# ``primary_sqlite_code(...)`` to mask before the registry probe.
+#
+# Registry rationale (stdlib ``sqlite3``'s ``util.c::get_exception_class``):
+# - SQLITE_INTERNAL (2) → InternalError ("cursor not valid anymore")
+# - SQLITE_NOMEM (7) → InternalError (stdlib raises MemoryError; we
+#   route through PEP 249's hierarchy so ``except dbapi.Error:``
+#   continues to catch)
+# - SQLITE_NOTFOUND (12) → InternalError (groups with INTERNAL /
+#   IOERR_VNODE / IOERR_CONVPATH per stdlib). The dqlite-namespace
+#   twin ``DQLITE_NOTFOUND`` (1002) is a separate "server-side
+#   scratch registry miss" → ProgrammingError.
+# - SQLITE_TOOBIG (18) → DataError ("value exceeds size limit")
+# - SQLITE_CONSTRAINT (19) plus extended family → IntegrityError
+# - SQLITE_MISMATCH (20) → IntegrityError (stdlib groups with
+#   CONSTRAINT for STRICT-table datatype mismatch; cross-driver
+#   parity matters more than the defensible-DataError reading)
+# - SQLITE_MISUSE (21) → InterfaceError (driver-interface misuse)
+# - SQLITE_RANGE (25) → InterfaceError (bind index out of range)
+# - SQLITE_NOLFS (22), SQLITE_AUTH (23), SQLITE_NOTICE (27),
+#   SQLITE_WARNING (28) → DatabaseError (stdlib's ``default:`` arm;
+#   forward-compat parity for codes dqlite-server does not currently
+#   emit)
+# - SQLITE_CORRUPT (11), SQLITE_FORMAT (24), SQLITE_NOTADB (26) →
+#   DatabaseError (server-side file malformed / wrong format)
 
 # Registry of primary-code → PEP 249 class. Keep the default
 # (OperationalError) outside the dict so adding a code is one line.
@@ -133,17 +97,17 @@ _CODE_TO_EXCEPTION: dict[
         | InterfaceError
     ],
 ] = {
-    _SQLITE_CONSTRAINT: IntegrityError,
-    _SQLITE_INTERNAL: InternalError,
-    _SQLITE_TOOBIG: DataError,
-    _SQLITE_MISMATCH: IntegrityError,
-    _SQLITE_RANGE: InterfaceError,
-    _SQLITE_MISUSE: InterfaceError,
-    _SQLITE_NOTFOUND: InternalError,
-    _SQLITE_NOMEM: InternalError,
-    _SQLITE_CORRUPT: DatabaseError,
-    _SQLITE_FORMAT: DatabaseError,
-    _SQLITE_NOTADB: DatabaseError,
+    SQLITE_CONSTRAINT: IntegrityError,
+    SQLITE_INTERNAL: InternalError,
+    SQLITE_TOOBIG: DataError,
+    SQLITE_MISMATCH: IntegrityError,
+    SQLITE_RANGE: InterfaceError,
+    SQLITE_MISUSE: InterfaceError,
+    SQLITE_NOTFOUND: InternalError,
+    SQLITE_NOMEM: InternalError,
+    SQLITE_CORRUPT: DatabaseError,
+    SQLITE_FORMAT: DatabaseError,
+    SQLITE_NOTADB: DatabaseError,
     # Codes that intentionally fall through to the OperationalError
     # default (no explicit entry needed): BUSY, LOCKED, READONLY,
     # IOERR, FULL, CANTOPEN, EMPTY, SCHEMA, PROTOCOL (15), PERM,
@@ -152,10 +116,10 @@ _CODE_TO_EXCEPTION: dict[
     # "documentary" but that just invited symmetry pressure to add
     # 12 more no-op entries.
     # CPython stdlib parity — see the primary-code constants above.
-    _SQLITE_NOLFS: DatabaseError,
-    _SQLITE_AUTH: DatabaseError,
-    _SQLITE_NOTICE: DatabaseError,
-    _SQLITE_WARNING: DatabaseError,
+    SQLITE_NOLFS: DatabaseError,
+    SQLITE_AUTH: DatabaseError,
+    SQLITE_NOTICE: DatabaseError,
+    SQLITE_WARNING: DatabaseError,
     # dqlite-namespace error codes (>= 1000). ``primary_sqlite_code``
     # passes them through unchanged (see ``dqlitewire.constants``),
     # so the dispatch table keys match the code observed on the wire.
