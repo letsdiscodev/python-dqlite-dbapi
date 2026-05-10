@@ -2086,6 +2086,16 @@ class Cursor:
         # would let ``for row in cur:`` observe stale messages on an
         # empty result set (``__next__`` raises ``StopIteration``
         # without calling ``fetchone``'s clear).
+        #
+        # Cross-thread affinity is verified by the first ``__next__``
+        # call (which dispatches to ``fetchone`` → ``_check_thread``),
+        # not at iter() time, mirroring stdlib ``sqlite3.Cursor.__iter__``
+        # which is also a bare ``return self``. The async sibling
+        # ``AsyncCursor.__aiter__`` deliberately fails fast at iter
+        # time because ``async for`` is the only common idiom that
+        # crosses event loops; the divergence is rooted in the lazy
+        # loop-bind contract and PEP 234's ``iter(x) is x`` requirement
+        # on closed iterables.
         del self.messages[:]
         return self
 

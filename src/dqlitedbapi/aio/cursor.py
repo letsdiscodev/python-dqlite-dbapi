@@ -1073,6 +1073,15 @@ class AsyncCursor:
         # The closed-state diagnostic is deferred to the first
         # ``__anext__`` / ``fetchone``, matching the synchronous
         # pin's documented design.
+        #
+        # Note: the sync ``Cursor.__iter__`` does NOT fail fast on
+        # cross-thread misuse — it defers to the first ``__next__``,
+        # matching stdlib ``sqlite3.Cursor.__iter__``. The async
+        # divergence here is deliberate because ``async for`` is the
+        # only common idiom that crosses event loops; the lazy
+        # loop-bind contract makes the iter-time check structurally
+        # only available on the async side. See the matching note on
+        # ``Cursor.__iter__`` in ``../cursor.py``.
         self._check_parent_loop_only()
         return self
 
