@@ -1530,8 +1530,25 @@ class Connection:
                     coro = self._close_async()
                     coro.close()
                 else:
-                    with contextlib.suppress(Exception):
+                    # Narrow the suppression so the op_lock-acquire-
+                    # timeout signal surfaces to the caller. The async
+                    # sibling at ``aio/connection.py`` raises on
+                    # contended close (force-closes the transport AND
+                    # raises) so operators / SA pool see the recycle
+                    # event. The sync side previously swallowed every
+                    # ``Exception`` here, including the
+                    # ``OperationalError("op_lock acquire timed out
+                    # ...")`` raised by ``_run_sync`` under contention.
+                    # Genuine transport / drain faults during close
+                    # are still swallowed — close() is best-effort and
+                    # the connection IS closed by the time control
+                    # reaches the loop-teardown ``finally`` below.
+                    try:
                         self._run_sync(self._close_async())
+                    except OperationalError:
+                        raise
+                    except Exception:
+                        pass
         finally:
             with self._loop_lock:
                 # Mirror ``AsyncConnection.close()``'s ``finally``-
