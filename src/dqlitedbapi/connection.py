@@ -2763,5 +2763,8 @@ class Connection:
                     exc_info=True,
                 )
         # Do NOT close — matches stdlib sqlite3.Connection.__exit__ and
-        # psycopg. Callers who want eager close use ``conn.close()``
-        # explicitly or go through a pool.
+        # psycopg2. (psycopg3 closes on exit; we deliberately don't,
+        # because closing-on-context-manager-exit conflicts with common
+        # SA-style usage where Connection lifetimes outlive a single
+        # ``with conn:`` block.) Callers who want eager close use
+        # ``conn.close()`` explicitly or go through a pool.
