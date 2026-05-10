@@ -79,9 +79,14 @@ The bare `BEGIN` SQL is the SQLite default (`BEGIN DEFERRED`). dqlite's
 Raft FSM serializes the transaction across the cluster regardless of
 the `DEFERRED` / `IMMEDIATE` / `EXCLUSIVE` qualifier, so the qualifier
 does not change isolation semantics — only the lock-acquisition timing
-on the leader. There is no `isolation_level` attribute (cannot be
-weakened on dqlite); the SQLAlchemy dialect rejects `AUTOCOMMIT` on
-the same grounds.
+on the leader. The `Connection.isolation_level` attribute exists for
+pre-3.12 stdlib parity: the getter returns `None`, the setter accepts
+only `None` (no-op) and rejects every other value (`""`, `"DEFERRED"`,
+`"IMMEDIATE"`, `"EXCLUSIVE"`, `"SERIALIZABLE"`, `"AUTOCOMMIT"`, etc.)
+with `NotSupportedError`. dqlite is autocommit-by-default at the dbapi
+layer; explicit transactions are managed via `conn.commit()` /
+`conn.rollback()` per PEP 249. The SQLAlchemy dialect rejects
+`AUTOCOMMIT` on the same grounds.
 
 Connection-level `commit()` / `rollback()` semantics:
 
@@ -114,8 +119,10 @@ hierarchy (`Warning`, `Error`, `InterfaceError`, `DatabaseError`,
 `ProgrammingError`, `NotSupportedError`), type constructors
 (`Date`, `Time`, `Timestamp`, `DateFromTicks`, `TimeFromTicks`,
 `TimestampFromTicks`, `Binary`), type sentinels (`STRING`, `BINARY`,
-`NUMBER`, `DATETIME`, `ROWID`), and stdlib-sqlite3-parity stubs
-(`register_adapter`, `register_converter`, `complete_statement`,
+`NUMBER`, `DATETIME`, `ROWID`), the working `register_adapter` /
+`unregister_adapter` (process-global; mirrors stdlib's pre-3.12
+behavior), and stdlib-sqlite3-parity stubs that raise
+`NotSupportedError` (`register_converter`, `complete_statement`,
 `enable_callback_tracebacks`) are all re-exported under
 `dqlitedbapi.aio` so cross-driver code porting from aiosqlite
 imports them from one namespace. One notable deviation:
