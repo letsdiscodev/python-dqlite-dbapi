@@ -540,6 +540,12 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
     UNIXTIME is unambiguously seconds-since-epoch in UTC, so returning a
     UTC-aware value is faithful. Callers that want local time can convert.
 
+    Subsecond precision is structurally absent at this wire layer
+    (UNIXTIME is integer seconds — see ``ValueType.UNIXTIME`` in
+    ``dqlitewire.constants``). Callers needing microsecond precision
+    should ensure the server emits ISO8601 (TEXT-storage DATETIME)
+    instead.
+
     This UTC-aware result is asymmetric with the PEP 249 ``*FromTicks``
     constructors, which return naive local time (matching stdlib
     sqlite3). Storing a ``TimestampFromTicks`` value on a UNIXTIME
