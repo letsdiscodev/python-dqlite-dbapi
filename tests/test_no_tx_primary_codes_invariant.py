@@ -36,19 +36,30 @@ def test_invariant_test_does_not_use_bare_assert() -> None:
     """Static-discipline pin against a future revert to bare
     ``assert``. The check above MUST use ``raise AssertionError`` so
     it survives ``python -O``; this test reads its own source and
-    confirms the discipline is intact."""
+    confirms the discipline is intact.
+
+    The meta-test ITSELF must also use ``raise AssertionError`` (not
+    bare ``assert``) — otherwise ``python -O`` strips it and silently
+    disables the very discipline the test pins.
+    """
     import pathlib
     import re
 
     src = pathlib.Path(__file__).read_text()
     # Match a bare ``assert 0 <= code`` at any indent — the previous
     # form. Must NOT appear in the source after this fix.
-    assert re.search(r"^\s*assert\s+0\s*<=\s*code", src, re.MULTILINE) is None, (
-        "test_no_tx_primary_codes_invariant.py uses a bare ``assert`` "
-        "for the runtime invariant. Bare asserts strip under "
-        "``python -O``; the runtime enforcement must use "
-        "``raise AssertionError(...)`` so the invariant survives "
-        "optimised CI runs."
-    )
+    if re.search(r"^\s*assert\s+0\s*<=\s*code", src, re.MULTILINE) is not None:
+        raise AssertionError(
+            "test_no_tx_primary_codes_invariant.py uses a bare ``assert`` "
+            "for the runtime invariant. Bare asserts strip under "
+            "``python -O``; the runtime enforcement must use "
+            "``raise AssertionError(...)`` so the invariant survives "
+            "optimised CI runs."
+        )
     # Positive: the explicit raise must be present.
-    assert "raise AssertionError" in src
+    if "raise AssertionError" not in src:
+        raise AssertionError(
+            "test_no_tx_primary_codes_invariant.py must use "
+            "``raise AssertionError`` for the runtime invariant check "
+            "so the discipline survives ``python -O`` stripping."
+        )
