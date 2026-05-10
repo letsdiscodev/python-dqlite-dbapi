@@ -14,8 +14,9 @@ no thread in the child owns.
 
 from __future__ import annotations
 
+import inspect
+import re
 import threading
-from unittest import mock
 
 import dqlitedbapi.connection as _conn_mod
 
@@ -40,33 +41,33 @@ def test_atfork_callback_replaces_cache_lock() -> None:
         _conn_mod._RESOLVE_LEADER_CACHE_LOCK = original
 
 
-def test_atfork_hook_registered_with_register_at_fork() -> None:
-    """The module's after-fork callback must be registered via
-    ``os.register_at_fork``. Without registration, the hook is dead
-    code — verify by patching ``os.register_at_fork`` and re-importing
-    the module to confirm the registration is hit on import."""
-    import importlib
-    import os
+def test_atfork_hook_registered_at_module_level() -> None:
+    """The after-fork hook must be registered via
+    ``os.register_at_fork(after_in_child=_at_fork_replace_resolve_leader_cache_lock)``
+    at module top-level so the child process inherits a fresh lock
+    instead of a potentially-held one.
 
-    register_calls: list[dict[str, object]] = []
-
-    def fake_register_at_fork(**kwargs: object) -> None:
-        register_calls.append(kwargs)
-
-    with mock.patch.object(os, "register_at_fork", side_effect=fake_register_at_fork):
-        importlib.reload(_conn_mod)
-
-    # The module re-import should have called register_at_fork at
-    # least twice (once for the existing _refresh_pid_cache callback
-    # if any imported by client side, plus our new lock-replace).
-    # We focus on the lock-replace call specifically:
-    matching = [
-        c
-        for c in register_calls
-        if c.get("after_in_child") is _conn_mod._at_fork_replace_resolve_leader_cache_lock
-    ]
-    assert matching, (
-        "_at_fork_replace_resolve_leader_cache_lock must be registered "
-        "via os.register_at_fork(after_in_child=...) so the child "
-        "process inherits a fresh lock instead of a potentially-held one"
+    Verified by source-level regex (NOT by ``importlib.reload``).
+    Reload mutates module state in-place: the ``Connection`` class
+    identity changes, the original ``_RESOLVE_LEADER_CACHE`` /
+    ``_RESOLVE_LEADER_CACHE_PID`` globals are reset, and the
+    OS-level fork-handler list still holds the original function
+    pointer. Subsequent tests in the same pytest session that rely
+    on ``isinstance(x, dqlitedbapi.Connection)`` would fail
+    spuriously. Source-level introspection avoids the pollution.
+    """
+    src = inspect.getsource(_conn_mod)
+    pattern = (
+        r"os\.register_at_fork\("
+        r"\s*after_in_child=_at_fork_replace_resolve_leader_cache_lock"
+        r"\s*\)"
     )
+    if re.search(pattern, src) is None:
+        raise AssertionError(
+            "_at_fork_replace_resolve_leader_cache_lock must be "
+            "registered via os.register_at_fork(after_in_child=...) "
+            "so the child process inherits a fresh lock instead of a "
+            "potentially-held one. Source-level regex did not match — "
+            "check that the registration call is at module top-level "
+            "and uses the literal kwarg name 'after_in_child'."
+        )
