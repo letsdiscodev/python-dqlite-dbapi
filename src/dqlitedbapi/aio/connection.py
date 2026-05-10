@@ -900,8 +900,8 @@ class AsyncConnection:
         # orphaned — surfacing as "Task was destroyed but it is
         # pending" at GC under SA finalize-from-foreign-thread paths.
         # Mirrors the in-thread re-snapshot loop in
-        # ``DqliteConnection._close_impl`` (cycle 27 R27_1 cap-and-
-        # fail-loud discipline).
+        # ``DqliteConnection._close_impl`` (cap-and-fail-loud
+        # discipline).
         _RESNAPSHOT_CAP = 3
         for _attempt in range(_RESNAPSHOT_CAP):
             pending = getattr(inner, "_pending_drain", None)
