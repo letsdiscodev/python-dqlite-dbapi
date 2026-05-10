@@ -217,6 +217,29 @@ async def test_setinputsizes_rejects_non_sequence_async() -> None:
         cur.setinputsizes("not-a-sequence")
 
 
+def test_setoutputsize_rejects_non_int_column_sync() -> None:
+    """The ``column`` keyword has its own validation arm (an int or
+    None per PEP 249). The ``size`` validators above never reach it.
+    Pin both the str and bool cases so a future refactor can't silently
+    relax the type guard."""
+    conn = Connection("localhost:9001", timeout=2.0)
+    cur = Cursor(conn)
+    with pytest.raises(ProgrammingError, match="column"):
+        cur.setoutputsize(10, column="not-an-int")  # type: ignore[arg-type]
+    with pytest.raises(ProgrammingError, match="column"):
+        cur.setoutputsize(10, column=True)
+
+
+async def test_setoutputsize_rejects_non_int_column_async() -> None:
+    """Async sibling of ``test_setoutputsize_rejects_non_int_column_sync``."""
+    conn = AsyncConnection("localhost:9001")
+    cur = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="column"):
+        cur.setoutputsize(10, column="not-an-int")  # type: ignore[arg-type]
+    with pytest.raises(ProgrammingError, match="column"):
+        cur.setoutputsize(10, column=True)
+
+
 # ---------------- _call_client catch-all forward-compat (test pin)
 
 
