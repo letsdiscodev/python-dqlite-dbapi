@@ -629,8 +629,10 @@ def _classify_caller_sql(
     - **Multi-statement SQL**. Server's prepare path returns only
       the first statement; without this guard, ``"INSERT ...;
       INSERT ..."`` silently drops everything past the first ``;``
-      with no diagnostic. Use ``executescript`` for multi-
-      statement intent.
+      with no diagnostic. Callers with multi-statement intent must
+      split client-side and call ``execute`` per statement —
+      ``executescript`` is a stub that raises ``NotSupportedError``
+      (see the README §"Limitations vs. stdlib `sqlite3`").
     - **Wrong ``?`` count vs ``len(parameters)``**. Server rejects
       with ``SQLITE_RANGE (25)`` after a wire round-trip; pre-
       flighting saves the RTT and matches stdlib's

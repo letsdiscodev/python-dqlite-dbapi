@@ -617,8 +617,8 @@ def register_adapter(type_: type, adapter: Callable[[Any], Any]) -> None:
     implemented: dqlite's wire protocol does not carry declared
     column types, so type-name-keyed converters cannot be
     dispatched on read. Callers wanting per-row decoding can use
-    ``Cursor.row_factory`` (when implemented) or post-fetch
-    coercion in user code.
+    ``Cursor.row_factory`` (or inherit from
+    ``Connection.row_factory``) or post-fetch coercion in user code.
 
     **Scope: process-global.** Adapters live in a single module-
     level dict shared by every sync and async connection in the
