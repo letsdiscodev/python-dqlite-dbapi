@@ -532,6 +532,19 @@ def _strip_leading_comments_and_separators(sql: str) -> str:
 
 _ROW_RETURNING_PREFIXES: Final[tuple[str, ...]] = ("SELECT", "VALUES", "PRAGMA", "EXPLAIN", "WITH")
 
+# Word-boundary regex for the RETURNING-keyword scan. The previous
+# literal-space substring scan (`` RETURNING `` / `` RETURNING`` at
+# end) missed every multi-line SQL formatting style produced by
+# sqlfluff, pgFormatter, and hand-written queries that place
+# RETURNING on its own line. Result: ``INSERT INTO t VALUES (?)\n
+# RETURNING id`` silently classified as exec-only; rows discarded;
+# cursor.description None; cursor.fetchall() []. Data-loss-grade.
+# The regex matches RETURNING as a whole word after the noise-
+# stripped, comment-stripped text has been uppercased; the noise
+# stripper at ``_strip_sql_noise`` neutralises identifiers and
+# string literals so a column named RETURNING (quoted) is safe.
+_RETURNING_WORD_RE: Final[re.Pattern[str]] = re.compile(r"\bRETURNING\b")
+
 # Verbs that take no parameters and cannot legitimately drive an
 # ``executemany`` call. Stdlib ``sqlite3.Cursor.executemany`` rejects
 # the same shapes via its statement-type check; admitting them here
@@ -569,11 +582,11 @@ _SQL_NOISE_RE = re.compile(
 def _strip_sql_noise(sql: str) -> str:
     """Replace string literals / identifiers / comments with a space.
 
-    Preserves keyword boundaries so the downstream ``" RETURNING "``
-    scan still sees a spaced match in the cleaned text. The space
-    substitution is important: collapsing to empty would fuse adjacent
-    tokens into identifiers that could themselves trigger false
-    positives.
+    Preserves keyword boundaries so the downstream ``\\bRETURNING\\b``
+    regex scan still sees a well-bounded match in the cleaned text.
+    The space substitution is important: collapsing to empty would
+    fuse adjacent tokens into identifiers that could themselves
+    trigger false positives.
     """
     return _SQL_NOISE_RE.sub(" ", sql)
 
@@ -838,7 +851,12 @@ def _is_row_returning(sql: str) -> bool:
     normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
     if normalized.startswith(_ROW_RETURNING_PREFIXES):
         return True
-    return " RETURNING " in normalized or normalized.endswith(" RETURNING")
+    # Word-boundary regex: matches RETURNING preceded or followed by
+    # any whitespace (space, newline, tab, CR) or punctuation, while
+    # NOT matching when RETURNING is part of a larger identifier
+    # like ``RETURNING_id``. The noise stripper has already
+    # neutralised identifiers and string literals.
+    return _RETURNING_WORD_RE.search(normalized) is not None
 
 
 def _strip_leading_with_clause(normalized: str) -> str:
