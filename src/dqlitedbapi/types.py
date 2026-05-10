@@ -420,7 +420,15 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
         # cannot resolve an offset for this datetime — be explicit
         # and reject rather than silently demoting to naive (which
         # would lose the user's tz-awareness intent without warning).
-        offset = value.utcoffset()
+        # A raising tzinfo (custom subclass with a buggy utcoffset)
+        # must surface as DataError too — symmetric with the
+        # ``_validate_ticks`` and ``_datetime_from_unixtime`` discipline,
+        # so every plausible tzinfo failure stays inside the
+        # ``dbapi.Error`` hierarchy.
+        try:
+            offset = value.utcoffset()
+        except (TypeError, ValueError) as exc:
+            raise DataError(f"tzinfo.utcoffset() raised for {value!r}: {exc}") from exc
         if offset is None:
             raise DataError(
                 f"datetime is tz-aware but tzinfo.utcoffset() returned None for "
@@ -446,7 +454,12 @@ def _iso8601_from_time(value: datetime.time) -> str:
         base += f".{value.microsecond:06d}"
     if value.tzinfo is None:
         return base
-    offset = value.utcoffset()
+    # See ``_iso8601_from_datetime`` for the wrap rationale: a raising
+    # custom tzinfo must surface as DataError, not bare exception class.
+    try:
+        offset = value.utcoffset()
+    except (TypeError, ValueError) as exc:
+        raise DataError(f"tzinfo.utcoffset() raised for {value!r}: {exc}") from exc
     if offset is None:
         raise DataError(
             f"time is tz-aware but tzinfo.utcoffset() returned None for "
