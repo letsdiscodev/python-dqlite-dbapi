@@ -1006,6 +1006,17 @@ class AsyncConnection:
         un-usable as a cleanup-path discriminator. Uses
         ``_check_loop_only`` (not ``_check_loop_binding``) so the
         check does not lazy-bind the loop on first read.
+
+        **Lazy-loop-bind divergence**: on an ``AsyncConnection`` that
+        has never been awaited (loop ref not yet captured), accesses
+        from any thread / loop return ``False`` silently — the
+        cross-loop diagnostic is only enforceable after the first
+        await binds the connection. The sync sibling raises eagerly on
+        cross-thread access from any state because it captures the
+        creator-thread at ``__init__``; the async side cannot do the
+        same without breaking SA's lazy-construct-without-loop adapter
+        pattern. Code that needs the eager cross-context check on a
+        never-awaited connection must call ``connect()`` first.
         """
         self._check_loop_only()
         # Snapshot the reference once: ``close()`` running concurrently
