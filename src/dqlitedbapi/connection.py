@@ -1066,11 +1066,24 @@ class Connection:
         try:
             if not acquired:
                 coro.close()
-                raise InterfaceError(
-                    "another operation is in progress on this connection "
-                    f"(could not acquire operation lock within {self._timeout}s — "
-                    "may indicate re-entry from a signal handler or concurrent "
-                    "use from another thread)"
+                # ``OperationalError`` (not ``InterfaceError``) for
+                # parity with the async sibling at
+                # ``aio/connection.py``: ``commit`` / ``rollback``
+                # op_lock-acquire-timeout also raise ``OperationalError``.
+                # SA's ``is_disconnect`` is gated on ``DatabaseError``
+                # and recognises the ``OperationalError`` class — so a
+                # contended slot is recycled by the pool rather than
+                # surfaced as a programmer-bug class. The message
+                # leads with the canonical ``"op_lock acquire timed
+                # out"`` prefix so a sibling-thread/signal-handler
+                # contention scenario is identifiable in logs.
+                raise OperationalError(
+                    f"op_lock acquire timed out after {self._timeout}s waiting "
+                    "for another operation on this connection to release "
+                    f"(id={id(self)}; may indicate re-entry from a signal handler "
+                    "or concurrent use from another thread). Treat as a transient "
+                    "condition and retry on a fresh connection.",
+                    code=None,
                 )
             loop = self._ensure_loop()
             try:

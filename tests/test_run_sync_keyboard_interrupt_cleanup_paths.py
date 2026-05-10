@@ -73,8 +73,8 @@ def test_op_lock_acquire_keyboard_interrupt_closes_unscheduled_coroutine() -> No
 def test_op_lock_acquire_returns_false_closes_unscheduled_coroutine() -> None:
     """When ``_op_lock.acquire`` returns False (lock held elsewhere),
     the never-scheduled coroutine must also be closed before raising
-    InterfaceError."""
-    from dqlitedbapi.exceptions import InterfaceError
+    OperationalError."""
+    from dqlitedbapi.exceptions import OperationalError
 
     conn = _make_with_loop_thread()
     try:
@@ -88,7 +88,7 @@ def test_op_lock_acquire_returns_false_closes_unscheduled_coroutine() -> None:
         fake_lock.acquire.return_value = False
         conn._op_lock = fake_lock
 
-        with pytest.raises(InterfaceError, match="another operation is in progress"):
+        with pytest.raises(OperationalError, match="op_lock acquire timed out"):
             conn._run_sync(coro)
 
         assert getattr(coro, "cr_frame", None) is None, (
