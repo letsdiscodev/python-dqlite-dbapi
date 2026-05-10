@@ -461,6 +461,19 @@ def _strip_leading_comments(sql: str) -> str:
     ``encoding='utf-8'`` (instead of ``utf-8-sig``) or written with
     PowerShell ``Set-Content`` / Notepad would otherwise trip the
     classifier prefix-checks.
+
+    NOTE: this helper is also used by ``_is_multi_statement``'s tail
+    walk to detect content past a ``;`` boundary. It must NOT consume
+    bare ``;`` separators — the multi-statement walker's
+    security-posture invariant requires that a trailing ``;`` after a
+    real statement IS detected as multi-statement (the
+    ``_is_multi_statement`` walker tail-checks each post-``;`` segment
+    for non-empty content). The empty-statement classifier branch in
+    ``_classify_caller_sql`` uses the sibling
+    ``_strip_leading_comments_and_separators`` helper which DOES
+    consume ``;`` separators — that helper applies only when the
+    walker has already determined the input has at most one
+    statement.
     """
     s = sql.lstrip("﻿").strip()
     while True:
@@ -477,6 +490,41 @@ def _strip_leading_comments(sql: str) -> str:
                 # in. Mirrors the client-layer copy.
                 return ""
             s = s[end + 2 :].strip()
+        else:
+            break
+    return s
+
+
+def _strip_leading_comments_and_separators(sql: str) -> str:
+    """Like :func:`_strip_leading_comments` but additionally consumes
+    bare ``;`` separators.
+
+    Used ONLY by the empty-statement classification in
+    :func:`_classify_caller_sql`. Do NOT use in
+    :func:`_is_multi_statement`'s tail walk — the multi-statement
+    walker's security-posture invariant relies on detecting a trailing
+    ``;`` after a real statement as multi-statement.
+
+    A SQL input of just ``";"``, ``"; ; ;"``, ``"/* */;-- foo\\n;"``
+    etc. classifies as **empty** (no real content). Stdlib ``sqlite3``
+    silently no-ops on these; dqlite raises
+    ``ProgrammingError("empty statement")`` per the project's
+    documented divergence (caller-side bug → caller-side error class).
+    """
+    s = sql.lstrip("﻿").strip()
+    while True:
+        if s.startswith("--"):
+            newline = s.find("\n")
+            if newline == -1:
+                return ""
+            s = s[newline + 1 :].strip()
+        elif s.startswith("/*"):
+            end = s.find("*/")
+            if end == -1:
+                return ""
+            s = s[end + 2 :].strip()
+        elif s.startswith(";"):
+            s = s[1:].strip()
         else:
             break
     return s
@@ -565,6 +613,8 @@ def _is_multi_statement(sql: str) -> bool:
 def _classify_caller_sql(
     operation: str,
     parameters: Sequence[Any] | None,
+    *,
+    skip_param_count_check: bool = False,
 ) -> None:
     """Pre-flight classification of caller-supplied SQL.
 
@@ -592,16 +642,38 @@ def _classify_caller_sql(
     inside a quoted token / comment is not treated as syntactically
     significant.
     """
-    # Empty-SQL: ``_strip_leading_comments`` returns "" if the SQL
-    # is blank, whitespace, or comment-only. Stdlib raises
-    # ``ProgrammingError`` for ``""``; match.
-    if not _strip_leading_comments(operation):
+    # NUL byte in SQL: stdlib raises ``ProgrammingError("the query
+    # contains a null character")`` pre-flight. The wire encoder
+    # would also reject (with ``EncodeError`` → ``DataError``) but
+    # ``DataError`` is the wrong PEP 249 class for caller-supplied
+    # malformed SQL — the same bucket that catches the multi-statement
+    # and "empty statement" rejections. Pre-flight here so the right
+    # class surfaces without a wire RTT.
+    if "\x00" in operation:
+        raise ProgrammingError("the query contains a null character")
+    # Empty-SQL: ``_strip_leading_comments_and_separators`` returns
+    # "" if the SQL is blank, whitespace, comment-only, or consists
+    # solely of ``;`` separators (e.g. ``";"``, ``"; ; ;"``). Stdlib
+    # silently no-ops on the bare-semicolon shapes; we route them to
+    # the same caller-side ``ProgrammingError`` as empty / comment-
+    # only SQL because they are equivalent (zero non-empty
+    # statements). Stdlib raises ``ProgrammingError`` for ``""``;
+    # match.
+    if not _strip_leading_comments_and_separators(operation):
         raise ProgrammingError("empty statement")
     # Multi-statement: stdlib raises with this exact wording.
     if _is_multi_statement(operation):
         raise ProgrammingError("You can only execute one statement at a time.")
-    # ``?``-count vs len(parameters). Only validate when parameters
-    # is provided (``None`` / ``()`` are valid for parameterless SQL).
+    # The placeholder/len check is skipped for the ``executemany``
+    # one-time pre-flight (which deliberately passes
+    # ``skip_param_count_check=True`` because the per-iteration check
+    # runs in the executemany loop body). For the ``execute`` path,
+    # ``parameters=None`` (caller omitted the second arg) is treated
+    # as ``param_count=0`` so ``cur.execute("SELECT ?")`` pre-flights
+    # with the same ``ProgrammingError`` stdlib raises (rather than a
+    # wire RTT producing ``InterfaceError`` via ``SQLITE_RANGE``).
+    if skip_param_count_check:
+        return
     if parameters is not None:
         # Mappings, str, bytes are rejected by the binding layer
         # later — skip the count check for them since len() doesn't
@@ -610,15 +682,17 @@ def _classify_caller_sql(
             param_count = len(parameters)
         except TypeError:
             return  # caller will trip the binding-layer rejection
-        # Count ``?`` placeholders in the noise-stripped SQL.
-        cleaned = _strip_sql_noise(operation)
-        placeholder_count = cleaned.count("?")
-        if placeholder_count != param_count:
-            raise ProgrammingError(
-                f"Incorrect number of bindings supplied. The current "
-                f"statement uses {placeholder_count}, and there are "
-                f"{param_count} supplied."
-            )
+    else:
+        param_count = 0
+    # Count ``?`` placeholders in the noise-stripped SQL.
+    cleaned = _strip_sql_noise(operation)
+    placeholder_count = cleaned.count("?")
+    if placeholder_count != param_count:
+        raise ProgrammingError(
+            f"Incorrect number of bindings supplied. The current "
+            f"statement uses {placeholder_count}, and there are "
+            f"{param_count} supplied."
+        )
 
 
 class _ExecuteManyCursor(Protocol):
@@ -1470,15 +1544,15 @@ class Cursor:
         sync ``executemany`` wrapper before this helper is scheduled.
         """
         # Hoist ``_classify_caller_sql`` ONCE at the top: empty SQL,
-        # multi-statement, and the SQL parsing/scanning are all
-        # invariant across iterations. The placeholder count derived
-        # here is then compared per-iteration against ``len(params)``
-        # — a cheap O(1) check vs the per-iteration regex traversal
-        # that calling the full classifier per row would cost.
-        # Passing ``None`` for parameters skips the placeholder
-        # length-check on the first call (the classifier still runs
-        # the empty/multi guards, which are pure SQL parses).
-        _classify_caller_sql(operation, None)
+        # multi-statement, NUL-in-SQL, and the SQL parsing/scanning
+        # are all invariant across iterations. The placeholder count
+        # derived here is then compared per-iteration against
+        # ``len(params)`` — a cheap O(1) check vs the per-iteration
+        # regex traversal that calling the full classifier per row
+        # would cost. ``skip_param_count_check=True`` skips the
+        # placeholder length-check (the classifier still runs the
+        # empty/multi/NUL guards, which are pure SQL parses).
+        _classify_caller_sql(operation, None, skip_param_count_check=True)
         cleaned = _strip_sql_noise(operation)
         placeholder_count = cleaned.count("?")
         # Single source of truth for per-execute reset; see

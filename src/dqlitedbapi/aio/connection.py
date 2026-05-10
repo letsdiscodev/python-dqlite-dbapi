@@ -1626,6 +1626,10 @@ class AsyncConnection:
         """
         # PEP 249 §6.4 messages-clear; see ``execute`` above.
         del self.messages[:]
+        # Closed-state precedence: see sync sibling for rationale —
+        # route through ``self.cursor()`` so a closed connection
+        # raises ``InterfaceError`` BEFORE the outer-shape check.
+        cur = self.cursor()
         # Reject the outer shapes that would silently iterate over keys
         # (dict) / characters (str / bytes / bytearray / memoryview), or
         # iterate in non-deterministic order (set / frozenset), treating
@@ -1637,11 +1641,12 @@ class AsyncConnection:
             seq_of_parameters,
             dict | str | bytes | bytearray | memoryview | set | frozenset,
         ):
+            with contextlib.suppress(Exception):
+                await cur.close()
             raise ProgrammingError(
                 f"executemany seq_of_parameters must be an iterable of "
                 f"parameter sets, not {type(seq_of_parameters).__name__}"
             )
-        cur = self.cursor()
         try:
             await cur.executemany(operation, seq_of_parameters)
         except BaseException:

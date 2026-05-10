@@ -2156,6 +2156,16 @@ class Connection:
         # PEP 249 §6.4: see ``execute`` shortcut for the eager-clear
         # rationale.
         del self.messages[:]
+        # Closed-state precedence: route through ``self.cursor()`` so
+        # a closed connection raises ``InterfaceError`` BEFORE the
+        # outer-shape check fires. Mirrors ``Connection.cursor()``'s
+        # ordering: closed → cross-thread → input-shape. The
+        # outer-shape check moves AFTER cursor construction so a
+        # closed connection that receives a bad-shape ``seq`` raises
+        # the closed-state ``InterfaceError`` (cross-driver feature-
+        # probe / pool-recycle hooks expect that class), not a
+        # shape ``ProgrammingError``.
+        cur = self.cursor()
         # Reject the outer shapes that would silently iterate over keys
         # (dict) / characters (str / bytes / bytearray / memoryview), or
         # iterate in non-deterministic order (set / frozenset), treating
@@ -2168,11 +2178,12 @@ class Connection:
             seq_of_parameters,
             dict | str | bytes | bytearray | memoryview | set | frozenset,
         ):
+            with contextlib.suppress(Exception):
+                cur.close()
             raise ProgrammingError(
                 f"executemany seq_of_parameters must be an iterable of "
                 f"parameter sets, not {type(seq_of_parameters).__name__}"
             )
-        cur = self.cursor()
         try:
             cur.executemany(operation, seq_of_parameters)
         except BaseException:
