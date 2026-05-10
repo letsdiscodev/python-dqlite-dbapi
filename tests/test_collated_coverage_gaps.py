@@ -18,10 +18,12 @@ import dqlitedbapi.aio as dqlite_aio
 from dqlitedbapi.exceptions import NotSupportedError
 
 
-class TestAioConnectUnknownKwargsRejection:
-    """Async ``aconnect()`` mirrors the sync sibling's rejection of
-    stdlib-sqlite3 kwargs (``database``, ``timeout`` aliases, etc.).
-    The sync side is parametrised; the async side was uncovered."""
+class TestAioConnectLazyUnknownKwargsRejection:
+    """``dqlite_aio.connect()`` is the lazy (sync-return) helper that
+    constructs an ``AsyncConnection`` without driving the TCP
+    handshake. Its ``**unknown_kwargs`` rejection arm runs before the
+    constructor; cover it explicitly so a refactor of the kwargs
+    set cannot silently relax the rejection."""
 
     def test_rejects_stdlib_sqlite3_kwargs(self) -> None:
         async def _drive() -> None:
@@ -39,6 +41,32 @@ class TestAioConnectUnknownKwargsRejection:
                 )
 
         asyncio.run(_drive())
+
+
+class TestAioAConnectUnknownKwargsRejection:
+    """``dqlite_aio.aconnect()`` is the eager (awaitable) helper. Its
+    ``**unknown_kwargs`` rejection arm sits at a different code path
+    than the lazy ``connect()`` sibling and must be exercised
+    independently. The rejection fires BEFORE any TCP work, so the
+    test does not need a live cluster."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_stdlib_sqlite3_kwargs(self) -> None:
+        with pytest.raises(NotSupportedError):
+            # Same shape as the sync sibling: unknown kwargs raise
+            # before AsyncConnection.__init__ is reached.
+            await dqlite_aio.aconnect(
+                "127.0.0.1:9001",
+                isolation_level=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_kwarg(self) -> None:
+        with pytest.raises(NotSupportedError):
+            await dqlite_aio.aconnect(
+                "127.0.0.1:9001",
+                this_kwarg_does_not_exist=42,
+            )
 
 
 class TestConnectionRowFactoryHook:
