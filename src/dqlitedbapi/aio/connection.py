@@ -1414,6 +1414,18 @@ class AsyncConnection:
         ``self._cursors`` WeakSet and return a live wrapper. Match the
         sync sibling (``Connection.cursor`` enforces it via
         ``_check_thread``).
+
+        **Porting note (aiosqlite)**: aiosqlite's
+        ``Connection.cursor`` is ``async def`` — the standard
+        aiosqlite pattern is ``cur = await conn.cursor()``. dqlite's
+        ``AsyncConnection.cursor`` is sync (returns ``AsyncCursor``
+        directly); ``await conn.cursor()`` raises
+        ``TypeError: object AsyncCursor can't be used in 'await'
+        expression``. Drop the ``await``::
+
+            cur = conn.cursor()
+            async with cur:
+                ...
         """
         del self.messages[:]
         # Closed-state precedence — see sync sibling at
