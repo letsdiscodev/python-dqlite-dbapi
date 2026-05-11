@@ -1336,6 +1336,13 @@ class AsyncConnection:
 
         Re-raises ``InterfaceError`` if the connection is closed.
         """
+        # PEP 249 §6.4 messages-clear contract: every public method
+        # clears messages "prior to executing the call". Sync sibling
+        # at ``connection.py:transaction`` does this; every other
+        # AsyncConnection entry point (connect/close/commit/rollback/
+        # cursor/execute/executemany/setters) does this. The
+        # transaction() ctxmgr is the lone deviation.
+        del self.messages[:]
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         # Loop-binding check matches the sibling entry points

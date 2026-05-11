@@ -2124,6 +2124,13 @@ class Cursor:
         return row
 
     def __enter__(self) -> Self:
+        # PEP 249 §6.4 messages-clear contract — sibling __iter__
+        # already clears with the same rationale. Skip on a closed
+        # cursor (the iteration entry mirrors this), so `with cur:`
+        # on a closed cursor is a permissive no-op clear (closed
+        # cursors have already had messages scrubbed by close()).
+        if not self._closed:
+            del self.messages[:]
         return self
 
     def __exit__(

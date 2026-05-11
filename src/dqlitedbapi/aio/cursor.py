@@ -1092,6 +1092,11 @@ class AsyncCursor:
         return row
 
     async def __aenter__(self) -> Self:
+        # PEP 249 §6.4 messages-clear contract — sibling __aiter__
+        # already clears with the same rationale. Skip on a closed
+        # cursor (matches __aiter__'s shape).
+        if not self._closed:
+            del self.messages[:]
         # Surface loop-binding mismatches up front (mirroring
         # ``__aiter__``), so a cursor created on loop A and entered
         # via ``async with cur:`` on loop B raises at the ``with``
