@@ -1474,6 +1474,17 @@ class Cursor:
                 "executemany() seq_of_parameters must be a sequence/iterable, not None",
                 code=None,
             )
+        # PEP 249 §7: surface non-str ``operation`` as a ``dbapi.Error``
+        # subclass up front so cross-driver ``except dbapi.Error:`` catches
+        # the misuse. Without this guard, downstream calls (e.g.
+        # ``_strip_leading_comments(operation)``) raise bare
+        # ``TypeError`` / ``AttributeError`` that escape the hierarchy.
+        # Mirrors the canonical sibling guard on ``Cursor.execute``.
+        if not isinstance(operation, str):
+            raise ProgrammingError(
+                f"operation must be a str SQL statement, got {type(operation).__name__}",
+                code=None,
+            )
         # ``_lastrowid`` clear is intentionally deferred until AFTER the
         # verb-rejection guards below. A rejected ``executemany`` (a
         # transaction-control verb, a row-returning shape) means no

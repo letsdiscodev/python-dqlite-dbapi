@@ -488,6 +488,15 @@ class AsyncCursor:
                 "executemany() seq_of_parameters must be a sequence/iterable, not None",
                 code=None,
             )
+        # PEP 249 §7: surface non-str ``operation`` as a ``dbapi.Error``
+        # subclass up front so cross-driver ``except dbapi.Error:`` catches
+        # the misuse. Mirrors the canonical sibling guard on
+        # ``AsyncCursor.execute`` and the sync ``Cursor.executemany``.
+        if not isinstance(operation, str):
+            raise ProgrammingError(
+                f"operation must be a str SQL statement, got {type(operation).__name__}",
+                code=None,
+            )
         # Reject concurrent execute/executemany on the same cursor
         # — see ``execute`` for full rationale. The slot-state check
         # observes the existing slot BEFORE the slot is set; the
