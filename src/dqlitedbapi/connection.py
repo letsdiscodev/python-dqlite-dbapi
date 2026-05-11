@@ -1404,9 +1404,16 @@ class Connection:
         # contract that ``cursor`` / ``commit`` / ``rollback`` /
         # ``close`` already follow.
         del self.messages[:]
-        self._check_thread()
+        # Closed-first precedence — rationale at the canonical site
+        # (``commit``): closed-conn diagnostic is more salient than
+        # thread-affinity, and stdlib sqlite3 raises closed-first
+        # regardless of thread. Every other public Connection method
+        # (commit/rollback/cursor/transaction/execute/executemany/
+        # autocommit/isolation_level/row_factory/text_factory setters)
+        # orders the same way.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        self._check_thread()
         # _get_async_connection is a coroutine; route through _run_sync
         # so we share the same loop-in-thread the cursor path uses.
         self._run_sync(self._get_async_connection())
