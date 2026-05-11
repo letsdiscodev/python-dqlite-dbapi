@@ -98,7 +98,7 @@ async def test_async_setinputsizes_loop_affinity_precedes_shape_validation() -> 
     def _runner() -> None:
         async def _invoke() -> None:
             try:
-                cur.setinputsizes(b"not a sequence-of-int")  # type: ignore[arg-type]
+                cur.setinputsizes(b"not a sequence-of-int")
             except BaseException as e:  # noqa: BLE001
                 holder.append(e)
 
@@ -164,5 +164,5 @@ async def test_async_open_cursor_same_loop_bad_arg_still_raises_shape() -> None:
     cur = AsyncCursor(conn)
     conn._ensure_locks()
     with pytest.raises(ProgrammingError) as excinfo:
-        cur.setinputsizes(b"not a sequence-of-int")  # type: ignore[arg-type]
+        cur.setinputsizes(b"not a sequence-of-int")
     assert "size hints" in str(excinfo.value) or "expects a sequence" in str(excinfo.value)
