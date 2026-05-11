@@ -1874,14 +1874,24 @@ class AsyncConnection:
             # forensic trail exists for an operator triaging cleanup-
             # time failures.
             #
-            # ``asyncio.shield`` so a fresh outer cancel landing during
-            # the cleanup-close cannot itself replace the original
-            # connect-time exception. Without the shield, a cancel
-            # mid-cleanup raises a NEW ``CancelledError`` from
-            # ``close()``, which Python then propagates instead of the
-            # original — operators see the cleanup-cleanup site, not
-            # the connect failure that triggered cleanup. Mirrors the
-            # SA-adapter cleanup-on-failure discipline.
+            # ``asyncio.shield`` lets the inner ``close()`` task finish
+            # its drain even when the cancellation that triggered the
+            # original ``connect()`` failure is the SAME inner cancel
+            # chain — without the shield, ``close()`` would itself be
+            # cancelled before draining and the original
+            # ``CancelledError`` context would be lost mid-flight. (This
+            # is the load-bearing property; see the historical fix in
+            # the package.) The shield does NOT preserve the original
+            # connect-time exception against a FRESH outer cancel
+            # landing during this cleanup: ``await asyncio.shield(...)``
+            # still raises a new ``CancelledError`` in the outer
+            # awaiter, which is a ``BaseException`` subclass and so
+            # escapes the ``except Exception`` arm below, replacing the
+            # original (which survives only as ``__context__``).
+            # Cancellation propagation winning over exception
+            # preservation is the project-wide structured-concurrency
+            # posture. Mirrors the SA-adapter cleanup-on-failure
+            # discipline.
             try:
                 await asyncio.shield(self.close())
             except Exception:
