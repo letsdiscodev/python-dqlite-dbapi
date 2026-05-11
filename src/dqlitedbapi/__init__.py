@@ -22,6 +22,7 @@ state misuse portably should catch ``Error`` (the parent class).
 # ``DQLITEWIRE_ALLOW_FREE_THREADED=1`` is signalling they accept
 # the single-owner discipline across all layers.
 
+import logging
 from typing import Final, Literal, NoReturn
 
 from dqlitedbapi._constants import (
@@ -271,3 +272,13 @@ def enable_callback_tracebacks(*args: object, **kwargs: object) -> NoReturn:
         "dqlitedbapi does not support stdlib sqlite3 enable_callback_tracebacks; "
         "this driver has no callback-handler family for the toggle to apply to"
     )
+
+
+# Convention from the Python logging HOWTO: attach a ``NullHandler``
+# to the library's top-level logger so applications that have not
+# configured logging don't see the ``lastResort`` stderr emission,
+# and downstream code can silence the library cleanly via
+# ``getLogger("dqlitedbapi").propagate = False``. The ``aio``
+# sub-package inherits this handler via propagation; no separate
+# handler is needed there.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
