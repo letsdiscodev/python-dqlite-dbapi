@@ -887,6 +887,17 @@ class AsyncCursor:
         # the sync sibling and from the documented intent.
         if self._closed or self._connection._closed:
             return
+        # Affinity-before-shape on the open-cursor path: surface a
+        # loop-binding mismatch up front so callers see the same
+        # ``ProgrammingError`` they'd get from ``execute`` /
+        # ``fetchone``. Without this, a sync no-op on a cursor bound
+        # to loop A but called from loop B silently succeeds and
+        # masks the misuse until the next awaited op. Non-binding
+        # helper so calling this on a fresh connection doesn't
+        # lazily bind it. Mirrors the sync sibling's affinity-before-
+        # shape ordering and the ``nextset`` / ``scroll`` /
+        # ``executescript`` / ``callproc`` ordering convention.
+        self._connection._check_loop_binding()
         # Validate input shape symmetric with the sync sibling so a
         # caller-side bug (e.g. passing a string) surfaces at the call
         # site rather than being silently absorbed. PEP 249 §7 keeps
@@ -902,14 +913,6 @@ class AsyncCursor:
             # ``deque`` / ``range`` / custom Sequence subclass —
             # accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
-        # Surface a loop-binding mismatch up front so callers see the
-        # same ``ProgrammingError`` they'd get from ``execute`` /
-        # ``fetchone``. Without this, a sync no-op on a cursor bound
-        # to loop A but called from loop B silently succeeds and
-        # masks the misuse until the next awaited op. Non-binding
-        # helper so calling this on a fresh connection doesn't
-        # lazily bind it.
-        self._connection._check_loop_binding()
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
@@ -918,6 +921,9 @@ class AsyncCursor:
         # ``setinputsizes`` rationale.
         if self._closed or self._connection._closed:
             return
+        # Affinity-before-shape on the open-cursor path; see
+        # ``setinputsizes`` for the full rationale.
+        self._connection._check_loop_binding()
         # Validate input shape symmetric with sync sibling.
         if not isinstance(size, int) or isinstance(size, bool):
             raise ProgrammingError(f"setoutputsize expects an int, got {type(size).__name__}")
@@ -925,7 +931,6 @@ class AsyncCursor:
             raise ProgrammingError(
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
-        self._connection._check_loop_binding()
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
         """PEP 249 optional extension — not supported.

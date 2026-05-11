@@ -1945,9 +1945,18 @@ class Cursor:
         # mid-tear-down — symmetric with the async sibling.
         if self._closed or self._connection._closed:
             return
-        # Validate input shape symmetric with the call sites that DO
-        # exercise the no-op (open cursor) — the validators run only
-        # after the closed-cursor short-circuit so a closed-cursor
+        # On the open-cursor path, fire thread-affinity BEFORE shape
+        # validation so a cross-thread caller with a misshapen ``sizes``
+        # gets the affinity diagnostic, not the shape diagnostic.
+        # Mirrors the ordering of ``nextset`` / ``scroll`` /
+        # ``executescript`` / ``callproc`` (check-thread before
+        # input-validation). The closed-permissive-return above
+        # remains BEFORE the affinity check (closed-state is shape-
+        # independent — see the sibling ``done/`` issue that fixed the
+        # closed-vs-validator ordering).
+        self._connection._check_thread()
+        # Validate input shape — runs only after the closed-cursor
+        # short-circuit and the affinity check so a closed-cursor
         # cleanup helper can call setinputsizes / setoutputsize without
         # a raise regardless of argument shape.
         if isinstance(sizes, (str, bytes, bytearray)):
@@ -1965,7 +1974,6 @@ class Cursor:
             # callers passing a ``deque`` / ``range`` / custom Sequence
             # subclass — accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
-        self._connection._check_thread()
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
@@ -1976,6 +1984,9 @@ class Cursor:
         # the async sibling.
         if self._closed or self._connection._closed:
             return
+        # Affinity-before-shape on the open-cursor path; see
+        # ``setinputsizes`` for the full rationale.
+        self._connection._check_thread()
         # Validate input shape — see ``setinputsizes`` rationale.
         # ``ProgrammingError`` keeps the failure inside the
         # ``dbapi.Error`` hierarchy per PEP 249 §7.
@@ -1985,7 +1996,6 @@ class Cursor:
             raise ProgrammingError(
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
-        self._connection._check_thread()
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
         """PEP 249 optional extension — not supported.
