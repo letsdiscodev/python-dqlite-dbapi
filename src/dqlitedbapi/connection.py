@@ -1092,7 +1092,27 @@ class Connection:
                     "condition and retry on a fresh connection.",
                     code=None,
                 )
-            loop = self._ensure_loop()
+            # Defensive narrow wrap: if ``_ensure_loop()`` raises
+            # before the coroutine is scheduled (rare paths: OS
+            # thread-start failure, ``new_event_loop`` failing under
+            # FD ulimit exhaustion), close ``coro`` so the
+            # unscheduled coroutine doesn't emit
+            # ``RuntimeWarning("coroutine was never awaited")`` at GC.
+            # The sibling cleanup arms at lines 1036 / 1075 / 1124
+            # all close ``coro``; this completes the discipline for
+            # the third failure mode. Distinct from the
+            # ``run_coroutine_threadsafe`` RuntimeError arm below —
+            # that one knows the loop is closed; this one knows we
+            # never even built the loop. Conflating them in one
+            # except would route an OS-resource-exhaustion error
+            # through the "event loop closed" remap, misleading
+            # operators. Pinned by
+            # tests/test_run_sync_ensure_loop_raise_closes_coroutine.py.
+            try:
+                loop = self._ensure_loop()
+            except BaseException:
+                coro.close()
+                raise
             try:
                 future = asyncio.run_coroutine_threadsafe(coro, loop)
             except RuntimeError as e:
