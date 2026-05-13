@@ -2681,11 +2681,16 @@ class Connection:
             "use the dqlite-server dump/restore mechanism instead"
         )
 
-    def iterdump(self, *args: object, **kwargs: object) -> NoReturn:
-        # ``*args/**kwargs`` so Python 3.13's new ``filter=`` kwarg (and
-        # any future additions) routes through ``_stub_unsupported``
-        # rather than leaking a bare ``TypeError`` outside the
-        # ``dqlitedbapi.Error`` hierarchy.
+    def iterdump(self, *args: object, filter: str | None = None, **kwargs: object) -> NoReturn:
+        # Spell ``filter=`` explicitly so ``inspect.signature`` matches
+        # the documented stdlib-3.13 shape ``(*, filter=None)`` for
+        # cross-driver tooling that walks the dbapi-connection API
+        # surface (doc generators, IDE auto-complete,
+        # compatibility-shim detection). ``*args/**kwargs`` still
+        # absorbs any Python-3.14+ additions so callers route through
+        # ``_stub_unsupported`` rather than leaking a bare ``TypeError``
+        # outside the ``dqlitedbapi.Error`` hierarchy.
+        del filter  # accepted for signature parity; dqlite has no dump surface
         self._stub_unsupported(
             "dqlite does not support stdlib sqlite3 iterdump; "
             "use the dqlite-server dump/restore mechanism instead"
