@@ -1106,11 +1106,18 @@ class AsyncCursor:
         return row
 
     async def __aenter__(self) -> Self:
-        # PEP 249 §6.4 messages-clear contract — sibling __aiter__
-        # already clears with the same rationale. Skip on a closed
-        # cursor (matches __aiter__'s shape).
-        if not self._closed:
-            del self.messages[:]
+        # PEP 249 §6.4 messages-clear contract — unconditional,
+        # mirroring the sibling __aiter__ above which also clears
+        # regardless of _closed state. Every secondary entry point
+        # in the cursor surface (nextset / callproc / scroll /
+        # setinputsizes / setoutputsize / __iter__ / __aiter__ /
+        # __enter__) clears unconditionally; the closed-cursor case
+        # is admitted because a future driver path that appends to
+        # messages from a cross-loop / cross-thread background
+        # producer (e.g., a deferred warning enqueued from
+        # ``_invalidate``) must not be observed by ``async with cur:``
+        # on a closed cursor.
+        del self.messages[:]
         # Surface loop-binding mismatches up front (mirroring
         # ``__aiter__``), so a cursor created on loop A and entered
         # via ``async with cur:`` on loop B raises at the ``with``

@@ -42,3 +42,49 @@ async def test_async_aiter_clears_messages() -> None:
         assert list(cur.messages) == []
     finally:
         await cur.close()
+
+
+def test_sync_enter_clears_messages_on_closed_cursor() -> None:
+    """``Cursor.__enter__`` clears messages unconditionally — symmetric
+    with the sibling ``__iter__`` (which clears regardless of
+    ``_closed`` state). PEP 249 §6.4 applies to every secondary entry
+    point, not just the open-cursor ones.
+
+    Pre-fix the ``__enter__`` body had ``if not self._closed: del
+    self.messages[:]`` with a comment claiming it matched ``__iter__``'s
+    shape — but ``__iter__`` does not skip on a closed cursor. The
+    asymmetry would let a future driver path that appends to
+    ``messages`` after close be observed by a closed-cursor
+    ``with cur:`` even though ``with cur:`` is a documented clear-on-
+    entry site.
+    """
+    conn = Connection("127.0.0.1:9001")
+    try:
+        cur = conn.cursor()
+        cur.close()
+        # Append AFTER close (close itself clears messages). Simulates
+        # a future driver path that publishes to messages from a
+        # background producer.
+        cur.messages.append((Warning, "stale-after-close"))
+        with cur:
+            assert list(cur.messages) == [], (
+                "Cursor.__enter__ must clear messages on entry (PEP 249 §6.4) "
+                "symmetric with __iter__'s unconditional clear"
+            )
+    finally:
+        conn._closed = True
+
+
+async def test_async_aenter_clears_messages_on_closed_cursor() -> None:
+    """``AsyncCursor.__aenter__`` clears messages unconditionally —
+    symmetric with the sibling ``__aiter__`` (which clears regardless
+    of ``_closed`` state). Mirrors the sync sibling test above."""
+    conn = AsyncConnection("127.0.0.1:9001")
+    cur = conn.cursor()
+    await cur.close()
+    cur.messages.append((Warning, "stale-after-close"))
+    async with cur:
+        assert list(cur.messages) == [], (
+            "AsyncCursor.__aenter__ must clear messages on entry "
+            "(PEP 249 §6.4) symmetric with __aiter__'s unconditional clear"
+        )

@@ -2145,13 +2145,16 @@ class Cursor:
         return row
 
     def __enter__(self) -> Self:
-        # PEP 249 §6.4 messages-clear contract — sibling __iter__
-        # already clears with the same rationale. Skip on a closed
-        # cursor (the iteration entry mirrors this), so `with cur:`
-        # on a closed cursor is a permissive no-op clear (closed
-        # cursors have already had messages scrubbed by close()).
-        if not self._closed:
-            del self.messages[:]
+        # PEP 249 §6.4 messages-clear contract — unconditional,
+        # mirroring the sibling __iter__ above which also clears
+        # regardless of _closed state. Every secondary entry point
+        # in the cursor surface (nextset / callproc / scroll /
+        # setinputsizes / setoutputsize / __iter__ / __aiter__ /
+        # __aenter__) clears unconditionally; the closed-cursor case
+        # is admitted because a future driver path that appends to
+        # messages from a cross-thread background producer must not
+        # be observed by ``with cur:`` on a closed cursor.
+        del self.messages[:]
         return self
 
     def __exit__(
