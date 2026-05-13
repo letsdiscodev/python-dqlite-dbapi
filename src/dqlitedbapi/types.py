@@ -293,9 +293,13 @@ class _DBAPIType:
         return self._name or f"_DBAPIType({sorted(self.values, key=str)!r})"
 
 
-STRING = _DBAPIType("TEXT", "VARCHAR", "CHAR", "CLOB", ValueType.TEXT, _name="STRING")
-BINARY = _DBAPIType("BLOB", "BINARY", "VARBINARY", ValueType.BLOB, _name="BINARY")
-NUMBER = _DBAPIType(
+STRING: Final[_DBAPIType] = _DBAPIType(
+    "TEXT", "VARCHAR", "CHAR", "CLOB", ValueType.TEXT, _name="STRING"
+)
+BINARY: Final[_DBAPIType] = _DBAPIType(
+    "BLOB", "BINARY", "VARBINARY", ValueType.BLOB, _name="BINARY"
+)
+NUMBER: Final[_DBAPIType] = _DBAPIType(
     "INTEGER",
     "INT",
     "SMALLINT",
@@ -309,7 +313,7 @@ NUMBER = _DBAPIType(
     ValueType.BOOLEAN,
     _name="NUMBER",
 )
-DATETIME = _DBAPIType(
+DATETIME: Final[_DBAPIType] = _DBAPIType(
     "DATE",
     "TIME",
     "TIMESTAMP",
@@ -318,7 +322,9 @@ DATETIME = _DBAPIType(
     ValueType.UNIXTIME,
     _name="DATETIME",
 )
-ROWID = _DBAPIType("ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER, _name="ROWID")
+ROWID: Final[_DBAPIType] = _DBAPIType(
+    "ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER, _name="ROWID"
+)
 
 
 # Internal conversion helpers.
