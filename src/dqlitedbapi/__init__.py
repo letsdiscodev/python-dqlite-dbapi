@@ -267,7 +267,7 @@ def connect(
 # ``_convert_bind_param`` consults the registry. ``PrepareProtocol``
 # is the stdlib-parity sentinel passed to ``__conform__`` for the
 # adapter-discovery fallback path.
-from dqlitedbapi.types import (  # noqa: E402, F401
+from dqlitedbapi.types import (  # noqa: E402
     PrepareProtocol,
     register_adapter,
     unregister_adapter,

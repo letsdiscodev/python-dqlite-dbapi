@@ -10,7 +10,7 @@ from typing import Final, Literal
 # ``dbapi.NotSupportedError`` rather than ``AttributeError`` —
 # matching the discipline already applied to ``register_adapter``
 # (re-exported from the sync surface for the same reason).
-from dqlitedbapi import (  # noqa: E402 — module-level re-export
+from dqlitedbapi import (  # module-level re-export
     LEGACY_TRANSACTION_CONTROL,
     PARSE_COLNAMES,
     PARSE_DECLTYPES,
