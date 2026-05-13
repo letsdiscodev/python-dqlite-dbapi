@@ -193,6 +193,7 @@ class TestTypesModuleAll:
                 "DATETIME",
                 "ROWID",
                 "DescriptionTuple",
+                "RowFactory",
                 "register_adapter",
                 "unregister_adapter",
             ]

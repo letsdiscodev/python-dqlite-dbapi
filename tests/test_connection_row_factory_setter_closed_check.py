@@ -22,7 +22,7 @@ def test_sync_row_factory_setter_closed_raises_interface_error() -> None:
     c._closed = True
     c._closed_flag[0] = True
     sentinel = object()
-    c._row_factory = sentinel
+    c._row_factory = sentinel  # type: ignore[assignment]
     with pytest.raises(InterfaceError, match="closed"):
         c.row_factory = lambda cur, row: row
     assert c._row_factory is sentinel, (
@@ -34,7 +34,7 @@ def test_async_row_factory_setter_closed_raises_interface_error() -> None:
     c = AsyncConnection("127.0.0.1:9999")
     c._closed = True
     sentinel = object()
-    c._row_factory = sentinel
+    c._row_factory = sentinel  # type: ignore[assignment]
     with pytest.raises(InterfaceError, match="closed"):
         c.row_factory = lambda cur, row: row
     assert c._row_factory is sentinel

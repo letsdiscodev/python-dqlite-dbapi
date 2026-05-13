@@ -21,6 +21,7 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
 )
 from dqlitedbapi.types import (
+    RowFactory,
     _convert_bind_param,
     _datetime_from_iso8601,
     _datetime_from_unixtime,
@@ -1090,7 +1091,7 @@ class Cursor:
         # wrap every row. Use class-name comparison rather than
         # ``isinstance`` to avoid the cursor → connection import
         # cycle.
-        self._row_factory: Any = (
+        self._row_factory: RowFactory | None = (
             getattr(connection, "_row_factory", None)
             if type(connection).__name__ == "Connection"
             else None
@@ -1257,7 +1258,7 @@ class Cursor:
         return self._closed
 
     @property
-    def row_factory(self) -> Any:
+    def row_factory(self) -> RowFactory | None:
         """stdlib ``sqlite3.Cursor.row_factory`` parity hook.
 
         Set to a callable ``factory(cursor, row) -> Any`` to wrap each

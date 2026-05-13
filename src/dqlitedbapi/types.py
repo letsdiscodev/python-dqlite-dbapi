@@ -22,6 +22,7 @@ __all__ = [
     "Date",
     "DateFromTicks",
     "DescriptionTuple",
+    "RowFactory",
     "Time",
     "TimeFromTicks",
     "Timestamp",
@@ -41,6 +42,18 @@ __all__ = [
 # client/cluster.py, sqlalchemydqlite/aio.py).
 type DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
 type _Description = tuple[DescriptionTuple, ...] | None
+
+# stdlib ``sqlite3``-style row factory callable. Invoked as
+# ``factory(cursor, row_tuple)`` (see ``Connection.row_factory`` /
+# ``Cursor.row_factory`` docstrings) and may return any object — the
+# value replaces the raw tuple in the cursor's result stream.
+# ``Callable[..., Any]`` avoids the forward-reference circularity
+# between the cursor and connection types; the setter on both
+# ``Connection.row_factory`` and ``Cursor.row_factory`` validates
+# ``callable(value)`` at runtime, so the call shape is enforced
+# operationally. Used as the canonical type across the four mirror
+# sites (sync/async × connection/cursor).
+type RowFactory = Callable[..., Any]
 
 
 # Type constructors

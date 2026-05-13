@@ -27,7 +27,7 @@ from dqlitedbapi.exceptions import (
     NotSupportedError,
     ProgrammingError,
 )
-from dqlitedbapi.types import _Description
+from dqlitedbapi.types import RowFactory, _Description
 from dqlitewire.constants import ValueType
 
 if TYPE_CHECKING:
@@ -81,7 +81,7 @@ class AsyncCursor:
         # parity). Class-name check restricts inheritance to real
         # AsyncConnection instances — MagicMock-typed test fakes
         # would otherwise silently wrap every row.
-        self._row_factory: Any = (
+        self._row_factory: RowFactory | None = (
             getattr(connection, "_row_factory", None)
             if type(connection).__name__ == "AsyncConnection"
             else None
@@ -225,7 +225,7 @@ class AsyncCursor:
         return self._closed
 
     @property
-    def row_factory(self) -> Any:
+    def row_factory(self) -> RowFactory | None:
         """stdlib ``sqlite3.Cursor.row_factory`` parity hook. See
         sync sibling ``Cursor.row_factory`` for full docs."""
         return self._row_factory

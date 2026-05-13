@@ -27,6 +27,7 @@ from dqlitedbapi.exceptions import (
     OperationalError,
     ProgrammingError,
 )
+from dqlitedbapi.types import RowFactory
 from dqlitewire import (
     DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
 )
@@ -888,7 +889,7 @@ class Connection:
         self._closed = False
         # stdlib ``sqlite3.Connection.row_factory`` parity. None means
         # "return plain tuples". New cursors inherit this default.
-        self._row_factory: Any = None
+        self._row_factory: RowFactory | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._loop_lock = threading.Lock()
@@ -2432,7 +2433,7 @@ class Connection:
         return getattr(inner, "_protocol", "_sentinel") is None
 
     @property
-    def row_factory(self) -> Any:
+    def row_factory(self) -> RowFactory | None:
         """stdlib ``sqlite3.Connection.row_factory`` parity hook.
 
         Set to a callable ``factory(cursor, row) -> Any`` to wrap

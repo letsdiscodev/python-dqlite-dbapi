@@ -28,6 +28,7 @@ from dqlitedbapi.exceptions import (
     OperationalError,
     ProgrammingError,
 )
+from dqlitedbapi.types import RowFactory
 from dqlitewire import (
     DEFAULT_MAX_CONTINUATION_FRAMES as _DEFAULT_MAX_CONTINUATION_FRAMES,
 )
@@ -237,7 +238,7 @@ class AsyncConnection:
         self._transaction_owner: asyncio.Task[Any] | None = None
         # stdlib ``sqlite3.Connection.row_factory`` parity. None
         # means "return plain tuples". New cursors inherit this default.
-        self._row_factory: Any = None
+        self._row_factory: RowFactory | None = None
         # Fork-after-init is unsupported: the inherited TCP socket
         # is shared with the parent and writer.close() would FIN
         # the parent's connection, and asyncio primitives are bound
@@ -1546,7 +1547,7 @@ class AsyncConnection:
         return getattr(inner, "_protocol", "_sentinel") is None
 
     @property
-    def row_factory(self) -> "Any":
+    def row_factory(self) -> RowFactory | None:
         """stdlib ``sqlite3.Connection.row_factory`` parity hook.
         See sync sibling for full docs. New cursors inherit this
         default; per-cursor override via ``cur.row_factory = ...``."""
