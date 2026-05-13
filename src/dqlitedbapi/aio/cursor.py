@@ -28,7 +28,7 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
 )
 from dqlitedbapi.types import RowFactory, _Description
-from dqlitewire.constants import ValueType
+from dqlitewire import ValueType
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection

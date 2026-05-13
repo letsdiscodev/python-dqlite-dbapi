@@ -27,7 +27,7 @@ from dqlitedbapi.types import (
     _datetime_from_unixtime,
     _Description,
 )
-from dqlitewire.constants import (
+from dqlitewire import (
     DQLITE_NOTFOUND,
     DQLITE_PARSE,
     DQLITE_PROTO,

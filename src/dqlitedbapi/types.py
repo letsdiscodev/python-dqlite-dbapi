@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any, Final, final
 
 from dqlitedbapi.exceptions import DataError, ProgrammingError
-from dqlitewire.constants import ValueType
+from dqlitewire import ValueType
 
 # PEP 249 §3: type objects + constructors. ``DescriptionTuple`` is
 # the public alias for the cursor.description row shape — exported so

@@ -34,8 +34,11 @@ from dqlitewire import (
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
 )
-from dqlitewire import NO_TRANSACTION_MESSAGE_SUBSTRINGS, WIRE_DECODE_FAILED_PREFIX
-from dqlitewire.constants import primary_sqlite_code
+from dqlitewire import (
+    NO_TRANSACTION_MESSAGE_SUBSTRINGS,
+    WIRE_DECODE_FAILED_PREFIX,
+    primary_sqlite_code,
+)
 
 __all__ = ["Connection"]
 
