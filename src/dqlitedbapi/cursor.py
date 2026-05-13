@@ -734,9 +734,37 @@ def _classify_caller_sql(
     if skip_param_count_check:
         return
     if parameters is not None:
-        # Mappings, str, bytes are rejected by the binding layer
-        # later — skip the count check for them since len() doesn't
-        # mean what we want.
+        # Reject structural outer-shape mistakes (str/bytes/bytearray/
+        # memoryview, Mapping, set/frozenset) BEFORE the placeholder-
+        # count check. Otherwise ``len("abc") == 3`` surfaces the
+        # misleading count-mismatch diagnostic ("uses 1, and there
+        # are 3 supplied") for a single string passed as the outer
+        # params, blaming the caller for the wrong reason.
+        # ``_reject_non_sequence_params`` (called later from
+        # ``_convert_bind_params``) is the same discipline; hoisting
+        # the structural arms here surfaces the diagnostic at the
+        # caller's frame with the sharper "did you mean (value,)?"
+        # tutorial. Unsized iterables (generators / iterators)
+        # deliberately skip this reject and fall through to the
+        # ``TypeError`` arm below — preserving the documented
+        # "binding-layer handles unsized" contract pinned by
+        # ``test_classify_caller_sql.test_non_sized_iterable_silently_skips_count_check``.
+        if isinstance(parameters, (str, bytes, bytearray, memoryview)):
+            raise ProgrammingError(
+                f"parameters must be a sequence of values, not "
+                f"{type(parameters).__name__!r}; did you mean to pass a tuple "
+                f"like (value,) with a single element?"
+            )
+        if isinstance(parameters, Mapping):
+            raise ProgrammingError(
+                "qmark paramstyle requires a sequence; got a mapping. "
+                "Use a list or tuple positionally matching the ? placeholders."
+            )
+        if isinstance(parameters, (set, frozenset)):
+            raise ProgrammingError(
+                "qmark paramstyle requires an ordered sequence; got a set. "
+                "Use a list or tuple positionally matching the ? placeholders."
+            )
         try:
             param_count = len(parameters)
         except TypeError:
@@ -1655,12 +1683,34 @@ class Cursor:
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         try:
             for params in seq_of_parameters:
-                # Per-iteration ``?``-count vs ``len(params)``. Mappings,
-                # str, bytes are rejected by the binding layer later —
-                # skip the count check for them since len() doesn't
-                # mean what we want. Mirrors ``_classify_caller_sql``'s
-                # late check on a per-row basis.
+                # Per-iteration structural reject + ``?``-count check.
+                # Mirrors ``_classify_caller_sql``'s discipline: the
+                # structural-type reject (``str``/``bytes``/
+                # ``bytearray``/``memoryview``/``Mapping``/``set``/
+                # ``frozenset``) runs BEFORE ``len(params)`` so a
+                # single string/bytes row surfaces with the sharp
+                # structural diagnostic rather than a misleading
+                # per-character count. Unsized iterables deliberately
+                # skip the count check and fall through to the bind
+                # layer's rejection (matches the sibling pin at
+                # ``_classify_caller_sql``).
                 if params is not None:
+                    if isinstance(params, (str, bytes, bytearray, memoryview)):
+                        raise ProgrammingError(
+                            f"parameters must be a sequence of values, not "
+                            f"{type(params).__name__!r}; did you mean to pass a tuple "
+                            f"like (value,) with a single element?"
+                        )
+                    if isinstance(params, Mapping):
+                        raise ProgrammingError(
+                            "qmark paramstyle requires a sequence; got a mapping. "
+                            "Use a list or tuple positionally matching the ? placeholders."
+                        )
+                    if isinstance(params, (set, frozenset)):
+                        raise ProgrammingError(
+                            "qmark paramstyle requires an ordered sequence; got a set. "
+                            "Use a list or tuple positionally matching the ? placeholders."
+                        )
                     try:
                         param_count = len(params)
                     except TypeError:
