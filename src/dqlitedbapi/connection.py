@@ -2612,8 +2612,19 @@ class Connection:
     def set_trace_callback(self, *args: object, **kwargs: object) -> NoReturn:
         self._stub_unsupported("dqlite-server does not expose a per-statement trace callback")
 
-    @property
-    def total_changes(self) -> NoReturn:
+    def total_changes(self, *args: object, **kwargs: object) -> NoReturn:
+        """dqlite-server does not surface a total_changes counter on
+        the wire.
+
+        Stdlib ``sqlite3.Connection.total_changes`` is an int-valued
+        attribute. This driver exposes it as a callable stub
+        (parens required) to keep the ``hasattr(conn, "total_changes")``
+        invariant that the rest of the stub family relies on —
+        ``hasattr`` would propagate the ``NotSupportedError`` raised
+        from a property-getter, breaking cross-driver feature-probe
+        code. Pinned by tests/test_total_changes_hasattr_safe.py and
+        tests/test_pep249_stub_hasattr_divergence.py.
+        """
         self._stub_unsupported("dqlite-server does not surface a total_changes counter on the wire")
 
     def getlimit(self, *args: object, **kwargs: object) -> NoReturn:

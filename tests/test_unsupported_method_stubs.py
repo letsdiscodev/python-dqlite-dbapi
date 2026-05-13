@@ -137,7 +137,7 @@ class TestSyncCycle22StubFamily:
 
     def test_total_changes(self, conn: dqlitedbapi.Connection) -> None:
         with pytest.raises(NotSupportedError, match="total_changes"):
-            _ = conn.total_changes  # property, no parens
+            conn.total_changes()  # method, parens — see total_changes docstring
 
     def test_getlimit(self, conn: dqlitedbapi.Connection) -> None:
         with pytest.raises(NotSupportedError, match="getlimit"):
@@ -257,7 +257,7 @@ class TestAsyncCycle22StubFamily:
 
     def test_total_changes(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError, match="total_changes"):
-            _ = aconn.total_changes  # property, no parens
+            aconn.total_changes()  # method, parens — see total_changes docstring
 
     def test_getlimit(self, aconn: AsyncConnection) -> None:
         with pytest.raises(NotSupportedError, match="getlimit"):

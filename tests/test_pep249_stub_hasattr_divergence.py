@@ -26,25 +26,30 @@ def conn() -> Connection:
     return Connection("localhost:9001", timeout=1.0)
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "tpc_begin",
-        "tpc_prepare",
-        "tpc_commit",
-        "tpc_rollback",
-        "tpc_recover",
-        "xid",
-        "enable_load_extension",
-        "load_extension",
-        "backup",
-        "iterdump",
-        "create_function",
-        "create_aggregate",
-        "create_collation",
-        "create_window_function",
-    ],
-)
+_STUB_NAMES = [
+    "tpc_begin",
+    "tpc_prepare",
+    "tpc_commit",
+    "tpc_rollback",
+    "tpc_recover",
+    "xid",
+    "enable_load_extension",
+    "load_extension",
+    "backup",
+    "iterdump",
+    "create_function",
+    "create_aggregate",
+    "create_collation",
+    "create_window_function",
+    # total_changes was the lone ``@property`` outlier in the family;
+    # converting it to a method preserves the hasattr-returns-True
+    # invariant the rest of the list relies on. See
+    # tests/test_total_changes_hasattr_safe.py for the rationale.
+    "total_changes",
+]
+
+
+@pytest.mark.parametrize("name", _STUB_NAMES)
 def test_connection_stub_methods_present_for_pep249_compliance(conn: Connection, name: str) -> None:
     """``hasattr`` returns True — the stub is present so
     ``except dbapi.Error:`` catches the rejection uniformly.
@@ -52,6 +57,19 @@ def test_connection_stub_methods_present_for_pep249_compliance(conn: Connection,
     there). Documented divergence."""
     assert hasattr(conn, name)
     method = getattr(conn, name)
+    assert callable(method)
+
+
+@pytest.mark.parametrize("name", _STUB_NAMES)
+def test_async_connection_stub_methods_present_for_pep249_compliance(name: str) -> None:
+    """Async sibling pin — AsyncConnection's stub family mirrors the
+    sync sibling, including total_changes which was also a property
+    outlier."""
+    from dqlitedbapi.aio.connection import AsyncConnection
+
+    aconn = AsyncConnection("localhost:9001", timeout=1.0)
+    assert hasattr(aconn, name)
+    method = getattr(aconn, name)
     assert callable(method)
 
 
