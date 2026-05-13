@@ -708,14 +708,19 @@ class AsyncCursor:
 
         Returns an empty list when no more rows are available OR when
         no result set is active (DML-only / never-executed). Stdlib
-        parity with ``sqlite3.Cursor.fetchmany`` matching the
-        ``fetchone`` parity already in place.
+        parity with ``sqlite3.Cursor.fetchmany`` for the "no result
+        set" case matching the ``fetchone`` parity already in place.
 
-        **Divergence from psycopg3**: an explicit ``size=0`` returns
-        ``[]`` here (stdlib ``sqlite3`` parity). psycopg3 treats
-        ``size=0`` as "use ``self.arraysize``". Pass ``None`` or
-        omit ``size`` to default to ``self.arraysize``. See sync
-        sibling for the rationale.
+        **``size=0`` divergence (cross-driver matrix)**: dqlite
+        returns ``[]`` deterministically. This differs from stdlib
+        ``sqlite3`` (whose behaviour for ``fetchmany(0)`` is
+        version-dependent — some Python/sqlite releases drain the
+        result set, others return ``[]``) and from psycopg3 (which
+        treats ``0`` as the sentinel "use ``self.arraysize``").
+        Cross-driver code should pass an explicit positive size,
+        use ``None`` / omit ``size`` to default to ``self.arraysize``,
+        or rely on ``fetchall()`` to drain. See sync sibling for the
+        full rationale.
         """
         del self.messages[:]
         self._check_closed()

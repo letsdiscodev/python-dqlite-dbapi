@@ -1778,20 +1778,26 @@ class Cursor:
         Returns an empty list when no more rows are available. ``size``
         defaults to ``self.arraysize``.
 
-        Stdlib parity: ``sqlite3.Cursor.fetchmany()`` after a DML
-        (no result set active) returns ``[]`` rather than raising,
-        matching the ``fetchone`` parity already in place. Cross-
-        driver code that polls ``cur.fetchmany(N) or default`` after
-        a connect-and-cursor sequence works on stdlib and dqlite.
+        Stdlib parity for the "no result set" case:
+        ``sqlite3.Cursor.fetchmany()`` after a DML (no result set
+        active) returns ``[]`` rather than raising, matching the
+        ``fetchone`` parity already in place. Cross-driver code that
+        polls ``cur.fetchmany(N) or default`` after a connect-and-
+        cursor sequence works on stdlib and dqlite.
 
-        **Divergence from psycopg3**: an explicit ``size=0`` returns
-        ``[]`` here (stdlib ``sqlite3`` parity). psycopg3 treats
-        ``size=0`` as the sentinel meaning "use ``self.arraysize``"
-        (its default IS ``size: int = 0``, not ``None``). Cross-
-        driver code ported from psycopg that calls
+        **``size=0`` divergence (cross-driver matrix)**: dqlite
+        returns ``[]`` deterministically. This differs from stdlib
+        ``sqlite3`` (which has historically drained the result set on
+        some Python/sqlite versions and returned ``[]`` on others —
+        the behaviour is version-dependent and was never a reliable
+        parity guarantee) and from psycopg3 (which treats ``0`` as
+        the sentinel "use ``self.arraysize``", since its default IS
+        ``size: int = 0``, not ``None``). Cross-driver code should
+        pass an explicit positive size, use ``None`` / omit the
+        argument to default to ``self.arraysize``, or rely on
+        ``fetchall()`` to drain. Code ported from psycopg that calls
         ``cur.fetchmany(0)`` thinking it requests "default batch"
-        gets an empty list under dqlite. Pass ``None`` or omit
-        ``size`` to default to ``self.arraysize``.
+        gets an empty list under dqlite.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
