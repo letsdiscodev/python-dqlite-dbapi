@@ -2812,3 +2812,14 @@ class Connection:
         # SA-style usage where Connection lifetimes outlive a single
         # ``with conn:`` block.) Callers who want eager close use
         # ``conn.close()`` explicitly or go through a pool.
+
+
+# PEP 249 optional parity extension mirroring the exception-class
+# attributes on ``Connection``: expose the ``Cursor`` class so cross-
+# driver adapter / instrumentation code can ``isinstance(cur,
+# conn.Cursor)`` without importing ``dqlitedbapi.cursor``. Assigned
+# outside the class body to avoid shadowing the ``Cursor`` type name
+# in method annotations within the class scope. Not a
+# ``cursor_factory`` hook — ``cursor()`` still instantiates ``Cursor``
+# directly; this is purely an introspection / isinstance-check surface.
+Connection.Cursor = Cursor  # type: ignore[attr-defined]

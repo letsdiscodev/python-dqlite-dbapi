@@ -2022,3 +2022,12 @@ class AsyncConnection:
         #
         # Callers who want eager close use ``conn.close()`` explicitly
         # or go through a pool.
+
+
+# Parity with sync ``Connection.Cursor``: expose ``AsyncCursor`` so
+# cross-driver adapter / instrumentation code can isinstance-check the
+# cursor type without importing ``dqlitedbapi.aio.cursor``. Assigned
+# outside the class body to avoid shadowing the ``AsyncCursor`` type
+# name in method annotations within the class scope. Not a factory
+# hook — ``cursor()`` still instantiates ``AsyncCursor`` directly.
+AsyncConnection.AsyncCursor = AsyncCursor  # type: ignore[attr-defined]
