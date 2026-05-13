@@ -205,7 +205,17 @@ class InterfaceError(Error):
         *,
         raw_message: str | None = None,
     ) -> None:
-        super().__init__(message)
+        # Cap the displayed ``message`` (i.e. ``args[0]``, what
+        # ``str(exc)`` / ``repr(exc)`` / pickling surfaces) at the same
+        # 4 KiB budget the ``raw_message`` cap uses. The wire layer's
+        # 64 KiB ``FailureResponse`` ceiling otherwise amplifies
+        # through Celery / multiprocessing pickled-exception payloads,
+        # BaseExceptionGroup fan-out, and repr-quoting overhead (Python
+        # repr inflates control-byte-heavy text 2-4×). String inputs
+        # take the cap; non-string ``message`` (e.g. integer code,
+        # exception ctxmgr None) passes through unchanged.
+        capped_message: object = _cap_raw_message(message) if isinstance(message, str) else message
+        super().__init__(capped_message)
         self.code = code
         resolved = str(message) if raw_message is None else raw_message
         self.raw_message = _cap_raw_message(resolved)
@@ -261,7 +271,11 @@ class DatabaseError(Error):
         *,
         raw_message: str | None = None,
     ) -> None:
-        super().__init__(message)
+        # See InterfaceError.__init__: cap the displayed message at
+        # the same 4 KiB budget so the wire-layer 64 KiB ceiling does
+        # not amplify through pickled-exception / repr surfaces.
+        capped_message: object = _cap_raw_message(message) if isinstance(message, str) else message
+        super().__init__(capped_message)
         self.code = code
         resolved = str(message) if raw_message is None else raw_message
         self.raw_message = _cap_raw_message(resolved)
