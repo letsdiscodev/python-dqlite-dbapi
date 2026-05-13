@@ -745,6 +745,20 @@ class AsyncConnection:
                     # Defensive backstop clear — see the trailing
                     # comment in this method's normal path.
                     self._transaction_owner = None
+                    # Defensive parity with the orderly + fork-shortcut
+                    # arms: detach the finalizer here too so the
+                    # discipline is explicit at every termination
+                    # shape. The orderly top-of-close detach at line
+                    # 562-565 already runs before reaching this arm
+                    # on the current code shape, so this is a no-op
+                    # in practice — but a future refactor that
+                    # reorders or removes the top-of-close detach
+                    # would silently leak the finalizer-registry
+                    # entry on cancel without this redundant clear.
+                    finalizer = getattr(self, "_finalizer", None)
+                    if finalizer is not None:
+                        finalizer.detach()
+                        self._finalizer = None
                     raise
                 except Exception:
                     logger.debug(
