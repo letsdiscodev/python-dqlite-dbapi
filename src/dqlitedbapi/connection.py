@@ -33,7 +33,7 @@ from dqlitewire import (
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
 )
-from dqlitewire import NO_TRANSACTION_MESSAGE_SUBSTRINGS
+from dqlitewire import NO_TRANSACTION_MESSAGE_SUBSTRINGS, WIRE_DECODE_FAILED_PREFIX
 from dqlitewire.constants import primary_sqlite_code
 
 __all__ = ["Connection"]
@@ -533,10 +533,12 @@ async def _build_and_connect(
         raise OperationalError(f"Failed to connect: {e}", code=None, raw_message=raw_msg) from e
     except _client_exc.ProtocolError as e:
         # Wire-level desync during handshake (very rare). Match the
-        # cursor-path classifier's wording so SA's substring scan
-        # sees the canonical "wire decode failed" prefix.
+        # cursor-path classifier's wording so SA's substring scan sees
+        # the canonical ``WIRE_DECODE_FAILED_PREFIX``.
         raw_msg = getattr(e, "raw_message", None) or str(e)
-        raise OperationalError(f"wire decode failed: {e}", code=None, raw_message=raw_msg) from e
+        raise OperationalError(
+            f"{WIRE_DECODE_FAILED_PREFIX}: {e}", code=None, raw_message=raw_msg
+        ) from e
     except _client_exc.DataError as e:
         # Encode-side error during the open handshake (e.g. a binary
         # database name that fails encode_text). Surface as DataError
