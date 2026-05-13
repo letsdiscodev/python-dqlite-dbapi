@@ -41,7 +41,10 @@ logger = logging.getLogger(__name__)
 
 
 def _async_unclosed_warning(
-    closed_flag: list[bool], connected_flag: list[bool], address: str
+    closed_flag: list[bool],
+    connected_flag: list[bool],
+    address: str,
+    creator_pid: int,
 ) -> None:
     """Emit a ResourceWarning when an ``AsyncConnection`` is GC'd
     without ``await close()``.
@@ -55,8 +58,14 @@ def _async_unclosed_warning(
     own "Unclosed transport" warnings, which point at the StreamReader/
     StreamWriter rather than the dqlite layer they came from.
 
-    Three-flag gate:
+    Four-flag gate:
 
+    - ``get_current_pid() != creator_pid``: forked child. The
+      ``(closed_flag, connected_flag)`` snapshots belong to the
+      parent process at fork-time; emitting a ResourceWarning here
+      would falsely accuse the child of leaking what the parent owns.
+      Mirrors the sync sibling at ``connection.py:688-692`` and every
+      other fork-traversing site in the package.
     - ``closed_flag[0]`` is True if ``close()`` ran or if the
       synchronous ``force_close_transport`` (terminate / SA outside-
       greenlet) ran.
@@ -75,6 +84,9 @@ def _async_unclosed_warning(
     Suppression-narrow ``RuntimeError`` mirrors the sync sibling's
     interpreter-shutdown race protection.
     """
+    if get_current_pid() != creator_pid:
+        # Forked child. Skip — the parent owns the lifecycle.
+        return
     if closed_flag[0] or not connected_flag[0]:
         return
     with contextlib.suppress(RuntimeError):
@@ -285,6 +297,7 @@ class AsyncConnection:
             self._closed_flag,
             self._connected_flag,
             address,
+            self._creator_pid,
         )
 
     def _ensure_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:

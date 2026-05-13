@@ -28,6 +28,7 @@ promises without failing any existing test.
 from __future__ import annotations
 
 import gc
+import os
 import warnings
 from unittest.mock import MagicMock
 
@@ -42,7 +43,7 @@ def test_never_connected_does_not_warn_on_gc() -> None:
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        _async_unclosed_warning(closed_flag, connected_flag, "localhost:9999")
+        _async_unclosed_warning(closed_flag, connected_flag, "localhost:9999", os.getpid())
 
     rw = [w for w in captured if issubclass(w.category, ResourceWarning)]
     assert not rw, f"never-connected ResourceWarning leaked: {[str(w.message) for w in rw]}"
@@ -56,7 +57,7 @@ def test_closed_flag_short_circuits_warning() -> None:
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        _async_unclosed_warning(closed_flag, connected_flag, "localhost:9999")
+        _async_unclosed_warning(closed_flag, connected_flag, "localhost:9999", os.getpid())
 
     rw = [w for w in captured if issubclass(w.category, ResourceWarning)]
     assert not rw
@@ -70,7 +71,7 @@ def test_connected_unclosed_warns() -> None:
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        _async_unclosed_warning(closed_flag, connected_flag, "localhost:9999")
+        _async_unclosed_warning(closed_flag, connected_flag, "localhost:9999", os.getpid())
 
     rw = [w for w in captured if issubclass(w.category, ResourceWarning)]
     assert len(rw) == 1
