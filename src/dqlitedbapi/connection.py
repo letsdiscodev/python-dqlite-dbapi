@@ -791,7 +791,7 @@ class Connection:
     # Class attrs (not instance attrs) to keep ``type(conn).Error``
     # identity.
     Error = _exc.Error
-    Warning = _exc.Warning
+    Warning = _exc.Warning  # noqa: A003, N815 - PEP 249 §7 mandated class attr name
     InterfaceError = _exc.InterfaceError
     DatabaseError = _exc.DatabaseError
     DataError = _exc.DataError

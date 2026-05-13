@@ -153,7 +153,7 @@ class AsyncConnection:
     # parity with the sync ``Connection`` class so cross-driver code can
     # write ``except aconn.Error:`` without importing the driver module.
     Error = _exc.Error
-    Warning = _exc.Warning
+    Warning = _exc.Warning  # noqa: A003, N815 - PEP 249 §7 mandated class attr name
     InterfaceError = _exc.InterfaceError
     DatabaseError = _exc.DatabaseError
     DataError = _exc.DataError

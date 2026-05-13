@@ -111,7 +111,7 @@ def _sqlite_errorname(code: int | None) -> str | None:
     return _stdlib_extended_code_to_name().get(code)
 
 
-class Warning(Exception):  # PEP 249 mandated class name
+class Warning(Exception):  # noqa: A001, N818 - PEP 249 §7 mandated class name
     """PEP 249 Warning class.
 
     Exported for compatibility with generic cross-driver code and
