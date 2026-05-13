@@ -4,6 +4,7 @@ import sqlite3 as _stdlib_sqlite3
 from functools import lru_cache
 from typing import Final
 
+from dqlitewire._truncate import _DEFAULT_MAX_RAW_MESSAGE
 from dqlitewire._truncate import _cap_raw_message as _wire_cap_raw_message
 
 __all__ = [
@@ -130,13 +131,12 @@ class Warning(Exception):  # noqa: A001, N818 - PEP 249 §7 mandated class name
 
 
 # Cap on ``raw_message`` carried by any code-bearing dbapi Error.
-# Mirrors ``dqliteclient.exceptions.DqliteError._MAX_RAW_MESSAGE``.
-# The wire layer caps a single FailureResponse at ~64 KiB; combined
-# with BaseExceptionGroup chains and cross-process pickling, an
-# unbounded ``raw_message`` can produce multi-MB pickled exception
-# payloads. 4 KiB is well above any realistic SQLite error string
-# while bounding the worst-case fan-out.
-_MAX_RAW_MESSAGE: Final[int] = 4 * 1024
+# Hosted in ``dqlitewire._truncate._DEFAULT_MAX_RAW_MESSAGE`` as the
+# cross-package single source of truth shared with
+# ``dqliteclient.exceptions.DqliteError._MAX_RAW_MESSAGE``. The
+# rationale (~64 KiB FailureResponse, BaseExceptionGroup fan-out,
+# cross-process pickling) lives at the wire-layer definition.
+_MAX_RAW_MESSAGE: Final[int] = _DEFAULT_MAX_RAW_MESSAGE
 
 
 def _cap_raw_message(raw_message: str) -> str:
