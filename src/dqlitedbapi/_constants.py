@@ -50,5 +50,7 @@ version >= the value here.
 
 from typing import Final
 
+__all__ = ["SQLITE_VERSION", "SQLITE_VERSION_INFO"]
+
 SQLITE_VERSION_INFO: Final[tuple[int, int, int]] = (3, 35, 0)
 SQLITE_VERSION: Final[str] = ".".join(str(v) for v in SQLITE_VERSION_INFO)
