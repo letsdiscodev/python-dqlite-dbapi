@@ -1765,8 +1765,8 @@ class Connection:
                     # the snapshot-vs-fresh-publish race; without it,
                     # the fresh task would be orphaned and surface as
                     # "Task was destroyed but it is pending" at GC.
-                    _RESNAPSHOT_CAP = 3
-                    for _attempt in range(_RESNAPSHOT_CAP):
+                    resnapshot_cap = 3
+                    for _attempt in range(resnapshot_cap):
                         pending = getattr(inner, "_pending_drain", None)
                         with contextlib.suppress(Exception):
                             inner._pending_drain = None
@@ -1800,7 +1800,7 @@ class Connection:
                             "to avoid 'Task was destroyed but it is pending' at GC. This "
                             "indicates a pathological _invalidate feedback loop on inner "
                             "conn.",
-                            _RESNAPSHOT_CAP,
+                            resnapshot_cap,
                         )
                     proto = getattr(inner, "_protocol", None)
                     writer = getattr(proto, "_writer", None) if proto is not None else None

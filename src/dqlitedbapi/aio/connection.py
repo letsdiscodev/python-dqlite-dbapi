@@ -920,8 +920,8 @@ class AsyncConnection:
         # Mirrors the in-thread re-snapshot loop in
         # ``DqliteConnection._close_impl`` (cap-and-fail-loud
         # discipline).
-        _RESNAPSHOT_CAP = 3
-        for _attempt in range(_RESNAPSHOT_CAP):
+        resnapshot_cap = 3
+        for _attempt in range(resnapshot_cap):
             pending = getattr(inner, "_pending_drain", None)
             with contextlib.suppress(Exception):
                 inner._pending_drain = None
@@ -988,7 +988,7 @@ class AsyncConnection:
                 "set after %d re-snapshot iterations; cancelling residual task to "
                 "avoid 'Task was destroyed but it is pending' at GC. This indicates "
                 "a pathological _invalidate feedback loop on inner conn.",
-                _RESNAPSHOT_CAP,
+                resnapshot_cap,
             )
         # Mirror the fork branch's null-out so the AsyncConnection
         # does not keep claiming to reference a live inner conn
