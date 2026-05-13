@@ -14,11 +14,17 @@ from dqlitedbapi import (  # noqa: E402 — module-level re-export
     LEGACY_TRANSACTION_CONTROL,
     PARSE_COLNAMES,
     PARSE_DECLTYPES,
-    __version__,
     complete_statement,
     enable_callback_tracebacks,
     register_converter,
 )
+from dqlitedbapi import __version__ as _parent_version
+
+# ``Final`` does not propagate through ``from X import Y`` aliases —
+# the re-export creates a new module-level binding that needs its
+# own annotation to match the sync sibling's discipline. Mirrors
+# the four sibling ``__version__`` Final pins across the workspace.
+__version__: Final[str] = _parent_version
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
 )
