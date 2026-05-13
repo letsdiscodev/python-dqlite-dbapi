@@ -18,7 +18,7 @@ from dqliteclient.cluster import ClusterClient
 from dqliteclient.connection import parse_address as _client_parse_address
 from dqliteclient.node_store import MemoryNodeStore
 from dqlitedbapi import exceptions as _exc
-from dqlitedbapi.cursor import Cursor, _call_client
+from dqlitedbapi.cursor import Cursor, _call_client, _validate_executemany_seq_shape
 from dqlitedbapi.exceptions import (
     DatabaseError,
     DataError,
@@ -2355,22 +2355,19 @@ class Connection:
         cur = self.cursor()
         # Reject the outer shapes that would silently iterate over keys
         # (dict) / characters (str / bytes / bytearray / memoryview), or
-        # iterate in non-deterministic order (set / frozenset), treating
-        # each as a parameter set — almost certainly a caller bug.
-        # Stricter than stdlib ``sqlite3.Connection.executemany``,
-        # consistent with the project's ``_reject_non_sequence_params``
-        # discipline at the inner level. ``Mapping`` at large is NOT
-        # rejected so an OrderedDict-of-rows pattern still works.
-        if isinstance(
-            seq_of_parameters,
-            dict | str | bytes | bytearray | memoryview | set | frozenset,
-        ):
+        # iterate in non-deterministic order (set / frozenset). The
+        # shared ``_validate_executemany_seq_shape`` helper is the
+        # single source of truth so this shortcut and
+        # ``Cursor.executemany`` produce one diagnostic and one
+        # accept/reject contract. ``Mapping`` at large is NOT rejected
+        # so an OrderedDict-of-rows pattern still works — only literal
+        # ``dict`` (the common single-row misuse) is denied.
+        try:
+            _validate_executemany_seq_shape(seq_of_parameters)
+        except ProgrammingError:
             with contextlib.suppress(Exception):
                 cur.close()
-            raise ProgrammingError(
-                f"executemany seq_of_parameters must be an iterable of "
-                f"parameter sets, not {type(seq_of_parameters).__name__}"
-            )
+            raise
         try:
             cur.executemany(operation, seq_of_parameters)
         except BaseException:

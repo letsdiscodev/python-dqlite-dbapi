@@ -417,6 +417,47 @@ def _reject_non_sequence_params(params: Any) -> None:
         )
 
 
+# Outer shapes that ``executemany`` must reject before iteration begins.
+# A ``dict`` / ``str`` / ``bytes`` / ``bytearray`` / ``memoryview`` would
+# silently iterate over keys / characters / bytes (each yielded element
+# becoming a "parameter set" — almost always a caller bug). ``set`` /
+# ``frozenset`` iterate in non-deterministic order, scrambling row order.
+# The ``Mapping`` ABC at large is NOT in the reject list so an
+# ``OrderedDict([(0, params0), (1, params1)])``-of-rows pattern still
+# works — only literal ``dict`` (the common single-row misuse) is denied.
+_REJECTED_EXECUTEMANY_SEQ_TYPES: Final[tuple[type, ...]] = (
+    str,
+    bytes,
+    bytearray,
+    memoryview,
+    dict,
+    set,
+    frozenset,
+)
+
+
+def _validate_executemany_seq_shape(seq_of_parameters: object) -> None:
+    """Reject outer shapes that ``executemany`` would silently iterate.
+
+    Called from both ``Cursor.executemany`` / ``AsyncCursor.executemany``
+    and the ``Connection.executemany`` / ``AsyncConnection.executemany``
+    shortcuts so the four entry points share one diagnostic and one
+    accept/reject contract. Without the cursor-side check, a caller
+    passing ``"abc"`` mutates cursor state per-character before the
+    inner ``_reject_non_sequence_params`` rejects the character; the
+    connection-shortcut layer already rejected upfront, leaving the
+    cursor path as the only asymmetric arm.
+    """
+    if isinstance(seq_of_parameters, _REJECTED_EXECUTEMANY_SEQ_TYPES):
+        raise ProgrammingError(
+            f"executemany seq_of_parameters must be an iterable of "
+            f"parameter sets (e.g. list of tuples), not "
+            f"{type(seq_of_parameters).__name__}. Iterating a "
+            f"{type(seq_of_parameters).__name__} parameter-set is "
+            f"almost certainly a bug."
+        )
+
+
 def _convert_params(params: Sequence[Any] | None) -> list[Any] | None:
     """Convert driver-level bind parameters (e.g. datetime) to wire primitives.
 
@@ -1476,6 +1517,17 @@ class Cursor:
                 "executemany() seq_of_parameters must be a sequence/iterable, not None",
                 code=None,
             )
+        # Reject outer shapes that would silently iterate over keys
+        # (dict) / characters (str / bytes / bytearray / memoryview) or
+        # iterate in non-deterministic order (set / frozenset), treating
+        # each yielded element as a parameter set. Shared with the
+        # ``Connection.executemany`` shortcut so the cursor and
+        # connection entry points have one accept/reject contract and
+        # one diagnostic. Without this check, ``cur.executemany(sql,
+        # "abc")`` mutated cursor state before the inner per-character
+        # binding raised the less-actionable ``parameter type str not
+        # supported`` message.
+        _validate_executemany_seq_shape(seq_of_parameters)
         # PEP 249 §7: surface non-str ``operation`` as a ``dbapi.Error``
         # subclass up front so cross-driver ``except dbapi.Error:`` catches
         # the misuse. Without this guard, downstream calls (e.g.

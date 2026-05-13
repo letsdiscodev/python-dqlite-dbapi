@@ -19,6 +19,7 @@ from dqlitedbapi.cursor import (
     _is_row_returning,
     _strip_leading_comments,
     _to_signed_int64,
+    _validate_executemany_seq_shape,
 )
 from dqlitedbapi.exceptions import (
     DataError,
@@ -488,6 +489,13 @@ class AsyncCursor:
                 "executemany() seq_of_parameters must be a sequence/iterable, not None",
                 code=None,
             )
+        # Reject outer shapes that would silently iterate over keys
+        # (dict) / characters (str / bytes / bytearray / memoryview) or
+        # iterate in non-deterministic order (set / frozenset). Shared
+        # with the sync sibling and with the ``AsyncConnection.executemany``
+        # shortcut so the four entry points share one diagnostic and one
+        # accept/reject contract.
+        _validate_executemany_seq_shape(seq_of_parameters)
         # PEP 249 §7: surface non-str ``operation`` as a ``dbapi.Error``
         # subclass up front so cross-driver ``except dbapi.Error:`` catches
         # the misuse. Mirrors the canonical sibling guard on
