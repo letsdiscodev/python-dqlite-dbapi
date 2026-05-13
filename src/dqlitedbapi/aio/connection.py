@@ -287,10 +287,11 @@ class AsyncConnection:
         # captured ``(closed_flag, connected_flag, address)`` cells
         # stay on the ``weakref`` global table for the lifetime of
         # ``self`` even after the user closed the connection.
-        # Symmetric with the sync sibling at
-        # ``connection.py:1399-1401, 1417-1419, 1581-1589`` and
-        # ``DqliteConnection`` / ``ConnectionPool`` finalizer
-        # discipline.
+        # Symmetric with the sync sibling's ``self._finalizer.detach()``
+        # calls in ``connection.py`` (one each in ``close()``,
+        # ``force_close_transport()``, and ``_cleanup_loop_thread()``)
+        # and the parallel ``DqliteConnection`` /
+        # ``ConnectionPool`` finalizer discipline.
         self._finalizer: weakref.finalize[Any, Any] | None = weakref.finalize(
             self,
             _async_unclosed_warning,
@@ -498,9 +499,10 @@ class AsyncConnection:
         if get_current_pid() != self._creator_pid:
             self._closed = True
             self._closed_flag[0] = True
-            # Detach the finalizer — symmetric with sync sibling at
-            # ``connection.py:1420-1422``. Keeps the ``weakref``
-            # global table free of stale entries after orderly
+            # Detach the finalizer — symmetric with sync sibling's
+            # ``self._finalizer.detach()`` inside ``close()``. Keeps
+            # the ``weakref`` global table free of stale entries
+            # after orderly
             # close.
             if self._finalizer is not None:
                 self._finalizer.detach()
@@ -552,9 +554,10 @@ class AsyncConnection:
         # in-flight op (if any) under the lock.
         self._closed = True
         self._closed_flag[0] = True
-        # Detach the finalizer — symmetric with sync sibling at
-        # ``connection.py:1438-1440``. Keeps the ``weakref`` global
-        # table free of stale entries after orderly close.
+        # Detach the finalizer — symmetric with sync sibling's
+        # ``self._finalizer.detach()`` inside ``force_close_transport``.
+        # Keeps the ``weakref`` global table free of stale entries
+        # after orderly close.
         finalizer = getattr(self, "_finalizer", None)
         if finalizer is not None:
             finalizer.detach()
@@ -608,8 +611,8 @@ class AsyncConnection:
         op_lock_timed_out = False
         try:
             # Bound the op_lock acquire by ``self._timeout`` to mirror
-            # the sync sibling at ``connection.py:756`` (``acquire(
-            # timeout=self._timeout)`` + InterfaceError on miss). Without
+            # the sync sibling's ``_op_lock.acquire(timeout=self._timeout)``
+            # + InterfaceError on miss in ``Connection._run_sync``. Without
             # the bound, ``close()`` waits indefinitely on a sibling
             # task parked on a slow ``reader.read()`` — under SIGTERM
             # / ``engine.dispose()``, an N-slot SA pool with stuck
@@ -845,9 +848,10 @@ class AsyncConnection:
         # against a dead transport and a follow-up close() drove the
         # full async teardown again on already-closed primitives.
         self._closed = True
-        # Detach the finalizer — symmetric with sync sibling at
-        # ``connection.py:1603-1604, 1609-1610``. Keeps the
-        # ``weakref`` global table free of stale entries after the
+        # Detach the finalizer — symmetric with the sync sibling's
+        # ``self._finalizer.detach()`` call paths in
+        # ``force_close_transport``. Keeps the ``weakref`` global
+        # table free of stale entries after the
         # transport-level force-close path.
         finalizer = getattr(self, "_finalizer", None)
         if finalizer is not None:
@@ -1187,8 +1191,9 @@ class AsyncConnection:
             )
         _, op_lock = self._ensure_locks()
         # Bound the op_lock acquire by ``self._timeout`` — the sync
-        # sibling at ``connection.py:947`` and ``close()`` above (lines
-        # 569-570) have the same discipline. Without the bound,
+        # sibling's ``_op_lock.acquire(timeout=self._timeout)`` in
+        # ``Connection._run_sync`` and the matching ``close()``
+        # discipline above have the same shape. Without the bound,
         # ``commit()`` waits indefinitely on a sibling task parked on a
         # slow ``reader.read()`` (especially under
         # ``trust_server_heartbeat=True`` widening the per-read

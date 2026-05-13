@@ -1622,8 +1622,9 @@ class Connection:
                         # races with the selector's transport-state
                         # bookkeeping. Schedule via
                         # ``call_soon_threadsafe`` like the sibling
-                        # ``force_close_transport`` does (see
-                        # ``connection.py:1554-1555``). FIFO discipline
+                        # ``force_close_transport`` does (the sibling
+                        # ``self._async_conn.force_close_transport()``
+                        # call shape). FIFO discipline
                         # of the ready queue with the subsequent
                         # ``loop.stop`` queue ensures FIN goes out
                         # before ``run_forever`` exits.
