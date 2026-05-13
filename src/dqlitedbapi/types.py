@@ -56,7 +56,16 @@ type _Description = tuple[DescriptionTuple, ...] | None
 
 
 def Date(year: int, month: int, day: int) -> datetime.date:
-    """Construct a date value."""
+    """Construct a date value.
+
+    Note: this is a function wrapper (not a class alias as in stdlib
+    ``sqlite3.dbapi2``); ``isinstance(v, dqlitedbapi.Date)`` therefore
+    raises ``TypeError`` because functions are not classes. Use
+    ``isinstance(v, datetime.date)`` for cross-driver code that runs
+    against both stdlib ``sqlite3`` and ``dqlitedbapi``. The wrapper
+    exists so out-of-range inputs raise PEP 249 ``DataError`` rather
+    than bare ``ValueError``.
+    """
     try:
         return datetime.date(year, month, day)
     except (TypeError, ValueError) as e:
@@ -76,6 +85,10 @@ def Time(
     stdlib ``datetime.time``. PEP 249 does not require this,
     but mixing the driver's ``Time()`` with ``datetime.time`` would
     otherwise drop sub-second precision silently.
+
+    Note: this is a function wrapper (not a class alias);
+    ``isinstance(v, dqlitedbapi.Time)`` raises ``TypeError``. Use
+    ``isinstance(v, datetime.time)`` for cross-driver porting code.
     """
     try:
         return datetime.time(hour, minute, second, microsecond, tzinfo=tzinfo)
@@ -95,7 +108,12 @@ def Timestamp(
     microsecond: int = 0,
     tzinfo: datetime.tzinfo | None = None,
 ) -> datetime.datetime:
-    """Construct a timestamp value."""
+    """Construct a timestamp value.
+
+    Note: this is a function wrapper (not a class alias);
+    ``isinstance(v, dqlitedbapi.Timestamp)`` raises ``TypeError``. Use
+    ``isinstance(v, datetime.datetime)`` for cross-driver porting code.
+    """
     try:
         return datetime.datetime(year, month, day, hour, minute, second, microsecond, tzinfo=tzinfo)
     except (TypeError, ValueError) as e:
@@ -145,9 +163,13 @@ def DateFromTicks(ticks: float) -> datetime.date:
     """Construct a date from a Unix timestamp.
 
     Returns a naive date interpreted as the host's **local** time zone,
-    matching stdlib ``sqlite3.dbapi2.DateFromTicks``. For an explicit
-    UTC interpretation, call ``datetime.datetime.fromtimestamp(ticks,
+    like stdlib ``sqlite3.dbapi2.DateFromTicks``. For an explicit UTC
+    interpretation, call ``datetime.datetime.fromtimestamp(ticks,
     tz=datetime.UTC).date()`` directly.
+
+    Implementation uses ``datetime.date.fromtimestamp`` rather than
+    stdlib's ``time.localtime(ticks)[:3]``; sub-second precision in
+    ``ticks`` is dropped because the return type is date-only.
 
     Note that the wire layer's UNIXTIME decoder
     (``_datetime_from_unixtime``) returns UTC-aware datetimes; storing
@@ -166,10 +188,15 @@ def TimeFromTicks(ticks: float) -> datetime.time:
     """Construct a time from a Unix timestamp.
 
     Returns a naive time interpreted as the host's **local** time zone,
-    matching stdlib ``sqlite3.dbapi2.TimeFromTicks``. Near midnight in
+    like stdlib ``sqlite3.dbapi2.TimeFromTicks``. Near midnight in
     non-UTC locales the wall-clock time differs from the UTC time;
     callers that need UTC should use
     ``datetime.datetime.fromtimestamp(ticks, tz=datetime.UTC).time()``.
+
+    Implementation uses ``datetime.datetime.fromtimestamp(ticks).time()``;
+    unlike stdlib's ``time.localtime(ticks)[3:6]`` (which truncates
+    sub-second precision), this **preserves** the microsecond component
+    of fractional ``ticks``.
 
     See ``DateFromTicks`` for the tz asymmetry with the UNIXTIME
     decoder on readback.
@@ -185,10 +212,17 @@ def TimestampFromTicks(ticks: float) -> datetime.datetime:
     """Construct a timestamp from a Unix timestamp.
 
     Returns a naive datetime interpreted as the host's **local** time
-    zone, matching stdlib ``sqlite3.dbapi2.TimestampFromTicks`` (and
+    zone, like stdlib ``sqlite3.dbapi2.TimestampFromTicks`` (and
     PEP 249's own convention). For UTC-aware values, call
     ``datetime.datetime.fromtimestamp(ticks, tz=datetime.UTC)``
     directly.
+
+    Implementation uses ``datetime.datetime.fromtimestamp(ticks)``;
+    unlike stdlib's ``time.localtime(ticks)[:6]`` (which truncates
+    sub-second precision), this **preserves** the microsecond component
+    of fractional ``ticks`` — e.g. ``TimestampFromTicks(1700000000.5)``
+    returns ``datetime(..., microsecond=500_000)`` whereas stdlib
+    returns ``microsecond=0``.
 
     See ``DateFromTicks`` for the tz asymmetry with the UNIXTIME
     decoder on readback.

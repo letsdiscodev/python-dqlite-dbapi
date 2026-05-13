@@ -9,6 +9,28 @@ Operations on a closed ``Connection`` or ``Cursor`` raise
 this driver matches psycopg's convention. Stdlib ``sqlite3`` chose
 ``ProgrammingError``. Cross-driver code that wants to catch closed-
 state misuse portably should catch ``Error`` (the parent class).
+
+Limitations vs stdlib sqlite3
+=============================
+
+- ``Date``, ``Time``, ``Timestamp`` are constructor *functions* (not
+  class aliases as in stdlib ``sqlite3.dbapi2``), so they raise PEP
+  249 ``DataError`` on invalid inputs (year=0, month=13, etc.) rather
+  than bare ``ValueError``. Trade-off:
+  ``isinstance(value, dqlitedbapi.Date)`` raises ``TypeError`` because
+  functions are not classes. Use ``isinstance(value, datetime.date)``
+  for cross-driver porting code that runs against both stdlib
+  ``sqlite3`` and ``dqlitedbapi``.
+- ``DateFromTicks`` / ``TimeFromTicks`` / ``TimestampFromTicks`` use
+  ``datetime.fromtimestamp(ticks)`` rather than stdlib's
+  ``time.localtime(ticks)[:6]``. Sub-second precision in fractional
+  ``ticks`` is preserved in the returned ``datetime`` (stdlib's
+  ``time.localtime`` drops it). The local-time interpretation matches
+  stdlib.
+- ``total_changes`` is a method (callable; ``conn.total_changes()``)
+  rather than stdlib's int-property. The method-form keeps
+  ``hasattr(conn, "total_changes")`` returning ``True`` consistently
+  with the rest of the unsupported-stub family.
 """
 
 # Free-threaded Python (python3.13t / PEP 703) is not supported.
