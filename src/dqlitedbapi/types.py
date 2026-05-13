@@ -36,8 +36,11 @@ __all__ = [
 # (the wire ``ValueType`` int); the other five are always ``None``.
 # Live here so sync/async cursors and the sqlalchemy adapter share one
 # shape instead of repeating the inline tuple at every site.
-DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
-_Description = tuple[DescriptionTuple, ...] | None
+# PEP 695 ``type X = ...`` syntax matches the rest of the workspace's
+# public type-alias declarations (wire/types.py, client/_dial.py,
+# client/cluster.py, sqlalchemydqlite/aio.py).
+type DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
+type _Description = tuple[DescriptionTuple, ...] | None
 
 
 # Type constructors

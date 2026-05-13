@@ -26,3 +26,19 @@ def test_description_tuple_is_publicly_exported_from_package_root() -> None:
     assert hasattr(dqlitedbapi, "DescriptionTuple")
     assert dqlitedbapi.DescriptionTuple is dqlite_types.DescriptionTuple
     assert "DescriptionTuple" in dqlitedbapi.__all__
+
+
+def test_description_tuple_is_pep_695_type_alias() -> None:
+    """The workspace's PEP 695 ``type X = ...`` discipline applies
+    to public type aliases across all packages
+    (wire/types.py, client/_dial.py, client/cluster.py,
+    sqlalchemydqlite/aio.py). ``DescriptionTuple`` was the last
+    holdout using legacy bare assignment; migrate to PEP 695 so the
+    alias is a ``typing.TypeAliasType`` and immutable.
+    """
+    import typing
+
+    assert isinstance(dqlite_types.DescriptionTuple, typing.TypeAliasType), (
+        "DescriptionTuple must be declared as 'type DescriptionTuple = ...' "
+        "to match the workspace's PEP 695 discipline"
+    )
