@@ -32,7 +32,7 @@ __all__ = [
 # symbol even when stdlib's constant set grows.
 #
 # Source of truth: https://www.sqlite.org/rescode.html
-_PRIMARY_RESULT_CODE_NAMES: dict[int, str] = {
+_PRIMARY_RESULT_CODE_NAMES: Final[dict[int, str]] = {
     0: "SQLITE_OK",
     1: "SQLITE_ERROR",
     2: "SQLITE_INTERNAL",

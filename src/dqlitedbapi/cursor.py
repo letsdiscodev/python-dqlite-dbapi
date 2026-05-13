@@ -85,17 +85,19 @@ __all__ = ["Cursor"]
 
 # Registry of primary-code → PEP 249 class. Keep the default
 # (OperationalError) outside the dict so adding a code is one line.
-_CODE_TO_EXCEPTION: dict[
-    int,
-    type[
-        OperationalError
-        | IntegrityError
-        | InternalError
-        | DataError
-        | ProgrammingError
-        | DatabaseError
-        | InterfaceError
-    ],
+_CODE_TO_EXCEPTION: Final[
+    dict[
+        int,
+        type[
+            OperationalError
+            | IntegrityError
+            | InternalError
+            | DataError
+            | ProgrammingError
+            | DatabaseError
+            | InterfaceError
+        ],
+    ]
 ] = {
     SQLITE_CONSTRAINT: IntegrityError,
     SQLITE_INTERNAL: InternalError,
@@ -340,7 +342,7 @@ if TYPE_CHECKING:
 # if it says UNIXTIME, the value IS an int. A mismatch indicates a
 # malformed frame, which ``_datetime_from_iso8601`` / ``_datetime_from_unixtime``
 # surface as ``DataError``.
-_RESULT_CONVERTERS: dict[int, Callable[[Any], Any]] = {
+_RESULT_CONVERTERS: Final[dict[int, Callable[[Any], Any]]] = {
     int(ValueType.ISO8601): _datetime_from_iso8601,
     int(ValueType.UNIXTIME): _datetime_from_unixtime,
 }
@@ -563,7 +565,7 @@ _EXECUTEMANY_REJECT_VERBS: Final[frozenset[str]] = frozenset(
 # RETURNING thing')`` or an identifier like ``SET "returning" = 1`` got
 # misclassified as row-returning, the statement was dispatched through
 # QUERY_SQL, and ``_rowcount`` / ``_lastrowid`` reported zero / None.
-_SQL_NOISE_RE = re.compile(
+_SQL_NOISE_RE: Final[re.Pattern[str]] = re.compile(
     r"""
     '(?:[^']|'')*'          # single-quoted string literal
     | "(?:[^"]|"")*"        # double-quoted identifier
