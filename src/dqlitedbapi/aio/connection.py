@@ -1501,12 +1501,23 @@ class AsyncConnection:
         # caller as a usable wrapper attached to a connection that is
         # mid-close. Defense-in-depth: if ``_closed`` flipped to True
         # between the AsyncCursor construction and the WeakSet add,
-        # mark the cursor closed so its first await fails cleanly via
-        # ``_check_closed`` rather than running against a torn-down
-        # parent. The cascade handles the typical ordering; this
-        # re-check covers the narrow TOCTOU window.
+        # run the full scrub the cascade would have applied AND
+        # discard the entry so ``self._cursors`` matches the
+        # ``self._cursors.clear()`` postcondition rather than
+        # retaining a stale (closed-but-late-added) entry. Without
+        # ``discard()``, post-close diagnostics that read
+        # ``len(conn._cursors)`` see a stale count, and any future
+        # cascade field added (e.g. a buffer pointer) would silently
+        # leak on the late-added cursor.
         if self._closed:
             cur._closed = True
+            cur._rows = []
+            cur._description = None
+            cur._rowcount = -1
+            cur._lastrowid = None
+            cur._row_index = 0
+            del cur.messages[:]
+            self._cursors.discard(cur)
         return cur
 
     @property
