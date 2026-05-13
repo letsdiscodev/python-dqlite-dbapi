@@ -2182,10 +2182,14 @@ class Cursor:
         # ``__iter__`` is the iter-protocol entry point; sibling no-op
         # methods (``nextset`` / ``callproc`` / ``scroll`` /
         # ``setinputsizes`` / ``setoutputsize``) all clear first.
-        # Without this, a future driver path that populates messages
-        # would let ``for row in cur:`` observe stale messages on an
-        # empty result set (``__next__`` raises ``StopIteration``
-        # without calling ``fetchone``'s clear).
+        # ``__next__`` itself dispatches to ``fetchone`` (which clears
+        # at its own entry, including on the terminating call that
+        # returns None and surfaces ``StopIteration``), so the iter-
+        # protocol's clear obligation is satisfied at every step. The
+        # clear here is for the ``iter(cur)`` entry point itself —
+        # generic consumer code that calls ``iter(cur)`` and then never
+        # advances would otherwise observe stale messages from a prior
+        # operation on the cursor.
         #
         # Cross-thread affinity is verified by the first ``__next__``
         # call (which dispatches to ``fetchone`` → ``_check_thread``),

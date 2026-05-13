@@ -1083,11 +1083,15 @@ class AsyncCursor:
         # Symmetric with the sync sibling ``Cursor.__iter__``; sibling
         # no-op cursor methods (``nextset`` / ``callproc`` /
         # ``scroll`` / ``setinputsizes`` / ``setoutputsize``) all
-        # clear first. Without this, a future driver path that
-        # populates messages would let ``async for row in cur:``
-        # observe stale messages on an empty result set
-        # (``__anext__`` raises ``StopAsyncIteration`` without
-        # calling ``fetchone``'s clear).
+        # clear first. ``__anext__`` itself dispatches to
+        # ``fetchone`` (which clears at its own entry, including on
+        # the terminating call that returns None and surfaces
+        # ``StopAsyncIteration``), so the iter-protocol's clear
+        # obligation is satisfied at every step. The clear here is
+        # for the ``aiter(cur)`` entry point itself — generic
+        # consumer code that calls ``aiter(cur)`` and then never
+        # advances would otherwise observe stale messages from a
+        # prior operation on the cursor.
         del self.messages[:]
         # Surface a loop-mismatch at the ``async for cursor:`` site
         # rather than one await deeper inside ``__anext__``'s
