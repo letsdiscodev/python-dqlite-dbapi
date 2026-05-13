@@ -1665,6 +1665,17 @@ class Cursor:
         Pure queries (SELECT / VALUES / PRAGMA) are rejected in the
         sync ``executemany`` wrapper before this helper is scheduled.
         """
+        # Single source of truth for per-execute reset; see
+        # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
+        # an empty ``seq_of_parameters`` ends with the same
+        # ``rowcount`` shape as empty ``execute``. Reset BEFORE the
+        # classifier so a classifier-raise (empty SQL / multi-
+        # statement / NUL byte) leaves the cursor at the no-result
+        # baseline, matching stdlib's reset-then-prepare ordering
+        # and the sibling ``execute`` flow. ``_reset_execute_state``
+        # also zeroes ``_completed_iterations`` so the per-call
+        # counter is clean before the loop body runs.
+        self._reset_execute_state()
         # Hoist ``_classify_caller_sql`` ONCE at the top: empty SQL,
         # multi-statement, NUL-in-SQL, and the SQL parsing/scanning
         # are all invariant across iterations. The placeholder count
@@ -1677,17 +1688,6 @@ class Cursor:
         _classify_caller_sql(operation, None, skip_param_count_check=True)
         cleaned = _strip_sql_noise(operation)
         placeholder_count = cleaned.count("?")
-        # Single source of truth for per-execute reset; see
-        # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
-        # an empty ``seq_of_parameters`` ends with the same
-        # ``rowcount`` shape as empty ``execute``.
-        self._reset_execute_state()
-        # Reset the per-call completed-iteration counter. After a
-        # successful executemany, equals len(seq_of_parameters).
-        # After cancel / mid-batch raise, retains the count of
-        # iterations that already committed server-side — observability
-        # signal for idempotent compensation.
-        self._completed_iterations = 0
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
         try:
             for params in seq_of_parameters:
