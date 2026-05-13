@@ -264,6 +264,13 @@ class AsyncCursor:
         self._rows = []
         self._row_index = 0
         self._rowcount = -1
+        # See the sync sibling: reset ``_completed_iterations`` here
+        # too so the property's documented "0 after a single-row
+        # execute" contract holds across an executemany → execute
+        # transition. ``executemany`` already calls
+        # ``_reset_execute_state``, so the explicit reset there is
+        # redundant once the helper takes responsibility.
+        self._completed_iterations = 0
 
     async def _execute_unlocked(
         self, operation: str, parameters: Sequence[Any] | None = None

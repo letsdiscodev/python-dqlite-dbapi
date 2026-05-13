@@ -1341,6 +1341,14 @@ class Cursor:
         self._rows = []
         self._row_index = 0
         self._rowcount = -1
+        # Reset the per-call completed-iteration counter alongside the
+        # other per-execute state. ``executemany`` increments it in
+        # its loop body; without the reset here the counter would
+        # carry over from a prior ``executemany`` into a subsequent
+        # single-row ``execute``, contradicting the
+        # ``completed_iterations`` property's documented contract
+        # ("0 after a never-executed cursor or a single-row execute").
+        self._completed_iterations = 0
 
     def execute(self, operation: str, parameters: Sequence[Any] | None = None, /) -> Self:
         """Execute a database operation (query or command).
