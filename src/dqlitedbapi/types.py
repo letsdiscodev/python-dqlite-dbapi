@@ -519,15 +519,25 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
     server still tolerates empty ISO8601 values. Returning None matches
     PEP 249 NULL semantics.
 
-    Tries, in order:
+    Two-step fallback (in order):
 
-    1. ``datetime.datetime.fromisoformat`` — ``YYYY-MM-DD HH:MM:SS[…]``
+    1. ``datetime.datetime.fromisoformat`` — covers full
+       ``YYYY-MM-DD HH:MM:SS[.ffffff][±HH:MM]`` plus bare
+       ``YYYY-MM-DD``. On Python 3.11+ ``datetime.fromisoformat``
+       widened to accept every shape ``date.fromisoformat`` accepts,
+       so a bare-date input lands here (returning midnight datetime
+       — see the date-widens paragraph below).
     2. ``datetime.time.fromisoformat`` — ``HH:MM:SS[.ffffff][±HH:MM]``,
        matching the ``_iso8601_from_time`` bind-path encoder so a
        ``datetime.time`` bound via the driver round-trips as
        ``datetime.time`` on readback rather than raising ``DataError``.
-    3. ``datetime.date.fromisoformat`` — ``YYYY-MM-DD`` (widened to
-       ``datetime.datetime`` on return; see below).
+
+    There is intentionally NO third ``date.fromisoformat`` arm — step 1
+    already covers bare ``YYYY-MM-DD`` on every supported Python.
+    Ordinal-date form ``YYYY-OOO`` (which ``date.fromisoformat``
+    accepts but ``datetime.fromisoformat`` rejects) is therefore
+    rejected here too; no upstream emits ordinal dates today, so the
+    asymmetry is benign.
 
     Naive input round-trips as naive; aware input preserves the offset.
     Python 3.11+ ``datetime.fromisoformat`` accepts a trailing ``Z``
@@ -535,14 +545,14 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
 
     **``date`` widens to ``datetime`` on round-trip.** A ``datetime.date``
     passed to PEP 249 ``Date()`` serializes via ``isoformat()`` as
-    ``"YYYY-MM-DD"`` (no time component). The decoder's fallback path
-    parses the string with ``datetime.date.fromisoformat`` and returns
-    a ``datetime.datetime(year, month, day)`` — the value widens from
-    date to datetime. This matches pysqlite's default behaviour (stdlib
-    ``sqlite3`` with ``detect_types`` does the same widen). Callers who
-    need a strict ``date`` on readback should narrow via ``.date()`` or
-    use the SQLAlchemy ``_DqliteDate`` type that does the narrowing at
-    the ORM layer.
+    ``"YYYY-MM-DD"`` (no time component). Step 1 above parses that
+    bare-date string and returns ``datetime.datetime(year, month, day)``
+    at midnight — the value widens from date to datetime. This matches
+    pysqlite's default behaviour (stdlib ``sqlite3`` with
+    ``detect_types`` does the same widen). Callers who need a strict
+    ``date`` on readback should narrow via ``.date()`` or use the
+    SQLAlchemy ``_DqliteDate`` type that does the narrowing at the
+    ORM layer.
 
     ``datetime.time`` does NOT widen — ``HH:MM:SS`` has no date
     component so widening would require an arbitrary sentinel date.
