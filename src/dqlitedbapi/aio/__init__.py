@@ -98,7 +98,7 @@ paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name
 sqlite_version_info: Final[tuple[int, int, int]] = _SQLITE_VERSION_INFO
 sqlite_version: Final[str] = _SQLITE_VERSION
 
-__all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
+__all__ = [  # grouped by PEP 249 section, not alphabetical
     # Module attributes
     "__version__",
     "apilevel",

@@ -133,7 +133,7 @@ PARSE_COLNAMES: Final[int] = 2
 
 __version__: Final[str] = "0.1.5"
 
-__all__ = [  # noqa: RUF022 - grouped by PEP 249 section, not alphabetical
+__all__ = [  # grouped by PEP 249 section, not alphabetical
     # Module attributes
     "__version__",
     "apilevel",
