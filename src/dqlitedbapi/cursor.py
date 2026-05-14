@@ -28,19 +28,17 @@ from dqlitedbapi.types import (
     _Description,
 )
 from dqlitewire import (
+    BARE_DATABASE_ERROR_CODES,
     DQLITE_NOTFOUND,
     DQLITE_PARSE,
     DQLITE_PROTO,
     SQLITE_AUTH,
     SQLITE_CONSTRAINT,
-    SQLITE_CORRUPT,
-    SQLITE_FORMAT,
     SQLITE_INTERNAL,
     SQLITE_MISMATCH,
     SQLITE_MISUSE,
     SQLITE_NOLFS,
     SQLITE_NOMEM,
-    SQLITE_NOTADB,
     SQLITE_NOTFOUND,
     SQLITE_NOTICE,
     SQLITE_RANGE,
@@ -108,9 +106,16 @@ _CODE_TO_EXCEPTION: Final[
     SQLITE_MISUSE: InterfaceError,
     SQLITE_NOTFOUND: InternalError,
     SQLITE_NOMEM: InternalError,
-    SQLITE_CORRUPT: DatabaseError,
-    SQLITE_FORMAT: DatabaseError,
-    SQLITE_NOTADB: DatabaseError,
+    # Wire SSOT for slot-fatal "bare DatabaseError" routes:
+    # ``BARE_DATABASE_ERROR_CODES`` (SQLITE_CORRUPT / SQLITE_FORMAT /
+    # SQLITE_NOTADB). The SQLAlchemy adapter derives its slot-fatal
+    # classification from the same wire set
+    # (``sqlalchemydqlite/base.py::_BARE_DBE_DISCONNECT_CODES``);
+    # deriving here too keeps the two consumers aligned automatically
+    # if the wire set grows. The dict-merge spread is dict-literal-safe
+    # because the SSOT codes do not collide with any of the entries
+    # above.
+    **{code: DatabaseError for code in BARE_DATABASE_ERROR_CODES},
     # Codes that intentionally fall through to the OperationalError
     # default (no explicit entry needed): BUSY, LOCKED, READONLY,
     # IOERR, FULL, CANTOPEN, EMPTY, SCHEMA, PROTOCOL (15), PERM,
@@ -118,7 +123,11 @@ _CODE_TO_EXCEPTION: Final[
     # codes; we used to enumerate PROTOCOL explicitly as
     # "documentary" but that just invited symmetry pressure to add
     # 12 more no-op entries.
-    # CPython stdlib parity — see the primary-code constants above.
+    # Defensive pass-through entries (NOT in the wire SSOT because
+    # dqlite-server does not currently emit them): route to bare
+    # DatabaseError so a future server release that surfaces one does
+    # not land on the unclassified-OperationalError default. CPython
+    # stdlib parity — see the primary-code constants above.
     SQLITE_NOLFS: DatabaseError,
     SQLITE_AUTH: DatabaseError,
     SQLITE_NOTICE: DatabaseError,
