@@ -99,7 +99,7 @@ def test_scroll_with_bool_value_raises_programming_error() -> None:
     project standard from ``arraysize.setter``."""
     cur = _make_sync_cursor()
     with pytest.raises(ProgrammingError, match="scroll value"):
-        cur.scroll(True, "relative")  # type: ignore[arg-type]
+        cur.scroll(True, "relative")
 
 
 def test_scroll_with_float_value_raises_programming_error() -> None:

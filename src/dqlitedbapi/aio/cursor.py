@@ -78,12 +78,17 @@ class AsyncCursor:
         # across cancel for idempotent-compensation observability.
         self._completed_iterations: int = 0
         # Inherit parent connection's default row_factory (stdlib
-        # parity). Class-name check restricts inheritance to real
-        # AsyncConnection instances — MagicMock-typed test fakes
-        # would otherwise silently wrap every row.
+        # parity). ``isinstance`` admits real AsyncConnection instances
+        # and user subclasses (a common cross-cutting pattern) while
+        # MagicMock-typed test fakes still fall through to ``None``.
+        # The import is deferred to call time to break the cursor →
+        # connection import cycle (``AsyncConnection`` only appears in
+        # ``TYPE_CHECKING`` at module scope).
+        from dqlitedbapi.aio.connection import AsyncConnection as _AsyncConnection
+
         self._row_factory: RowFactory | None = (
             getattr(connection, "_row_factory", None)
-            if type(connection).__name__ == "AsyncConnection"
+            if isinstance(connection, _AsyncConnection)
             else None
         )
         # PEP 249 optional extension; see Cursor.messages.

@@ -70,7 +70,7 @@ async def test_async_scroll_bool_value_raises_programming_error() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
     with pytest.raises(ProgrammingError, match="scroll value"):
-        cur.scroll(True, "relative")  # type: ignore[arg-type]
+        cur.scroll(True, "relative")
 
 
 # ---------------- Error.sqlite_errorcode + __repr__ (coverage)

@@ -1121,16 +1121,20 @@ class Cursor:
         self._completed_iterations: int = 0
         # stdlib ``sqlite3.Cursor.row_factory`` parity. None means
         # "return plain tuples" (PEP 249 default). New cursors inherit
-        # the parent Connection's default factory if set. The class-
-        # name check below restricts inheritance to real Connection
-        # instances — MagicMock-typed test fakes have an auto-magic
-        # ``_row_factory`` attribute that would otherwise silently
-        # wrap every row. Use class-name comparison rather than
-        # ``isinstance`` to avoid the cursor → connection import
-        # cycle.
+        # the parent Connection's default factory if set. The
+        # ``isinstance`` check restricts inheritance to real Connection
+        # instances (and user subclasses — common cross-cutting pattern
+        # such as ``class TracingConnection(Connection)``) — MagicMock-
+        # typed test fakes have an auto-magic ``_row_factory`` attribute
+        # that would otherwise silently wrap every row. The import is
+        # deferred to call time to break the cursor → connection import
+        # cycle (``Connection`` only appears in ``TYPE_CHECKING`` at
+        # module scope).
+        from dqlitedbapi.connection import Connection as _Connection
+
         self._row_factory: RowFactory | None = (
             getattr(connection, "_row_factory", None)
-            if type(connection).__name__ == "Connection"
+            if isinstance(connection, _Connection)
             else None
         )
         # PEP 249 optional extension. Currently no driver path appends
