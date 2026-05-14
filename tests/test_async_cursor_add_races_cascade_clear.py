@@ -86,6 +86,17 @@ def test_cursor_called_after_close_full_scrub_and_discard() -> None:
     assert cur not in aconn._cursors
     assert len(aconn._cursors) == 0
 
+    # 4) The cursor's back-reference to the connection is a
+    # ``weakref.proxy`` so a user holding a strong ref to the race-
+    # leaked cursor does not pin the closed AsyncConnection's
+    # loop-bound state. Matches the cascade's swap pattern; without
+    # this, the previous defensive arm omitted the swap and the
+    # postcondition silently leaked the strong-ref.
+    assert type(cur._connection) is weakref.ProxyType, (
+        "defensive late-add arm must apply the cascade's weakref.proxy "
+        "swap so the cursor does not pin the closed connection"
+    )
+
 
 def test_cursor_called_after_close_with_normal_state_intact() -> None:
     """Negative pin: when the connection is NOT mid-close at the
