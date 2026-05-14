@@ -486,6 +486,23 @@ class AsyncCursor:
         """
         del self.messages[:]
         self._check_closed()
+        # Scrub per-execute state (description / rowcount / rows /
+        # row_index) BEFORE every rejection guard — input-validation
+        # (None seq / bad outer shape / non-str operation / cross-task
+        # slot) AND SQL-content (verb-reject / row-returning-reject /
+        # PRAGMA) — so a rejected ``executemany`` lands at the stdlib
+        # "no result set" baseline rather than reporting the prior
+        # query's shape. ``_reset_execute_state`` deliberately does
+        # NOT touch ``_lastrowid``, so the preserve-across-rejection
+        # contract for lastrowid is unaffected. Also zeroes
+        # ``_completed_iterations`` so an empty ``seq_of_parameters``
+        # ends with the same shape as empty ``execute``; the counter
+        # is preserved across the BaseException re-raise so callers
+        # can observe how many iterations committed before the
+        # cancel / failure. Runs BEFORE the cross-task slot check so
+        # the slot state itself is untouched (the reset does not
+        # touch ``_executing_task``).
+        self._reset_execute_state()
         # PEP 249 §7: errors raised by the module subclass ``Error``.
         # ``seq_of_parameters=None`` would later leak a bare ``TypeError``
         # ("'NoneType' object is not iterable") from the iteration site
@@ -540,19 +557,6 @@ class AsyncCursor:
         # on a cursor that was NOT actually executing.
         try:
             self._executing_task = cur_task
-            # Scrub per-execute state (description / rowcount / rows /
-            # row_index) BEFORE the verb-reject and row-returning-reject
-            # guards so a rejected ``executemany`` lands at the stdlib
-            # "no result set" baseline rather than reporting the prior
-            # query's shape. ``_reset_execute_state`` deliberately does
-            # NOT touch ``_lastrowid``, so the preserve-across-rejection
-            # contract for lastrowid is unaffected. Also zeroes
-            # ``_completed_iterations`` so an empty ``seq_of_parameters``
-            # ends with the same shape as empty ``execute``; the counter
-            # is preserved across the BaseException re-raise so callers
-            # can observe how many iterations committed before the
-            # cancel / failure.
-            self._reset_execute_state()
             # Reject transaction-control verbs and pure queries up front
             # (mirror of the sync sibling).
             # See sync sibling for the leading ``;``-stripping loop and the

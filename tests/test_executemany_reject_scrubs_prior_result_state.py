@@ -21,6 +21,8 @@ contracts coexist because ``_reset_execute_state`` does not touch
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,7 +31,7 @@ from dqlitedbapi import Connection
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import Cursor
-from dqlitedbapi.exceptions import ProgrammingError
+from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
 
 def _seed_prior_select_state(cur: Cursor | AsyncCursor) -> None:
@@ -157,3 +159,80 @@ async def test_async_executemany_pragma_rejection_scrubs_prior_result_state() ->
     with pytest.raises(ProgrammingError, match="executemany.*does not accept PRAGMA"):
         await cursor.executemany("PRAGMA journal_mode", [(1,)])
     _assert_scrubbed_to_baseline(cursor)
+
+
+# Input-validation rejects (None seq, bad outer shape, non-str operation,
+# async cross-task slot). Same stdlib-parity baseline contract: cursor
+# state must scrub before the guard raises so a caller catching the
+# rejection observes the "no result set" shape rather than the prior
+# SELECT's description / rowcount / rows / row_index.
+
+
+def test_sync_executemany_none_seq_rejection_scrubs_prior_result_state() -> None:
+    cursor = _make_sync_cursor()
+    _seed_prior_select_state(cursor)
+    with pytest.raises(ProgrammingError, match="seq_of_parameters must be a sequence"):
+        cursor.executemany("INSERT INTO t VALUES (?)", None)  # type: ignore[arg-type]
+    _assert_scrubbed_to_baseline(cursor)
+
+
+def test_sync_executemany_bad_outer_shape_rejection_scrubs_prior_result_state() -> None:
+    cursor = _make_sync_cursor()
+    _seed_prior_select_state(cursor)
+    # ``str`` is one of the rejected outer shapes (would iterate over chars).
+    with pytest.raises(ProgrammingError):
+        cursor.executemany("INSERT INTO t VALUES (?)", "abc")  # type: ignore[arg-type]
+    _assert_scrubbed_to_baseline(cursor)
+
+
+def test_sync_executemany_non_str_operation_rejection_scrubs_prior_result_state() -> None:
+    cursor = _make_sync_cursor()
+    _seed_prior_select_state(cursor)
+    with pytest.raises(ProgrammingError, match="operation must be a str SQL statement"):
+        cursor.executemany(b"INSERT INTO t VALUES (?)", [(1,)])  # type: ignore[arg-type]
+    _assert_scrubbed_to_baseline(cursor)
+
+
+async def test_async_executemany_none_seq_rejection_scrubs_prior_result_state() -> None:
+    cursor = _make_async_cursor()
+    _seed_prior_select_state(cursor)
+    with pytest.raises(ProgrammingError, match="seq_of_parameters must be a sequence"):
+        await cursor.executemany("INSERT INTO t VALUES (?)", None)  # type: ignore[arg-type]
+    _assert_scrubbed_to_baseline(cursor)
+
+
+async def test_async_executemany_bad_outer_shape_rejection_scrubs_prior_result_state() -> None:
+    cursor = _make_async_cursor()
+    _seed_prior_select_state(cursor)
+    with pytest.raises(ProgrammingError):
+        await cursor.executemany("INSERT INTO t VALUES (?)", "abc")  # type: ignore[arg-type]
+    _assert_scrubbed_to_baseline(cursor)
+
+
+async def test_async_executemany_non_str_operation_rejection_scrubs_prior_result_state() -> None:
+    cursor = _make_async_cursor()
+    _seed_prior_select_state(cursor)
+    with pytest.raises(ProgrammingError, match="operation must be a str SQL statement"):
+        await cursor.executemany(b"INSERT INTO t VALUES (?)", [(1,)])  # type: ignore[arg-type]
+    _assert_scrubbed_to_baseline(cursor)
+
+
+async def test_async_executemany_cross_task_slot_rejection_scrubs_prior_result_state() -> None:
+    """The cross-task slot reject (``_executing_task is not None`` and not
+    the current task) raises ``InterfaceError`` BEFORE the
+    ``_reset_execute_state`` call. Same stdlib-parity baseline contract."""
+    cursor = _make_async_cursor()
+    _seed_prior_select_state(cursor)
+    # Pin the slot to a sentinel task that is not the current one. Use
+    # a freshly-scheduled task so its identity differs from the test's
+    # running task; cancel it so it doesn't outlive the test.
+    other_task = asyncio.create_task(asyncio.sleep(60))
+    try:
+        cursor._executing_task = other_task
+        with pytest.raises(InterfaceError, match="already executing in another task"):
+            await cursor.executemany("INSERT INTO t VALUES (?)", [(1,)])
+        _assert_scrubbed_to_baseline(cursor)
+    finally:
+        other_task.cancel()
+        with contextlib.suppress(BaseException):
+            await other_task

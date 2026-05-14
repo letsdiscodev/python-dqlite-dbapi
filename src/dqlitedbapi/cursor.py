@@ -1553,6 +1553,18 @@ class Cursor:
         # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
         self._connection._check_thread()
+        # Scrub per-execute state (description / rowcount / rows /
+        # row_index) BEFORE every rejection guard — input-validation
+        # (None seq / bad outer shape / non-str operation) AND
+        # SQL-content (verb-reject / row-returning-reject / PRAGMA)
+        # — so a rejected ``executemany`` lands at the stdlib "no
+        # result set" baseline rather than reporting the prior
+        # query's shape. ``_reset_execute_state`` deliberately does
+        # NOT touch ``_lastrowid``, so the preserve-across-rejection
+        # contract for lastrowid is unaffected. The post-loop clear
+        # at the end of ``_executemany_async`` handles the documented
+        # "clear after success" contract for the admitted-verb path.
+        self._reset_execute_state()
         # PEP 249 §7: errors raised by the module subclass ``Error``.
         # ``seq_of_parameters=None`` would later leak a bare ``TypeError``
         # ("'NoneType' object is not iterable") from the iteration site,
@@ -1596,18 +1608,7 @@ class Cursor:
         # rowid, violating both the cursor docstring contract
         # ("ROLLBACK / UPDATE / DELETE / DDL do NOT clear it... close()
         # is the single lifecycle event that scrubs it") and parity with
-        # the async sibling's rejection path. The post-loop clear at the
-        # end of ``_executemany_async`` handles the documented "clear
-        # after success" contract for the admitted-verb path.
-        #
-        # Scrub per-execute state (description / rowcount / rows /
-        # row_index) BEFORE the verb-reject and row-returning-reject
-        # guards so a rejected ``executemany`` lands at the stdlib
-        # "no result set" baseline rather than reporting the prior
-        # query's shape. ``_reset_execute_state`` deliberately does
-        # NOT touch ``_lastrowid``, so the preserve-across-rejection
-        # contract for lastrowid is unaffected.
-        self._reset_execute_state()
+        # the async sibling's rejection path.
         # Reject transaction-control verbs and pure queries up front so
         # the caller's frame sees the ProgrammingError rather than
         # having it surface deep inside the async helper. stdlib
