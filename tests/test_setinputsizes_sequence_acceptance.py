@@ -55,6 +55,21 @@ def test_bytes_rejected(cursor: dqlitedbapi.Cursor) -> None:
         cursor.setinputsizes(b"ab")
 
 
+def test_bytearray_rejected(cursor: dqlitedbapi.Cursor) -> None:
+    with pytest.raises(ProgrammingError, match="size hints"):
+        cursor.setinputsizes(bytearray(b"ab"))
+
+
+def test_memoryview_rejected(cursor: dqlitedbapi.Cursor) -> None:
+    """``memoryview`` slips past a ``(str, bytes, bytearray)`` rejection
+    triplet because it satisfies ``collections.abc.Sequence`` — explicit
+    rejection keeps the validator family aligned with the sibling
+    ``_reject_non_sequence_params`` quartet (str/bytes/bytearray/memoryview).
+    """
+    with pytest.raises(ProgrammingError, match="size hints"):
+        cursor.setinputsizes(memoryview(b"ab"))
+
+
 def test_int_rejected(cursor: dqlitedbapi.Cursor) -> None:
     with pytest.raises(ProgrammingError, match="Sequence"):
         cursor.setinputsizes(42)  # type: ignore[arg-type]

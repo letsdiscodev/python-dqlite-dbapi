@@ -930,7 +930,12 @@ class AsyncCursor:
         # caller-side bug (e.g. passing a string) surfaces at the call
         # site rather than being silently absorbed. PEP 249 §7 keeps
         # the failure inside the ``dbapi.Error`` hierarchy.
-        if isinstance(sizes, (str, bytes, bytearray)):
+        if isinstance(sizes, (str, bytes, bytearray, memoryview)):
+            # ``memoryview`` satisfies ``collections.abc.Sequence`` so
+            # it would slip past the explicit-rejection arm and reach
+            # the ABC arm below. Quartet-rejection keeps this validator
+            # aligned with the sibling ``_reject_non_sequence_params``
+            # (str/bytes/bytearray/memoryview).
             raise ProgrammingError(
                 f"setinputsizes expects a sequence of size hints, got {type(sizes).__name__}"
             )

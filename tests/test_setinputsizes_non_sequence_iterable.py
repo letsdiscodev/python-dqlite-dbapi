@@ -66,3 +66,22 @@ async def test_async_setinputsizes_accepts_deque_and_range() -> None:
     cur = AsyncCursor(conn)
     cur.setinputsizes(collections.deque([1, 2]))
     cur.setinputsizes(range(3))
+
+
+def test_sync_setinputsizes_rejects_memoryview() -> None:
+    """``memoryview`` satisfies ``collections.abc.Sequence`` so it
+    would slip past the str/bytes/bytearray triplet and be accepted by
+    the ABC arm. Mirror the sibling ``_reject_non_sequence_params``
+    quartet (str/bytes/bytearray/memoryview)."""
+    conn = Connection("localhost:9001", timeout=2.0)
+    cur = Cursor(conn)
+    with pytest.raises(ProgrammingError, match="size hints"):
+        cur.setinputsizes(memoryview(b"ab"))
+
+
+async def test_async_setinputsizes_rejects_memoryview() -> None:
+    """Async sibling pin for the memoryview-rejection symmetry."""
+    conn = AsyncConnection("localhost:9001")
+    cur = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="size hints"):
+        cur.setinputsizes(memoryview(b"ab"))

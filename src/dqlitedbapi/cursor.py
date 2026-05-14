@@ -2098,7 +2098,12 @@ class Cursor:
         # short-circuit and the affinity check so a closed-cursor
         # cleanup helper can call setinputsizes / setoutputsize without
         # a raise regardless of argument shape.
-        if isinstance(sizes, (str, bytes, bytearray)):
+        if isinstance(sizes, (str, bytes, bytearray, memoryview)):
+            # ``memoryview`` satisfies ``collections.abc.Sequence`` so
+            # it would slip past the explicit-rejection arm and reach
+            # the ABC arm below. Quartet-rejection keeps this validator
+            # aligned with the sibling ``_reject_non_sequence_params``
+            # (str/bytes/bytearray/memoryview).
             raise ProgrammingError(
                 f"setinputsizes expects a sequence of size hints, got {type(sizes).__name__}"
             )
