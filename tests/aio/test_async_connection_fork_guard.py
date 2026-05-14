@@ -1,14 +1,14 @@
 """Pin: dbapi ``AsyncConnection`` and ``force_close_transport`` reject
 or short-circuit when used after ``os.fork``.
 
-Cycle 20 added pid guards to the sync ``Connection`` and the
+Pid guards exist on the sync ``Connection`` and the
 client-layer ``DqliteConnection`` / ``ConnectionPool``. The dbapi
 async surface (``AsyncConnection``) and its synchronous
 ``force_close_transport`` hook (used by SA's adapter outside-greenlet
 preflight, post-await RuntimeError catches, and ``terminate()``)
-were left without guards. The hook in particular calls
+must mirror the same discipline. The hook in particular calls
 ``writer.close()`` on the inherited socket — the exact "FIN on the
-parent's connection" the cycle was designed to prevent.
+parent's connection" the pid-guards exist to prevent.
 
 Tests cover:
 - public-method use after fork raises a clear ``InterfaceError``

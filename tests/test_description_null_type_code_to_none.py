@@ -1,9 +1,9 @@
 """Pin: ``Cursor.description`` / ``AsyncCursor.description`` map
-``ValueType.NULL`` to ``None`` (cycle 22 mapping).
+``ValueType.NULL`` to ``None`` in the type_code slot.
 
 Wire-layer returns ``column_types`` derived from row 0; if a
 column was tagged ``ValueType.NULL`` (e.g. a ``LEFT JOIN``
-unmatched row, or a literal ``SELECT NULL``), the cycle 22
+unmatched row, or a literal ``SELECT NULL``), the description
 mapping replaces ``ValueType.NULL`` (5) with ``None`` in the
 description's ``type_code`` slot. PEP 249 §6.1.2 says the
 type_code "must compare equal to one of the Type Objects" —
@@ -30,7 +30,7 @@ from dqlitewire.constants import ValueType
 
 class _MixedNullTypesClient:
     """Returns ``column_types=[TEXT, NULL, INTEGER]`` — the
-    mixed-row case the cycle 22 mapping must handle."""
+    mixed-row case the description mapping must handle."""
 
     async def query_raw_typed(
         self, sql: str, params: Any

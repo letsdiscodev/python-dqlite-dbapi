@@ -10,7 +10,7 @@ exception handler, and the coroutine frame keeps the
 StreamReader/StreamWriter referenced.
 
 The async sibling ``AsyncConnection.force_close_transport`` already
-has the bounded re-snapshot reap (cycle-27 R27_1); this restores
+has the bounded re-snapshot reap; this restores
 sync-vs-async parity.
 """
 

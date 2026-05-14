@@ -104,8 +104,8 @@ class TestSyncStdlibParityStubs:
             conn.create_window_function("name", 0, object)
 
 
-class TestSyncCycle22StubFamily:
-    """Stubs added alongside the cycle-22 stdlib-parity work
+class TestSyncStdlibParityStubFamily:
+    """Stubs added alongside the stdlib-parity work
     (executescript, interrupt, set_authorizer / progress /
     trace, total_changes, getlimit / setlimit, getconfig /
     setconfig, serialize / deserialize, blobopen). All return
@@ -228,8 +228,8 @@ class TestAsyncStdlibParityStubs:
             aconn.create_window_function("name", 0, object)
 
 
-class TestAsyncCycle22StubFamily:
-    """Async sibling of ``TestSyncCycle22StubFamily``."""
+class TestAsyncStdlibParityStubFamily:
+    """Async sibling of ``TestSyncStdlibParityStubFamily``."""
 
     async def test_executescript(self, aconn: AsyncConnection) -> None:
         # ``executescript`` is plain ``def`` (not ``async def``) so the

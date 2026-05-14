@@ -207,11 +207,11 @@ class TestIso8601EncoderBrokenTzinfo:
     """Pin the ``utcoffset() is None`` rejection branch on both encoders.
 
     A tzinfo subclass that declares itself but cannot resolve an
-    offset for the given datetime/time is a broken contract. Cycle 22
-    flipped this from silent demotion (encoded as naive, losing the
-    user's tz-awareness intent) to a hard ``DataError``. Pin the new
-    contract so a regression that re-introduces silent demotion is
-    caught.
+    offset for the given datetime/time is a broken contract. The
+    encoders reject this with a hard ``DataError`` rather than
+    silently demoting to naive (which would lose the user's
+    tz-awareness intent). Pin the contract so a regression that
+    re-introduces silent demotion is caught.
     """
 
     def test_datetime_broken_tzinfo_raises_data_error(self) -> None:

@@ -3,7 +3,7 @@
 field on mid-batch failure and re-raise.
 
 PEP 249 §6.1.5 says ``rowcount=-1`` means undetermined.
-The cycle 22 reset block uses that signal so callers
+The reset block uses that signal so callers
 cannot mistake the LAST iteration's rowcount for the
 cumulative count of successfully-applied iterations.
 A regression that drops the bare ``raise`` would

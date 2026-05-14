@@ -14,7 +14,7 @@ task was then nulled with no observer/cancel — orphaned, surfacing
 as "Task was destroyed but it is pending" at GC.
 
 The fix mirrors the in-thread re-snapshot loop in
-``DqliteConnection._close_impl`` (cycle-27 R27_1 cap-and-fail-loud
+``DqliteConnection._close_impl`` (the cap-and-fail-loud
 discipline): repeat snapshot+null+cancel for up to 3 iterations; on
 cap-exhaustion, log a WARNING and leave the residual task cancelled.
 """

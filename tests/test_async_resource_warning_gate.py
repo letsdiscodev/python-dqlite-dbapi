@@ -1,8 +1,8 @@
-"""Pin: cycle 22's three-flag gate on
+"""Pin: the three-flag gate on
 ``AsyncConnection``'s GC-time ``ResourceWarning``.
 
-Cycle 22 added the ``connected_flag`` argument and the
-gate ``if closed_flag[0] or not connected_flag[0]: return``
+The gate adds the ``connected_flag`` argument and the
+check ``if closed_flag[0] or not connected_flag[0]: return``
 plus an early ``self._closed_flag[0] = True`` in
 ``force_close_transport``. The three behavioural promises:
 

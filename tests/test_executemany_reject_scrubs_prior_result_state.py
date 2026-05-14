@@ -181,7 +181,7 @@ def test_sync_executemany_bad_outer_shape_rejection_scrubs_prior_result_state() 
     _seed_prior_select_state(cursor)
     # ``str`` is one of the rejected outer shapes (would iterate over chars).
     with pytest.raises(ProgrammingError):
-        cursor.executemany("INSERT INTO t VALUES (?)", "abc")  # type: ignore[arg-type]
+        cursor.executemany("INSERT INTO t VALUES (?)", "abc")
     _assert_scrubbed_to_baseline(cursor)
 
 
@@ -205,7 +205,7 @@ async def test_async_executemany_bad_outer_shape_rejection_scrubs_prior_result_s
     cursor = _make_async_cursor()
     _seed_prior_select_state(cursor)
     with pytest.raises(ProgrammingError):
-        await cursor.executemany("INSERT INTO t VALUES (?)", "abc")  # type: ignore[arg-type]
+        await cursor.executemany("INSERT INTO t VALUES (?)", "abc")
     _assert_scrubbed_to_baseline(cursor)
 
 
