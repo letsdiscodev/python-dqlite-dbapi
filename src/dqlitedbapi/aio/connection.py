@@ -1004,11 +1004,12 @@ class AsyncConnection:
                 "a pathological _invalidate feedback loop on inner conn.",
                 resnapshot_cap,
             )
-        # Mirror the fork branch's null-out so the AsyncConnection
+        # Mirror the fork-branch null-out so the AsyncConnection
         # does not keep claiming to reference a live inner conn
-        # after force-close. The fork branch above (line 638)
-        # already nulls; this brings the regular sync path to the
-        # same discipline.
+        # after force-close. The fork-after-init branch in this
+        # method (the ``if get_current_pid() != self._creator_pid:``
+        # arm) already nulls; this brings the regular non-fork path
+        # to the same discipline.
         self._async_conn = None
 
     @property
