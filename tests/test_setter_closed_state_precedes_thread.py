@@ -6,8 +6,7 @@ diagnostic — instead of being masked by the thread-affinity
 ``ProgrammingError``.
 
 Mirrors the closed-first precedence already pinned for sync
-``commit`` / ``rollback`` / ``cursor`` / ``row_factory.setter`` in
-prior rounds.
+``commit`` / ``rollback`` / ``cursor`` / ``row_factory.setter``.
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ def test_setter_on_closed_from_foreign_thread_raises_interface_error(name: str, 
     assert isinstance(captured[0], InterfaceError), (
         f"{name}.setter on a closed connection from a foreign thread "
         f"must raise InterfaceError (closed-state precedence per stdlib + "
-        f"sibling round-32 fixes); got {type(captured[0]).__name__}: "
+        f"sibling setters' precedence discipline); got {type(captured[0]).__name__}: "
         f"{captured[0]}"
     )
 

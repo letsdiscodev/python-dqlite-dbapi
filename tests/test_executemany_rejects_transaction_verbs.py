@@ -143,8 +143,8 @@ _LEADING_SEMICOLON_VERBS = [
 @pytest.mark.parametrize("statement", _LEADING_SEMICOLON_VERBS)
 def test_sync_executemany_rejects_leading_semicolon_verb(statement: str) -> None:
     """``executemany(";BEGIN ...", ...)`` and friends must also be
-    rejected — the round-2 ``rstrip(";")`` fix only canonicalised the
-    trailing-semicolon side. The leading-semicolon side requires
+    rejected — the existing ``rstrip(";")`` canonicalisation only
+    covers the trailing-semicolon side. The leading-semicolon side requires
     stripping leading ``;`` + interleaved whitespace before the verb
     extraction. Otherwise ``head_normalised.split(maxsplit=1)[0]``
     yields ``";BEGIN"`` which is not in the reject set."""

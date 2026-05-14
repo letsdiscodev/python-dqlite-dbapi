@@ -2,7 +2,7 @@
 as ``DataError``, not the bare exception class.
 
 The ISO8601 encoders at ``types.py`` already reject ``utcoffset()
-returning None`` (per a prior round). The complementary case — a
+returning None``. The complementary case — a
 broken tzinfo that *raises* — was previously uncovered: bare
 ``RuntimeError`` / ``ValueError`` / ``TypeError`` from a hand-rolled
 tzinfo would leak outside the PEP 249 ``dbapi.Error`` hierarchy,

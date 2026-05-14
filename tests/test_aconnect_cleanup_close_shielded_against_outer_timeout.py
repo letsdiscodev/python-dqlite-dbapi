@@ -17,8 +17,8 @@ fresh outer cancel landing during ``await conn.close()`` raises a new
 exception — the bare ``raise`` is never reached and the original
 error is demoted to ``__context__``.
 
-Mirrors the sibling ``dqliteclient.connect`` fix (round-3 commit
-``1ba9371``): wrap the close in
+Mirrors the sibling ``dqliteclient.connect`` cleanup-close shield:
+wrap the close in
 ``contextlib.suppress(asyncio.CancelledError) + asyncio.shield(...)``
 so the close runs to completion in the background and the original
 exception's bare ``raise`` is reached.
