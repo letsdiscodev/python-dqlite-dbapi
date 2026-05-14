@@ -2028,7 +2028,8 @@ class Connection:
         # boundaries — a stray commit ends the transaction without
         # exiting the block, and the surrounding rollback-at-exit
         # then no-ops because ``in_transaction`` is already False.
-        # Mirrors the async sibling at ``aio/connection.py:1149-1157``.
+        # Mirrors the async sibling's stray-commit reject arm in
+        # ``AsyncConnection.commit``.
         # ``getattr`` so test helpers that build via ``Connection.__new__``
         # (skipping ``__init__``) without seeding the slot don't crash;
         # production paths always have the attribute from ``__init__``.
