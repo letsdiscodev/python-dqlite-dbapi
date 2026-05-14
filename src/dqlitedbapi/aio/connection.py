@@ -1898,11 +1898,13 @@ class AsyncConnection:
             "use the dqlite-server dump/restore mechanism instead"
         )
 
-    def iterdump(self, *args: object, filter: str | None = None, **kwargs: object) -> NoReturn:
+    def iterdump(self, *, filter: str | None = None, **kwargs: object) -> NoReturn:
         # Spell ``filter=`` explicitly so ``inspect.signature`` matches
         # the documented stdlib-3.13 shape ``(*, filter=None)``.
-        # ``*args/**kwargs`` still absorbs any Python-3.14+ additions
-        # so callers route through ``_stub_unsupported``.
+        # ``**kwargs`` still absorbs any future Python additions so
+        # callers route through ``_stub_unsupported``. Stdlib's
+        # ``iterdump`` is keyword-only (no positional args after
+        # ``self``); we mirror that.
         del filter  # accepted for signature parity; dqlite has no dump surface
         self._stub_unsupported(
             "dqlite does not support stdlib sqlite3 iterdump; "

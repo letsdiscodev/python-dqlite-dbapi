@@ -37,7 +37,7 @@ def async_conn() -> AsyncConnection:
     [
         ("iterdump", (), {}),
         ("iterdump", (), {"filter": "*"}),  # stdlib 3.13 added kwarg
-        ("iterdump", ("extra",), {"filter": "*", "novel_kwarg": True}),
+        ("iterdump", (), {"filter": "*", "novel_kwarg": True}),  # **kwargs absorbs unknown
         ("enable_load_extension", (), {}),  # zero-arg
         ("enable_load_extension", (True,), {}),
         ("enable_load_extension", (), {"enabled": True}),
