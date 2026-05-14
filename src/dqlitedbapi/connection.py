@@ -13,10 +13,14 @@ from types import TracebackType
 from typing import Any, Final, NoReturn, Self
 
 import dqliteclient.exceptions as _client_exc
-from dqliteclient import DqliteConnection, get_current_pid, validate_positive_int_or_none
-from dqliteclient.cluster import ClusterClient
-from dqliteclient.connection import parse_address as _client_parse_address
-from dqliteclient.node_store import MemoryNodeStore
+from dqliteclient import (
+    ClusterClient,
+    DqliteConnection,
+    MemoryNodeStore,
+    get_current_pid,
+    validate_positive_int_or_none,
+)
+from dqliteclient import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client, _validate_executemany_seq_shape
 from dqlitedbapi.exceptions import (
@@ -165,8 +169,8 @@ def _validate_close_timeout(close_timeout: float) -> None:
     operator-facing explanation as direct ``DqliteConnection`` /
     ``ConnectionPool`` callers when the floor trips.
     """
+    from dqliteclient import CLOSE_TIMEOUT_FLOOR_RATIONALE
     from dqliteclient import validate_timeout as _client_validate_timeout
-    from dqliteclient.connection import CLOSE_TIMEOUT_FLOOR_RATIONALE
 
     try:
         _client_validate_timeout(
