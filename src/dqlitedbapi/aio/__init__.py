@@ -3,7 +3,8 @@
 import asyncio
 import contextlib
 import logging
-from typing import Final, Literal
+from typing import Final as _Final
+from typing import Literal as _Literal
 
 # Re-export the stdlib-sqlite3-parity NotSupportedError stubs from
 # the sync surface so cross-driver code porting from aiosqlite (which
@@ -26,7 +27,7 @@ from dqlitedbapi import __version__ as _parent_version
 # the re-export creates a new module-level binding that needs its
 # own annotation to match the sync sibling's discipline. Mirrors
 # the four sibling ``__version__`` Final pins across the workspace.
-__version__: Final[str] = _parent_version
+__version__: _Final[str] = _parent_version
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
 )
@@ -83,22 +84,22 @@ from dqlitewire import (
 # ``import_dbapi`` discovery path; we set it for SA dialect glue.)
 logger = logging.getLogger(__name__)
 
-apilevel: Final[Literal["2.0"]] = "2.0"
+apilevel: _Final[_Literal["2.0"]] = "2.0"
 # PEP 249 value 1: threads may share the module.
 #
 # The async API is further restricted: each AsyncConnection is bound
 # to the event loop it was first used on (see dqlitedbapi.aio.connection).
 # Use one AsyncConnection per loop.
-threadsafety: Final[Literal[1]] = 1
-paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name=?
+threadsafety: _Final[_Literal[1]] = 1
+paramstyle: _Final[_Literal["qmark"]] = "qmark"  # Question mark style: WHERE name=?
 
 # SQLite compatibility attributes (for SQLAlchemy).
 #
 # Re-exported from ``dqlitedbapi._constants`` so the sync and the
 # async surface cannot drift. See ``_constants.py`` for the rationale
 # and the pin test (``tests/integration/test_sqlite_version_pin.py``).
-sqlite_version_info: Final[tuple[int, int, int]] = _SQLITE_VERSION_INFO
-sqlite_version: Final[str] = _SQLITE_VERSION
+sqlite_version_info: _Final[tuple[int, int, int]] = _SQLITE_VERSION_INFO
+sqlite_version: _Final[str] = _SQLITE_VERSION
 
 __all__ = [  # grouped by PEP 249 section, not alphabetical
     # Module attributes

@@ -45,7 +45,9 @@ Limitations vs stdlib sqlite3
 # the single-owner discipline across all layers.
 
 import logging
-from typing import Final, Literal, NoReturn
+from typing import Final as _Final
+from typing import Literal as _Literal
+from typing import NoReturn as _NoReturn
 
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
@@ -90,7 +92,7 @@ from dqlitewire import (
 )
 
 # PEP 249 module-level attributes
-apilevel: Final[Literal["2.0"]] = "2.0"
+apilevel: _Final[_Literal["2.0"]] = "2.0"
 # PEP 249 value 1: threads may share the module.
 #
 # This driver is stricter than the PEP minimum: each Connection is
@@ -98,8 +100,8 @@ apilevel: Final[Literal["2.0"]] = "2.0"
 # different thread raises ProgrammingError. Use one Connection per
 # thread, or use the async API (dqlitedbapi.aio.aconnect) for a
 # single-thread-per-loop model.
-threadsafety: Final[Literal[1]] = 1
-paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name=?
+threadsafety: _Final[_Literal[1]] = 1
+paramstyle: _Final[_Literal["qmark"]] = "qmark"  # Question mark style: WHERE name=?
 
 # SQLite compatibility attributes (for SQLAlchemy).
 #
@@ -110,15 +112,15 @@ paramstyle: Final[Literal["qmark"]] = "qmark"  # Question mark style: WHERE name
 # dialect feature paths) and the pin test
 # (``tests/integration/test_sqlite_version_pin.py``) that verifies
 # the value against the live cluster.
-sqlite_version_info: Final[tuple[int, int, int]] = _SQLITE_VERSION_INFO
-sqlite_version: Final[str] = _SQLITE_VERSION
+sqlite_version_info: _Final[tuple[int, int, int]] = _SQLITE_VERSION_INFO
+sqlite_version: _Final[str] = _SQLITE_VERSION
 
 # Stdlib ``sqlite3.LEGACY_TRANSACTION_CONTROL = -1`` parity (3.12+).
 # The ``Connection.autocommit`` setter already accepts the literal
 # ``-1`` sentinel; expose the canonical name so cross-driver code can
 # do ``conn.autocommit = dbapi.LEGACY_TRANSACTION_CONTROL`` without
 # falling back to ``getattr(dbapi, "LEGACY_TRANSACTION_CONTROL", -1)``.
-LEGACY_TRANSACTION_CONTROL: Final[int] = -1
+LEGACY_TRANSACTION_CONTROL: _Final[int] = -1
 
 # Stdlib ``sqlite3.PARSE_DECLTYPES = 1`` / ``PARSE_COLNAMES = 2``
 # parity. The values are exposed for cross-driver porting code that
@@ -128,10 +130,10 @@ LEGACY_TRANSACTION_CONTROL: Final[int] = -1
 # stubbed ``register_converter`` below). Exposing the constants only
 # closes the AttributeError-outside-Error-hierarchy footgun; it does
 # NOT enable any converter behaviour.
-PARSE_DECLTYPES: Final[int] = 1
-PARSE_COLNAMES: Final[int] = 2
+PARSE_DECLTYPES: _Final[int] = 1
+PARSE_COLNAMES: _Final[int] = 2
 
-__version__: Final[str] = "0.1.6"
+__version__: _Final[str] = "0.1.6"
 
 __all__ = [  # grouped by PEP 249 section, not alphabetical
     # Module attributes
@@ -274,7 +276,7 @@ from dqlitedbapi.types import (  # noqa: E402
 )
 
 
-def register_converter(*args: object, **kwargs: object) -> NoReturn:
+def register_converter(*args: object, **kwargs: object) -> _NoReturn:
     raise NotSupportedError(
         "dqlitedbapi does not support stdlib sqlite3 register_converter; "
         "the wire protocol does not surface declared column types for "
@@ -282,14 +284,14 @@ def register_converter(*args: object, **kwargs: object) -> NoReturn:
     )
 
 
-def complete_statement(*args: object, **kwargs: object) -> NoReturn:
+def complete_statement(*args: object, **kwargs: object) -> _NoReturn:
     raise NotSupportedError(
         "dqlitedbapi does not support stdlib sqlite3 complete_statement; "
         "REPL-helper utility not in PEP 249's surface"
     )
 
 
-def enable_callback_tracebacks(*args: object, **kwargs: object) -> NoReturn:
+def enable_callback_tracebacks(*args: object, **kwargs: object) -> _NoReturn:
     raise NotSupportedError(
         "dqlitedbapi does not support stdlib sqlite3 enable_callback_tracebacks; "
         "this driver has no callback-handler family for the toggle to apply to"
