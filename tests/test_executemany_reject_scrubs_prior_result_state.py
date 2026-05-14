@@ -43,6 +43,12 @@ def _seed_prior_select_state(cur: Cursor | AsyncCursor) -> None:
     cur._rows = [(1, 2), (3, 4), (5, 6)]
     cur._row_index = 3
     cur._lastrowid = 4242
+    # Only the async cursor exposes ``_completed_iterations`` (mid-loop
+    # progress counter). Seed it to a non-zero value so that "scrubbed"
+    # is distinguishable from "never set" — ``_reset_execute_state``
+    # co-scrubs this sixth field per its docstring.
+    if hasattr(cur, "_completed_iterations"):
+        cur._completed_iterations = 17
 
 
 def _assert_scrubbed_to_baseline(cur: Cursor | AsyncCursor) -> None:
@@ -58,6 +64,14 @@ def _assert_scrubbed_to_baseline(cur: Cursor | AsyncCursor) -> None:
     assert cur._row_index == 0, f"row_index must scrub to 0; got {cur._row_index}"
     # Per the lastrowid lifecycle contract, rejection preserves it.
     assert cur._lastrowid == 4242, f"lastrowid must survive rejection; got {cur._lastrowid}"
+    # Async cursor only: ``_reset_execute_state`` zeroes the mid-loop
+    # progress counter so an empty / rejected ``seq_of_parameters``
+    # ends with the same shape as empty ``execute``.
+    if hasattr(cur, "_completed_iterations"):
+        assert cur._completed_iterations == 0, (
+            f"_completed_iterations must scrub to 0 after rejection; "
+            f"got {cur._completed_iterations}"
+        )
 
 
 def _make_sync_cursor() -> Cursor:
