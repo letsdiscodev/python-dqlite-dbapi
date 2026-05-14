@@ -1,17 +1,21 @@
 """Pin: ``iterdump``, ``enable_load_extension``, and
-``load_extension`` stubs accept any call signature and route every
-misuse through the ``dqlitedbapi.Error`` hierarchy.
+``load_extension`` stubs route caller misuse through the
+``dqlitedbapi.Error`` hierarchy when the signature accepts the
+call.
 
-Every un-implementable stdlib stub uses
-``def stub(self, *args: object, **kwargs: object) -> NoReturn`` so
-any caller signature — positional, keyword, novel-stdlib-3.13
-``filter=`` kwarg — reaches ``_stub_unsupported`` and surfaces a
+``iterdump`` matches stdlib 3.13's ``(self, *, filter=None)`` shape
+plus a ``**kwargs`` absorber for forward-compat with future stdlib
+kwargs; positional misuse surfaces as bare ``TypeError`` matching
+stdlib's positional-rejection. ``enable_load_extension`` and
+``load_extension`` use ``(self, *args, **kwargs)`` so every
+signature reaches ``_stub_unsupported`` and surfaces a
 ``NotSupportedError`` inside the dbapi exception hierarchy.
 
 The three subjects had previously carried tightly-typed signatures
-that leaked bare ``TypeError`` outside ``dqlitedbapi.Error`` for any
-signature mismatch — breaking cross-driver feature-probe code. This
-pin forecloses a re-tightening regression.
+that leaked bare ``TypeError`` outside ``dqlitedbapi.Error`` for
+keyword-mismatch — breaking cross-driver feature-probe code. This
+pin forecloses a re-tightening regression on the keyword path while
+matching stdlib's positional-rejection on iterdump.
 """
 
 from __future__ import annotations

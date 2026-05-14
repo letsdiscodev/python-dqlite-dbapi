@@ -1,8 +1,9 @@
 """Pin: ``AsyncConnection.execute(sql, params)`` parameter-forwarding.
 
-The shortcut at ``aio/connection.py:1670`` is the
-``await cur.execute(operation, parameters)`` arm; the no-params arm at
-L1668 is exercised by
+The shortcut in ``AsyncConnection.execute`` (the
+``await cur.execute(operation, parameters)`` arm) is the parametrised
+forwarding path; the no-params arm of the same shortcut is exercised
+by
 ``test_audit_2026_05_dbapi_coverage.py::test_async_execute_shortcut_closes_cursor_on_raise``.
 
 Without this pin, a refactor that mishandles the parameter forwarding

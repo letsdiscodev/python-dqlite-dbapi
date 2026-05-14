@@ -2072,9 +2072,8 @@ class AsyncConnection:
 # hook — ``cursor()`` still instantiates ``AsyncCursor`` directly.
 #
 # Both attribute names are exposed:
-# - ``AsyncCursor`` mirrors the explicit type name (the original
-#   cycle36 alias; load-bearing for code that introspects under that
-#   name).
+# - ``AsyncCursor`` mirrors the explicit type name (load-bearing for
+#   code that introspects under that name).
 # - ``Cursor`` mirrors the aiosqlite convention
 #   (``aiosqlite.Connection.Cursor`` exposes the async cursor under
 #   the bare ``Cursor`` name) so cross-driver adapter code targeting
