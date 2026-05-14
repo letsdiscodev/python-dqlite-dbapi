@@ -656,6 +656,11 @@ class AsyncCursor:
                     # by every cursor method call; clear here so the
                     # contract holds even on the BaseException re-raise
                     # path.
+                    # ``_completed_iterations`` is intentionally PRESERVED
+                    # — it's the observability signal for "how many
+                    # iterations committed before the failure"; callers
+                    # reading it after cancel get the count for
+                    # idempotent compensation. Mirrors the sync sibling.
                     self._rowcount = -1
                     self._rows = []
                     self._description = None

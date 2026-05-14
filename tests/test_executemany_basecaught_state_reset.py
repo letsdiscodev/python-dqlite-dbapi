@@ -70,6 +70,62 @@ async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> N
     assert cur._row_index == 0
 
 
+async def test_sync_executemany_basecaught_preserves_completed_iterations() -> None:
+    """Pin the preserve-direction of the BaseException arm: iteration 0
+    succeeds (incrementing ``_completed_iterations`` to 1), iteration 1
+    raises a BaseException-subclass. After the re-raise, the reset
+    fields scrub to baseline AND ``_completed_iterations`` survives at
+    its mid-batch value — the documented observability signal callers
+    rely on for idempotent compensation after a cancel."""
+    conn = MagicMock()
+
+    class _Sentinel(BaseException):
+        """Synthetic BaseException subclass to drive the arm without
+        triggering pytest's BaseException-bypassing behaviour."""
+
+    cur = Cursor(conn)
+    cur._lastrowid = 99  # seed lastrowid so we can also assert it survives
+
+    # The loop body calls ``_execute_async`` then ``acc.push(self)`` then
+    # ``self._completed_iterations += 1``. Drive iteration 0 to
+    # success (push will read seeded state) and iteration 1 to raise.
+    call_count = {"n": 0}
+
+    async def _maybe_fail(*args: object, **kwargs: object) -> None:
+        # Seed the per-iteration state so ``acc.push`` is happy.
+        cur._rowcount = 1
+        cur._rows = []
+        cur._description = None
+        cur._row_index = 0
+        if call_count["n"] == 1:
+            raise _Sentinel("simulated mid-batch failure on iter 1")
+        call_count["n"] += 1
+
+    with (
+        patch.object(Cursor, "_execute_async", _maybe_fail),
+        pytest.raises(_Sentinel, match="iter 1"),
+    ):
+        await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,)])
+
+    # Reset fields scrub to baseline (already pinned by the sibling
+    # test above — re-pin together for locality):
+    assert cur._rowcount == -1
+    assert cur._rows == []
+    assert cur._description is None
+    assert cur._row_index == 0
+    # ``_lastrowid`` preservation (mirrored from the sibling test):
+    assert cur._lastrowid == 99
+    # ``_completed_iterations`` preservation (the new pin):
+    # iteration 0 succeeded (incremented to 1), iteration 1 raised
+    # BEFORE the increment ran. The arm must NOT zero this — it is
+    # the observability signal for "how many iterations committed
+    # before the failure".
+    assert cur._completed_iterations == 1, (
+        "_completed_iterations must survive the BaseException re-raise; "
+        f"got {cur._completed_iterations}"
+    )
+
+
 async def test_async_executemany_basecaught_resets_all_fields_and_reraises() -> None:
     conn = MagicMock()
     raised = RuntimeError("simulated mid-batch failure")
@@ -100,3 +156,52 @@ async def test_async_executemany_basecaught_resets_all_fields_and_reraises() -> 
     assert aconn_cursor._description is None
     assert aconn_cursor._lastrowid == 99  # preserved (stdlib parity)
     assert aconn_cursor._row_index == 0
+
+
+async def test_async_executemany_basecaught_preserves_completed_iterations() -> None:
+    """Async sibling of the sync preserve-direction pin: iteration 0
+    succeeds, iteration 1 raises a BaseException-subclass, the re-raise
+    leaves ``_completed_iterations`` at its mid-batch value."""
+    import asyncio
+
+    conn = MagicMock()
+
+    class _Sentinel(BaseException):
+        pass
+
+    aconn_cursor = AsyncCursor(conn)
+    aconn_cursor._lastrowid = 99
+
+    call_count = {"n": 0}
+
+    async def _maybe_fail(*args: object, **kwargs: object) -> None:
+        aconn_cursor._rowcount = 1
+        aconn_cursor._rows = []
+        aconn_cursor._description = None
+        aconn_cursor._row_index = 0
+        if call_count["n"] == 1:
+            raise _Sentinel("simulated mid-batch failure on iter 1")
+        call_count["n"] += 1
+
+    op_lock = asyncio.Lock()
+    aconn_cursor._connection._ensure_locks = MagicMock(return_value=(MagicMock(), op_lock))
+    aconn_cursor._connection._ensure_connection = MagicMock(return_value=MagicMock())
+
+    with (
+        patch.object(AsyncCursor, "_execute_unlocked", _maybe_fail),
+        pytest.raises(_Sentinel, match="iter 1"),
+    ):
+        await aconn_cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
+
+    # Reset fields scrub to baseline:
+    assert aconn_cursor._rowcount == -1
+    assert list(aconn_cursor._rows) == []
+    assert aconn_cursor._description is None
+    assert aconn_cursor._row_index == 0
+    # ``_lastrowid`` preservation:
+    assert aconn_cursor._lastrowid == 99
+    # ``_completed_iterations`` preservation (the new pin):
+    assert aconn_cursor._completed_iterations == 1, (
+        "_completed_iterations must survive the BaseException re-raise; "
+        f"got {aconn_cursor._completed_iterations}"
+    )
