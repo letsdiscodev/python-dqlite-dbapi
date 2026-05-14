@@ -54,6 +54,25 @@ async def test_async_scroll_bad_mode_raises_programming_error() -> None:
         await cur.scroll(0, mode="bad-mode")
 
 
+async def test_async_scroll_bad_value_raises_programming_error() -> None:
+    """Sibling-validator symmetry: ``value`` must be an integer offset
+    per PEP 249 §6.1.1. Without this check, ``cur.scroll("five",
+    "relative")`` is masked by the unconditional ``NotSupportedError``."""
+    conn = AsyncConnection("localhost:9001")
+    cur = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="scroll value"):
+        cur.scroll("five", "relative")  # type: ignore[arg-type]
+
+
+async def test_async_scroll_bool_value_raises_programming_error() -> None:
+    """``bool`` is-a ``int``; explicit reject matches the project
+    standard from ``arraysize.setter``."""
+    conn = AsyncConnection("localhost:9001")
+    cur = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="scroll value"):
+        cur.scroll(True, "relative")  # type: ignore[arg-type]
+
+
 # ---------------- Error.sqlite_errorcode + __repr__ (coverage)
 
 

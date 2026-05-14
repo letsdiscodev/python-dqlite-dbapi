@@ -2200,6 +2200,16 @@ class Cursor:
         # ``_check_closed`` first; see ``execute`` for rationale.
         self._check_closed()
         self._connection._check_thread()
+        # PEP 249 §6.1.1 documents ``value`` as an integer offset.
+        # Validate the value-type alongside the mode enumeration so the
+        # "surfaces as a caller-side bug" argument applies symmetrically
+        # to both parameters. ``bool`` is-a ``int`` in Python; explicit
+        # rejection matches the project standard from
+        # ``arraysize.setter``.
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ProgrammingError(
+                f"scroll value must be an integer offset, got {type(value).__name__}"
+            )
         # PEP 249 §6.1.1 enumerates ``mode`` ∈ {"relative", "absolute"}.
         # Validate before the unconditional NotSupportedError so a
         # caller typo (``cur.scroll(5, "absolutely")``) surfaces as a

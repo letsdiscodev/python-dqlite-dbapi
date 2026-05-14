@@ -69,3 +69,48 @@ def test_scroll_default_mode_is_relative() -> None:
     cur = _make_sync_cursor()
     with pytest.raises(NotSupportedError, match="not scrollable"):
         cur.scroll(0)
+
+
+# ---------------- value-type validation (sibling discipline)
+#
+# PEP 249 §6.1.1 documents ``value`` as an integer offset. The
+# project-wide validator family (``arraysize.setter``,
+# ``_reject_non_sequence_params``, ``setinputsizes``) treats a
+# misshapen value as a caller-side bug surfaced as ``ProgrammingError``.
+# Without a value-type check, ``cur.scroll("five", "relative")`` slips
+# past the mode validator and is masked by the unconditional
+# ``NotSupportedError`` — the same diagnostic a correct call produces.
+
+
+def test_scroll_with_string_value_raises_programming_error() -> None:
+    cur = _make_sync_cursor()
+    with pytest.raises(ProgrammingError, match="scroll value"):
+        cur.scroll("five", "relative")  # type: ignore[arg-type]
+
+
+def test_scroll_with_none_value_raises_programming_error() -> None:
+    cur = _make_sync_cursor()
+    with pytest.raises(ProgrammingError, match="scroll value"):
+        cur.scroll(None, "relative")  # type: ignore[arg-type]
+
+
+def test_scroll_with_bool_value_raises_programming_error() -> None:
+    """``bool`` is-a ``int`` in Python; explicit reject matches the
+    project standard from ``arraysize.setter``."""
+    cur = _make_sync_cursor()
+    with pytest.raises(ProgrammingError, match="scroll value"):
+        cur.scroll(True, "relative")  # type: ignore[arg-type]
+
+
+def test_scroll_with_float_value_raises_programming_error() -> None:
+    cur = _make_sync_cursor()
+    with pytest.raises(ProgrammingError, match="scroll value"):
+        cur.scroll(1.5, "relative")  # type: ignore[arg-type]
+
+
+def test_scroll_with_int_value_reaches_not_supported() -> None:
+    """Sanity: a legal ``int`` value still reaches the unconditional
+    ``NotSupportedError`` (no value-check false positive)."""
+    cur = _make_sync_cursor()
+    with pytest.raises(NotSupportedError, match="not scrollable"):
+        cur.scroll(-3, "relative")
