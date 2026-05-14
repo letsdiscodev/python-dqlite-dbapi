@@ -65,8 +65,8 @@ def _async_unclosed_warning(
       ``(closed_flag, connected_flag)`` snapshots belong to the
       parent process at fork-time; emitting a ResourceWarning here
       would falsely accuse the child of leaking what the parent owns.
-      Mirrors the sync sibling at ``connection.py:688-692`` and every
-      other fork-traversing site in the package.
+      Mirrors the sync sibling's ``_cleanup_loop_thread`` fork-safety
+      discipline and every other fork-traversing site in the package.
     - ``closed_flag[0]`` is True if ``close()`` ran or if the
       synchronous ``force_close_transport`` (terminate / SA outside-
       greenlet) ran.
