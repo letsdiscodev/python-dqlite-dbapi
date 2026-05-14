@@ -1,5 +1,7 @@
 """Async PEP 249-style interface for dqlite."""
 
+import asyncio
+import contextlib
 import logging
 from typing import Final, Literal
 
@@ -286,16 +288,29 @@ async def aconnect(
         # bound locks, transport, and the reader task don't leak. The
         # SA dialect (DqliteDialect_aio.connect) uses the same
         # pattern. Catch BaseException to cover CancelledError from
-        # an outer asyncio.timeout; suppress only Exception during
-        # the close so the original cancel / error propagates. Log
-        # any close-side error at DEBUG so a forensic trail exists
-        # for an operator triaging cleanup-time failures (the
-        # original connect error is what users see, but a follow-up
-        # debug log surfaces secondary failures that would otherwise
-        # be swallowed silently). Mirrors the SA-glue
-        # ``aio_close`` discipline.
+        # an outer asyncio.timeout.
+        #
+        # ``asyncio.shield`` lets the inner ``close()`` task run to
+        # completion even when a FRESH outer cancel (e.g. from an
+        # ``asyncio.timeout(...)`` wrapping the caller's
+        # ``await aconnect(...)``) lands while we are suspended in
+        # ``await conn.close()``. Without the shield, the close
+        # would be cancelled mid-flight and the bare ``raise`` below
+        # would re-raise a ``CancelledError`` from the close site
+        # instead of the original connect-time exception — the
+        # original would survive only as ``__context__``.
+        # ``contextlib.suppress(asyncio.CancelledError)`` absorbs the
+        # outer-await CancelledError so the bare ``raise`` below
+        # re-delivers the ORIGINAL exception (asyncio will re-raise
+        # the cancel at the next await on this task). ``except
+        # Exception`` catches non-cancel close-time failures (e.g.
+        # OSError on a stale transport) and logs them at DEBUG so the
+        # original connect error remains user-visible. Mirrors the
+        # sibling ``dqliteclient.connect`` shape (commit 1ba9371) and
+        # the SA-glue ``aio_close`` discipline.
         try:
-            await conn.close()
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.shield(conn.close())
         except Exception:
             logger.debug(
                 "aconnect: exception during cleanup-close after failed connect",
