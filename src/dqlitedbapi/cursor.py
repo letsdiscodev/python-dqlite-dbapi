@@ -8,7 +8,6 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, Self
 
 import dqliteclient.exceptions as _client_exc
-import dqlitewire.exceptions as _wire_exc
 from dqlitedbapi.exceptions import (
     DatabaseError,
     DataError,
@@ -47,6 +46,7 @@ from dqlitewire import (
     ValueType,
     primary_sqlite_code,
 )
+from dqlitewire import EncodeError as _WireEncodeError
 
 __all__ = ["Cursor"]
 
@@ -295,7 +295,7 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # signature stays symmetric with the coded branches above.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise DataError(str(e), code=None, raw_message=raw_msg) from e
-    except _wire_exc.EncodeError as e:
+    except _WireEncodeError as e:
         # Wire-layer encode failure that escaped the client's
         # ``_run_protocol`` (e.g. a Message constructor raising
         # mid-validation before ``_run_protocol`` was reached).
