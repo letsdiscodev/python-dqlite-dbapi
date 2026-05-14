@@ -1518,6 +1518,18 @@ class AsyncConnection:
             cur._lastrowid = None
             cur._row_index = 0
             del cur.messages[:]
+            # Mirror the cascade's ``weakref.proxy`` swap so a
+            # race-leaked cursor does not strong-pin the closed
+            # AsyncConnection's loop-bound state (lazy
+            # ``asyncio.Lock`` / ``weakref.finalize`` / inner client
+            # conn). Cascade canonical pattern at the
+            # ``Cursor.close``-cascade loop earlier in this file; the
+            # per-cursor close arm at ``aio/cursor.py`` follows the
+            # same. ``contextlib.suppress(TypeError)`` for the rare
+            # path where the connection object does not support
+            # weakref (test fakes typed with ``object()``).
+            with contextlib.suppress(TypeError):
+                cur._connection = weakref.proxy(cur._connection)
             self._cursors.discard(cur)
         return cur
 
