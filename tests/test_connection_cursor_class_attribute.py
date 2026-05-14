@@ -41,3 +41,21 @@ def test_sync_connection_instance_attribute_routes_to_class_attribute() -> None:
 def test_async_connection_instance_attribute_routes_to_class_attribute() -> None:
     aconn = AsyncConnection("localhost:9001")
     assert getattr(aconn, "AsyncCursor") is AsyncCursor  # noqa: B009
+
+
+def test_async_connection_class_exposes_cursor_attribute_aiosqlite_shape() -> None:
+    """aiosqlite-shape parity: aiosqlite exposes its async cursor under
+    ``Connection.Cursor`` (not ``AsyncCursor``). Cross-driver adapter
+    / instrumentation code that targets aiosqlite-shape async DBAPI
+    connections with ``isinstance(cur, conn.Cursor)`` would otherwise
+    hit ``AttributeError`` on our ``AsyncConnection``. We expose under
+    BOTH names — the existing ``AsyncConnection.AsyncCursor`` stays
+    for the explicit-name parity, and ``Connection.Cursor`` is the
+    aiosqlite-shape introspection surface."""
+    assert getattr(AsyncConnection, "Cursor") is AsyncCursor  # noqa: B009
+
+
+def test_async_connection_instance_cursor_attribute_aiosqlite_shape() -> None:
+    """Instance attribute lookup follows the class attribute."""
+    aconn = AsyncConnection("localhost:9001")
+    assert getattr(aconn, "Cursor") is AsyncCursor  # noqa: B009

@@ -2070,4 +2070,18 @@ class AsyncConnection:
 # outside the class body to avoid shadowing the ``AsyncCursor`` type
 # name in method annotations within the class scope. Not a factory
 # hook — ``cursor()`` still instantiates ``AsyncCursor`` directly.
+#
+# Both attribute names are exposed:
+# - ``AsyncCursor`` mirrors the explicit type name (the original
+#   cycle36 alias; load-bearing for code that introspects under that
+#   name).
+# - ``Cursor`` mirrors the aiosqlite convention
+#   (``aiosqlite.Connection.Cursor`` exposes the async cursor under
+#   the bare ``Cursor`` name) so cross-driver adapter code targeting
+#   the aiosqlite-shape async dbapi can write
+#   ``isinstance(cur, conn.Cursor)`` against either driver. The sync
+#   sibling at ``connection.py`` carries the same ``Cursor`` alias —
+#   exposing the async surface here under the same name honours the
+#   "Parity with sync ``Connection.Cursor``" comment above literally.
 AsyncConnection.AsyncCursor = AsyncCursor  # type: ignore[attr-defined]
+AsyncConnection.Cursor = AsyncCursor  # type: ignore[attr-defined]
