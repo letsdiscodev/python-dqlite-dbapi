@@ -1369,6 +1369,27 @@ class Cursor:
         Returns ``self`` so callers can chain ``.fetchall()`` etc.
         """
         del self.messages[:]
+        # ``_check_closed`` BEFORE ``_check_thread``: ``Cursor.close()``
+        # swaps ``self._connection`` for a ``weakref.proxy``; once the
+        # parent ``Connection`` is GC'd, ``_connection._check_thread()``
+        # raises ``ReferenceError`` — outside the PEP 249 ``Error``
+        # hierarchy. ``_check_closed`` reads only ``self._closed`` and
+        # raises ``InterfaceError`` (a real ``Error`` subclass).
+        self._check_closed()
+        self._connection._check_thread()
+        # Scrub per-execute state (description / rowcount / rows /
+        # row_index) BEFORE every rejection guard — input-validation
+        # (non-str operation) AND SQL-content (empty / multi-stmt /
+        # wrong ``?``-count) — so a rejected ``execute`` lands at the
+        # stdlib "no result set" baseline rather than reporting the
+        # prior query's shape. The closed/thread guards still precede
+        # the reset so a caller executing on a closed cursor sees the
+        # sharp ``InterfaceError("Cursor is closed")`` without a
+        # state-clobber side effect. ``_reset_execute_state``
+        # deliberately does NOT touch ``_lastrowid``, so the
+        # preserve-across-rejection contract for lastrowid is
+        # unaffected. Mirrors the ``executemany`` sibling.
+        self._reset_execute_state()
         # PEP 249 §7: errors raised by the module subclass ``Error``.
         # A non-str ``operation`` would later raise bare ``AttributeError``
         # (``None.lstrip``) or ``TypeError`` (``bytes.lstrip("﻿")``)
@@ -1382,21 +1403,6 @@ class Cursor:
                 f"operation must be a str SQL statement, got {type(operation).__name__}",
                 code=None,
             )
-        # ``_check_closed`` BEFORE ``_check_thread``: ``Cursor.close()``
-        # swaps ``self._connection`` for a ``weakref.proxy``; once the
-        # parent ``Connection`` is GC'd, ``_connection._check_thread()``
-        # raises ``ReferenceError`` — outside the PEP 249 ``Error``
-        # hierarchy. ``_check_closed`` reads only ``self._closed`` and
-        # raises ``InterfaceError`` (a real ``Error`` subclass).
-        self._check_closed()
-        self._connection._check_thread()
-        # Clear after the guards but before the wire call so a caller
-        # who executes on a closed cursor still sees the sharp
-        # ``InterfaceError("Cursor is closed")`` without a state-clobber
-        # side effect; a caller whose call raises mid-execute sees a
-        # cursor in the "no result set" baseline, not one reporting the
-        # previous query's description / rows.
-        self._reset_execute_state()
 
         # Pre-flight classification pass: empty SQL → ProgrammingError
         # (PEP 249 §7), multi-statement → ProgrammingError (stdlib

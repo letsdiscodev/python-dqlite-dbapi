@@ -389,6 +389,22 @@ class AsyncCursor:
         # PEP 249 §6.1.2: ``messages`` is cleared by every standard
         # cursor method before the call runs.
         del self.messages[:]
+        # Fast-path guard outside the lock so we fail quickly on an
+        # already-closed cursor without taking the lock.
+        self._check_closed()
+        # Scrub per-execute state (description / rowcount / rows /
+        # row_index) BEFORE the non-str and cross-task slot rejects so
+        # a rejected ``execute`` lands at the stdlib "no result set"
+        # baseline rather than reporting the prior query's shape. The
+        # closed guard above still precedes the reset so a caller
+        # executing on a closed cursor sees the sharp
+        # ``InterfaceError("Cursor is closed")`` without a
+        # state-clobber side effect. ``_reset_execute_state``
+        # deliberately does NOT touch ``_lastrowid`` or
+        # ``_executing_task``, so the preserve-across-rejection
+        # contract for lastrowid is unaffected and a foreign task's
+        # slot is left intact. Mirrors the ``executemany`` sibling.
+        self._reset_execute_state()
         # PEP 249 §7: errors raised by the module subclass ``Error``.
         # A non-str ``operation`` would later raise bare ``AttributeError``
         # (``None.lstrip``) or ``TypeError`` (``bytes.lstrip("﻿")``)
@@ -401,9 +417,6 @@ class AsyncCursor:
                 f"operation must be a str SQL statement, got {type(operation).__name__}",
                 code=None,
             )
-        # Fast-path guard outside the lock so we fail quickly on an
-        # already-closed cursor without taking the lock.
-        self._check_closed()
         # Reject concurrent execute on the same cursor. ``op_lock``
         # below serialises the wire calls, but the cursor's
         # per-execute state is mutated outside that lock (the
@@ -424,12 +437,6 @@ class AsyncCursor:
         # to a now-completed task. Mirrors the executemany sibling.
         try:
             self._executing_task = cur_task
-            # Clear state after the closed guard and before taking
-            # the lock: matches stdlib sqlite3 semantics so a mid-
-            # execute failure (including CancelledError) leaves the
-            # cursor in the "no result set" baseline rather than
-            # reporting the prior query's description.
-            self._reset_execute_state()
 
             # Pre-flight classification of caller-supplied SQL — empty /
             # multi-statement / wrong ``?``-count. Mirrors the sync
