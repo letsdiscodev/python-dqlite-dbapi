@@ -578,14 +578,13 @@ class AsyncCursor:
                 )
 
             # Single source of truth for per-execute reset; see
-            # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
-            # an empty ``seq_of_parameters`` ends with the same
-            # ``rowcount`` shape as empty ``execute``.
+            # ``_reset_execute_state``. Resets ``_completed_iterations``
+            # along with ``_rowcount`` and the row buffer so an empty
+            # ``seq_of_parameters`` ends with the same shape as empty
+            # ``execute``. The counter is preserved across the
+            # BaseException re-raise so callers can observe how many
+            # iterations committed before the cancel / failure.
             self._reset_execute_state()
-            # Reset the per-call completed-iteration counter. Preserved
-            # across the BaseException re-raise so callers can observe how
-            # many iterations committed before the cancel / failure.
-            self._completed_iterations = 0
             acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
             # Hold ``op_lock`` once for the entire loop. Previously each
             # iteration called ``self.execute(...)`` which re-acquired the
