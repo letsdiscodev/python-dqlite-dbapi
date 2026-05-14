@@ -1599,6 +1599,15 @@ class Cursor:
         # the async sibling's rejection path. The post-loop clear at the
         # end of ``_executemany_async`` handles the documented "clear
         # after success" contract for the admitted-verb path.
+        #
+        # Scrub per-execute state (description / rowcount / rows /
+        # row_index) BEFORE the verb-reject and row-returning-reject
+        # guards so a rejected ``executemany`` lands at the stdlib
+        # "no result set" baseline rather than reporting the prior
+        # query's shape. ``_reset_execute_state`` deliberately does
+        # NOT touch ``_lastrowid``, so the preserve-across-rejection
+        # contract for lastrowid is unaffected.
+        self._reset_execute_state()
         # Reject transaction-control verbs and pure queries up front so
         # the caller's frame sees the ProgrammingError rather than
         # having it surface deep inside the async helper. stdlib

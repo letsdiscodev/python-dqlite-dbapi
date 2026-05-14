@@ -540,6 +540,19 @@ class AsyncCursor:
         # on a cursor that was NOT actually executing.
         try:
             self._executing_task = cur_task
+            # Scrub per-execute state (description / rowcount / rows /
+            # row_index) BEFORE the verb-reject and row-returning-reject
+            # guards so a rejected ``executemany`` lands at the stdlib
+            # "no result set" baseline rather than reporting the prior
+            # query's shape. ``_reset_execute_state`` deliberately does
+            # NOT touch ``_lastrowid``, so the preserve-across-rejection
+            # contract for lastrowid is unaffected. Also zeroes
+            # ``_completed_iterations`` so an empty ``seq_of_parameters``
+            # ends with the same shape as empty ``execute``; the counter
+            # is preserved across the BaseException re-raise so callers
+            # can observe how many iterations committed before the
+            # cancel / failure.
+            self._reset_execute_state()
             # Reject transaction-control verbs and pure queries up front
             # (mirror of the sync sibling).
             # See sync sibling for the leading ``;``-stripping loop and the
@@ -582,14 +595,8 @@ class AsyncCursor:
                     "use execute() for SELECT / VALUES / PRAGMA / EXPLAIN / WITH."
                 )
 
-            # Single source of truth for per-execute reset; see
-            # ``_reset_execute_state``. Resets ``_completed_iterations``
-            # along with ``_rowcount`` and the row buffer so an empty
-            # ``seq_of_parameters`` ends with the same shape as empty
-            # ``execute``. The counter is preserved across the
-            # BaseException re-raise so callers can observe how many
-            # iterations committed before the cancel / failure.
-            self._reset_execute_state()
+            # Per-execute state was scrubbed BEFORE the reject guards
+            # above so a rejected batch lands at the stdlib baseline.
             acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
             # Hold ``op_lock`` once for the entire loop. Previously each
             # iteration called ``self.execute(...)`` which re-acquired the
