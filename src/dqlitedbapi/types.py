@@ -396,9 +396,13 @@ _MAX_DATA_ERROR_TEXT_DISPLAY: Final[int] = 200
 
 def _truncate_for_message(text: str) -> str:
     """Bound a server-controlled string before interpolating into a
-    DataError message. The truncation marker carries the original
-    length so a triaging operator knows the original size class
-    without exposing the full payload."""
+    DataError message. The truncation marker carries the OVERFLOW
+    codepoint count (number of characters dropped past the cap) so a
+    triaging operator knows the size class without exposing the full
+    payload. The suffix shape aligns with the wire-layer
+    ``_cap_raw_message`` SSOT (single overflow-count vocabulary across
+    every truncation surface).
+    """
     if len(text) <= _MAX_DATA_ERROR_TEXT_DISPLAY:
         return text
     return (
