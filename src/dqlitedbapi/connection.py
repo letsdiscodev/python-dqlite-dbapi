@@ -1794,7 +1794,7 @@ class Connection:
                         # iteration. Final defensive null-out + WARNING
                         # so operators see the pathological feedback
                         # loop. Mirrors the async-sibling cap-exhausted
-                        # branch at aio/connection.py:895-911.
+                        # branch in ``AsyncConnection.force_close_transport``.
                         with contextlib.suppress(Exception):
                             inner._pending_drain = None
                         logger.warning(
