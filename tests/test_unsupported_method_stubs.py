@@ -306,14 +306,15 @@ class TestTpcStubsRouteThroughHelper:
     of raising ``InterfaceError`` (closed) before ``NotSupportedError``
     (capability gap).
 
-    Round 30 introduced ``_stub_unsupported`` and retrofitted the
-    eighteen-plus stdlib-parity stubs (executescript, interrupt,
-    serialize/deserialize, blobopen, create_function,
-    set_authorizer, ...) but silently omitted the six TPC stubs that
-    sit immediately above the helper definition in source order.
-    Without this pin a regression that re-introduces a direct ``raise
-    NotSupportedError`` in any TPC stub silently re-opens the same
-    contract gap.
+    The ``_stub_unsupported`` helper consolidates the contract for
+    the eighteen-plus stdlib-parity stubs (``executescript``,
+    ``interrupt``, ``serialize`` / ``deserialize``, ``blobopen``,
+    ``create_function``, ``set_authorizer``, ...). The six TPC stubs
+    must route through the same helper. Without this pin a
+    regression that re-introduces a direct ``raise NotSupportedError``
+    in any TPC stub silently re-opens the contract gap (no
+    ``messages`` clear, no ``InterfaceError``-before-``NotSupported``
+    precedence on a closed connection).
     """
 
     @pytest.mark.parametrize("invoke", _TPC_INVOCATIONS, ids=_TPC_IDS)

@@ -1,8 +1,8 @@
 """Pin: the async surface re-exports the stdlib-sqlite3-parity
 NotSupportedError stubs that the sync surface already provides.
 
-ISSUE-Q8 mirrored ``register_adapter`` to the async surface; this
-finishes the symmetry for ``register_converter`` /
+``register_adapter`` is mirrored to the async surface for the same
+reason — together they cover ``register_converter`` /
 ``complete_statement`` / ``enable_callback_tracebacks`` so a
 cross-driver caller porting from aiosqlite gets a
 ``dbapi.NotSupportedError`` rather than ``AttributeError``

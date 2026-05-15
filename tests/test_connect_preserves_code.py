@@ -4,12 +4,10 @@ sqlalchemy-dqlite's ``is_disconnect`` classifier reads ``exc.code``
 to identify leader-change failures (``SQLITE_IOERR_NOT_LEADER``,
 ``SQLITE_IOERR_LEADERSHIP_LOST``). The query path preserves the
 code via ``_classify_operational`` in ``cursor.py``, but the
-connect path used to catch every exception as a bare ``Exception``
-and rebuild the DBAPI ``OperationalError`` without ``code=``,
-so leader-change errors hit the brittle substring matcher instead
-of the code-based branch.
-
-Peer of ISSUE-296.
+connect path catches every exception as a bare ``Exception`` and
+rebuilds the DBAPI ``OperationalError`` carrying the original
+``code=``, so leader-change errors hit the code-based branch of
+``is_disconnect`` rather than the brittle substring matcher.
 """
 
 from __future__ import annotations

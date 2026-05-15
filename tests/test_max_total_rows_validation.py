@@ -5,9 +5,9 @@ from the driver must be a subclass of ``Error``. Bad
 ``max_total_rows`` values therefore raise ``ProgrammingError`` (the
 PEP 249 class for "errors related to the database's operation, but
 not necessarily under the control of the programmer", per §6.1.4).
-The client-layer validator still raises raw ``TypeError`` /
-``ValueError`` for client-only consumers (per ISSUE-39); the dbapi
-entry points wrap.
+The client-layer validator raises raw ``TypeError`` / ``ValueError``
+(client consumers don't sit behind the PEP 249 boundary); the dbapi
+entry points wrap those into ``ProgrammingError``.
 """
 
 import pytest

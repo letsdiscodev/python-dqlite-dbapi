@@ -51,10 +51,10 @@ class TestRunSyncTimeout:
                 return True
 
             def done(self) -> bool:
-                # Race check (ISSUE-674) — pretend the coroutine is
-                # still running, so the cancel-success branch is
-                # skipped and the original cancel-then-bounded-wait
-                # path executes.
+                # Race check — pretend the coroutine is still
+                # running, so the cancel-success branch is skipped
+                # and the original cancel-then-bounded-wait path
+                # executes.
                 return False
 
             def cancelled(self) -> bool:

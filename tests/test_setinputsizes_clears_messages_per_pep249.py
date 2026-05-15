@@ -3,8 +3,9 @@ and ``self._connection.messages`` per PEP 249 §6.1.1.
 
 PEP 249 §6.1.1 enumerates the cursor methods that clear the
 messages list and explicitly names ``setinputsizes`` /
-``setoutputsize``. Every other method in the list already clears;
-these two were the outliers until ISSUE-566 brought them in line.
+``setoutputsize``. This test pins both methods to that contract on
+the dbapi cursor — they are easy to overlook because the bodies are
+otherwise no-ops on this driver.
 """
 
 from __future__ import annotations

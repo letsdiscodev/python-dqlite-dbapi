@@ -129,7 +129,7 @@ class TestAsyncNoTxSwallowSurvivesWrapping:
     """The existing no-tx swallow (``_is_no_transaction_error``) must
     keep working once COMMIT/ROLLBACK route through ``_call_client``.
     The gate reads ``.code`` which the wrapped
-    ``dbapi.OperationalError`` preserves (per ISSUE-168).
+    ``dbapi.OperationalError`` preserves.
     """
 
     async def test_commit_no_tx_still_silent(self) -> None:

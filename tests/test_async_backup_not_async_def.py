@@ -3,8 +3,8 @@ def`` — so a forgotten ``await`` raises ``NotSupportedError`` on
 the call line rather than producing a discarded coroutine that
 warns "coroutine was never awaited" at GC.
 
-ISSUE-Sym4 applied this discipline to ``executescript`` but
-deferred ``backup``; this is the symmetric pin.
+The async ``executescript`` stub uses the same plain-``def``
+discipline; this is the symmetric pin for ``backup``.
 """
 
 import inspect
@@ -22,7 +22,7 @@ def test_async_backup_is_not_async_def() -> None:
     assert not inspect.iscoroutinefunction(method), (
         "AsyncConnection.backup is async def — a forgotten `await` "
         "would silently produce a discarded coroutine. Match the "
-        "ISSUE-Sym4 discipline applied to executescript."
+        "plain-def discipline applied to executescript."
     )
 
 

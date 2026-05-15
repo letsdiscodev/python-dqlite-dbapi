@@ -189,8 +189,9 @@ class _AbstractTz(datetime.tzinfo):
     ``_iso8601_from_time`` carry a ``if offset is None: return base``
     early-return to handle that case; these tests pin the fallback-to-
     naive-format contract so a future cleanup cannot silently
-    reinstate an ``assert offset is not None`` (see done/ISSUE-108 for
-    the paired dead-assert removal).
+    reinstate an ``assert offset is not None`` (the assertion was
+    removed precisely because tzinfo subclasses are allowed to return
+    ``None``).
     """
 
     def utcoffset(self, dt: datetime.datetime | None) -> datetime.timedelta | None:

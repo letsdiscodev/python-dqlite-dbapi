@@ -67,7 +67,7 @@ class TestExceptionWrapping:
 
 
 class TestDqliteConnectionErrorWrapping:
-    """ISSUE-349 regression fence: the dbapi wraps the client-level
+    """Regression fence: the dbapi wraps the client-level
     ``DqliteConnectionError`` into an ``OperationalError(code=None)``
     with the original preserved as ``__cause__`` so downstream
     disconnect detection can walk the chain without the dbapi needing

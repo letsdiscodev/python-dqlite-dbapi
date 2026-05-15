@@ -119,8 +119,8 @@ class TestValueTypeMappingExhaustiveness:
         assert matched, (
             f"ValueType.{value_type.name} ({int(value_type)}) is not covered "
             f"by any DBAPI type object. Add it to the appropriate "
-            f"_DBAPIType(...) call in dqlitedbapi/types.py — see ISSUE-395 "
-            f"for the contract."
+            f"_DBAPIType(...) call in dqlitedbapi/types.py per the PEP 249 "
+            f"§6.1.2 type_code contract."
         )
 
     def test_null_value_type_is_intentionally_exempt(self) -> None:
@@ -133,7 +133,7 @@ class TestValueTypeMappingExhaustiveness:
         for t in DBAPI_TYPE_OBJECTS:
             assert t != ValueType.NULL, (
                 f"DBAPI type object {t!r} unexpectedly compares equal to "
-                f"ValueType.NULL — see ISSUE-395 for the exempt-NULL contract"
+                f"ValueType.NULL — NULL has no DBAPI type-object per PEP 249."
             )
 
 

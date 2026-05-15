@@ -1,10 +1,10 @@
 """Cross-entry-point timeout validation.
 
 All three DB-API entry points — ``dqlitedbapi.connect``,
-``dqlitedbapi.aio.connect``, and ``dqlitedbapi.aio.aconnect`` — share a
-single ``_validate_timeout`` helper (see ISSUE-203). These tests pin
-that each entry point rejects the same set of bad values with the same
-error phrasing and exception type.
+``dqlitedbapi.aio.connect``, and ``dqlitedbapi.aio.aconnect`` — share
+a single ``_validate_timeout`` helper. These tests pin that each
+entry point rejects the same set of bad values with the same error
+phrasing and exception type.
 """
 
 from __future__ import annotations

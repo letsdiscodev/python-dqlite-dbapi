@@ -3,15 +3,15 @@ the client-layer ``_validate_positive_int_or_none``'s
 ``TypeError``/``ValueError`` into PEP 249 ``ProgrammingError``.
 
 The client-layer validator deliberately raises Python-convention
-exceptions (per the original ISSUE-39 contract for client-only
-consumers). The dbapi entry points are the PEP 249 boundary: every
-error originating from the driver must be a subclass of
+exceptions (client consumers don't sit behind the PEP 249 boundary).
+The dbapi entry points are the PEP 249 boundary: every error
+originating from the driver must be a subclass of
 ``dqlitedbapi.Error`` (PEP 249 §7). The sibling validator
 ``_validate_timeout`` already wraps to ``ProgrammingError``; the
 parallel ``_client_parse_address`` ``ValueError`` is wrapped to
-``InterfaceError``. ``_validate_positive_int_or_none`` was the
-remaining outlier — passing through raw ``TypeError``/``ValueError``
-for ``max_total_rows`` / ``max_continuation_frames``.
+``InterfaceError``. ``_validate_positive_int_or_none`` follows the
+same wrap discipline for ``max_total_rows`` /
+``max_continuation_frames``.
 """
 
 from __future__ import annotations

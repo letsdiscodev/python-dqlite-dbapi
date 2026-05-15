@@ -2110,9 +2110,9 @@ class Cursor:
         # Mirrors the ordering of ``nextset`` / ``scroll`` /
         # ``executescript`` / ``callproc`` (check-thread before
         # input-validation). The closed-permissive-return above
-        # remains BEFORE the affinity check (closed-state is shape-
-        # independent — see the sibling ``done/`` issue that fixed the
-        # closed-vs-validator ordering).
+        # remains BEFORE the affinity check so closed-state behaviour
+        # is shape-independent: a closed cursor + good arg and a
+        # closed cursor + bad arg both return silently.
         self._connection._check_thread()
         # Validate input shape — runs only after the closed-cursor
         # short-circuit and the affinity check so a closed-cursor

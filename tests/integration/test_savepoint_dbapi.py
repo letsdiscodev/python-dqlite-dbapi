@@ -1,9 +1,9 @@
 """SAVEPOINT round-trip pins at the dbapi layer.
 
-ISSUE-701 added SAVEPOINT integration coverage for the SQLAlchemy
-adapter. The dbapi layer had no equivalent — a future change to the
-SQL classifier or to the in-transaction flag tracking could silently
-break SAVEPOINT routing.
+The SQLAlchemy adapter has its own SAVEPOINT integration coverage.
+The dbapi layer needs an equivalent — without it, a future change
+to the SQL classifier or to the in-transaction flag tracking could
+silently break SAVEPOINT routing.
 """
 
 from __future__ import annotations

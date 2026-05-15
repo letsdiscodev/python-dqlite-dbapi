@@ -283,7 +283,7 @@ def test_keyboard_interrupt_during_op_lock_acquire_nulls_async_conn_synchronousl
 
         # Load-bearing assertion: synchronous null-out before the
         # KI propagates, mirroring the post-acquire arm's
-        # ISSUE-785 discipline.
+        # synchronous-invalidation discipline.
         assert conn._async_conn is None, (
             "Pre-acquire KI arm must null self._async_conn "
             "synchronously — otherwise a retry from the signal "

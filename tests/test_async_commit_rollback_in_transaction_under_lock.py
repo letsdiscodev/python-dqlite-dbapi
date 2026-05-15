@@ -11,8 +11,8 @@ Reading ``in_transaction`` outside the lock left a window where:
        transaction is active", which the wrap silences as a no-op
 
 The execution is functionally a no-op (the wrap silences "no tx"),
-but the wasted RTT is observable and the loose structure is what
-ISSUE-740 flagged. Reading inside the lock closes the window.
+but the wasted RTT is observable and the loose structure is the
+defect. Reading inside the lock closes the window.
 """
 
 from __future__ import annotations

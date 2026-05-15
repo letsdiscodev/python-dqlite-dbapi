@@ -10,9 +10,10 @@ BEFORE invoking ``_check_thread()`` — so the contract holds even
 when the cross-thread guard rejects the call. Before this fix, the
 five secondary methods invoked ``_check_thread()`` first; the clear
 was reachable only on the well-formed path. Severity is low because
-``messages`` is empty in practice today (per ISSUE-644), but a future
-code path that begins populating ``messages`` would silently retain
-stale entries on the rejected cross-thread path.
+``messages`` is empty in practice today (no code path on this driver
+appends to it), but a future code path that begins populating
+``messages`` would silently retain stale entries on the rejected
+cross-thread path.
 
 This module pins the ordering symmetry: from a non-creator thread,
 each secondary method must clear ``messages`` BEFORE raising

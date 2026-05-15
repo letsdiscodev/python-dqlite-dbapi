@@ -3,9 +3,10 @@ stdlib's ``factory=`` Cursor-subclass hook) with
 ``NotSupportedError`` rather than letting Python raise a bare
 ``TypeError`` outside the ``dbapi.Error`` hierarchy.
 
-Symmetric with the connect()-time ``**unknown_kwargs`` rejection
-introduced by ISSUE-Q4/Q5/Q6 — covers the cursor-creation surface
-that ISSUE-Q6 originally framed.
+Symmetric with the ``connect()``-time ``**unknown_kwargs`` rejection
+— covers the cursor-creation surface (``Connection.cursor`` and its
+async sibling) so the ``factory=`` / ``cached_statements=`` / etc.
+stdlib kwargs surface a typed PEP 249 error.
 """
 
 import pytest

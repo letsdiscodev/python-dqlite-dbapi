@@ -62,7 +62,8 @@ class TestAccumulatorApplySkipsClosed:
         acc.description = desc
         acc.total_affected = 2
         # Mark that push() ran — otherwise apply() skips the write to
-        # preserve the empty-seq baseline (see ISSUE-569).
+        # preserve the empty-seq baseline (zero-iteration executemany
+        # must leave the cursor's prior state untouched).
         acc._pushed = 1
         cur = _OpenStubCursor()
         acc.apply(cur)

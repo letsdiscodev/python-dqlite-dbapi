@@ -6,9 +6,8 @@ in ``except dbapi.Error:`` continues to match after the parent
 
 Companion to ``test_cursor_closed_after_connection_gc_pep249`` which
 covers the 11 other public cursor methods; the ``connection``
-property is the asymmetric outlier that motivated the original
-translation arm fix
-(``done/dbapi-cursor-connection-referenceerror-after-gc.md``).
+property is the asymmetric outlier whose translation arm is pinned
+here.
 
 The probe attribute access at ``cursor.py`` (``_ = self._connection
 .address``) is load-bearing: a refactor that replaces the probe with

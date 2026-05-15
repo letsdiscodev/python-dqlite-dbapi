@@ -5,10 +5,8 @@ comment claiming the failure was "attached via ``__context__``
 automatically" — but ``contextlib.suppress`` discards, it does not
 chain. Result: silent failures with zero diagnostic trail.
 
-The async ``__aexit__`` path landed the narrow-except + DEBUG-log
-pattern earlier. This test pins the sync-side companion.
-
-Peer of ISSUE-301.
+The async ``__aexit__`` path uses the same narrow-except + DEBUG-log
+pattern. This test pins the sync-side companion.
 """
 
 from __future__ import annotations
