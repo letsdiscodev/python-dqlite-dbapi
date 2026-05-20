@@ -60,7 +60,7 @@ def test_setoutputsize_kwarg_raises_type_error() -> None:
     cur._closed = False
     cur._connection = MagicMock(spec=Connection)
     with pytest.raises(TypeError, match="positional-only"):
-        cur.setoutputsize(10, column=0)  # type: ignore[misc]
+        cur.setoutputsize(10, column=0)  # type: ignore[call-arg]
 
 
 def test_setinputsizes_kwarg_raises_type_error() -> None:
@@ -73,4 +73,4 @@ def test_setinputsizes_kwarg_raises_type_error() -> None:
     cur._closed = False
     cur._connection = MagicMock(spec=Connection)
     with pytest.raises(TypeError, match="positional-only"):
-        cur.setinputsizes(sizes=[])  # type: ignore[misc]
+        cur.setinputsizes(sizes=[])  # type: ignore[call-arg]

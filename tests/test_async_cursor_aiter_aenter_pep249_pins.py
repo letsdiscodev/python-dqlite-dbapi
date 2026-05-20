@@ -20,18 +20,31 @@ import dqlitedbapi
 from dqlitedbapi.aio import AsyncConnection
 
 
-async def test_aiter_on_closed_cursor_with_gc_parent_raises_interface_error() -> None:
-    """A weakref.proxy from a GC'd AsyncConnection must not leak
-    ReferenceError past the PEP 249 boundary."""
+async def test_aiter_on_closed_cursor_with_gc_parent_defers_to_anext() -> None:
+    """Stdlib parity: ``iter(closed_cur) is closed_cur`` succeeds
+    in stdlib `sqlite3`; the diagnostic surfaces on the first
+    ``next()``. The async sibling matches: ``aiter(closed_cur)``
+    returns the cursor itself, the diagnostic surfaces on the first
+    ``__anext__`` / ``fetchone``.
+
+    A weakref.proxy from a GC'd AsyncConnection must not leak
+    ReferenceError past the PEP 249 boundary, but the cleanest
+    surfacing is at ``__anext__`` (via ``fetchone``), not at
+    ``aiter()`` itself. ``__aenter__`` retains the eager-raise
+    discipline because async-with has no sync analog."""
     conn = AsyncConnection("localhost:9001")
     cur = conn.cursor()
     cur.close()
-    # Drop the connection ref and force GC so the proxy referent
-    # disappears.
     del conn
     gc.collect()
+
+    # aiter is the lazy entry point — must NOT raise.
+    it = aiter(cur)
+    assert it is cur, "aiter(cur) must return the cursor itself (PEP 234)"
+
+    # The diagnostic surfaces on the first __anext__.
     with pytest.raises(dqlitedbapi.InterfaceError):
-        aiter(cur)
+        await anext(cur)
 
 
 async def test_aenter_loop_binding_check_runs_before_body() -> None:

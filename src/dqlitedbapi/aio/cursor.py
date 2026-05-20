@@ -1147,16 +1147,47 @@ class AsyncCursor:
         # ``weakref.proxy``. Once the parent ``AsyncConnection`` is
         # GC'd, attribute access through the proxy raises
         # ``ReferenceError`` — outside the PEP 249 ``Error``
-        # hierarchy. Translate to ``InterfaceError`` so cross-driver
-        # code wrapping ``async with cur:`` / ``async for cur:`` in
-        # ``except dbapi.Error:`` continues to match. Mirrors the
-        # ``connection`` property's discipline.
+        # hierarchy.
+        #
+        # For ``__aiter__``: silently defer to the first
+        # ``__anext__`` / ``fetchone`` — sync ``Cursor.__iter__`` is
+        # bare ``return self`` per PEP 234 + stdlib `sqlite3` (verified:
+        # ``iter(closed_cur) is closed_cur`` succeeds, the diagnostic
+        # surfaces on the first ``next()``). A GC'd parent surfacing
+        # ``InterfaceError`` from ``aiter()`` itself diverges from
+        # that contract.
+        #
+        # For ``__aenter__``: translate to ``InterfaceError`` so a
+        # cross-driver ``except dbapi.Error:`` clause around
+        # ``async with cur:`` catches the misuse. The async context-
+        # manager protocol does not have a sync analog and PEP 343
+        # gives no guidance, so the fail-fast surface is acceptable.
+        # Callers use ``__aenter__`` to drive a body that requires
+        # cursor invariants; surfacing the diagnostic at the
+        # ``async with`` line is operationally cleaner.
+        #
+        # The deliberate loop-binding fail-fast (cross-loop misuse
+        # at ``async for cur:``) is preserved for the live-parent
+        # case via ``_check_loop_only``.
         try:
             self._connection._check_loop_only()
         except ReferenceError as e:
             raise InterfaceError(
                 f"Cursor's parent AsyncConnection has been garbage-collected (id={id(self)})"
             ) from e
+
+    def _check_parent_loop_only_lazy(self) -> None:
+        """Variant of ``_check_parent_loop_only`` that silently
+        defers on a GC'd parent — used by ``__aiter__`` to match
+        stdlib `sqlite3`'s ``iter(closed_cur) is closed_cur``
+        contract. Loop-binding mismatch on a live parent still
+        raises (that fail-fast is the deliberate async divergence
+        from sync per the ``__aiter__`` note)."""
+        try:
+            self._connection._check_loop_only()
+        except ReferenceError:
+            # Defer to first ``__anext__`` / ``fetchone``.
+            return
 
     def __aiter__(self) -> Self:
         # PEP 249 §6.4 messages-clear contract: every public cursor
@@ -1194,7 +1225,12 @@ class AsyncCursor:
         # loop-bind contract makes the iter-time check structurally
         # only available on the async side. See the matching note on
         # ``Cursor.__iter__`` in ``../cursor.py``.
-        self._check_parent_loop_only()
+        #
+        # Use the ``_lazy`` variant so a GC'd parent silently defers
+        # — matching stdlib `sqlite3`'s ``iter(closed_cur) is closed_cur``
+        # contract. The loop-binding fail-fast is preserved for the
+        # live-parent case.
+        self._check_parent_loop_only_lazy()
         return self
 
     async def __anext__(self) -> tuple[Any, ...]:
