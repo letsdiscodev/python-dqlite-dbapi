@@ -112,6 +112,32 @@ _NO_TX_SUBSTRINGS: Final[tuple[str, ...]] = NO_TRANSACTION_MESSAGE_SUBSTRINGS
 # ``close_timeout >> 0.1`` and get the full configured window.
 _LOOP_THREAD_JOIN_MIN_SECONDS: Final[float] = 0.1
 
+# Maximum number of per-RPC phases a single high-level sync call can
+# stack end-to-end. ``self._timeout`` is documented as a PER-PHASE
+# budget — the async surface honours this by wrapping each individual
+# RPC in ``asyncio.timeout(self._timeout)``, so a single
+# ``await execute(...)`` can legitimately take up to N × ``timeout``
+# wall-clock without any phase exceeding its budget. The sync wrapper
+# bridges the same async coroutine via ``Future.result(timeout=...)``
+# from a calling thread, so its single timeout window must absorb all
+# N phases — otherwise the sync surface fails on benign latency the
+# async surface tolerates (silent sync/async contract drift; see the
+# ``DqliteConnection.__init__`` and ``_operation_deadline`` docstrings
+# for the client-layer source of the per-phase contract).
+#
+# N = 4 covers the worst-case first-call-after-connect:
+#   1. handshake (Raft endpoint version negotiation),
+#   2. open_database (database-id allocation),
+#   3. query_sql send (request frame),
+#   4. read+drain (response + any continuation frames).
+# Steady-state calls (handshake + open already amortised) bottom out
+# at N = 2 (send + read+drain), so the multiplier is conservative for
+# the common case and authoritative for the worst case. Document each
+# phase here so a future protocol change that adds a phase updates
+# the multiplier; the per-phase budget itself stays the operator's
+# ``timeout`` knob.
+_SYNC_PHASES_MULTIPLIER: Final[int] = 4
+
 # Fallback bound (in seconds) used by the ``weakref.finalize``-backed
 # cleanup path (``_cleanup_loop_thread``) when invoked without an
 # explicit close_timeout. The finalizer is captured at loop-creation
@@ -1270,10 +1296,20 @@ class Connection:
                 raise OperationalError(
                     f"event loop closed before coroutine could be scheduled: {e}"
                 ) from e
+            # ``self._timeout`` is the per-RPC-phase budget; a single
+            # high-level sync call can stack up to
+            # ``_SYNC_PHASES_MULTIPLIER`` phases (handshake + open + send
+            # + read+drain) before the Future settles. The async surface
+            # honours the per-phase contract by wrapping each RPC in
+            # ``asyncio.timeout(self._timeout)`` and exposes no
+            # cross-RPC ceiling, so the sync wrapper must absorb the
+            # documented N × budget here or it silently fires false
+            # positives on benign latency the async surface tolerates.
+            sync_timeout = _SYNC_PHASES_MULTIPLIER * self._timeout
             try:
                 # Future.result() provides a happens-before memory barrier,
                 # ensuring all writes by the event loop thread are visible here.
-                return future.result(timeout=self._timeout)
+                return future.result(timeout=sync_timeout)
             except TimeoutError as e:
                 # Race check BEFORE calling ``cancel()`` /
                 # ``_invalidate``: the coroutine may have completed
@@ -1369,7 +1405,11 @@ class Connection:
                     ):  # pragma: no cover - race: loop closing mid-schedule
                         loop.call_soon_threadsafe(
                             dying._invalidate,
-                            OperationalError(f"sync timeout after {self._timeout}s"),
+                            OperationalError(
+                                f"sync timeout after {sync_timeout}s "
+                                f"({_SYNC_PHASES_MULTIPLIER} × per-phase budget "
+                                f"of {self._timeout}s)"
+                            ),
                         )
                 # Wait a bounded time for the cancelled coroutine to
                 # unwind. Without this, the next sync call can race the
@@ -1407,7 +1447,11 @@ class Connection:
                 # flight; sync caller's ``Future.result(timeout=...)``
                 # fired). Connection state is now ambiguous, hence
                 # the unconditional ``OperationalError``.
-                raise OperationalError(f"Operation timed out after {self._timeout} seconds") from e
+                raise OperationalError(
+                    f"Operation timed out after {sync_timeout} seconds "
+                    f"({_SYNC_PHASES_MULTIPLIER} × per-phase budget of "
+                    f"{self._timeout}s)"
+                ) from e
             except (KeyboardInterrupt, SystemExit):
                 # KeyboardInterrupt / SystemExit raised inside the
                 # caller's thread while it was blocked on Future.result.
