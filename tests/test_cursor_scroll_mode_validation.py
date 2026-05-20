@@ -130,7 +130,7 @@ async def test_async_scroll_bad_mode_raises_programming_error() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
     with pytest.raises(ProgrammingError):
-        cur.scroll(0, mode="bad-mode")
+        cur.scroll(0, "bad-mode")
 
 
 async def test_async_scroll_bad_value_raises_programming_error() -> None:

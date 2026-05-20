@@ -935,7 +935,7 @@ class AsyncCursor:
         ):  # pragma: no cover - AsyncConnection always supports weakref
             self._connection = weakref.proxy(self._connection)
 
-    def setinputsizes(self, sizes: Sequence[Any] | None) -> None:
+    def setinputsizes(self, sizes: Sequence[Any] | None, /) -> None:
         """Set input sizes (no-op for dqlite).
 
         PEP 249 §6.1.1 names ``setinputsizes`` among the methods that
@@ -999,7 +999,7 @@ class AsyncCursor:
             # accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
 
-    def setoutputsize(self, size: int | None, column: int | None = None) -> None:
+    def setoutputsize(self, size: int | None, column: int | None = None, /) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
         # PEP 249 §6.2 — closed short-circuit before validators. See
@@ -1025,7 +1025,7 @@ class AsyncCursor:
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
 
-    def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
+    def callproc(self, procname: str, parameters: Sequence[Any] | None = None, /) -> NoReturn:
         """PEP 249 optional extension — not supported.
 
         Sync despite the cursor being async: the method raises
@@ -1066,7 +1066,7 @@ class AsyncCursor:
         self._connection._check_loop_binding()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
-    def scroll(self, value: int, mode: str = "relative") -> NoReturn:
+    def scroll(self, value: int, mode: str = "relative", /) -> NoReturn:
         """PEP 249 optional extension — not supported."""
         # Sibling consistency with ``nextset`` / ``callproc`` /
         # ``setinputsizes`` / ``setoutputsize``: clear ``messages`` on

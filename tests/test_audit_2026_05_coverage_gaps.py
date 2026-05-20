@@ -221,9 +221,9 @@ def test_setoutputsize_rejects_non_int_column_sync() -> None:
     conn = Connection("localhost:9001", timeout=2.0)
     cur = Cursor(conn)
     with pytest.raises(ProgrammingError, match="column"):
-        cur.setoutputsize(10, column="not-an-int")  # type: ignore[arg-type]
+        cur.setoutputsize(10, "not-an-int")  # type: ignore[arg-type]
     with pytest.raises(ProgrammingError, match="column"):
-        cur.setoutputsize(10, column=True)
+        cur.setoutputsize(10, True)
 
 
 async def test_setoutputsize_rejects_non_int_column_async() -> None:
@@ -231,9 +231,9 @@ async def test_setoutputsize_rejects_non_int_column_async() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
     with pytest.raises(ProgrammingError, match="column"):
-        cur.setoutputsize(10, column="not-an-int")  # type: ignore[arg-type]
+        cur.setoutputsize(10, "not-an-int")  # type: ignore[arg-type]
     with pytest.raises(ProgrammingError, match="column"):
-        cur.setoutputsize(10, column=True)
+        cur.setoutputsize(10, True)
 
 
 # ---------------- _call_client catch-all forward-compat (test pin)

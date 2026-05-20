@@ -2072,7 +2072,7 @@ class Cursor:
         ):  # pragma: no cover - Connection always supports weakref
             self._connection = weakref.proxy(self._connection)
 
-    def setinputsizes(self, sizes: Sequence[Any] | None) -> None:
+    def setinputsizes(self, sizes: Sequence[Any] | None, /) -> None:
         """Set input sizes (no-op for dqlite).
 
         PEP 249 §6.1.1 names ``setinputsizes`` among the methods that
@@ -2162,7 +2162,7 @@ class Cursor:
             # subclass — accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
 
-    def setoutputsize(self, size: int | None, column: int | None = None) -> None:
+    def setoutputsize(self, size: int | None, column: int | None = None, /) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
         # PEP 249 §6.2 — see ``setinputsizes`` rationale. Closed
@@ -2193,7 +2193,7 @@ class Cursor:
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
 
-    def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> NoReturn:
+    def callproc(self, procname: str, parameters: Sequence[Any] | None = None, /) -> NoReturn:
         """PEP 249 optional extension — not supported.
 
         dqlite (and SQLite) have no stored-procedure concept. Annotated
@@ -2236,7 +2236,7 @@ class Cursor:
         self._connection._check_thread()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
-    def scroll(self, value: int, mode: str = "relative") -> NoReturn:
+    def scroll(self, value: int, mode: str = "relative", /) -> NoReturn:
         """PEP 249 optional extension — not supported.
 
         The dqlite cursor is forward-only; rows are buffered from a
