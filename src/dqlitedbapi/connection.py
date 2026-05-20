@@ -327,10 +327,24 @@ def _get_resolve_leader_cluster(
         cluster = _RESOLVE_LEADER_CACHE.get(key)
         if cluster is None:
             if len(_RESOLVE_LEADER_CACHE) >= _RESOLVE_LEADER_CACHE_MAX:
-                # Evict an arbitrary oldest entry. Worst case: the
-                # evicted client's fast-path cache is lost; the next
-                # ``find_leader`` against that key rediscovers in one
-                # sweep. Acceptable bound on the cache size.
+                # FIFO eviction: drop the oldest entry. Two effects,
+                # both acceptable for this cache's intended use:
+                # 1. Fast-path lookup for that key is lost — the next
+                #    ``find_leader`` against the evicted key
+                #    rediscovers in one sweep.
+                # 2. Single-flight collapse is temporarily violated:
+                #    if a concurrent caller arrives on the evicted
+                #    key while the prior awaiter still holds a
+                #    reference to the in-flight task, the new caller
+                #    constructs a brand-new ClusterClient (fresh
+                #    ``_find_leader_tasks`` slot map) and runs ITS
+                #    own parallel sweep against the same cluster.
+                # Both effects self-heal — the cache backfills on the
+                # next successful resolve, and the original in-flight
+                # sweep completes independently. Cost: one wasted
+                # sweep per evicted key with concurrent demand. The
+                # cache size cap (_RESOLVE_LEADER_CACHE_MAX) bounds
+                # the per-loop memory pressure.
                 _RESOLVE_LEADER_CACHE.pop(next(iter(_RESOLVE_LEADER_CACHE)))
             cluster = ClusterClient(
                 MemoryNodeStore([address]),
