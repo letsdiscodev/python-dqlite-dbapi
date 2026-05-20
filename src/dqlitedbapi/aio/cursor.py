@@ -1261,6 +1261,23 @@ class AsyncCursor:
         # ``_check_parent_loop_only`` translates ``ReferenceError``
         # from a GC'd proxy parent into ``InterfaceError`` (PEP 249).
         self._check_parent_loop_only()
+        # Cross-task contention guard, symmetric with ``execute`` /
+        # ``executemany``. ``__aexit__`` runs ``self.close()``
+        # unconditionally; without this guard a foreign task that
+        # enters ``async with cur:`` while Task A is parked
+        # mid-execute on the same cursor will silently close the
+        # cursor on exit. Task A's wire response then hits the
+        # post-await ``if self._closed: return`` short-circuit in
+        # ``_execute_unlocked``, dropping the result; Task A's next
+        # ``fetchone`` raises ``InterfaceError("Cursor is closed")``
+        # — pointing at fetch rather than at the cross-task misuse.
+        # Surface the misuse here at the ``async with`` site instead.
+        cur_task = asyncio.current_task()
+        if self._executing_task is not None and self._executing_task is not cur_task:
+            raise InterfaceError(
+                f"cursor is already executing in another task (id={id(self)}); "
+                "use one cursor per task"
+            )
         return self
 
     async def __aexit__(
