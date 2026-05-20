@@ -451,6 +451,8 @@ async def _build_and_connect(
     max_continuation_frames: int | None,
     trust_server_heartbeat: bool,
     close_timeout: float,
+    dial_timeout: float | None = None,
+    attempt_timeout: float | None = None,
 ) -> DqliteConnection:
     """Build a DqliteConnection with the given governors and connect it.
 
@@ -549,6 +551,8 @@ async def _build_and_connect(
         max_continuation_frames=max_continuation_frames,
         trust_server_heartbeat=trust_server_heartbeat,
         close_timeout=close_timeout,
+        dial_timeout=dial_timeout,
+        attempt_timeout=attempt_timeout,
     )
     try:
         await conn.connect()
@@ -931,6 +935,8 @@ class Connection:
         max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
         trust_server_heartbeat: bool = False,
         close_timeout: float = 0.5,
+        dial_timeout: float | None = None,
+        attempt_timeout: float | None = None,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -962,9 +968,28 @@ class Connection:
                 :class:`DqliteConnection`. The default (0.5 s) is
                 sized for LAN; callers with higher-latency links or
                 strict shutdown SLAs can override.
+            dial_timeout: Per-TCP-connect budget (seconds) — mirrors
+                go-dqlite's ``Config.DialTimeout``. ``None`` (default)
+                collapses onto ``timeout``. Set a smaller value than
+                ``timeout`` to fast-fail on a DNS-typo / firewalled
+                peer rather than paying the full per-RPC budget at the
+                dial stage. Forwarded to the underlying
+                :class:`DqliteConnection`.
+            attempt_timeout: Per-attempt envelope (seconds) covering
+                dial + handshake + first RPC — mirrors go-dqlite's
+                ``Config.AttemptTimeout``. ``None`` (default) collapses
+                onto ``timeout``. Smaller-than-``timeout`` values
+                bound the parallel leader-sweep against slow-
+                handshaking peers (TLS-terminating proxies with stuck
+                welcomes, partial-restart nodes). Forwarded to the
+                underlying :class:`DqliteConnection`.
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
+        if dial_timeout is not None:
+            _validate_timeout(dial_timeout)
+        if attempt_timeout is not None:
+            _validate_timeout(attempt_timeout)
         # Eager address parse so a typoed DSN surfaces as
         # ``InterfaceError`` at the operator's config-load site rather
         # than at first-use — the sibling ``DqliteConnection``
@@ -1005,6 +1030,8 @@ class Connection:
         )
         self._trust_server_heartbeat = trust_server_heartbeat
         self._close_timeout = close_timeout
+        self._dial_timeout = dial_timeout
+        self._attempt_timeout = attempt_timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # stdlib ``sqlite3.Connection.row_factory`` parity. None means
@@ -1571,6 +1598,8 @@ class Connection:
                 max_continuation_frames=self._max_continuation_frames,
                 trust_server_heartbeat=self._trust_server_heartbeat,
                 close_timeout=self._close_timeout,
+                dial_timeout=getattr(self, "_dial_timeout", None),
+                attempt_timeout=getattr(self, "_attempt_timeout", None),
             )
 
         return self._async_conn

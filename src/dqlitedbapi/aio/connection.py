@@ -173,6 +173,8 @@ class AsyncConnection:
         max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
         trust_server_heartbeat: bool = False,
         close_timeout: float = 0.5,
+        dial_timeout: float | None = None,
+        attempt_timeout: float | None = None,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -195,9 +197,22 @@ class AsyncConnection:
             close_timeout: Budget (seconds) for the transport-drain
                 during ``close()``. Forwarded to the underlying
                 DqliteConnection. Default 0.5 s is sized for LAN.
+            dial_timeout: Per-TCP-connect budget (seconds) — mirrors
+                go-dqlite's ``Config.DialTimeout``. ``None`` (default)
+                collapses onto ``timeout``. Forwarded to the underlying
+                DqliteConnection.
+            attempt_timeout: Per-attempt envelope (seconds) covering
+                dial + handshake + first RPC — mirrors go-dqlite's
+                ``Config.AttemptTimeout``. ``None`` (default) collapses
+                onto ``timeout``. Forwarded to the underlying
+                DqliteConnection.
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
+        if dial_timeout is not None:
+            _validate_timeout(dial_timeout)
+        if attempt_timeout is not None:
+            _validate_timeout(attempt_timeout)
         # Eager address parse, matching the sync Connection and the
         # underlying DqliteConnection. A typoed DSN surfaces at
         # construction, not at first-use.
@@ -228,6 +243,8 @@ class AsyncConnection:
         )
         self._trust_server_heartbeat = trust_server_heartbeat
         self._close_timeout = close_timeout
+        self._dial_timeout = dial_timeout
+        self._attempt_timeout = attempt_timeout
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # Tracks the asyncio.Task that currently owns the
@@ -439,6 +456,8 @@ class AsyncConnection:
                 max_continuation_frames=self._max_continuation_frames,
                 trust_server_heartbeat=self._trust_server_heartbeat,
                 close_timeout=self._close_timeout,
+                dial_timeout=getattr(self, "_dial_timeout", None),
+                attempt_timeout=getattr(self, "_attempt_timeout", None),
             )
             # A concurrent close() may have flipped _closed while we were
             # suspended in _build_and_connect. close() observes

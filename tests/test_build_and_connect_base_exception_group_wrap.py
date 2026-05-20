@@ -45,9 +45,10 @@ async def test_build_and_connect_resolve_leader_group_wraps_as_operational_error
             ],
         )
 
-    with patch("dqlitedbapi.connection._resolve_leader", new=_group), pytest.raises(
-        OperationalError
-    ) as info:
+    with (
+        patch("dqlitedbapi.connection._resolve_leader", new=_group),
+        pytest.raises(OperationalError) as info,
+    ):
         await _build_and_connect(
             "127.0.0.1:9001",
             database="default",

@@ -196,6 +196,8 @@ def connect(
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
     close_timeout: float = 0.5,
+    dial_timeout: float | None = None,
+    attempt_timeout: float | None = None,
     **unknown_kwargs: object,
 ) -> Connection:
     """Connect to a dqlite database.
@@ -221,6 +223,15 @@ def connect(
         close_timeout: Budget (seconds) for the transport-drain during
             ``close()``. Forwarded to the underlying :class:`Connection`.
             Default 0.5 s is sized for LAN.
+        dial_timeout: Per-TCP-connect budget (seconds) — mirrors
+            go-dqlite's ``Config.DialTimeout``. ``None`` (default)
+            collapses onto ``timeout``. Forwarded to the underlying
+            :class:`Connection`.
+        attempt_timeout: Per-attempt envelope (seconds) covering dial
+            + handshake + first RPC — mirrors go-dqlite's
+            ``Config.AttemptTimeout``. ``None`` (default) collapses
+            onto ``timeout``. Forwarded to the underlying
+            :class:`Connection`.
 
     Returns:
         A Connection object
@@ -274,6 +285,8 @@ def connect(
         max_continuation_frames=max_continuation_frames,
         trust_server_heartbeat=trust_server_heartbeat,
         close_timeout=close_timeout,
+        dial_timeout=dial_timeout,
+        attempt_timeout=attempt_timeout,
     )
 
 
