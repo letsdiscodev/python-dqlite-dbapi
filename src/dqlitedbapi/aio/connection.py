@@ -819,6 +819,19 @@ class AsyncConnection:
                 "in-flight operation; transport force-closed"
             )
 
+    async def aclose(self) -> None:
+        """PEP 525 / ``contextlib.aclosing``-compatible alias for
+        :meth:`close`.
+
+        Provided for cross-driver portability with code that targets
+        the aiosqlite / asyncpg / psycopg ``aclose()`` shape and with
+        ``contextlib.aclosing(conn)``. Equivalent to ``await
+        self.close()`` — :meth:`close` is already ``async def`` so
+        the alias is a thin wrapper rather than a wrap-around-sync
+        bridge. Symmetric with :meth:`AsyncCursor.aclose`.
+        """
+        await self.close()
+
     def force_close_transport(self) -> None:
         """Synchronously tear down the underlying socket transport.
 

@@ -904,6 +904,19 @@ class AsyncCursor:
         executor's post-await ``if self._closed: return`` short-circuit
         prevents the wire response from re-populating ``_rows`` /
         ``_description`` onto a closed cursor.
+
+        **Porting note (aiosqlite)**: aiosqlite's ``Cursor.close`` is
+        ``async def`` (its close runs on the connection's background
+        thread, so the async shape is load-bearing there). The
+        standard aiosqlite pattern is ``await cur.close()``. dqlite's
+        ``AsyncCursor.close`` is sync (see "synchronous by design"
+        above); ``await cur.close()`` raises
+        ``TypeError: object NoneType can't be used in 'await'
+        expression``. Either drop the ``await`` (``cur.close()``), use
+        the ``async with cur:`` form which closes on exit, or call
+        :meth:`aclose` — a one-line awaitable alias added for
+        cross-driver portability with ``contextlib.aclosing`` and the
+        aiosqlite / asyncpg / psycopg ``async def close`` shape.
         """
         # PEP 249 §6.1.2 messages-clear contract; see Cursor.close.
         # Suppress ``AttributeError`` symmetric with the setter
@@ -941,6 +954,34 @@ class AsyncCursor:
             TypeError
         ):  # pragma: no cover - AsyncConnection always supports weakref
             self._connection = weakref.proxy(self._connection)
+
+    async def aclose(self) -> None:
+        """PEP 525 / ``contextlib.aclosing``-compatible awaitable alias
+        for :meth:`close`.
+
+        The underlying close is synchronous by design (see
+        :meth:`close` for the rationale); this wrapper exists so
+        cross-driver code targeting the aiosqlite / asyncpg / psycopg
+        ``async def close`` shape can ``await cur.aclose()`` without
+        the ``TypeError: object NoneType can't be used in 'await'
+        expression`` that ``await cur.close()`` raises, and so
+        ``contextlib.aclosing(cur)`` works as the canonical async-
+        iterator-with-explicit-cleanup helper:
+
+            from contextlib import aclosing
+
+            async with aclosing(cur) as c:
+                async for row in c:
+                    ...
+
+        Unlike PEP 525's ``aclose()`` on async generators (which
+        throws ``GeneratorExit`` into the running generator), this
+        alias performs a plain sync close — there is no body to
+        cancel. The cursor is idempotently closed and its in-memory
+        state scrubbed; see :meth:`close` for the full post-close
+        state surface.
+        """
+        self.close()
 
     def setinputsizes(self, sizes: Sequence[Any] | None, /) -> None:
         """Set input sizes (no-op for dqlite).
