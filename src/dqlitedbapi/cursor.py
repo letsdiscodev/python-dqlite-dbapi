@@ -355,6 +355,33 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
             code=None,
             raw_message=str(e),
         ) from e
+    except BaseExceptionGroup as eg:
+        # PEP 249 §7 mandates Error-class surface for every database-
+        # related fault. ``BaseExceptionGroup`` does NOT inherit from
+        # ``Exception`` (PEP 654 — it inherits from ``BaseException``
+        # so ``except Exception:`` blocks correctly miss it), and no
+        # client / wire exception class matches it. A group raised
+        # from inside the awaited coro — by a future ``TaskGroup``
+        # codec path, by third-party retry / telemetry middleware
+        # wrapping the coro, or by an upstream `_bounded_group`
+        # primary raise — would otherwise propagate as-is past every
+        # ``except dbapi.Error:`` clause.
+        #
+        # Wrap as ``DatabaseError`` (the most generic Error subclass
+        # for "errors during database operation"; see PEP 249 §6.5 +
+        # §7) preserving the group on ``__cause__`` so SA's
+        # ``_walk_cause_chain`` can still descend the children and
+        # ``is_disconnect`` can classify the leaf exceptions. The
+        # message names the group size and the children-type
+        # cardinality so an operator can triage without walking the
+        # chain manually.
+        child_classes = {type(c).__name__ for c in eg.exceptions}
+        raise DatabaseError(
+            f"aggregate {type(eg).__name__} with {len(eg.exceptions)} child(ren) "
+            f"of class(es) {sorted(child_classes)}",
+            code=None,
+            raw_message=str(eg),
+        ) from eg
 
 
 if TYPE_CHECKING:

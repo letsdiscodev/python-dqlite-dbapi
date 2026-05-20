@@ -465,6 +465,23 @@ async def _build_and_connect(
             code=None,
             raw_message=raw_msg,
         ) from e
+    except BaseExceptionGroup as eg:
+        # PEP 249 §7 mandates Error-class surface. ``BaseExceptionGroup``
+        # does not inherit from ``Exception`` so ``except Exception:``
+        # blocks miss it; no client class matches it either. The
+        # in-tree primary raise path is ``ConnectionPool.initialize``;
+        # a future dbapi-side pool or third-party retry middleware
+        # wrapping the connect coro could route a group here. Mirror
+        # the ``_call_client`` discipline. See
+        # ``cursor.py::_call_client`` for the full rationale.
+        child_classes = {type(c).__name__ for c in eg.exceptions}
+        raise OperationalError(
+            f"Failed to find leader from {address}: aggregate "
+            f"{type(eg).__name__} with {len(eg.exceptions)} child(ren) "
+            f"of class(es) {sorted(child_classes)}",
+            code=None,
+            raw_message=str(eg),
+        ) from eg
 
     conn = DqliteConnection(
         leader_address,
@@ -598,6 +615,19 @@ async def _build_and_connect(
         # subclasses; OperationalError is the right shape for
         # transport.
         raise OperationalError(f"Failed to connect: {e}", code=None, raw_message=str(e)) from e
+    except BaseExceptionGroup as eg:
+        # See the sibling arm above the ``DqliteConnection(...)``
+        # construction for the rationale. ``BaseExceptionGroup``
+        # bypasses every per-class arm; wrap as ``OperationalError``
+        # (transport flavour, since this block surrounds the actual
+        # connect) with the group on ``__cause__``.
+        child_classes = {type(c).__name__ for c in eg.exceptions}
+        raise OperationalError(
+            f"Failed to connect: aggregate {type(eg).__name__} with "
+            f"{len(eg.exceptions)} child(ren) of class(es) {sorted(child_classes)}",
+            code=None,
+            raw_message=str(eg),
+        ) from eg
     return conn
 
 
