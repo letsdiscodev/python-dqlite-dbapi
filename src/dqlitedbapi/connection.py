@@ -1108,8 +1108,9 @@ class Connection:
             # FD ulimit exhaustion), close ``coro`` so the
             # unscheduled coroutine doesn't emit
             # ``RuntimeWarning("coroutine was never awaited")`` at GC.
-            # The sibling cleanup arms at lines 1036 / 1075 / 1124
-            # all close ``coro``; this completes the discipline for
+            # The sibling cleanup arms in the KI / SystemExit /
+            # TimeoutError / CancelledError branches all close
+            # ``coro``; this completes the discipline for
             # the third failure mode. Distinct from the
             # ``run_coroutine_threadsafe`` RuntimeError arm below —
             # that one knows the loop is closed; this one knows we
@@ -1189,7 +1190,8 @@ class Connection:
                         # diagnostic.
                         recovered_error = recovered
                 # If the coroutine actually completed (success branch
-                # returned via line 1064 above; exception branch caught
+                # returned via ``future.result(timeout=...)`` in the
+                # main try-block above; exception branch caught
                 # ``recovered_error`` here), the connection is healthy:
                 # ``_run_protocol``'s ``finally`` already cleared
                 # ``_in_use``. Re-raise the recovered exception
@@ -1236,7 +1238,8 @@ class Connection:
                 # coroutine that actually completed (success or late
                 # server-side exception) does not get its connection
                 # state torn out from under it. The success branch
-                # returns at line 1064; the exception branch raises
+                # returns ``future.result(timeout=...)`` in the main
+                # try-block; the exception branch raises
                 # immediately via the early-raise block (just above
                 # ``future.cancel()``), so this null-out and the
                 # subsequent ``_invalidate`` schedule fire only on a
@@ -1318,8 +1321,8 @@ class Connection:
                 # via the standard exception path, NOT trigger
                 # invalidation.
                 #
-                # Race-recovery (mirror of the timeout-arm at line
-                # 1008): if the coroutine resolved the future
+                # Race-recovery (mirror of the TimeoutError arm
+                # above): if the coroutine resolved the future
                 # successfully (or with its own real exception)
                 # between ``Future.result(...)`` raising the signal
                 # and our cleanup, there is no wedged in-flight op
