@@ -98,15 +98,28 @@ if __debug__:
 # layer divergence (client suppressing while the dbapi raises).
 _NO_TX_SUBSTRINGS: Final[tuple[str, ...]] = NO_TRANSACTION_MESSAGE_SUBSTRINGS
 
-# Bound (in seconds) for joining the background event-loop thread on
-# teardown. Worst-case scenario: a coroutine queued on the loop is
-# mid-await on a wire call when shutdown is requested. The loop is
-# asked to stop; the in-flight task resolves to CancelledError; the
-# thread then joins. 5 seconds covers the slow-network worst case
-# while preventing process hang on close. Both the finalizer
-# (``_cleanup_loop_thread``) and ``Connection.close()`` use this
-# bound — keep them in step via the constant.
-_LOOP_THREAD_JOIN_TIMEOUT_SECONDS: Final[float] = 5.0
+# Minimum bound (in seconds) for joining the background event-loop
+# thread on teardown. Both ``Connection.close()`` and
+# ``force_close_transport()`` consult the operator's
+# ``self._close_timeout`` for the join, but ``_close_timeout`` has a
+# 0.01 s floor (``_CLOSE_TIMEOUT_FLOOR``) — too tight in practice for
+# the queued ``loop.stop`` callback to land and the daemon thread to
+# observe the stop and exit cleanly on a non-stuck loop. Floor the
+# join at 0.1 s so the operator's tight close budgets do not race the
+# scheduling latency of the stop dispatch itself; a stuck loop still
+# bottoms out at this floor (matching the prior hard-coded behaviour
+# under tight tuning) while WAN-tuned operators set
+# ``close_timeout >> 0.1`` and get the full configured window.
+_LOOP_THREAD_JOIN_MIN_SECONDS: Final[float] = 0.1
+
+# Fallback bound (in seconds) used by the ``weakref.finalize``-backed
+# cleanup path (``_cleanup_loop_thread``) when invoked without an
+# explicit close_timeout. The finalizer is captured at loop-creation
+# time and ordinarily receives the operator's ``self._close_timeout``
+# as a positional argument so its budget matches the graceful close
+# path; this constant is the conservative cap retained for the rare
+# case where the captured value is missing or invalid.
+_LOOP_THREAD_JOIN_FALLBACK_SECONDS: Final[float] = 5.0
 
 
 def _validate_timeout(timeout: float) -> None:
@@ -735,6 +748,7 @@ def _cleanup_loop_thread(
     closed_flag: list[bool],
     address: str,
     creator_pid: int,
+    close_timeout: float = _LOOP_THREAD_JOIN_FALLBACK_SECONDS,
 ) -> None:
     """Stop the background event loop and join its thread.
 
@@ -744,17 +758,27 @@ def _cleanup_loop_thread(
     rather than a direct reference to self to decide whether to emit
     a ``ResourceWarning``.
 
+    ``close_timeout`` mirrors the operator's ``Connection._close_timeout``
+    so the finalizer's join budget matches the graceful ``close()`` and
+    ``force_close_transport()`` paths. Captured positionally at finalize
+    registration so the finalizer does not retain a reference to the
+    ``Connection`` instance. Floored at
+    ``_LOOP_THREAD_JOIN_MIN_SECONDS`` so a tight ``close_timeout``
+    (down to the ``_CLOSE_TIMEOUT_FLOOR=0.01`` minimum) still leaves
+    enough slack for the queued ``loop.stop`` callback to land and the
+    daemon thread to exit on a non-stuck loop.
+
     Fork-safety: ``creator_pid`` is the pid of the process that
     constructed the Connection; the finalizer fires in BOTH parent
     and child after ``os.fork`` (each frees the inherited
     Connection independently). In the child the captured ``loop`` /
     ``thread`` are parent-owned — calling ``loop.close()`` would
     close inherited selector FDs the parent still uses;
-    ``thread.join`` blocks for up to 5 s on a non-existent OS
-    thread (only the calling thread crosses ``fork``);
-    ``ResourceWarning`` based on the parent's frozen ``closed_flag``
-    is a false positive (the parent may close after fork). Mirror
-    the discipline of ``Connection._check_thread`` /
+    ``thread.join`` blocks for up to the configured budget on a
+    non-existent OS thread (only the calling thread crosses
+    ``fork``); ``ResourceWarning`` based on the parent's frozen
+    ``closed_flag`` is a false positive (the parent may close after
+    fork). Mirror the discipline of ``Connection._check_thread`` /
     ``DqliteConnection.close`` / ``Pool.close``: pid-mismatch →
     no-op.
     """
@@ -813,7 +837,7 @@ def _cleanup_loop_thread(
                 exc_info=True,
             )
         with contextlib.suppress(RuntimeError):
-            thread.join(timeout=_LOOP_THREAD_JOIN_TIMEOUT_SECONDS)
+            thread.join(timeout=max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS))
         try:
             if not loop.is_closed():
                 loop.close()
@@ -1049,6 +1073,7 @@ class Connection:
                     self._closed_flag,
                     self._address,
                     self._creator_pid,
+                    self._close_timeout,
                 )
         return self._loop
 
@@ -1725,7 +1750,22 @@ class Connection:
                     with contextlib.suppress(RuntimeError):
                         self._loop.call_soon_threadsafe(self._loop.stop)
                     if self._thread is not None:
-                        self._thread.join(timeout=_LOOP_THREAD_JOIN_TIMEOUT_SECONDS)
+                        # Honour the operator's ``close_timeout`` knob
+                        # for the join budget, mirroring
+                        # ``force_close_transport()``. Floor at
+                        # ``_LOOP_THREAD_JOIN_MIN_SECONDS`` so a tight
+                        # ``close_timeout`` (down to the 0.01 s floor)
+                        # still gives the queued ``loop.stop`` callback
+                        # enough scheduling slack to land and the
+                        # daemon thread to exit on a non-stuck loop.
+                        # WAN-tuned operators set
+                        # ``close_timeout >> 0.1`` and get the full
+                        # configured window. A genuinely stuck loop
+                        # bottoms out at the floor instead of the
+                        # previous hard-coded 5 s.
+                        self._thread.join(
+                            timeout=max(self._close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)
+                        )
                     # ``loop.close()`` raises
                     # ``RuntimeError("Cannot close a running event loop")``
                     # if ``thread.join`` returned with the loop still
@@ -1744,7 +1784,7 @@ class Connection:
                         logger.debug(
                             "Connection.close: loop.close raised RuntimeError "
                             "(loop thread did not exit within %s s); refs cleared",
-                            _LOOP_THREAD_JOIN_TIMEOUT_SECONDS,
+                            max(self._close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS),
                             exc_info=True,
                         )
                     self._loop = None
@@ -1907,8 +1947,14 @@ class Connection:
                             loop.call_soon_threadsafe(_safe_writer_close, writer)
                 with contextlib.suppress(RuntimeError):
                     loop.call_soon_threadsafe(loop.stop)
+                join_budget = max(self._close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)
                 if self._thread is not None:
-                    self._thread.join(timeout=self._close_timeout)
+                    # Same floor as ``Connection.close()`` — the
+                    # ``_CLOSE_TIMEOUT_FLOOR=0.01`` lower bound on
+                    # ``close_timeout`` is too tight in practice for
+                    # the queued ``loop.stop`` to land and the daemon
+                    # thread to observe and exit cleanly.
+                    self._thread.join(timeout=join_budget)
                 try:
                     loop.close()
                 except RuntimeError:
@@ -1916,7 +1962,7 @@ class Connection:
                         "Connection.force_close_transport: loop.close raised "
                         "RuntimeError (loop thread did not exit within %s s); "
                         "refs cleared",
-                        self._close_timeout,
+                        join_budget,
                         exc_info=True,
                     )
                 self._loop = None

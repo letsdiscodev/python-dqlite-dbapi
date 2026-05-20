@@ -160,8 +160,8 @@ def test_finalizer_in_forked_child_does_not_block_or_emit_warning() -> None:
             gc.collect()
             elapsed = time.monotonic() - t0
             # If the finalizer ran the thread.join, it would block
-            # for up to _LOOP_THREAD_JOIN_TIMEOUT_SECONDS (5s).
-            # Forked-child GC + finalize should complete in well under
+            # for up to the captured close_timeout budget. Forked-
+            # child GC + finalize should complete in well under
             # 1 second.
             os.write(pipe_w, f"OK elapsed={elapsed:.3f}".encode())
         except BaseException as e:
