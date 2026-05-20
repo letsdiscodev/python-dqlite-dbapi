@@ -225,14 +225,38 @@ def connect(
     Returns:
         A Connection object
     """
+    # Accept the no-op sentinel values for stdlib's
+    # ``isolation_level`` and ``autocommit`` kwargs so cross-driver
+    # porting code that passes stdlib defaults through to the
+    # constructor doesn't trip on the kwarg-reject path. The
+    # ``isolation_level.setter`` and ``autocommit.setter`` already
+    # accept these same sentinels post-construction as documented
+    # no-ops; the constructor was the asymmetric surface.
+    #
+    # Stdlib parity ``conn = sqlite3.connect(":memory:",
+    # isolation_level=None)`` yields ``conn.isolation_level is None``;
+    # dqlite is fixed-mode autocommit at the wire layer, so the
+    # only sentinel meaning the user can express is the "I
+    # acknowledge the existing mode" no-op.
+    _SENTINEL = object()
+    iso = unknown_kwargs.pop("isolation_level", _SENTINEL)
+    autoc = unknown_kwargs.pop("autocommit", _SENTINEL)
+    if iso is not _SENTINEL and iso is not None:
+        raise NotSupportedError(f"dqlite connect() accepts isolation_level=None only; got {iso!r}")
+    if autoc is not _SENTINEL and autoc is not True and autoc != -1:
+        raise NotSupportedError(
+            f"dqlite connect() accepts autocommit=True or autocommit=-1 "
+            f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
+        )
+
     # Reject stdlib ``sqlite3.connect`` kwargs that this driver
-    # cannot honour (``detect_types``, ``isolation_level``,
-    # ``check_same_thread``, ``factory``, ``cached_statements``,
-    # ``uri``, ``autocommit``) with ``NotSupportedError`` rather
-    # than letting Python's call-protocol leak ``TypeError``
-    # (which escapes ``except dbapi.Error:``). Cross-driver code
-    # that passes stdlib kwargs through should be able to catch
-    # the rejection inside the dbapi error hierarchy.
+    # cannot honour (``detect_types``, ``check_same_thread``,
+    # ``factory``, ``cached_statements``, ``uri``) with
+    # ``NotSupportedError`` rather than letting Python's call-
+    # protocol leak ``TypeError`` (which escapes ``except
+    # dbapi.Error:``). Cross-driver code that passes stdlib kwargs
+    # through should be able to catch the rejection inside the
+    # dbapi error hierarchy.
     if unknown_kwargs:
         raise NotSupportedError(
             f"dqlite connect() rejects stdlib sqlite3 kwargs not supported "

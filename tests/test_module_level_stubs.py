@@ -72,12 +72,10 @@ def test_enable_callback_tracebacks_raises_not_supported() -> None:
     "kwarg",
     [
         "detect_types",
-        "isolation_level",
         "check_same_thread",
         "factory",
         "cached_statements",
         "uri",
-        "autocommit",
     ],
 )
 def test_connect_rejects_stdlib_sqlite3_kwargs(kwarg: str) -> None:
@@ -85,7 +83,12 @@ def test_connect_rejects_stdlib_sqlite3_kwargs(kwarg: str) -> None:
     ``sqlite3.connect`` kwargs that this driver cannot honour
     must raise ``NotSupportedError`` (in the dbapi.Error
     hierarchy) rather than bare ``TypeError`` (escapes the
-    hierarchy)."""
+    hierarchy).
+
+    ``isolation_level`` and ``autocommit`` accept their no-op
+    sentinel values (``None`` / ``True`` / ``-1``) symmetric with
+    the setter — see
+    ``test_connect_isolation_level_autocommit_kwargs_symmetric.py``."""
     with pytest.raises(NotSupportedError, match="stdlib sqlite3 kwargs"):
         dqlitedbapi.connect("127.0.0.1:9999", **{kwarg: 0})  # type: ignore[arg-type]
 

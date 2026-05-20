@@ -201,6 +201,18 @@ def connect(
     Returns:
         An AsyncConnection object
     """
+    # Accept no-op sentinels for ``isolation_level`` / ``autocommit``
+    # symmetric with the setter — see sync sibling for rationale.
+    _SENTINEL = object()
+    iso = unknown_kwargs.pop("isolation_level", _SENTINEL)
+    autoc = unknown_kwargs.pop("autocommit", _SENTINEL)
+    if iso is not _SENTINEL and iso is not None:
+        raise NotSupportedError(f"dqlite connect() accepts isolation_level=None only; got {iso!r}")
+    if autoc is not _SENTINEL and autoc is not True and autoc != -1:
+        raise NotSupportedError(
+            f"dqlite connect() accepts autocommit=True or autocommit=-1 "
+            f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
+        )
     # Reject stdlib ``sqlite3.connect`` kwargs as ``NotSupportedError``
     # so cross-driver porting code's ``except dbapi.Error:`` catches
     # the rejection instead of bare ``TypeError``. Sync sibling does
@@ -263,6 +275,18 @@ async def aconnect(
     Returns:
         A connected AsyncConnection object
     """
+    # Accept no-op sentinels for ``isolation_level`` / ``autocommit``
+    # symmetric with the setter — see sync sibling for rationale.
+    _SENTINEL = object()
+    iso = unknown_kwargs.pop("isolation_level", _SENTINEL)
+    autoc = unknown_kwargs.pop("autocommit", _SENTINEL)
+    if iso is not _SENTINEL and iso is not None:
+        raise NotSupportedError(f"dqlite aconnect() accepts isolation_level=None only; got {iso!r}")
+    if autoc is not _SENTINEL and autoc is not True and autoc != -1:
+        raise NotSupportedError(
+            f"dqlite aconnect() accepts autocommit=True or autocommit=-1 "
+            f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
+        )
     # Reject stdlib ``sqlite3.connect`` kwargs as ``NotSupportedError``;
     # see ``connect`` sibling.
     if unknown_kwargs:
