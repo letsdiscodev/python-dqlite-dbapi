@@ -399,9 +399,16 @@ def _truncate_for_message(text: str) -> str:
     DataError message. The truncation marker carries the OVERFLOW
     codepoint count (number of characters dropped past the cap) so a
     triaging operator knows the size class without exposing the full
-    payload. The suffix shape aligns with the wire-layer
-    ``_cap_raw_message`` SSOT (single overflow-count vocabulary across
-    every truncation surface).
+    payload.
+
+    Local re-implementation of the wire-layer ``_cap_raw_message``
+    SSOT shape (overflow-count suffix vocabulary). Kept independent
+    because the suffix wording here (``"... [truncated, N chars]"``)
+    differs from the wire SSOT's ``"... [raw_message truncated, N
+    codepoints]"`` — both report the same CPython quantity
+    (``len(str)`` counts codepoints), and the divergence is intentional
+    context-specific wording. See the cross-package divergence index
+    in ``dqlitewire/_truncate.py``.
     """
     if len(text) <= _MAX_DATA_ERROR_TEXT_DISPLAY:
         return text
