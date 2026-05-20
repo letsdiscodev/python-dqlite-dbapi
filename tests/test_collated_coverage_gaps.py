@@ -37,7 +37,7 @@ class TestAioConnectLazyUnknownKwargsRejection:
                 # pytest.raises wraps a sync raise, not an awaitable.
                 _ = dqlite_aio.connect(
                     "127.0.0.1:9001",
-                    isolation_level=None,
+                    detect_types=1,
                 )
 
         asyncio.run(_drive())
@@ -57,7 +57,7 @@ class TestAioAConnectUnknownKwargsRejection:
             # before AsyncConnection.__init__ is reached.
             await dqlite_aio.aconnect(
                 "127.0.0.1:9001",
-                isolation_level=None,
+                detect_types=1,
             )
 
     @pytest.mark.asyncio

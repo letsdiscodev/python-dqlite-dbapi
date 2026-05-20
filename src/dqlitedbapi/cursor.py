@@ -1374,12 +1374,25 @@ class Cursor:
 
         Set to a callable ``factory(cursor, row) -> Any`` to wrap each
         fetched tuple before returning. ``None`` (default) returns
-        plain tuples per PEP 249. Common factories:
+        plain tuples per PEP 249.
 
-        - ``sqlite3.Row`` (stdlib): tuple-like with index AND
-          column-name access.
-        - ``lambda cur, row: dict(zip([c[0] for c in cur.description], row))``:
-          dict-of-column-name-to-value.
+        **Factory contract**: the factory is called as
+        ``factory(cursor, row)`` where ``cursor`` is the dqlite
+        ``Cursor`` instance. Factories that require a specific
+        ``Cursor`` subclass — notably ``sqlite3.Row``, whose
+        C-extension constructor type-checks the first argument to
+        be ``pysqlite_CursorType`` — do NOT work with this driver
+        and surface ``DataError("row_factory call failed: ...")``
+        at the first fetch.
+
+        Working shapes:
+
+        - ``lambda cur, row: dict(zip([c[0] for c in cur.description], row))``
+          for a dict factory.
+        - ``namedtuple`` builders: ``lambda cur, row: MyTuple._make(row)``
+          (ignores the cursor arg).
+        - Plain callables that read ``cur.description`` for column
+          names.
 
         New cursors inherit the parent Connection's default factory.
         Setting ``cur.row_factory = ...`` overrides per-cursor.
@@ -1914,7 +1927,22 @@ class Cursor:
         # factory-raised rows — silently REPLAYING a row on the next
         # call instead of either retrying or skipping cleanly.
         if self._row_factory is not None:
-            transformed: tuple[Any, ...] = self._row_factory(self, row)
+            try:
+                transformed: tuple[Any, ...] = self._row_factory(self, row)
+            except TypeError as exc:
+                # The factory rejected ``self`` as the first argument
+                # — typical when the user wired a factory that requires
+                # a specific ``Cursor`` subclass (e.g. ``sqlite3.Row``,
+                # whose C-extension constructor type-checks
+                # ``argument 1`` to be a ``pysqlite_CursorType``).
+                # Surface as ``DataError`` (PEP 249 §7 "problems with
+                # the processed data") rather than leaking bare
+                # ``TypeError`` past ``except dbapi.Error:`` clauses.
+                raise DataError(
+                    f"row_factory call failed: {exc}",
+                    code=None,
+                    raw_message=str(exc),
+                ) from exc
             self._row_index += 1
             return transformed
         self._row_index += 1
@@ -2026,8 +2054,21 @@ class Cursor:
             # vs the sibling fetch verbs.
             try:
                 transformed = [self._row_factory(self, row) for row in result]
+            except TypeError as exc:
+                # See ``fetchone`` for rationale — wrap as DataError so
+                # a factory that rejects this cursor (e.g.
+                # ``sqlite3.Row``'s C-extension type check) surfaces
+                # inside the PEP 249 ``Error`` hierarchy. Index is
+                # NOT advanced — the snapshot-restore discipline above.
+                raise DataError(
+                    f"row_factory call failed: {exc}",
+                    code=None,
+                    raw_message=str(exc),
+                ) from exc
             except BaseException:
-                # Index unchanged; raise propagates the factory error.
+                # Other raises (factory ValueError, programmer bugs)
+                # propagate so the snapshot-restore discipline still
+                # applies. Index unchanged.
                 raise
             self._row_index = len(self._rows)
             return transformed

@@ -465,6 +465,25 @@ async def _build_and_connect(
             code=None,
             raw_message=raw_msg,
         ) from e
+    except OSError as e:
+        # Defence-in-depth, symmetric with the post-construct
+        # ``conn.connect()`` block's ``OSError`` arm. The in-tree
+        # ``find_leader`` wraps every per-probe ``OSError`` in
+        # ``_ProbeMiss`` and aggregates them into ``ClusterError`` —
+        # so on the happy path this arm is unreached. The arm exists
+        # for: (a) custom ``NodeStore``s that raise ``OSError`` from
+        # ``get_nodes()`` (e.g. a file-backed YAML store with a
+        # missing file); (b) ``socket.gaierror`` from future DNS
+        # paths; (c) ``TimeoutError`` (an ``OSError`` subclass since
+        # Python 3.11) leaked from a misconfigured ``asyncio.wait_for``
+        # inside a third-party ``cluster_factory``. PEP 249 §7
+        # requires Error-class surface; ``OperationalError`` is the
+        # right shape for transport-class faults.
+        raise OperationalError(
+            f"Failed to find leader from {address}: {e}",
+            code=None,
+            raw_message=str(e),
+        ) from e
     except BaseExceptionGroup as eg:
         # PEP 249 §7 mandates Error-class surface. ``BaseExceptionGroup``
         # does not inherit from ``Exception`` so ``except Exception:``
@@ -2514,9 +2533,17 @@ class Connection:
         default; assigning ``cur.row_factory = ...`` overrides
         per-cursor.
 
-        Common factory: ``sqlite3.Row`` from stdlib (tuple-like with
-        index AND column-name access). Custom factories can return
-        dicts, namedtuples, dataclasses, etc.
+        **Factory contract**: factories that require a specific
+        ``Cursor`` subclass — notably ``sqlite3.Row``, whose
+        C-extension constructor type-checks the first argument to
+        be ``pysqlite_CursorType`` — do NOT work with this driver.
+        The setter accepts them, but the first fetch surfaces
+        ``DataError("row_factory call failed: argument 1 must be
+        sqlite3.Cursor, not Cursor")``.
+
+        Use plain callables (lambdas, dataclass builders,
+        ``namedtuple._make``) instead. See ``Cursor.row_factory``
+        for the recommended shapes.
         """
         return self._row_factory
 
