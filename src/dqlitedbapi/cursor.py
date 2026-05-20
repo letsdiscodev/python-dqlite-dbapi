@@ -2434,6 +2434,29 @@ class Cursor:
         return self
 
     def __next__(self) -> tuple[Any, ...]:
+        """Advance the cursor by one row.
+
+        **Row-factory raise behaviour (divergence from stdlib
+        ``sqlite3`` convention):** if a custom ``row_factory`` raises
+        a non-``StopIteration`` exception while transforming the next
+        row, the cursor's row index is NOT advanced. A subsequent
+        ``__next__`` will retry the SAME row, re-running the factory
+        and re-raising. This is deliberate — ``fetchmany``'s
+        snapshot/restore retry semantic (``snapshot + len(result)``
+        on cancel) requires the un-delivered row to remain
+        pointed-to. The shared helper ``_next_row_unlocked`` applies
+        the factory BEFORE advancing the index so a raise leaves the
+        index unchanged, and the iterator path inherits that
+        property.
+
+        To skip past a bad row, drop and re-fetch via a fresh
+        ``execute``, or wrap the iteration in a try/except that
+        breaks out on the raise. The cursor is NOT "terminated" by a
+        factory raise — it is "wedged on the bad row" until the next
+        ``execute`` resets the row buffer. The async sibling
+        ``AsyncCursor.__anext__`` has the same shape for sync/async
+        consistency.
+        """
         row = self.fetchone()
         if row is None:
             raise StopIteration
