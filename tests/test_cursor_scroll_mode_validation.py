@@ -114,3 +114,44 @@ def test_scroll_with_int_value_reaches_not_supported() -> None:
     cur = _make_sync_cursor()
     with pytest.raises(NotSupportedError, match="not scrollable"):
         cur.scroll(-3, "relative")
+
+
+# ------------- async sibling pins (moved from test_audit_2026_05_coverage_gaps.py
+# so the file lives up to its docstring claim that ``AsyncCursor.scroll`` is
+# covered here). ``AsyncCursor.scroll`` is a plain ``def`` (the
+# project-standard "raise-fast" stub idiom — see
+# ``tests/test_async_cursor.py:test_async_cursor_scroll_is_sync``), so the
+# tests below call it without ``await``.
+
+
+async def test_async_scroll_bad_mode_raises_programming_error() -> None:
+    from dqlitedbapi.aio import AsyncConnection, AsyncCursor
+
+    conn = AsyncConnection("localhost:9001")
+    cur = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError):
+        cur.scroll(0, mode="bad-mode")
+
+
+async def test_async_scroll_bad_value_raises_programming_error() -> None:
+    """Sibling-validator symmetry: ``value`` must be an integer offset
+    per PEP 249 §6.1.1. Without this check, ``cur.scroll("five",
+    "relative")`` is masked by the unconditional ``NotSupportedError``.
+    """
+    from dqlitedbapi.aio import AsyncConnection, AsyncCursor
+
+    conn = AsyncConnection("localhost:9001")
+    cur = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="scroll value"):
+        cur.scroll("five", "relative")  # type: ignore[arg-type]
+
+
+async def test_async_scroll_bool_value_raises_programming_error() -> None:
+    """``bool`` is-a ``int``; explicit reject matches the project
+    standard from ``arraysize.setter``."""
+    from dqlitedbapi.aio import AsyncConnection, AsyncCursor
+
+    conn = AsyncConnection("localhost:9001")
+    cur = AsyncCursor(conn)
+    with pytest.raises(ProgrammingError, match="scroll value"):
+        cur.scroll(True, "relative")

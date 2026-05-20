@@ -44,33 +44,10 @@ async def test_async_fetchmany_size_exceeds_remaining() -> None:
     assert len(rows) == 2
 
 
-# ---------------- async scroll mode validation (coverage)
-
-
-async def test_async_scroll_bad_mode_raises_programming_error() -> None:
-    conn = AsyncConnection("localhost:9001")
-    cur = AsyncCursor(conn)
-    with pytest.raises(ProgrammingError):
-        await cur.scroll(0, mode="bad-mode")
-
-
-async def test_async_scroll_bad_value_raises_programming_error() -> None:
-    """Sibling-validator symmetry: ``value`` must be an integer offset
-    per PEP 249 §6.1.1. Without this check, ``cur.scroll("five",
-    "relative")`` is masked by the unconditional ``NotSupportedError``."""
-    conn = AsyncConnection("localhost:9001")
-    cur = AsyncCursor(conn)
-    with pytest.raises(ProgrammingError, match="scroll value"):
-        cur.scroll("five", "relative")  # type: ignore[arg-type]
-
-
-async def test_async_scroll_bool_value_raises_programming_error() -> None:
-    """``bool`` is-a ``int``; explicit reject matches the project
-    standard from ``arraysize.setter``."""
-    conn = AsyncConnection("localhost:9001")
-    cur = AsyncCursor(conn)
-    with pytest.raises(ProgrammingError, match="scroll value"):
-        cur.scroll(True, "relative")
+# The async scroll mode/value validation tests moved to
+# test_cursor_scroll_mode_validation.py — see that file's pins for the
+# async sibling. Removing the duplicates here keeps the file's
+# top-level docstring honest.
 
 
 # ---------------- Error.sqlite_errorcode + __repr__ (coverage)
