@@ -79,3 +79,61 @@ def test_async_connect_rejects_isolation_level_deferred() -> None:
 
     with pytest.raises(NotSupportedError, match="isolation_level"):
         aio_connect("127.0.0.1:9001", isolation_level="DEFERRED")
+
+
+# The awaitable ``aconnect`` is the recommended async entry-point
+# for new asyncio callers; the sentinel-handling block in its body
+# is a literal copy of ``connect``'s, and benefits from the same
+# behavioural pin so a regression deleting either copy surfaces.
+
+
+@pytest.mark.asyncio
+async def test_aconnect_accepts_isolation_level_none() -> None:
+    from unittest.mock import AsyncMock
+
+    from dqlitedbapi.aio import aconnect
+
+    with patch("dqlitedbapi.aio.AsyncConnection") as _ctor:
+        _ctor.return_value.connect = AsyncMock()
+        await aconnect("127.0.0.1:9001", isolation_level=None)
+    _ctor.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_aconnect_accepts_autocommit_true() -> None:
+    from unittest.mock import AsyncMock
+
+    from dqlitedbapi.aio import aconnect
+
+    with patch("dqlitedbapi.aio.AsyncConnection") as _ctor:
+        _ctor.return_value.connect = AsyncMock()
+        await aconnect("127.0.0.1:9001", autocommit=True)
+    _ctor.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_aconnect_accepts_autocommit_minus_one() -> None:
+    from unittest.mock import AsyncMock
+
+    from dqlitedbapi.aio import aconnect
+
+    with patch("dqlitedbapi.aio.AsyncConnection") as _ctor:
+        _ctor.return_value.connect = AsyncMock()
+        await aconnect("127.0.0.1:9001", autocommit=-1)
+    _ctor.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_aconnect_rejects_isolation_level_deferred() -> None:
+    from dqlitedbapi.aio import aconnect
+
+    with pytest.raises(NotSupportedError, match="isolation_level"):
+        await aconnect("127.0.0.1:9001", isolation_level="DEFERRED")
+
+
+@pytest.mark.asyncio
+async def test_aconnect_rejects_autocommit_false() -> None:
+    from dqlitedbapi.aio import aconnect
+
+    with pytest.raises(NotSupportedError, match="autocommit"):
+        await aconnect("127.0.0.1:9001", autocommit=False)
