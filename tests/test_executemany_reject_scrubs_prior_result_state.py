@@ -1,22 +1,25 @@
-"""Pin: ``Cursor.executemany`` / ``AsyncCursor.executemany`` reject paths
-scrub prior per-result-set state (description / rowcount / rows / row_index)
-BEFORE raising ``ProgrammingError``.
+"""Pin: ``Cursor.executemany`` / ``AsyncCursor.executemany`` apply
+the stdlib `sqlite3` two-class rejection contract:
 
-Stdlib ``sqlite3.Cursor.executemany`` resets these fields on entry, so a
-rejected batch leaves the cursor at the "no result set" baseline. The
-dqlite dbapi previously fired the verb-reject / row-returning-reject
-guards BEFORE ``_reset_execute_state`` ran, leaving the prior
-``SELECT``'s description, rowcount, and row buffer observable on the
-cursor after a ``ProgrammingError``. A SQLAlchemy / pandas adapter that
-introspects ``cur.description`` after a rejected batch would see stale
-shape.
+1. **Input-validation rejection** (``None`` seq, bad outer shape
+   like ``str`` / dict / set, non-str ``operation``, cross-task
+   slot mismatch) — PRESERVES prior cursor state. These are
+   caller-shape misuses fired before any SQL parser touches the
+   bytes. Stdlib `sqlite3` preserves prior state on the bare
+   TypeError path; we extend the same discipline to the project-
+   specific seq-shape and cross-task-slot rejects.
 
-``_lastrowid`` is the documented exception: it is cursor-scoped and
-intentionally preserved across rejection (see
-``test_executemany_rejects_transaction_verbs.py::
-test_sync_executemany_rejection_preserves_prior_lastrowid``). The two
+2. **Prepare-stage rejection** (verb-reject like BEGIN/COMMIT,
+   row-returning like SELECT, PRAGMA) — SCRUBS prior state to
+   the "no result set" baseline. Stdlib `sqlite3` clears on
+   ``cur.execute("")`` (the closest analog), and the project-
+   specific verb/row-returning rejects follow the same pattern
+   because they're inspecting the SQL text.
+
+``_lastrowid`` is the documented exception: cursor-scoped,
+intentionally preserved across BOTH classes of rejection. The two
 contracts coexist because ``_reset_execute_state`` does not touch
-``_lastrowid``.
+``_lastrowid`` or ``_executing_task``.
 """
 
 from __future__ import annotations
@@ -162,76 +165,93 @@ async def test_async_executemany_pragma_rejection_scrubs_prior_result_state() ->
 
 
 # Input-validation rejects (None seq, bad outer shape, non-str operation,
-# async cross-task slot). Same stdlib-parity baseline contract: cursor
-# state must scrub before the guard raises so a caller catching the
-# rejection observes the "no result set" shape rather than the prior
-# SELECT's description / rowcount / rows / row_index.
+# async cross-task slot): PRESERVE prior cursor state, matching stdlib's
+# behavior on the bare TypeError path. A caller's retry-with-coerce
+# idiom can then inspect ``cur.description`` to shape the retry.
 
 
-def test_sync_executemany_none_seq_rejection_scrubs_prior_result_state() -> None:
+_PRIOR_DESC = (
+    ("a", None, None, None, None, None, None),
+    ("b", None, None, None, None, None, None),
+)
+_PRIOR_ROWS = [(1, 2), (3, 4), (5, 6)]
+
+
+def _assert_state_preserved(cur: Cursor | AsyncCursor) -> None:
+    assert cur._description == _PRIOR_DESC, (
+        f"description must be PRESERVED on input-validation reject; got {cur._description!r}"
+    )
+    assert cur._rowcount == 7, f"rowcount preserved; got {cur._rowcount}"
+    assert cur._rows == _PRIOR_ROWS, f"rows preserved; got {cur._rows!r}"
+    assert cur._row_index == 3, f"row_index preserved; got {cur._row_index}"
+    assert cur._lastrowid == 4242
+    if hasattr(cur, "_completed_iterations"):
+        assert cur._completed_iterations == 17
+
+
+def test_sync_executemany_none_seq_rejection_preserves_prior_result_state() -> None:
     cursor = _make_sync_cursor()
     _seed_prior_select_state(cursor)
     with pytest.raises(ProgrammingError, match="seq_of_parameters must be a sequence"):
         cursor.executemany("INSERT INTO t VALUES (?)", None)  # type: ignore[arg-type]
-    _assert_scrubbed_to_baseline(cursor)
+    _assert_state_preserved(cursor)
 
 
-def test_sync_executemany_bad_outer_shape_rejection_scrubs_prior_result_state() -> None:
+def test_sync_executemany_bad_outer_shape_rejection_preserves_prior_result_state() -> None:
     cursor = _make_sync_cursor()
     _seed_prior_select_state(cursor)
-    # ``str`` is one of the rejected outer shapes (would iterate over chars).
     with pytest.raises(ProgrammingError):
         cursor.executemany("INSERT INTO t VALUES (?)", "abc")
-    _assert_scrubbed_to_baseline(cursor)
+    _assert_state_preserved(cursor)
 
 
-def test_sync_executemany_non_str_operation_rejection_scrubs_prior_result_state() -> None:
+def test_sync_executemany_non_str_operation_rejection_preserves_prior_result_state() -> None:
     cursor = _make_sync_cursor()
     _seed_prior_select_state(cursor)
     with pytest.raises(ProgrammingError, match="operation must be a str SQL statement"):
         cursor.executemany(b"INSERT INTO t VALUES (?)", [(1,)])  # type: ignore[arg-type]
-    _assert_scrubbed_to_baseline(cursor)
+    _assert_state_preserved(cursor)
 
 
-async def test_async_executemany_none_seq_rejection_scrubs_prior_result_state() -> None:
+async def test_async_executemany_none_seq_rejection_preserves_prior_result_state() -> None:
     cursor = _make_async_cursor()
     _seed_prior_select_state(cursor)
     with pytest.raises(ProgrammingError, match="seq_of_parameters must be a sequence"):
         await cursor.executemany("INSERT INTO t VALUES (?)", None)  # type: ignore[arg-type]
-    _assert_scrubbed_to_baseline(cursor)
+    _assert_state_preserved(cursor)
 
 
-async def test_async_executemany_bad_outer_shape_rejection_scrubs_prior_result_state() -> None:
+async def test_async_executemany_bad_outer_shape_rejection_preserves_prior_result_state() -> None:
     cursor = _make_async_cursor()
     _seed_prior_select_state(cursor)
     with pytest.raises(ProgrammingError):
         await cursor.executemany("INSERT INTO t VALUES (?)", "abc")
-    _assert_scrubbed_to_baseline(cursor)
+    _assert_state_preserved(cursor)
 
 
-async def test_async_executemany_non_str_operation_rejection_scrubs_prior_result_state() -> None:
+async def test_async_executemany_non_str_operation_rejection_preserves_prior_result_state() -> None:
     cursor = _make_async_cursor()
     _seed_prior_select_state(cursor)
     with pytest.raises(ProgrammingError, match="operation must be a str SQL statement"):
         await cursor.executemany(b"INSERT INTO t VALUES (?)", [(1,)])  # type: ignore[arg-type]
-    _assert_scrubbed_to_baseline(cursor)
+    _assert_state_preserved(cursor)
 
 
-async def test_async_executemany_cross_task_slot_rejection_scrubs_prior_result_state() -> None:
-    """The cross-task slot reject (``_executing_task is not None`` and not
-    the current task) raises ``InterfaceError`` BEFORE the
-    ``_reset_execute_state`` call. Same stdlib-parity baseline contract."""
+async def test_async_executemany_cross_task_slot_rejection_preserves_prior_result_state() -> None:
+    """The cross-task slot reject is a project-specific misuse-rejection
+    that follows the input-validation pattern: PRESERVE prior cursor
+    state, leave the foreign task's slot intact."""
     cursor = _make_async_cursor()
     _seed_prior_select_state(cursor)
-    # Pin the slot to a sentinel task that is not the current one. Use
-    # a freshly-scheduled task so its identity differs from the test's
-    # running task; cancel it so it doesn't outlive the test.
     other_task = asyncio.create_task(asyncio.sleep(60))
     try:
         cursor._executing_task = other_task
         with pytest.raises(InterfaceError, match="already executing in another task"):
             await cursor.executemany("INSERT INTO t VALUES (?)", [(1,)])
-        _assert_scrubbed_to_baseline(cursor)
+        _assert_state_preserved(cursor)
+        assert cursor._executing_task is other_task, (
+            "cross-task reject must leave the foreign task's slot intact"
+        )
     finally:
         other_task.cancel()
         with contextlib.suppress(BaseException):

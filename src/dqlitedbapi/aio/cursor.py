@@ -413,26 +413,15 @@ class AsyncCursor:
         # Fast-path guard outside the lock so we fail quickly on an
         # already-closed cursor without taking the lock.
         self._check_closed()
-        # Scrub per-execute state (description / rowcount / rows /
-        # row_index) BEFORE the non-str and cross-task slot rejects so
-        # a rejected ``execute`` lands at the stdlib "no result set"
-        # baseline rather than reporting the prior query's shape. The
-        # closed guard above still precedes the reset so a caller
-        # executing on a closed cursor sees the sharp
-        # ``InterfaceError("Cursor is closed")`` without a
-        # state-clobber side effect. ``_reset_execute_state``
-        # deliberately does NOT touch ``_lastrowid`` or
-        # ``_executing_task``, so the preserve-across-rejection
-        # contract for lastrowid is unaffected and a foreign task's
-        # slot is left intact. Mirrors the ``executemany`` sibling.
-        self._reset_execute_state()
-        # PEP 249 §7: errors raised by the module subclass ``Error``.
-        # A non-str ``operation`` would later raise bare ``AttributeError``
-        # (``None.lstrip``) or ``TypeError`` (``bytes.lstrip("﻿")``)
-        # from ``_strip_leading_comments`` inside ``_classify_caller_sql``,
-        # escaping the dbapi exception hierarchy. Symmetric with the
-        # sync sibling and with the ``executemany`` ``seq_of_parameters=None``
-        # guard.
+        # Input-validation rejections FIRST (non-str operation, cross-
+        # task slot). These are caller-shape misuses that fire before
+        # any SQL parser touches the bytes; stdlib ``sqlite3``
+        # preserves prior cursor state on the non-str path, and the
+        # cross-task case is a project-specific misuse-rejection that
+        # follows the same "preserve prior state" pattern (no stdlib
+        # analog because sqlite3 is sync-only). The reset below
+        # handles prepare-stage rejections (verb / row-returning /
+        # bind-count / empty SQL) — those clear, matching stdlib.
         if not isinstance(operation, str):
             raise ProgrammingError(
                 f"operation must be a str SQL statement, got {type(operation).__name__}",
@@ -440,18 +429,24 @@ class AsyncCursor:
             )
         # Reject concurrent execute on the same cursor. ``op_lock``
         # below serialises the wire calls, but the cursor's
-        # per-execute state is mutated outside that lock (the
-        # ``_reset_execute_state`` call AND the result population in
-        # ``_execute_unlocked``) — two concurrent execute() calls on
-        # the same cursor object see different result-set state at
-        # different times. Use a per-cursor task token; reject any
-        # concurrent entry from a foreign task.
+        # per-execute state is mutated outside that lock — two
+        # concurrent execute() calls on the same cursor object see
+        # different result-set state at different times. Use a per-
+        # cursor task token; reject any concurrent entry from a
+        # foreign task.
         cur_task = asyncio.current_task()
         if self._executing_task is not None and self._executing_task is not cur_task:
             raise InterfaceError(
                 f"cursor is already executing in another task (id={id(self)}); "
                 "use one cursor per task"
             )
+        # Prepare-stage path: scrub per-execute state so a rejected
+        # ``execute`` (empty SQL / multi-statement / wrong ?-count)
+        # lands at the stdlib "no result set" baseline rather than
+        # reporting the prior query's shape. ``_reset_execute_state``
+        # deliberately does NOT touch ``_lastrowid`` or
+        # ``_executing_task``.
+        self._reset_execute_state()
         # Set the slot INSIDE the try/finally so a KeyboardInterrupt /
         # SystemExit delivered at the bytecode boundary between the
         # STORE_ATTR and the SETUP_FINALLY cannot leave the slot pinned
@@ -514,33 +509,13 @@ class AsyncCursor:
         """
         del self.messages[:]
         self._check_closed()
-        # Scrub per-execute state (description / rowcount / rows /
-        # row_index) BEFORE every rejection guard — input-validation
-        # (None seq / bad outer shape / non-str operation / cross-task
-        # slot) AND SQL-content (verb-reject / row-returning-reject /
-        # PRAGMA) — so a rejected ``executemany`` lands at the stdlib
-        # "no result set" baseline rather than reporting the prior
-        # query's shape. ``_reset_execute_state`` deliberately does
-        # NOT touch ``_lastrowid``, so the preserve-across-rejection
-        # contract for lastrowid is unaffected. Also zeroes
-        # ``_completed_iterations`` so an empty ``seq_of_parameters``
-        # ends with the same shape as empty ``execute``; the counter
-        # is preserved across the BaseException re-raise so callers
-        # can observe how many iterations committed before the
-        # cancel / failure. Runs BEFORE the cross-task slot check so
-        # the slot state itself is untouched (the reset does not
-        # touch ``_executing_task``).
-        self._reset_execute_state()
-        # PEP 249 §7: errors raised by the module subclass ``Error``.
-        # ``seq_of_parameters=None`` would later leak a bare ``TypeError``
-        # ("'NoneType' object is not iterable") from the iteration site
-        # below, escaping the dbapi exception hierarchy. ``None`` for
-        # the outer iterable has no defensible "no params" reading
-        # (unlike ``execute(sql, None)``); mirror the project's
-        # existing strict input-validation discipline (str/bytes/Mapping/
-        # set rejection in ``_reject_non_sequence_params``) and surface
-        # ``ProgrammingError`` up front. Same treatment in the sync
-        # sibling.
+        # Input-validation rejections FIRST (None seq, bad outer shape,
+        # non-str operation, cross-task slot). These are caller-shape
+        # misuses fired before any SQL parser touches the bytes;
+        # stdlib ``sqlite3`` preserves prior cursor state on these
+        # paths. The reset below handles prepare-stage rejections
+        # (verb-reject / row-returning / PRAGMA) which clear, matching
+        # stdlib. See sync sibling for full ordering rationale.
         if seq_of_parameters is None:
             raise ProgrammingError(
                 "executemany() seq_of_parameters must be a sequence/iterable, not None",
@@ -549,14 +524,9 @@ class AsyncCursor:
         # Reject outer shapes that would silently iterate over keys
         # (dict) / characters (str / bytes / bytearray / memoryview) or
         # iterate in non-deterministic order (set / frozenset). Shared
-        # with the sync sibling and with the ``AsyncConnection.executemany``
-        # shortcut so the four entry points share one diagnostic and one
-        # accept/reject contract.
+        # with the sync sibling and with ``AsyncConnection.executemany``
+        # so the four entry points share one accept/reject contract.
         _validate_executemany_seq_shape(seq_of_parameters)
-        # PEP 249 §7: surface non-str ``operation`` as a ``dbapi.Error``
-        # subclass up front so cross-driver ``except dbapi.Error:`` catches
-        # the misuse. Mirrors the canonical sibling guard on
-        # ``AsyncCursor.execute`` and the sync ``Cursor.executemany``.
         if not isinstance(operation, str):
             raise ProgrammingError(
                 f"operation must be a str SQL statement, got {type(operation).__name__}",
@@ -574,15 +544,19 @@ class AsyncCursor:
                 f"cursor is already executing in another task (id={id(self)}); "
                 "use one cursor per task"
             )
+        # Prepare-stage path begins here. Scrub per-execute state so
+        # a rejected ``executemany`` (verb-reject / row-returning /
+        # PRAGMA) lands at the stdlib "no result set" baseline rather
+        # than reporting the prior query's shape. ``_reset_execute_state``
+        # deliberately does NOT touch ``_lastrowid`` or
+        # ``_executing_task``, so the preserve-across-rejection
+        # contract for lastrowid is unaffected and the slot state
+        # itself is untouched. Also zeroes ``_completed_iterations``
+        # so an empty ``seq_of_parameters`` ends with the same shape
+        # as empty ``execute``.
+        self._reset_execute_state()
         # Set the slot INSIDE the try/finally so any non-success exit
         # path (validation reject, mid-loop raise, cancel) clears it.
-        # Previously the slot was set BEFORE the verb-reject /
-        # PRAGMA-reject / row-returning-reject checks; a validation-
-        # rejected executemany pinned ``_executing_task`` to a
-        # completed task, then a cross-task ``cur.execute(...)``
-        # observed the stale slot and raised
-        # ``InterfaceError("cursor is already executing in another task")``
-        # on a cursor that was NOT actually executing.
         try:
             self._executing_task = cur_task
             # Reject transaction-control verbs and pure queries up front

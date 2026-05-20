@@ -1402,33 +1402,31 @@ class Cursor:
         # raises ``InterfaceError`` (a real ``Error`` subclass).
         self._check_closed()
         self._connection._check_thread()
-        # Scrub per-execute state (description / rowcount / rows /
-        # row_index) BEFORE every rejection guard — input-validation
-        # (non-str operation) AND SQL-content (empty / multi-stmt /
-        # wrong ``?``-count) — so a rejected ``execute`` lands at the
-        # stdlib "no result set" baseline rather than reporting the
-        # prior query's shape. The closed/thread guards still precede
-        # the reset so a caller executing on a closed cursor sees the
-        # sharp ``InterfaceError("Cursor is closed")`` without a
-        # state-clobber side effect. ``_reset_execute_state``
-        # deliberately does NOT touch ``_lastrowid``, so the
-        # preserve-across-rejection contract for lastrowid is
-        # unaffected. Mirrors the ``executemany`` sibling.
-        self._reset_execute_state()
-        # PEP 249 §7: errors raised by the module subclass ``Error``.
-        # A non-str ``operation`` would later raise bare ``AttributeError``
-        # (``None.lstrip``) or ``TypeError`` (``bytes.lstrip("﻿")``)
-        # from ``_strip_leading_comments`` inside ``_classify_caller_sql``,
-        # escaping the dbapi exception hierarchy. Symmetric with the
-        # ``executemany() seq_of_parameters=None`` guard below: surface
-        # ``ProgrammingError`` up front so cross-driver
-        # ``except dbapi.Error`` clauses catch the misuse.
+        # Input-validation rejection FIRST: a non-str ``operation`` is
+        # a caller-shape misuse that fires before any SQL parser would
+        # touch it, and stdlib ``sqlite3`` preserves the prior result
+        # set on this path:
+        #     >>> cur.execute("SELECT 1"); cur.execute(123)
+        #     # raises TypeError; cur.description is the SELECT's tuple
+        # Stdlib only scrubs on prepare-stage rejections (empty SQL,
+        # multi-statement, NUL byte, bind-count mismatch). Match that
+        # split: ``ProgrammingError`` here surfaces with cursor state
+        # intact so a caller's retry-with-coerce idiom can inspect
+        # ``cur.description`` to shape the retry. Mirrors the
+        # ``executemany`` sibling.
         if not isinstance(operation, str):
             raise ProgrammingError(
                 f"operation must be a str SQL statement, got {type(operation).__name__}",
                 code=None,
             )
 
+        # Prepare-stage path: scrub per-execute state (description /
+        # rowcount / rows / row_index) so a rejected ``execute`` lands
+        # at the stdlib "no result set" baseline rather than reporting
+        # the prior query's shape. ``_reset_execute_state`` deliberately
+        # does NOT touch ``_lastrowid``, so the preserve-across-rejection
+        # contract for lastrowid is unaffected.
+        self._reset_execute_state()
         # Pre-flight classification pass: empty SQL → ProgrammingError
         # (PEP 249 §7), multi-statement → ProgrammingError (stdlib
         # parity), wrong ``?``-count vs ``len(parameters)`` →
@@ -1587,27 +1585,15 @@ class Cursor:
         # See ``execute``'s prelude comment for the ordering rationale.
         self._check_closed()
         self._connection._check_thread()
-        # Scrub per-execute state (description / rowcount / rows /
-        # row_index) BEFORE every rejection guard — input-validation
-        # (None seq / bad outer shape / non-str operation) AND
-        # SQL-content (verb-reject / row-returning-reject / PRAGMA)
-        # — so a rejected ``executemany`` lands at the stdlib "no
-        # result set" baseline rather than reporting the prior
-        # query's shape. ``_reset_execute_state`` deliberately does
-        # NOT touch ``_lastrowid``, so the preserve-across-rejection
-        # contract for lastrowid is unaffected. The post-loop clear
-        # at the end of ``_executemany_async`` handles the documented
-        # "clear after success" contract for the admitted-verb path.
-        self._reset_execute_state()
-        # PEP 249 §7: errors raised by the module subclass ``Error``.
-        # ``seq_of_parameters=None`` would later leak a bare ``TypeError``
-        # ("'NoneType' object is not iterable") from the iteration site,
-        # escaping the dbapi exception hierarchy. ``None`` for the outer
-        # iterable has no defensible "no params" reading (unlike
-        # ``execute(sql, None)``); mirror the project's existing strict
-        # input-validation discipline (str/bytes/Mapping/set rejection)
-        # and surface ``ProgrammingError`` up front. Same treatment in
-        # the async sibling.
+        # Input-validation rejections FIRST: ``None`` seq, bad outer
+        # shape (str / dict / set / bytes), non-str operation — these
+        # are caller-shape misuses that fire before any SQL parser
+        # touches the bytes, and stdlib ``sqlite3`` preserves prior
+        # cursor state on these paths. Stdlib only clears on
+        # prepare-stage rejections (verb-reject / row-returning /
+        # bind-count / empty SQL). Match stdlib's split so a retry-
+        # with-coerce idiom can inspect ``cur.description`` after a
+        # caught ``ProgrammingError`` from this arm.
         if seq_of_parameters is None:
             raise ProgrammingError(
                 "executemany() seq_of_parameters must be a sequence/iterable, not None",
@@ -1616,25 +1602,26 @@ class Cursor:
         # Reject outer shapes that would silently iterate over keys
         # (dict) / characters (str / bytes / bytearray / memoryview) or
         # iterate in non-deterministic order (set / frozenset), treating
-        # each yielded element as a parameter set. Shared with the
-        # ``Connection.executemany`` shortcut so the cursor and
-        # connection entry points have one accept/reject contract and
-        # one diagnostic. Without this check, ``cur.executemany(sql,
-        # "abc")`` mutated cursor state before the inner per-character
-        # binding raised the less-actionable ``parameter type str not
-        # supported`` message.
+        # each yielded element as a parameter set. Without this check,
+        # ``cur.executemany(sql, "abc")`` mutated cursor state before
+        # the inner per-character binding raised the less-actionable
+        # ``parameter type str not supported`` message.
         _validate_executemany_seq_shape(seq_of_parameters)
-        # PEP 249 §7: surface non-str ``operation`` as a ``dbapi.Error``
-        # subclass up front so cross-driver ``except dbapi.Error:`` catches
-        # the misuse. Without this guard, downstream calls (e.g.
-        # ``_strip_leading_comments(operation)``) raise bare
-        # ``TypeError`` / ``AttributeError`` that escape the hierarchy.
-        # Mirrors the canonical sibling guard on ``Cursor.execute``.
         if not isinstance(operation, str):
             raise ProgrammingError(
                 f"operation must be a str SQL statement, got {type(operation).__name__}",
                 code=None,
             )
+        # Prepare-stage path begins here. Scrub per-execute state so a
+        # rejected ``executemany`` (verb-reject / row-returning /
+        # PRAGMA) lands at the stdlib "no result set" baseline rather
+        # than reporting the prior query's shape. ``_reset_execute_state``
+        # deliberately does NOT touch ``_lastrowid``, so the preserve-
+        # across-rejection contract for lastrowid is unaffected. The
+        # post-loop clear at the end of ``_executemany_async`` handles
+        # the documented "clear after success" contract for the
+        # admitted-verb path.
+        self._reset_execute_state()
         # ``_lastrowid`` clear is intentionally deferred until AFTER the
         # verb-rejection guards below. A rejected ``executemany`` (a
         # transaction-control verb, a row-returning shape) means no
