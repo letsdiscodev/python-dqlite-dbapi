@@ -2114,6 +2114,14 @@ class Cursor:
         # is shape-independent: a closed cursor + good arg and a
         # closed cursor + bad arg both return silently.
         self._connection._check_thread()
+        # PEP 249 §6.2: "implementations are free to have this method
+        # do nothing." Stdlib ``sqlite3``, aiosqlite, psycopg, and
+        # asyncpg all accept ``None`` silently. Treating ``None`` as a
+        # no-op preserves cross-driver portability for the common
+        # defensive idiom ``cur.setinputsizes(None)`` while keeping
+        # the strict rejection below for genuinely invalid types.
+        if sizes is None:
+            return
         # Validate input shape — runs only after the closed-cursor
         # short-circuit and the affinity check so a closed-cursor
         # cleanup helper can call setinputsizes / setoutputsize without

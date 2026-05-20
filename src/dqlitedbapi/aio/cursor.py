@@ -954,6 +954,13 @@ class AsyncCursor:
         # shape ordering and the ``nextset`` / ``scroll`` /
         # ``executescript`` / ``callproc`` ordering convention.
         self._connection._check_loop_binding()
+        # PEP 249 §6.2 permits no-op implementations. Stdlib
+        # ``sqlite3``, aiosqlite, psycopg, and asyncpg all accept
+        # ``None`` silently. Symmetric with the sync sibling: treat
+        # ``None`` as a no-op for cross-driver portability while
+        # keeping the strict rejection below for invalid types.
+        if sizes is None:
+            return
         # Validate input shape symmetric with the sync sibling so a
         # caller-side bug (e.g. passing a string) surfaces at the call
         # site rather than being silently absorbed. PEP 249 §7 keeps
