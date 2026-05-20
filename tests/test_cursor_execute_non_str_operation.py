@@ -41,5 +41,5 @@ async def test_async_cursor_execute_rejects_non_str_operation(bad: object) -> No
         with pytest.raises(ProgrammingError, match="operation must be a str"):
             await cur.execute(bad)  # type: ignore[arg-type]
     finally:
-        await cur.close()
+        cur.close()
         await conn.close()

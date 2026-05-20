@@ -75,7 +75,7 @@ async def test_transaction_owner_cleared_after_body_baseexception() -> None:
     try:
         cur = conn.cursor()
         await cur.execute("SELECT 1")
-        await cur.close()
+        cur.close()
 
         with pytest.raises(KeyboardInterrupt):
             async with conn.transaction():
@@ -85,7 +85,7 @@ async def test_transaction_owner_cleared_after_body_baseexception() -> None:
         async with conn.transaction():
             cur = conn.cursor()
             await cur.execute("SELECT 1")
-            await cur.close()
+            cur.close()
     finally:
         await conn.close()
 
@@ -97,7 +97,7 @@ async def test_close_clears_transaction_owner_as_backstop() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = conn.cursor()
     await cur.execute("SELECT 1")
-    await cur.close()
+    cur.close()
     # Synthetic stale pin — simulates a leaked slot from a prior
     # signal-window race.
     conn._transaction_owner = asyncio.current_task()
@@ -122,7 +122,7 @@ async def test_close_does_not_clear_transaction_owner_synchronously_pre_teardown
     try:
         cur = conn.cursor()
         await cur.execute("SELECT 1")
-        await cur.close()
+        cur.close()
         # Synthetic owner — stand-in for a concurrent task parked
         # inside transaction(). We don't actually hold a real txn open
         # because that would race with the close(); inspect the slot

@@ -51,7 +51,7 @@ async def test_async_cursor_close_releases_connection_pin() -> None:
     cur = aconn.cursor()
     aconn_ref = weakref.ref(aconn)
 
-    await cur.close()
+    cur.close()
     del aconn
     gc.collect()
 

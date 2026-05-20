@@ -86,6 +86,6 @@ class TestAsyncLastrowidAutoincrement:
             assert cur.lastrowid == first + 1
 
             await cur.execute("DROP TABLE t_rowid_async")
-            await cur.close()
+            cur.close()
         finally:
             await aconn.close()

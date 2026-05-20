@@ -306,6 +306,20 @@ class AsyncCursor:
             columns, column_types, row_types, rows = await _call_client(
                 conn.query_raw_typed(operation, params)
             )
+            # Post-await close-race guard: a sibling task may have
+            # called ``self.close()`` while we were parked on the
+            # wire. ``close()`` is synchronous and sets ``_closed =
+            # True`` GIL-atomically, plus clears ``_rows`` /
+            # ``_description``; without this re-check, the result-
+            # population below would re-populate state onto the now-
+            # closed cursor. Drop the result silently (close is a no-
+            # error termination — raising into the awaiter's frame
+            # would surprise a caller that just used a try/except for
+            # CancelledError). Mirrors the same discipline already
+            # applied in ``_ExecuteManyAccumulator.apply``'s post-
+            # await re-check arm.
+            if self._closed:
+                return
             if not columns:
                 # PRAGMA write-form dispatches through the row-
                 # returning branch but produces no columns; match
@@ -358,6 +372,9 @@ class AsyncCursor:
             self._rowcount = len(rows)
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))
+            # Same post-await close-race guard as the query branch.
+            if self._closed:
+                return
             # stdlib-parity: lastrowid only updates on INSERT / REPLACE.
             # See ``_is_insert_or_replace`` in the sync cursor for
             # rationale — sync and async share the same contract.
@@ -873,10 +890,22 @@ class AsyncCursor:
         self._row_index = 0
         return rows
 
-    async def close(self) -> None:
+    def close(self) -> None:
         """Close the cursor.
 
-        Idempotent: a second call is a no-op.
+        Idempotent and **synchronous by design**. The body has zero
+        await statements (every operation is a GIL-atomic attribute
+        write plus the weakref-proxy swap); making it ``async def``
+        would invite a forgot-``await`` footgun where ``cur.close()``
+        silently produced a discarded coroutine and the cursor was
+        left undrained, with only a GC-time
+        ``RuntimeWarning("coroutine was never awaited")`` pointing at
+        asyncio internals rather than at dqlite. Mirrors stdlib
+        ``sqlite3.Cursor.close`` and the project's
+        ``executescript`` / ``interrupt`` / ``backup`` / ``tpc_*``
+        family (sync ``def`` stubs that surface forgot-call as
+        immediate ``NotSupportedError`` rather than a discarded
+        coroutine).
 
         Scrubs ``description`` / ``rowcount`` / ``lastrowid`` /
         ``_rows`` / ``_row_index`` symmetrically with the sync sibling
@@ -890,11 +919,21 @@ class AsyncCursor:
         retain ``arraysize`` across ``close()``; this driver matches
         that parity. ``arraysize`` is therefore the single PEP 249
         §6.1.2 attribute outside the scrub set above — by design.
+
+        Cross-task safety: ``_closed = True`` is set FIRST (GIL-atomic
+        write) so a sibling task whose ``_execute_unlocked`` is parked
+        on the wire await observes the flag-flip on resume. The
+        executor's post-await ``if self._closed: return`` short-circuit
+        prevents the wire response from re-populating ``_rows`` /
+        ``_description`` onto a closed cursor.
         """
         # PEP 249 §6.1.2 messages-clear contract; see Cursor.close.
         del self.messages[:]
         if self._closed:
             return
+        # Set the flag FIRST so a sibling-task ``_execute_unlocked``
+        # that is parked on the wire await observes it on resume and
+        # short-circuits before repopulating state.
         self._closed = True
         self._rows = []
         self._description = None
@@ -918,7 +957,7 @@ class AsyncCursor:
         ):  # pragma: no cover - AsyncConnection always supports weakref
             self._connection = weakref.proxy(self._connection)
 
-    def setinputsizes(self, sizes: Sequence[Any]) -> None:
+    def setinputsizes(self, sizes: Sequence[Any] | None) -> None:
         """Set input sizes (no-op for dqlite).
 
         PEP 249 §6.1.1 names ``setinputsizes`` among the methods that
@@ -1208,4 +1247,5 @@ class AsyncCursor:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        await self.close()
+        # ``close`` is now sync (see docstring) — no await needed.
+        self.close()

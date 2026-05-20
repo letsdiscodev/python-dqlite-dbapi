@@ -46,7 +46,7 @@ async def _aexec(conn: AsyncConnection, sql: str) -> None:
     try:
         await cur.execute(sql)
     finally:
-        await cur.close()
+        cur.close()
 
 
 def test_sync_executemany_rejects_str_outer_shape() -> None:
@@ -207,7 +207,7 @@ async def test_async_executemany_accepts_list_of_tuples() -> None:
         await _aexec(conn, "DROP TABLE IF EXISTS aexm_ok")
         await _aexec(conn, "CREATE TABLE aexm_ok (n INTEGER)")
         cur2 = await conn.executemany("INSERT INTO aexm_ok VALUES (?)", [(1,), (2,)])
-        await cur2.close()
+        cur2.close()
     finally:
         with contextlib.suppress(Exception):
             await _aexec(conn, "DROP TABLE IF EXISTS aexm_ok")

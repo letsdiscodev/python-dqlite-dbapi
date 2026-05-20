@@ -97,7 +97,7 @@ class TestAsyncLastrowidSurvivesCrossCursorRollback:
             await setup.execute("DROP TABLE IF EXISTS t_xc_rollback_async")
             await setup.execute("CREATE TABLE t_xc_rollback_async (id INTEGER PRIMARY KEY, v TEXT)")
         finally:
-            await setup.close()
+            setup.close()
 
         cur_a = aconn.cursor()
         cur_b = aconn.cursor()
@@ -120,10 +120,10 @@ class TestAsyncLastrowidSurvivesCrossCursorRollback:
             row = await cur_a.fetchone()
             assert row is not None and row[0] == 0
         finally:
-            await cur_a.close()
-            await cur_b.close()
+            cur_a.close()
+            cur_b.close()
             cleanup = aconn.cursor()
             try:
                 await cleanup.execute("DROP TABLE IF EXISTS t_xc_rollback_async")
             finally:
-                await cleanup.close()
+                cleanup.close()

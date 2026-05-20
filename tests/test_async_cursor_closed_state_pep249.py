@@ -26,7 +26,7 @@ def _make_async_cursor() -> AsyncCursor:
     conn.messages = []
     # ``AsyncCursor.close()`` is async; the MagicMock stand-in exposes
     # no network I/O, so close() just toggles ``_closed`` and scrubs
-    # state. AsyncMock on close lets ``await cur.close()`` work even
+    # state. AsyncMock on close lets ``cur.close()`` work even
     # though the mock doesn't back a real connection.
     conn.close = AsyncMock()
     cur = AsyncCursor(conn)
@@ -39,31 +39,31 @@ class TestSetinputsizesSetoutputsizeClosedCheck:
 
     async def test_setinputsizes_does_not_raise_on_closed_cursor(self) -> None:
         cur = _make_async_cursor()
-        await cur.close()
+        cur.close()
         cur.setinputsizes([None])
 
     async def test_setoutputsize_does_not_raise_on_closed_cursor(self) -> None:
         cur = _make_async_cursor()
-        await cur.close()
+        cur.close()
         cur.setoutputsize(4096)
 
 
 class TestNotSupportedMethodsRaiseClosedFirst:
     async def test_callproc_on_closed_cursor_raises_interfaceerror(self) -> None:
         cur = _make_async_cursor()
-        await cur.close()
+        cur.close()
         with pytest.raises(InterfaceError, match="closed"):
             cur.callproc("proc_name")
 
     async def test_nextset_on_closed_cursor_raises_interfaceerror(self) -> None:
         cur = _make_async_cursor()
-        await cur.close()
+        cur.close()
         with pytest.raises(InterfaceError, match="closed"):
             cur.nextset()
 
     async def test_scroll_on_closed_cursor_raises_interfaceerror(self) -> None:
         cur = _make_async_cursor()
-        await cur.close()
+        cur.close()
         with pytest.raises(InterfaceError, match="closed"):
             cur.scroll(0)
 
@@ -80,7 +80,7 @@ class TestCloseScrubsAllState:
         cur._lastrowid = 42
         cur._description = (("c", 3, None, None, None, None, None),)
         cur._rows = [(1,), (2,)]
-        await cur.close()
+        cur.close()
         assert cur.description is None
         assert cur.rowcount == -1
         assert cur.lastrowid is None
@@ -94,7 +94,7 @@ class TestAsyncIterOnClosedCursor:
 
     async def test_async_for_on_closed_cursor_raises_interface_error(self) -> None:
         cur = _make_async_cursor()
-        await cur.close()
+        cur.close()
         rows: list[object] = []
         with pytest.raises(InterfaceError, match="closed"):
             async for row in cur:
@@ -105,6 +105,6 @@ class TestAsyncIterOnClosedCursor:
         """Direct ``__anext__`` invocation surfaces the same
         InterfaceError, not StopAsyncIteration."""
         cur = _make_async_cursor()
-        await cur.close()
+        cur.close()
         with pytest.raises(InterfaceError, match="closed"):
             await cur.__anext__()

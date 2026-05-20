@@ -32,7 +32,7 @@ async def test_aiter_on_closed_cursor_does_not_raise() -> None:
     to ``fetchone`` and raises ``InterfaceError("Cursor is closed")``)."""
     aconn = AsyncConnection("127.0.0.1:9999", database="x")
     cur = aconn.cursor()
-    await cur.close()
+    cur.close()
 
     # Must NOT raise. Pre-fix this raised InterfaceError because
     # ``_check_loop_binding`` ran a closed-state check before

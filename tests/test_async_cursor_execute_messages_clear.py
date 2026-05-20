@@ -49,7 +49,7 @@ async def cursor() -> AsyncIterator[AsyncCursor]:
         # to release the cursor's parent-connection back-reference
         # (project discipline).
         with contextlib.suppress(Exception):
-            await cur.close()
+            cur.close()
 
 
 async def test_execute_clears_messages_on_closed_path(cursor: AsyncCursor) -> None:

@@ -242,7 +242,10 @@ async def test_async_execute_shortcut_closes_cursor_on_raise() -> None:
     def fake_cursor() -> AsyncCursor:
         cur = MagicMock(spec=AsyncCursor)
         cur.execute = AsyncMock(side_effect=OperationalError("boom"))
-        cur.close = AsyncMock()
+        # ``AsyncCursor.close`` is sync by design — a forgotten
+        # ``await`` would silently leak the cursor — so use a
+        # MagicMock (not AsyncMock) for the close attribute.
+        cur.close = MagicMock()
         cursors_seen.append(cur)
         return cur
 
@@ -254,8 +257,8 @@ async def test_async_execute_shortcut_closes_cursor_on_raise() -> None:
 
     assert len(cursors_seen) == 1
     close_mock = cursors_seen[0].close
-    assert isinstance(close_mock, AsyncMock)
-    close_mock.assert_awaited_once()
+    assert isinstance(close_mock, MagicMock)
+    close_mock.assert_called_once()
 
 
 async def test_async_executemany_shortcut_closes_cursor_on_raise() -> None:
@@ -266,7 +269,7 @@ async def test_async_executemany_shortcut_closes_cursor_on_raise() -> None:
     def fake_cursor() -> AsyncCursor:
         cur = MagicMock(spec=AsyncCursor)
         cur.executemany = AsyncMock(side_effect=OperationalError("boom"))
-        cur.close = AsyncMock()
+        cur.close = MagicMock()
         cursors_seen.append(cur)
         return cur
 
@@ -278,8 +281,8 @@ async def test_async_executemany_shortcut_closes_cursor_on_raise() -> None:
 
     assert len(cursors_seen) == 1
     close_mock = cursors_seen[0].close
-    assert isinstance(close_mock, AsyncMock)
-    close_mock.assert_awaited_once()
+    assert isinstance(close_mock, MagicMock)
+    close_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------

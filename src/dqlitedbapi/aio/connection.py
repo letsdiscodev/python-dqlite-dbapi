@@ -1683,7 +1683,7 @@ class AsyncConnection:
                 await cur.execute(operation, parameters)
         except BaseException:
             with contextlib.suppress(Exception):
-                await cur.close()
+                cur.close()
             raise
         return cur
 
@@ -1729,13 +1729,13 @@ class AsyncConnection:
             _validate_executemany_seq_shape(seq_of_parameters)
         except ProgrammingError:
             with contextlib.suppress(Exception):
-                await cur.close()
+                cur.close()
             raise
         try:
             await cur.executemany(operation, seq_of_parameters)
         except BaseException:
             with contextlib.suppress(Exception):
-                await cur.close()
+                cur.close()
             raise
         return cur
 

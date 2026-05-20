@@ -21,7 +21,7 @@ async def test_async_cursor_close_clears_messages() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = conn.cursor()
     cur.messages.append(("sentinel", Warning("noop")))  # type: ignore[arg-type]
-    await cur.close()
+    cur.close()
     assert list(cur.messages) == []
 
 

@@ -25,7 +25,7 @@ async def test_aiter_on_closed_cursor_with_gc_parent_raises_interface_error() ->
     ReferenceError past the PEP 249 boundary."""
     conn = AsyncConnection("localhost:9001")
     cur = conn.cursor()
-    await cur.close()
+    cur.close()
     # Drop the connection ref and force GC so the proxy referent
     # disappears.
     del conn

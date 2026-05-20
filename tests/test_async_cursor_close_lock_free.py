@@ -43,12 +43,10 @@ async def test_async_cursor_close_completes_while_op_lock_is_held() -> None:
     await lock_acquired.wait()
     assert op_lock.locked()
 
-    # Pin: close() returns promptly even though op_lock is held by
-    # the holder task. ``asyncio.wait_for`` enforces the freedom
-    # contract — a regression that adds an ``async with op_lock`` to
-    # close would block here until the holder releases (and our
-    # release event isn't set yet).
-    await asyncio.wait_for(cursor.close(), timeout=0.5)
+    # Pin: close() is sync by design and never touches op_lock; it
+    # cannot block on a holder task. A regression that converted
+    # close() back to ``async with op_lock`` would block here.
+    cursor.close()
     assert cursor._closed is True
 
     # Cleanup: release the holder.

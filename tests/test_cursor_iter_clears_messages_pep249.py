@@ -41,7 +41,7 @@ async def test_async_aiter_clears_messages() -> None:
         assert it is cur
         assert list(cur.messages) == []
     finally:
-        await cur.close()
+        cur.close()
 
 
 def test_sync_enter_clears_messages_on_closed_cursor() -> None:
@@ -81,7 +81,7 @@ async def test_async_aenter_clears_messages_on_closed_cursor() -> None:
     of ``_closed`` state). Mirrors the sync sibling test above."""
     conn = AsyncConnection("127.0.0.1:9001")
     cur = conn.cursor()
-    await cur.close()
+    cur.close()
     cur.messages.append((Warning, "stale-after-close"))
     async with cur:
         assert list(cur.messages) == [], (

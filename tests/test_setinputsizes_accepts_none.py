@@ -47,7 +47,7 @@ async def test_async_setinputsizes_none_is_noop() -> None:
     try:
         cur.setinputsizes(None)
     finally:
-        await cur.close()
+        cur.close()
 
 
 async def test_async_setinputsizes_int_still_rejected() -> None:
@@ -57,4 +57,4 @@ async def test_async_setinputsizes_int_still_rejected() -> None:
         with pytest.raises(ProgrammingError):
             cur.setinputsizes(5)  # type: ignore[arg-type]
     finally:
-        await cur.close()
+        cur.close()

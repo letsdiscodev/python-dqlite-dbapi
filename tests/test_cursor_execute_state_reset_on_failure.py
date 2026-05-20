@@ -386,7 +386,7 @@ class TestAsyncCursorStateResetOnFailure:
             )
             cur = aconn.cursor()
             await cur.execute("SELECT a FROM t")
-            await cur.close()
+            cur.close()
 
             with pytest.raises(InterfaceError, match="Cursor is closed"):
                 await cur.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
@@ -403,7 +403,7 @@ class TestAsyncCursorStateResetOnFailure:
         aconn, _proto = _build_async_connection_with_mock_protocol()
         try:
             cur = aconn.cursor()
-            await cur.close()
+            cur.close()
 
             with pytest.raises(InterfaceError, match="Cursor is closed"):
                 await cur.executemany("SELECT ?", [(1,)])

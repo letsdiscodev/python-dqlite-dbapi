@@ -37,14 +37,14 @@ class TestAsyncCursor:
     async def test_close_marks_cursor_closed(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        await cursor.close()
+        cursor.close()
         assert cursor._closed
 
     async def test_close_is_idempotent(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        await cursor.close()
-        await cursor.close()  # must not raise
+        cursor.close()
+        cursor.close()  # must not raise
         assert cursor._closed
 
     def test_connection_property(self) -> None:
@@ -55,7 +55,7 @@ class TestAsyncCursor:
     async def test_fetchone_on_closed_cursor_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        await cursor.close()
+        cursor.close()
 
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             await cursor.fetchone()
@@ -63,14 +63,14 @@ class TestAsyncCursor:
     async def test_fetchmany_on_closed_cursor_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        await cursor.close()
+        cursor.close()
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             await cursor.fetchmany(5)
 
     async def test_fetchall_on_closed_cursor_raises(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        await cursor.close()
+        cursor.close()
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             await cursor.fetchall()
 
@@ -264,7 +264,7 @@ class TestOptionalAsyncCursorMethodsRaise:
 
         task = asyncio.create_task(run_execute())
         await ensure_entered.wait()
-        await cursor.close()
+        cursor.close()
         close_allowed.set()
         with pytest.raises(InterfaceError, match="Cursor is closed"):
             await task

@@ -2057,7 +2057,7 @@ class Cursor:
         ):  # pragma: no cover - Connection always supports weakref
             self._connection = weakref.proxy(self._connection)
 
-    def setinputsizes(self, sizes: Sequence[Any]) -> None:
+    def setinputsizes(self, sizes: Sequence[Any] | None) -> None:
         """Set input sizes (no-op for dqlite).
 
         PEP 249 §6.1.1 names ``setinputsizes`` among the methods that

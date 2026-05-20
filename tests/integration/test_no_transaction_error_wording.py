@@ -99,7 +99,7 @@ class TestAsyncNoTransactionErrorWording:
             msg = str(ei.value).lower()
             assert "no transaction is active" in msg, f"unexpected msg: {ei.value!s}"
         finally:
-            await cur.close()
+            cur.close()
 
     async def test_stray_rollback_emits_known_error(
         self, aconn: dqlitedbapi.aio.AsyncConnection
@@ -112,7 +112,7 @@ class TestAsyncNoTransactionErrorWording:
             msg = str(ei.value).lower()
             assert "no transaction is active" in msg, f"unexpected msg: {ei.value!s}"
         finally:
-            await cur.close()
+            cur.close()
 
     async def test_commit_swallows_no_tx_via_connection_method(
         self, aconn: dqlitedbapi.aio.AsyncConnection

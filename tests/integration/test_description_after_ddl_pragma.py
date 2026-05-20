@@ -102,6 +102,6 @@ class TestAsyncDescriptionAfterDdlPragma:
 
             await cur.execute("DROP TABLE t_ddl_pragma_async")
             assert cur.description is None
-            await cur.close()
+            cur.close()
         finally:
             await conn.close()

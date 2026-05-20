@@ -46,7 +46,7 @@ async def test_async_cursor_executemany_rejects_non_str_operation(bad: object) -
         with pytest.raises(ProgrammingError, match="operation must be a str"):
             await cur.executemany(bad, [(1,), (2,)])  # type: ignore[arg-type]
     finally:
-        await cur.close()
+        cur.close()
         await conn.close()
 
 

@@ -58,12 +58,9 @@ class TestCursorRepr:
             conn.close()
 
     def test_async_cursor_repr_state_transition(self) -> None:
-        import asyncio as _asyncio
-
         conn = AsyncConnection("localhost:19001")
         c = AsyncCursor(conn)
         assert "open" in repr(c)
-        # ``AsyncCursor.close`` is a coroutine; run it to flip the
-        # closed-state repr.
-        _asyncio.run(c.close())
+        # ``AsyncCursor.close`` is sync by design (see its docstring).
+        c.close()
         assert "closed" in repr(c)
