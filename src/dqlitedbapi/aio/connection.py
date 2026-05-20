@@ -980,8 +980,14 @@ class AsyncConnection:
                         target.cancel()
 
                         def _observe(t: asyncio.Task[Any]) -> None:
+                            # Narrow to Exception — KeyboardInterrupt /
+                            # SystemExit must propagate through
+                            # done-callbacks. Matches the project-wide
+                            # narrow-suppress discipline established at
+                            # _close_impl / pool-release-shielded /
+                            # aio-terminate / _observe_drain_exception.
                             if not t.cancelled():
-                                with contextlib.suppress(BaseException):
+                                with contextlib.suppress(Exception):
                                     t.exception()
 
                         target.add_done_callback(_observe)
