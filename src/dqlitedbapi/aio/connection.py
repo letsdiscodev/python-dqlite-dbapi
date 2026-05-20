@@ -385,7 +385,25 @@ class AsyncConnection:
         diagnostic is deferred to the first ``fetchone`` /
         ``__anext__``. The loop-binding check is preserved so a
         cross-loop misuse fails up front.
+
+        Pid mismatch is the strictly stronger condition than loop
+        mismatch (an inherited ``_loop_ref`` weakref may still
+        resolve to the parent's loop object in the child's address
+        space — making the loop comparison meaningless). Raise the
+        canonical ``InterfaceError("used after fork")`` before
+        checking the loop so cross-driver retry middleware catching
+        ``InterfaceError`` (psycopg parity) sees the right
+        diagnostic class. ``_check_loop_binding`` layers the same
+        order (closed → pid → loop); the standalone variant must
+        match.
         """
+        creator_pid = getattr(self, "_creator_pid", None)
+        if creator_pid is not None and get_current_pid() != creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
         if self._loop_ref is None:
             return  # not yet bound — don't bind from here
         try:
