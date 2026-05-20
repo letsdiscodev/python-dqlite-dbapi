@@ -2120,8 +2120,18 @@ class Cursor:
         # PEP 249 §6.1.2: ``Cursor.messages`` is cleared "prior to
         # executing the call" on every standard cursor method. Every
         # other method on this class clears it as the first statement;
-        # close() must too.
-        del self.messages[:]
+        # close() must too. Suppress ``AttributeError`` symmetric with
+        # the setter precedent (``arraysize.setter`` / ``row_factory.setter``):
+        # a subclass / test fixture that strips ``messages`` must not
+        # cause close() — invoked from ``__exit__`` after a body
+        # exception — to raise and supplant the body's exception
+        # (PEP 343 default behaviour). The SA-adapter execute finally
+        # at sqlalchemy-dqlite/aio.py likewise suppresses close errors
+        # so the primary execute exception wins; this is the same
+        # discipline applied at the close site rather than the call
+        # site.
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         if self._closed:
             return
         self._closed = True

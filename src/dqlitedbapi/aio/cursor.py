@@ -906,7 +906,14 @@ class AsyncCursor:
         ``_description`` onto a closed cursor.
         """
         # PEP 249 §6.1.2 messages-clear contract; see Cursor.close.
-        del self.messages[:]
+        # Suppress ``AttributeError`` symmetric with the setter
+        # precedent and with the sync sibling: a subclass / test
+        # fixture that strips ``messages`` must not cause close() —
+        # invoked from ``__aexit__`` after a body exception — to
+        # raise and supplant the body's exception (PEP 343 default
+        # behaviour).
+        with contextlib.suppress(AttributeError):
+            del self.messages[:]
         if self._closed:
             return
         # Set the flag FIRST so a sibling-task ``_execute_unlocked``
