@@ -26,11 +26,11 @@ async def _raise(exc: BaseException) -> None:
 
 class TestCallClientWrapsTypeError:
     async def test_typeerror_becomes_dataerror(self) -> None:
-        with pytest.raises(DataError, match="cannot bind"):
+        with pytest.raises(DataError, match="caller-input fault"):
             await _call_client(_raise(TypeError("not serializable")))
 
     async def test_valueerror_becomes_dataerror(self) -> None:
-        with pytest.raises(DataError, match="cannot bind"):
+        with pytest.raises(DataError, match="caller-input fault"):
             await _call_client(_raise(ValueError("bad value")))
 
     async def test_typeerror_chained(self) -> None:
