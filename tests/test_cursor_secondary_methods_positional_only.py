@@ -74,3 +74,67 @@ def test_setinputsizes_kwarg_raises_type_error() -> None:
     cur._connection = MagicMock(spec=Connection)
     with pytest.raises(TypeError, match="positional-only"):
         cur.setinputsizes(sizes=[])  # type: ignore[call-arg]
+
+
+async def test_async_setoutputsize_kwarg_raises_type_error() -> None:
+    """End-to-end on the async sibling: a kwarg form raises TypeError,
+    matching the sync sibling and stdlib `sqlite3`. Without this pin,
+    a regression that adds ``**kwargs`` (defeating the POSITIONAL_ONLY
+    inspection pin) would leave the user-observable contract broken
+    on the async side only."""
+    from unittest.mock import MagicMock
+
+    from dqlitedbapi.aio import AsyncConnection
+    from dqlitedbapi.aio.cursor import AsyncCursor
+
+    cur = AsyncCursor.__new__(AsyncCursor)
+    cur._closed = False
+    cur._connection = MagicMock(spec=AsyncConnection)
+    cur.messages = []
+    with pytest.raises(TypeError, match="positional-only"):
+        cur.setoutputsize(10, column=0)  # type: ignore[call-arg]
+
+
+async def test_async_setinputsizes_kwarg_raises_type_error() -> None:
+    """``setinputsizes(sizes=...)`` must TypeError on the async sibling."""
+    from unittest.mock import MagicMock
+
+    from dqlitedbapi.aio import AsyncConnection
+    from dqlitedbapi.aio.cursor import AsyncCursor
+
+    cur = AsyncCursor.__new__(AsyncCursor)
+    cur._closed = False
+    cur._connection = MagicMock(spec=AsyncConnection)
+    cur.messages = []
+    with pytest.raises(TypeError, match="positional-only"):
+        cur.setinputsizes(sizes=[])  # type: ignore[call-arg]
+
+
+async def test_async_scroll_kwarg_raises_type_error() -> None:
+    """``cur.scroll(0, mode="absolute")`` must TypeError on async."""
+    from unittest.mock import MagicMock
+
+    from dqlitedbapi.aio import AsyncConnection
+    from dqlitedbapi.aio.cursor import AsyncCursor
+
+    cur = AsyncCursor.__new__(AsyncCursor)
+    cur._closed = False
+    cur._connection = MagicMock(spec=AsyncConnection)
+    cur.messages = []
+    with pytest.raises(TypeError, match="positional-only"):
+        cur.scroll(0, mode="relative")  # type: ignore[call-arg]
+
+
+async def test_async_callproc_kwarg_raises_type_error() -> None:
+    """``cur.callproc(procname, parameters=...)`` must TypeError on async."""
+    from unittest.mock import MagicMock
+
+    from dqlitedbapi.aio import AsyncConnection
+    from dqlitedbapi.aio.cursor import AsyncCursor
+
+    cur = AsyncCursor.__new__(AsyncCursor)
+    cur._closed = False
+    cur._connection = MagicMock(spec=AsyncConnection)
+    cur.messages = []
+    with pytest.raises(TypeError, match="positional-only"):
+        cur.callproc("proc", parameters=())  # type: ignore[call-arg]
