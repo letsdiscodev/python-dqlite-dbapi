@@ -2963,6 +2963,20 @@ class Connection:
         )
 
     def __enter__(self) -> Self:
+        """Materialise the underlying connection and return self.
+
+        .. note::
+
+            **Asymmetric lifecycle** (mirrors the async sibling
+            :meth:`AsyncConnection.__aenter__`). ``__enter__`` calls
+            :meth:`connect`, but :meth:`__exit__` performs commit /
+            rollback only — it does **NOT** close the connection
+            (matches stdlib ``sqlite3.Connection.__exit__``). After
+            ``with`` exits the underlying socket + loop thread are
+            still alive; call ``conn.close()`` explicitly or hand
+            ownership to a pool. See :meth:`__exit__` for the
+            stdlib-parity rationale.
+        """
         # Eager connect to match ``AsyncConnection.__aenter__`` — both
         # context managers should fail at the ``with`` line when the
         # cluster is unreachable, not inside the body's first operation.

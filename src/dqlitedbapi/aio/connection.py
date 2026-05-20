@@ -2045,6 +2045,37 @@ class AsyncConnection:
         )
 
     async def __aenter__(self) -> Self:
+        """Materialise the underlying connection and return self.
+
+        .. note::
+
+            **Asymmetric lifecycle.** ``__aenter__`` lazily calls
+            :meth:`connect` on entry, but :meth:`__aexit__` performs
+            commit / rollback only — it does **NOT** close the
+            connection (matches stdlib ``sqlite3.Connection.__exit__``;
+            diverges from ``aiosqlite`` and ``psycopg``, both of which
+            close on exit). After ``async with`` exits, the underlying
+            client connection is still alive: the loop-bound socket,
+            ``op_lock``, and finalizer all persist until either an
+            explicit ``await aconn.close()`` or GC drives the
+            finalizer.
+
+            Cross-driver porters from ``aiosqlite``::
+
+                async with aiosqlite.connect("foo.db") as db:
+                    await db.execute("...")
+                # db is closed here
+
+            must add an explicit close on the dqlite side::
+
+                async with AsyncConnection("addr") as aconn:
+                    await aconn.execute("...")
+                await aconn.close()  # required — __aexit__ does not close
+
+            Alternatively, hand ownership to a pool that manages the
+            close-time. The asymmetry is documented in :meth:`__aexit__`
+            with the stdlib-parity rationale.
+        """
         try:
             await self.connect()
         except BaseException:
