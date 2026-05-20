@@ -2147,7 +2147,7 @@ class Cursor:
             # subclass — accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
 
-    def setoutputsize(self, size: int, column: int | None = None) -> None:
+    def setoutputsize(self, size: int | None, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
         # PEP 249 §6.2 — see ``setinputsizes`` rationale. Closed
@@ -2159,6 +2159,15 @@ class Cursor:
         # Affinity-before-shape on the open-cursor path; see
         # ``setinputsizes`` for the full rationale.
         self._connection._check_thread()
+        # PEP 249 §6.2: "implementations are free to have this method
+        # do nothing." Stdlib ``sqlite3``, aiosqlite, psycopg, and
+        # asyncpg all accept ``None`` silently. Treating ``None`` as
+        # a no-op preserves cross-driver portability for the common
+        # defensive idiom ``cur.setoutputsize(None)`` while keeping
+        # the strict rejection below for genuinely invalid types.
+        # Mirrors the existing ``setinputsizes`` discipline.
+        if size is None:
+            return
         # Validate input shape — see ``setinputsizes`` rationale.
         # ``ProgrammingError`` keeps the failure inside the
         # ``dbapi.Error`` hierarchy per PEP 249 §7.

@@ -1021,7 +1021,7 @@ class AsyncCursor:
             # accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
 
-    def setoutputsize(self, size: int, column: int | None = None) -> None:
+    def setoutputsize(self, size: int | None, column: int | None = None) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
         # PEP 249 §6.2 — closed short-circuit before validators. See
@@ -1031,6 +1031,14 @@ class AsyncCursor:
         # Affinity-before-shape on the open-cursor path; see
         # ``setinputsizes`` for the full rationale.
         self._connection._check_loop_binding()
+        # PEP 249 §6.2 permits no-op implementations. Stdlib
+        # ``sqlite3``, aiosqlite, psycopg, and asyncpg all accept
+        # ``None`` silently. Symmetric with the sync sibling and with
+        # ``setinputsizes``: treat ``None`` as a no-op for cross-driver
+        # portability while keeping the strict rejection below for
+        # invalid types.
+        if size is None:
+            return
         # Validate input shape symmetric with sync sibling.
         if not isinstance(size, int) or isinstance(size, bool):
             raise ProgrammingError(f"setoutputsize expects an int, got {type(size).__name__}")
