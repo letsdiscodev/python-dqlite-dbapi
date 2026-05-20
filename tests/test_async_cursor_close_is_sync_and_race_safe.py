@@ -86,3 +86,52 @@ async def test_execute_post_await_closed_check_drops_result() -> None:
     assert cur._closed is True
     assert cur._rows == []
     assert cur._description is None
+
+
+async def test_execute_post_await_closed_check_drops_insert_result() -> None:
+    """Race scenario for the SIBLING branch: a non-query (INSERT /
+    UPDATE / DDL) ``_execute_unlocked`` is parked on the wire await
+    when a sibling task closes the cursor. The post-await
+    ``if self._closed: return`` guard at the non-query branch must
+    drop the ``(last_insert_id, rows_affected)`` tuple so
+    ``_lastrowid`` / ``_rowcount`` are NOT repopulated onto the
+    closed cursor.
+
+    Mirror of ``test_execute_post_await_closed_check_drops_result``
+    (which covers the query branch's symmetric guard). Without this
+    pin, a regression that removes ONLY the non-query branch's guard
+    would not fail any test.
+    """
+    conn = AsyncConnection("localhost:9001")
+    cur = AsyncCursor(conn)
+    inner = AsyncMock()
+    inner.execute = lambda _op, _params: None
+    cur._connection._ensure_connection = AsyncMock(return_value=inner)
+    cur._lastrowid = 7  # pre-existing state
+    cur._rowcount = 3
+
+    async def race_call(_coro: Any) -> Any:
+        # While the executor is "parked" inside the wire await, an
+        # external close fires (simulated by flipping _closed +
+        # scrubbing state here, exactly as ``close()`` would).
+        cur._closed = True
+        cur._lastrowid = None
+        cur._rowcount = -1
+        # Non-query wire shape: (last_insert_id, rows_affected).
+        return (42, 1)
+
+    # Drive into the non-query branch by forcing ``_is_row_returning``
+    # to return False (the operation text is otherwise unused on this
+    # code path).
+    with (
+        patch("dqlitedbapi.aio.cursor._call_client", new=race_call),
+        patch("dqlitedbapi.aio.cursor._is_row_returning", return_value=False),
+    ):
+        await cur._execute_unlocked("INSERT INTO t VALUES (1)", (1,))
+
+    # After fix: cursor stays in the close-scrubbed state — the wire
+    # response (42, 1) was DROPPED, not written into _lastrowid /
+    # _rowcount.
+    assert cur._closed is True
+    assert cur._lastrowid is None
+    assert cur._rowcount == -1
