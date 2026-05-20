@@ -745,6 +745,11 @@ def register_adapter(type_: type, adapter: Callable[[Any], Any]) -> None:
     _ADAPTERS[type_] = adapter
 
 
+_BUILT_IN_ADAPTER_TYPES: frozenset[type] = frozenset(
+    {datetime.date, datetime.datetime, datetime.time}
+)
+
+
 def unregister_adapter(type_: type) -> None:
     """Remove a previously-registered adapter for ``type_``.
 
@@ -753,7 +758,27 @@ def unregister_adapter(type_: type) -> None:
     side. Safe to call from test cleanup helpers (``finally:`` blocks,
     ``pytest`` fixtures) without first checking whether the type is in
     the registry.
+
+    ``datetime.date`` / ``datetime.datetime`` / ``datetime.time`` are
+    rejected with ``ProgrammingError``: their ISO 8601 encoding is
+    hardcoded inside ``_convert_bind_param`` rather than going through
+    the ``_ADAPTERS`` registry, so a silent ``_ADAPTERS.pop()`` no-op
+    would mislead the caller into thinking the default was uninstalled.
+    Use :func:`register_adapter` to override the built-in encoding
+    instead.
     """
+    if type_ in _BUILT_IN_ADAPTER_TYPES:
+        from dqlitedbapi.exceptions import ProgrammingError
+
+        raise ProgrammingError(
+            f"cannot unregister built-in adapter for {type_.__name__}; "
+            f"the default ISO 8601 encoding is hardcoded inside "
+            f"_convert_bind_param. Use register_adapter("
+            f"{type_.__name__}, custom_fn) to override the default "
+            f"instead — register_adapter wins over the hardcoded "
+            f"isinstance branch.",
+            code=None,
+        )
     _ADAPTERS.pop(type_, None)
 
 

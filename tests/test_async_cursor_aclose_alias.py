@@ -89,7 +89,7 @@ async def test_await_cursor_close_directly_raises_type_error() -> None:
     cur = conn.cursor()
     try:
         with pytest.raises(TypeError, match="await"):
-            await cur.close()  # type: ignore[misc]
+            await cur.close()  # type: ignore[misc,func-returns-value]
     finally:
         # ``close`` was already called synchronously above, even
         # though awaiting its return value raised. Defensively ensure

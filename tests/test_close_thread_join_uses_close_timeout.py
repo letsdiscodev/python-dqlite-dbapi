@@ -30,7 +30,7 @@ from dqlitedbapi.connection import (
 
 
 @contextlib.contextmanager
-def _patched_dqlite_connection():  # type: ignore[no-untyped-def]
+def _patched_dqlite_connection():
     """Patch the leader-discovery + DqliteConnection construction so a
     Connection can spin up its loop+thread without touching the wire."""
     with (
@@ -169,7 +169,9 @@ def test_finalizer_captures_close_timeout(close_timeout: float) -> None:
     assert finalizer is not None
     # peek() returns ``(obj, func, args_tuple, kwargs_dict)``. The
     # close_timeout is the final positional argument in ``args_tuple``.
-    _obj, _func, args, _kwargs = finalizer.peek()
+    peeked = finalizer.peek()
+    assert peeked is not None
+    _obj, _func, args, _kwargs = peeked
     captured_close_timeout = args[-1]
     assert captured_close_timeout == close_timeout, (
         f"finalizer captured close_timeout={captured_close_timeout!r}; expected {close_timeout!r}"

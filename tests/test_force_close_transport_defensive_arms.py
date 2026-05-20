@@ -94,7 +94,7 @@ def test_force_close_transport_cursor_cascade_tolerates_missing_messages() -> No
     # Must not raise; the suppress(AttributeError) absorbs the
     # bare-cursor's missing-messages state.
     conn.force_close_transport()
-    assert cur._closed is True
+    assert cur._closed is True  # type: ignore[attr-defined]
     # The strong inner reference may or may not have been swapped
     # to a proxy depending on the cur._connection type; what matters
     # is the cascade completed.

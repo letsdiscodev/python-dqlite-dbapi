@@ -30,7 +30,7 @@ from dqlitedbapi.connection import Connection
 from dqlitedbapi.exceptions import InterfaceError
 
 
-def _patched():  # type: ignore[no-untyped-def]
+def _patched():
     """Construct the standard mock context so a Connection can build
     its loop without touching the wire."""
     return (
