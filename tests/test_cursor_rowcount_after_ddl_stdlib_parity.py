@@ -165,6 +165,83 @@ async def test_async_cursor_dml_still_reports_affected(dml: str, affected: int) 
     )
 
 
+@pytest.mark.parametrize(
+    "ddl",
+    [
+        "CREATE TABLE t (x)",
+        "DROP TABLE t",
+        "VACUUM",
+        "ALTER TABLE t ADD COLUMN y",
+    ],
+)
+def test_sync_cursor_rowcount_minus_one_after_ddl(ddl: str) -> None:
+    """End-to-end via the SYNC cursor: the exec branch leaves
+    ``_rowcount == -1`` for DDL even though the wire returns
+    ``rows_affected = 0`` and ``last_insert_id = 0``.
+
+    Mirror of ``test_async_cursor_rowcount_minus_one_after_ddl``. The
+    sync sibling previously had only an inspection pin — a refactor
+    moving the gate into a helper would defeat the substring scan
+    without behavioral regression coverage. Drive ``_execute_async``
+    directly as a coroutine via ``asyncio.run``."""
+    import asyncio
+
+    from dqlitedbapi.connection import Connection
+    from dqlitedbapi.cursor import Cursor
+
+    conn = Connection("localhost:9001", timeout=2.0)
+    cur = Cursor(conn)
+    inner = AsyncMock()
+    inner.execute = lambda _op, _params: None
+    cur._connection._get_async_connection = AsyncMock(return_value=inner)
+    cur._rowcount = 999
+
+    async def fake_call(_coro: Any) -> tuple[int, int]:
+        return (0, 0)
+
+    with patch("dqlitedbapi.cursor._call_client", new=fake_call):
+        asyncio.run(cur._execute_async(ddl, None))
+
+    assert cur._rowcount == -1, (
+        f"DDL {ddl!r} should leave rowcount at -1 (stdlib parity); got {cur._rowcount}"
+    )
+
+
+@pytest.mark.parametrize(
+    "dml,affected",
+    [
+        ("INSERT INTO t VALUES (1)", 1),
+        ("UPDATE t SET x = 1", 3),
+        ("DELETE FROM t WHERE x = 1", 2),
+    ],
+)
+def test_sync_cursor_dml_still_reports_affected(dml: str, affected: int) -> None:
+    """Sanity twin: DML still propagates the wire's ``affected`` count
+    on the SYNC side. The new gating must NOT make every exec return
+    ``-1``. Mirror of ``test_async_cursor_dml_still_reports_affected``."""
+    import asyncio
+
+    from dqlitedbapi.connection import Connection
+    from dqlitedbapi.cursor import Cursor
+
+    conn = Connection("localhost:9001", timeout=2.0)
+    cur = Cursor(conn)
+    inner = AsyncMock()
+    inner.execute = lambda _op, _params: None
+    cur._connection._get_async_connection = AsyncMock(return_value=inner)
+    cur._rowcount = -999
+
+    async def fake_call(_coro: Any) -> tuple[int, int]:
+        return (0, affected)
+
+    with patch("dqlitedbapi.cursor._call_client", new=fake_call):
+        asyncio.run(cur._execute_async(dml, None))
+
+    assert cur._rowcount == affected, (
+        f"DML {dml!r} must propagate affected={affected}; got {cur._rowcount}"
+    )
+
+
 def test_sync_exec_branch_gates_rowcount_on_dml_predicate() -> None:
     """Inspection pin: the sync exec branch reads
     ``_is_dml_rowcount_meaningful(operation)`` before writing
