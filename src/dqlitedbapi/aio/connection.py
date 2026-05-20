@@ -918,6 +918,27 @@ class AsyncConnection:
         if get_current_pid() != self._creator_pid:
             self._async_conn = None
             return
+        # Disarm the inner client's ResourceWarning finalizer
+        # (``DqliteConnection._connection_unclosed_warning``) BEFORE
+        # we reap the transport: the warning's three-flag gate
+        # (``_closed_flag`` AND ``_connected_flag``) fails open after
+        # the writer.close path runs and ``self._async_conn`` is
+        # nulled — emitting a misleading "GC'd without close" on the
+        # very inner connection we are explicitly closing here.
+        # ``close()``'s code path detaches the inner finalizer inside
+        # ``_close_impl``; ``force_close_transport`` doesn't route
+        # through ``close()`` so the detach has to happen here.
+        # ``getattr`` + ``suppress`` mirror the dbapi-layer
+        # finalizer detach above (idempotent against concurrent
+        # paths / partial init).
+        inner_closed_flag = getattr(inner, "_closed_flag", None)
+        if isinstance(inner_closed_flag, list) and inner_closed_flag:
+            inner_closed_flag[0] = True
+        inner_finalizer = getattr(inner, "_finalizer", None)
+        if inner_finalizer is not None:
+            with contextlib.suppress(Exception):
+                inner_finalizer.detach()
+            inner._finalizer = None
         # Close the transport writer if one exists; the cleanup tail
         # below (pending-drain reap and ``self._async_conn = None``)
         # runs unconditionally so a post-_invalidate state where

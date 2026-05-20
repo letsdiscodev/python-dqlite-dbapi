@@ -1811,6 +1811,24 @@ class Connection:
             inner = self._async_conn
             self._async_conn = None
             loop = self._loop
+            # Disarm the inner client's ResourceWarning finalizer
+            # (``DqliteConnection._connection_unclosed_warning``)
+            # BEFORE the loop runs ``writer.close``: the warning's
+            # three-flag gate fails open in the post-force-close
+            # state, emitting a misleading "GC'd without close" on
+            # the connection we are explicitly closing here.
+            # ``close()`` detaches the inner finalizer inside
+            # ``_close_impl``; ``force_close_transport`` doesn't route
+            # through ``close()`` so the detach has to happen here.
+            if inner is not None:
+                inner_closed_flag = getattr(inner, "_closed_flag", None)
+                if isinstance(inner_closed_flag, list) and inner_closed_flag:
+                    inner_closed_flag[0] = True
+                inner_finalizer = getattr(inner, "_finalizer", None)
+                if inner_finalizer is not None:
+                    with contextlib.suppress(Exception):
+                        inner_finalizer.detach()
+                    inner._finalizer = None
             if loop is not None and not loop.is_closed():
                 if inner is not None:
                     # Reap any pending invalidation-drain task on the
