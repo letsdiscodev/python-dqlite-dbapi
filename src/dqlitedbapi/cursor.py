@@ -1074,6 +1074,31 @@ def _is_insert_or_replace(sql: str) -> bool:
     return normalized.startswith(("INSERT", "REPLACE"))
 
 
+def _is_dml_rowcount_meaningful(sql: str) -> bool:
+    """True if ``sql`` is a DML statement for which SQLite's
+    ``sqlite3_changes()`` returns a meaningful count: INSERT / UPDATE
+    / DELETE / REPLACE.
+
+    Stdlib ``sqlite3`` returns ``-1`` from ``Cursor.rowcount`` for
+    every other verb (DDL: CREATE / DROP / ALTER / VACUUM / REINDEX /
+    ANALYZE / ATTACH / DETACH; transactional: SAVEPOINT / RELEASE /
+    ROLLBACK TO; etc.) — "not determinable" per PEP 249 §6.1.1.
+
+    The dqlite wire returns ``rows_affected = 0`` for those verbs
+    (SQLite's ``sqlite3_changes()`` returns 0 for non-DML). Writing
+    that 0 into ``_rowcount`` makes ``cur.rowcount == 0`` deterministic
+    AND True after a DDL — but stdlib makes it ``-1`` (undetermined,
+    False). Cross-driver migration tooling that branches on
+    ``if cur.rowcount == 0:`` then takes a different path.
+
+    Gate the ``_rowcount`` write on this predicate; default to ``-1``
+    otherwise.
+    """
+    cleaned = _strip_sql_noise(sql)
+    normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
+    return normalized.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
+
+
 class Cursor:
     """PEP 249 compliant database cursor."""
 
@@ -1515,7 +1540,10 @@ class Cursor:
             # value. See ``_is_insert_or_replace`` for rationale.
             if _is_insert_or_replace(operation):
                 self._lastrowid = _to_signed_int64(last_id)
-            self._rowcount = _to_signed_int64(affected)
+            if _is_dml_rowcount_meaningful(operation):
+                self._rowcount = _to_signed_int64(affected)
+            else:
+                self._rowcount = -1
             self._description = None
             self._rows = []
             # Parity with the SELECT branch and with executemany: every

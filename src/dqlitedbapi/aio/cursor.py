@@ -14,6 +14,7 @@ from dqlitedbapi.cursor import (
     _convert_params,
     _convert_row,
     _ExecuteManyAccumulator,
+    _is_dml_rowcount_meaningful,
     _is_dml_with_returning,
     _is_insert_or_replace,
     _is_row_returning,
@@ -380,7 +381,10 @@ class AsyncCursor:
             # rationale — sync and async share the same contract.
             if _is_insert_or_replace(operation):
                 self._lastrowid = _to_signed_int64(last_id)
-            self._rowcount = _to_signed_int64(affected)
+            if _is_dml_rowcount_meaningful(operation):
+                self._rowcount = _to_signed_int64(affected)
+            else:
+                self._rowcount = -1
             self._description = None
             self._rows = []
             # Parity with the SELECT branch and with executemany:
