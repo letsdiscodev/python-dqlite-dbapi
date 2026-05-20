@@ -1924,7 +1924,17 @@ class Connection:
         ``NotSupportedError``. The annotation stays ``bool`` (not
         ``Literal[True]``) for stdlib / PEP 249 parity — callers that
         do ``isinstance(conn.autocommit, bool)`` continue to work.
+
+        **Closed-state behaviour**: raises
+        ``InterfaceError("Connection is closed ...")`` on a closed
+        connection, matching stdlib `sqlite3`'s
+        ``ProgrammingError("Cannot operate on a closed database.")``.
+        Cross-driver teardown probes consulting the getter during
+        dispose see a sharp diagnostic rather than the misleading
+        ``True`` sentinel against a closed connection.
         """
+        if self._closed:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         return True
 
     @autocommit.setter
@@ -1982,7 +1992,14 @@ class Connection:
         attribute writes without ``__slots__``); the user's
         attempt to express "use autocommit" had no effect on the
         driver. The property closes the silent-write footgun.
+
+        **Closed-state behaviour**: raises ``InterfaceError`` on a
+        closed connection, matching stdlib `sqlite3`'s
+        ``ProgrammingError("Cannot operate on a closed database.")``
+        on the equivalent getter.
         """
+        if self._closed:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         return None
 
     @isolation_level.setter

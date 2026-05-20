@@ -29,8 +29,11 @@ from dqlitedbapi.connection import Connection
 def _bare_sync_conn() -> Connection:
     """Construct a Connection without dialing — used by setter unit
     tests that don't need transport. Sets the threadsafety affinity
-    fields so the setters' ``_check_thread()`` guard passes."""
+    fields so the setters' ``_check_thread()`` guard passes. Also
+    sets ``_closed=False`` so the ``autocommit`` / ``isolation_level``
+    getters' closed-state guard passes."""
     conn = Connection.__new__(Connection)
+    conn._closed = False
     conn._creator_thread = threading.get_ident()
     conn._creator_pid = os.getpid()
     return conn

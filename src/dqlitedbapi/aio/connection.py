@@ -1097,7 +1097,14 @@ class AsyncConnection:
         ``NotSupportedError``. The annotation stays ``bool`` (not
         ``Literal[True]``) for stdlib / PEP 249 parity — callers that
         do ``isinstance(conn.autocommit, bool)`` continue to work.
+
+        **Closed-state behaviour**: raises ``InterfaceError`` on a
+        closed connection, matching stdlib `sqlite3`'s
+        ``ProgrammingError("Cannot operate on a closed database.")``.
+        Sibling discipline to the sync ``Connection.autocommit``.
         """
+        if self._closed:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         return True
 
     @autocommit.setter
@@ -1131,7 +1138,13 @@ class AsyncConnection:
     def isolation_level(self) -> None:
         """stdlib pre-3.12 ``sqlite3.Connection.isolation_level``-
         parity surface. See sync sibling for full rationale.
-        Returns None (autocommit sentinel)."""
+        Returns None (autocommit sentinel).
+
+        **Closed-state**: raises ``InterfaceError`` on a closed
+        connection, matching stdlib `sqlite3`'s
+        ``ProgrammingError("Cannot operate on a closed database.")``."""
+        if self._closed:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
         return None
 
     @isolation_level.setter
