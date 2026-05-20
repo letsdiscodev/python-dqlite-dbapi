@@ -1053,7 +1053,31 @@ class Connection:
         created so a Connection that's garbage-collected without an
         explicit ``close()`` still cleans up its thread. (GC'd connections
         used to leak daemon threads forever.)
+
+        Defence-in-depth pid guard at the lowest sensible point in the
+        sync stack: every PUBLIC caller already routes through
+        ``_check_thread`` before reaching ``_run_sync`` / ``_ensure_loop``,
+        but a subclass / refactor / new caller that forgets that
+        perimeter check would otherwise return the parent's loop object
+        in a forked child (``loop.is_closed()`` is a Python attribute
+        inherited as False; ``self._thread`` survives only in the
+        thread that called ``fork()``). The result is an
+        ``asyncio.run_coroutine_threadsafe`` against a loop nobody
+        drains — the caller hangs on ``Future.result(timeout=...)``
+        for the configured per-RPC budget and then raises a generic
+        ``TimeoutError`` / ``OperationalError`` instead of the
+        canonical ``InterfaceError("Connection used after fork ...")``.
+        Mirror the discipline of the at-fork resolve-leader-cache lock
+        replacement at module top and the ``_check_thread`` guard on
+        the public surface: keep the diagnostic shape uniform across
+        every fork-violating entry point.
         """
+        if get_current_pid() != self._creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {self._creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
         if self._loop is not None and not self._loop.is_closed():
             return self._loop
         with self._loop_lock:
