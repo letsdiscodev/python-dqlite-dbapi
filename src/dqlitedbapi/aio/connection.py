@@ -863,6 +863,38 @@ class AsyncConnection:
         # against a dead transport and a follow-up close() drove the
         # full async teardown again on already-closed primitives.
         self._closed = True
+        # Cascade the closed state down to every open cursor BEFORE
+        # the inner snapshot — mirrors the sync sibling
+        # ``Connection.close``'s ``self._cascade_cursors()`` invocation
+        # at the same point in the orderly close. Without this,
+        # cursors retain ``_closed = False`` + populated
+        # ``_description`` / ``_rows`` / ``_rowcount`` AND strong
+        # ``_connection`` references to the dead ``AsyncConnection``,
+        # defeating the close-orchestrated ``weakref.proxy`` swap.
+        # Direct attribute writes only — ``AsyncCursor.close`` is
+        # async and would produce un-awaited coroutines from this
+        # sync context. ``_closed = True`` is the load-bearing write;
+        # the cursor's own ``_check_closed`` gates all reads, so a
+        # cursor whose later field-writes are skipped on signal
+        # arrival still rejects fetch attempts cleanly. Tolerate
+        # ``_cursors`` being absent on ``__new__``-constructed
+        # fixtures that bypass ``__init__``.
+        cursors = getattr(self, "_cursors", None)
+        if cursors is not None:
+            try:
+                for cur in list(cursors):
+                    cur._closed = True
+                    cur._rows = []
+                    cur._description = None
+                    cur._rowcount = -1
+                    cur._lastrowid = None
+                    cur._row_index = 0
+                    with contextlib.suppress(AttributeError):
+                        del cur.messages[:]
+                    with contextlib.suppress(TypeError):
+                        cur._connection = weakref.proxy(cur._connection)
+            finally:
+                cursors.clear()
         # Detach the finalizer — symmetric with the sync sibling's
         # ``self._finalizer.detach()`` call paths in
         # ``force_close_transport``. Keeps the ``weakref`` global
