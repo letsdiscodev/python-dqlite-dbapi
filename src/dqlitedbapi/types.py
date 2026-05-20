@@ -788,15 +788,30 @@ def _convert_bind_param(value: Any) -> Any:
         # an instance-bound ``__conform__`` is honoured (matches
         # stdlib). ``__conform__`` may legitimately return ``None``
         # to decline; in that case the value is left unchanged so
-        # the wire encoder's normal type rejection runs. A raising
-        # ``__conform__`` is swallowed and the fallthrough proceeds
-        # — stdlib's silent-fallthrough disposition.
+        # the wire encoder's normal type rejection runs.
+        #
+        # A raising ``__conform__`` propagates to the caller —
+        # matching stdlib `sqlite3.Cursor.execute`'s behaviour:
+        #
+        #     >>> class Bad:
+        #     ...     def __conform__(self, protocol):
+        #     ...         raise RuntimeError("boom")
+        #     >>> import sqlite3
+        #     >>> sqlite3.connect(":memory:").execute("SELECT ?", (Bad(),))
+        #     Traceback (most recent call last):
+        #       ...
+        #     RuntimeError: boom
+        #
+        # Verified against CPython's
+        # ``Modules/_sqlite/microprotocols.c::_pysqlite_microprotocols_adapt``:
+        # a NULL return with an exception set returns NULL to the
+        # bind-param machinery, which propagates the exception
+        # unwrapped. The previous silent-swallow disposition diverged
+        # from stdlib AND hid programmer bugs in user-defined
+        # ``__conform__`` implementations behind a wire-encode error.
         proto_method = getattr(value, "__conform__", None)
         if proto_method is not None:
-            try:
-                adapted = proto_method(PrepareProtocol)
-            except Exception:  # noqa: BLE001 - stdlib-parity fallthrough
-                adapted = None
+            adapted = proto_method(PrepareProtocol)
             if adapted is not None:
                 value = adapted
     # ``datetime.datetime`` is a subclass of ``datetime.date`` but not

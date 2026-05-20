@@ -131,16 +131,25 @@ def test_class_level_conform_still_honoured_after_instance_lookup_change() -> No
     assert out == "class-bound"
 
 
-def test_raising_conform_falls_through_silently() -> None:
-    """A ``__conform__`` that raises is swallowed and the value is
-    left unchanged so the wire encoder's normal type rejection runs.
-    Matches stdlib's silent-fallthrough disposition."""
+def test_raising_conform_propagates_unwrapped() -> None:
+    """A ``__conform__`` that raises propagates the exception to the
+    caller, matching stdlib ``sqlite3.Cursor.execute``:
+
+        >>> class Bad:
+        ...     def __conform__(self, protocol):
+        ...         raise RuntimeError("boom")
+        >>> import sqlite3
+        >>> sqlite3.connect(":memory:").execute("SELECT ?", (Bad(),))
+        RuntimeError: boom
+
+    The previous silent-swallow disposition diverged from stdlib and
+    erased the caller's traceback. Full parametric coverage in
+    ``test_convert_bind_param_conform_exception_propagates.py``."""
+    import pytest
 
     class Boom:
         def __conform__(self, protocol: type) -> object:
             raise RuntimeError("conform exploded")
 
-    obj = Boom()
-    out = _convert_bind_param(obj)
-    # The exception is swallowed; the value is left unchanged.
-    assert out is obj
+    with pytest.raises(RuntimeError, match="conform exploded"):
+        _convert_bind_param(Boom())
