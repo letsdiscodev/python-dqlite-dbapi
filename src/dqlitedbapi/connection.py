@@ -937,8 +937,8 @@ def _cleanup_loop_thread(
     rather than a direct reference to self to decide whether to emit
     a ``ResourceWarning``.
 
-    ``inner_handle`` is a 0-or-1-element list mutated by
-    ``Connection._publish_inner_finalize_handle`` once
+    ``inner_handle`` is a 0-or-1-element list mutated in
+    ``Connection._get_async_connection`` (inline ``[:]=``) once
     ``self._async_conn`` is built. When populated, the single element
     is a ``weakref.ref`` to the inner ``DqliteConnection``. The box
     indirection is the canonical idiom for late-publishing a value
@@ -948,6 +948,15 @@ def _cleanup_loop_thread(
     the inner from the finalize's args (which would create a
     reference cycle: outer → ``_async_conn`` → inner; finalize args →
     inner directly; cycle through the outer's ``__dict__``).
+
+    The box is NOT cleared on explicit close paths: explicit close
+    detaches the finalizer (``self._finalizer.detach()``) before
+    nulling ``_async_conn``, so the cleanup callback never observes
+    a populated box on that arm. The only path that reaches this
+    callback with the box populated is the leaked-outer-GC path —
+    where the inner's ``weakref.ref`` may resolve to ``None`` if the
+    inner was reclaimed in the same GC pass (handled by the
+    ``if inner is not None`` guard below).
 
     ``close_timeout`` mirrors the operator's ``Connection._close_timeout``
     so the finalizer's join budget matches the graceful ``close()`` and
@@ -1006,10 +1015,13 @@ def _cleanup_loop_thread(
         return
     # Resolve the inner ``DqliteConnection`` if the late-publish box
     # has been populated. Use a weakref to avoid strong-pinning. If
-    # the inner has already been GC'd (e.g. the outer's
-    # ``self._async_conn = None`` arm ran before the outer itself
-    # was reclaimed), ``inner_ref()`` returns ``None`` and we skip
-    # the disarm / drain reap entirely.
+    # the inner has already been GC'd (the leaked-outer path: the
+    # outer's ``__dict__["_async_conn"]`` held the only strong ref
+    # to the inner, so the inner is reclaimed in the same collection
+    # pass that triggers this finalizer), ``inner_ref()`` returns
+    # ``None`` and we skip the disarm / drain reap entirely — the
+    # inner's own ``weakref.finalize`` will have fired in the same
+    # pass and emitted its own diagnostic if applicable.
     inner: Any = None
     if inner_handle:
         inner_ref = inner_handle[0]
@@ -1368,12 +1380,17 @@ class Connection:
         # handle into ``_cleanup_loop_thread``'s captured args. The
         # finalize captures THIS list by reference at registration
         # time (inside ``_ensure_loop``, before the inner is built);
-        # ``_publish_inner_finalize_handle`` mutates the slot to a
+        # ``_get_async_connection`` mutates the slot to
         # ``weakref.ref(inner)`` once the inner is built so the
-        # finalize body can reach it without strong-pinning. Cleared
-        # back to ``[]`` when the inner is nulled on every explicit
-        # close path so the finalize does not observe a dead-weakref-
-        # to-already-disarmed-inner state.
+        # finalize body can reach it without strong-pinning.
+        #
+        # The box is intentionally NOT cleared on explicit close
+        # paths: those detach the finalizer before nulling
+        # ``_async_conn``, so the cleanup callback never observes a
+        # populated box on the explicit-close arm. The dead
+        # ``weakref.ref`` may survive until outer reclamation; the
+        # cleanup callback's ``if inner is not None`` guard handles
+        # the resolved-to-None case correctly.
         self._inner_finalize_handle: list[Any] = []
         self._finalizer: weakref.finalize[Any, Any] | None = None
         # Track outstanding cursors weakly so Connection.close() can
@@ -1449,8 +1466,8 @@ class Connection:
                 # closed-flag list is mutated by close() so the
                 # finalizer knows whether to emit a leak warning.
                 # ``_inner_finalize_handle`` is a list captured by
-                # reference; ``_publish_inner_finalize_handle`` will
-                # populate it with ``weakref.ref(inner)`` once
+                # reference; ``_get_async_connection`` populates it
+                # inline with ``weakref.ref(inner)`` once
                 # ``self._async_conn`` is built so the finalize can
                 # disarm the inner's ResourceWarning finalizer and
                 # reap any pending ``_invalidate`` drain task BEFORE
