@@ -2328,10 +2328,35 @@ class AsyncConnection:
                 # log a breadcrumb so the audit trail is consistent
                 # across layers, then re-raise so the cancel signal
                 # supersedes the body exception.
+                #
+                # **Policy: structured-concurrency cancel-wins.** This
+                # arm intentionally re-raises the cancel signal even
+                # when the body raised a transport/integrity exception.
+                # PEP 343 semantics make ``raise`` here supplant the
+                # body exception (which survives only on ``__context__``).
+                # SQLAlchemy's ``is_disconnect`` classifier walks
+                # ``__cause__`` only (not ``__context__``) so a
+                # cancel-during-rollback after a transport-class body
+                # exception is classified by SA as non-DBAPI and the
+                # slot is NOT invalidated. Operators relying on the
+                # body exception class to reach a disconnect classifier
+                # must observe it through ``except BaseException``
+                # in the surrounding scope and consult ``__context__``
+                # explicitly, OR use ``asyncio.timeout(...)`` which
+                # translates the cancel to a ``TimeoutError`` (also
+                # not a DBAPI class but at least observable). The
+                # alternative — preserving the body exception and
+                # making the cancel observable via ``Task.cancelling()``
+                # — would diverge from the project-wide structured-
+                # concurrency posture used in the SA adapter and the
+                # commit arm above. Pin: ``test_aexit_rollback_debug_log
+                # ::test_aexit_rollback_cancelled_error_propagates``.
                 logger.debug(
                     "AsyncConnection.__aexit__ (address=%s, id=%s): "
                     "rollback interrupted by cancel/signal after body "
-                    "raised %s",
+                    "raised %s; cancel re-raised per structured-"
+                    "concurrency policy — body exception survives on "
+                    "__context__ only, not __cause__",
                     self._address,
                     id(self),
                     exc_type.__name__,
