@@ -29,13 +29,21 @@ def test_isolation_level_attribute_exists_on_sync_connection() -> None:
     assert conn.isolation_level is None
 
 
-def test_isolation_level_setter_accepts_none_only() -> None:
-    """README: 'the setter accepts only None (no-op) and rejects every
-    other value with NotSupportedError'."""
+def test_isolation_level_setter_accepts_stdlib_pre_3_12_set() -> None:
+    """The setter accepts the stdlib pre-3.12 accept-set
+    (``{None, "", "DEFERRED", "IMMEDIATE", "EXCLUSIVE"}``) as no-ops
+    and rejects everything else with ``ProgrammingError`` (PEP 249 §7
+    caller-shape misuse). The previous behaviour rejected ``""`` and
+    the three named values with ``NotSupportedError``, breaking the
+    canonical cross-driver ``dst.isolation_level = src.isolation_level``
+    idiom against a stdlib source connection (whose default is
+    ``""``).
+    """
     conn = dqlitedbapi.connect("localhost:9001")
-    conn.isolation_level = None  # accepted, no-op
-    for bad in ("", "DEFERRED", "IMMEDIATE", "EXCLUSIVE", "SERIALIZABLE", "AUTOCOMMIT"):
-        with pytest.raises(dqlitedbapi.NotSupportedError):
+    for ok in (None, "", "DEFERRED", "IMMEDIATE", "EXCLUSIVE"):
+        conn.isolation_level = ok  # accepted no-op
+    for bad in ("SERIALIZABLE", "AUTOCOMMIT", "foo"):
+        with pytest.raises(dqlitedbapi.ProgrammingError):
             conn.isolation_level = bad
 
 

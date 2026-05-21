@@ -273,8 +273,22 @@ def connect(
     _SENTINEL = object()
     iso = unknown_kwargs.pop("isolation_level", _SENTINEL)
     autoc = unknown_kwargs.pop("autocommit", _SENTINEL)
-    if iso is not _SENTINEL and iso is not None:
-        raise NotSupportedError(f"dqlite connect() accepts isolation_level=None only; got {iso!r}")
+    # Accept stdlib pre-3.12 ``isolation_level`` accept-set as no-ops:
+    # ``None``, ``""`` (the stdlib DEFAULT), ``"DEFERRED"``,
+    # ``"IMMEDIATE"``, ``"EXCLUSIVE"``. See the
+    # ``isolation_level.setter`` rationale on ``Connection``.
+    from dqlitedbapi.connection import _STDLIB_IMPLICIT_TX_VALUES as _IL_OK
+
+    if (
+        iso is not _SENTINEL
+        and iso is not None
+        and not (isinstance(iso, str) and iso.upper() in _IL_OK)
+    ):
+        raise NotSupportedError(
+            f"dqlite connect() accepts isolation_level in "
+            f"[None, {', '.join(repr(v) for v in sorted(_IL_OK))}]; "
+            f"got {iso!r}"
+        )
     if autoc is not _SENTINEL and autoc is not True and autoc != -1:
         raise NotSupportedError(
             f"dqlite connect() accepts autocommit=True or autocommit=-1 "

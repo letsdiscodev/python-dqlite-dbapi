@@ -15,6 +15,7 @@ from dqliteclient import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import (
+    _STDLIB_IMPLICIT_TX_VALUES,
     _SYNC_PHASES_MULTIPLIER,
     MAX_CONTINUATION_FRAMES_UPPER_BOUND,
     _build_and_connect,
@@ -1240,7 +1241,7 @@ class AsyncConnection:
         return bool(conn.in_transaction)
 
     @property
-    def autocommit(self) -> bool:
+    def autocommit(self) -> "bool | int":
         """``True`` — dqlite operates in autocommit-by-default mode.
 
         Mirrors the surface stdlib ``sqlite3`` added in Python 3.12 and
@@ -1255,19 +1256,14 @@ class AsyncConnection:
         BEGIN/COMMIT control — both are accurate for their respective
         layer.
 
-        **Always returns** ``True`` — dqlite is fixed-mode autocommit
-        at the wire layer; the getter does not reflect what the setter
-        was last given. The setter accepts ``True`` and stdlib's
-        ``LEGACY_TRANSACTION_CONTROL`` (``-1``) for cross-driver
-        porting compatibility, but those settings are no-op'd: the
-        getter still returns ``True`` regardless. Cross-driver code
-        expecting a setter / getter round-trip
-        (``conn.autocommit = -1; assert conn.autocommit == -1``) does
-        **not** see that round-trip on this driver. Setting to
-        ``False`` (or any non-``True``, non-``-1`` value) raises
-        ``NotSupportedError``. The annotation stays ``bool`` (not
-        ``Literal[True]``) for stdlib / PEP 249 parity — callers that
-        do ``isinstance(conn.autocommit, bool)`` continue to work.
+        **Setter / getter round-trip**: stores the setter input on
+        ``self._autocommit_value`` and returns it. ``True`` and
+        stdlib's ``LEGACY_TRANSACTION_CONTROL`` (``-1``) are both
+        accepted; both no-op the wire layer (dqlite is fixed-mode
+        autocommit) but the property reflects the caller's last
+        input. The stdlib 3.12+ idiom round-trips on this driver.
+        Setting to ``False`` (or any non-``True``, non-``-1`` value)
+        raises ``NotSupportedError``.
 
         **Closed-state behaviour**: raises ``InterfaceError`` on a
         closed connection, matching stdlib `sqlite3`'s
@@ -1276,7 +1272,7 @@ class AsyncConnection:
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        return True
+        return getattr(self, "_autocommit_value", True)
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
@@ -1294,9 +1290,11 @@ class AsyncConnection:
         # ``_check_thread()`` for the same reason.
         self._check_loop_binding()
         # See sync sibling for full rationale: accept True or
-        # ``sqlite3.LEGACY_TRANSACTION_CONTROL`` (==-1); reject
-        # everything else.
+        # ``sqlite3.LEGACY_TRANSACTION_CONTROL`` (==-1) and store the
+        # caller's input so the getter round-trips. Reject everything
+        # else.
         if value is True or value == -1:
+            self._autocommit_value: bool | int = value
             return
         raise NotSupportedError(
             "dqlite operates in autocommit-by-default mode; the autocommit "
@@ -1325,13 +1323,19 @@ class AsyncConnection:
             del self.messages[:]
         # Loop-binding affinity contract — see ``autocommit.setter``.
         self._check_loop_binding()
+        # See sync sibling for accept-set + ProgrammingError-vs-
+        # NotSupportedError class rationale.
         if value is None:
             return
-        raise NotSupportedError(
-            "dqlite operates in autocommit-by-default mode and does not "
-            "support stdlib sqlite3 implicit-transaction isolation_level "
-            "values; use explicit BEGIN/COMMIT via cursor.execute or set "
-            "isolation_level=None to acknowledge the existing mode."
+        if isinstance(value, str) and value.upper() in _STDLIB_IMPLICIT_TX_VALUES:
+            return
+        raise ProgrammingError(
+            f"isolation_level must be None or one of "
+            f"{sorted(_STDLIB_IMPLICIT_TX_VALUES)!r}; got {value!r}. "
+            f"dqlite is fixed-mode autocommit at the wire layer; the "
+            f"accepted values are stdlib pre-3.12 parity no-ops. Use "
+            f"explicit BEGIN/COMMIT via cursor.execute to control "
+            f"transaction boundaries."
         )
 
     async def commit(self) -> None:

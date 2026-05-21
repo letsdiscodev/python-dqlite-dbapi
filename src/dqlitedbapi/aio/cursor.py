@@ -372,10 +372,24 @@ class AsyncCursor:
                         f"{len(column_types)} type codes"
                     )
                 else:
-                    # Map ValueType.NULL → None to satisfy PEP 249
-                    # §6.1.2 ("type_code must compare equal to one of
-                    # Type Objects"). See sync sibling rationale.
-                    type_codes = [None if c == ValueType.NULL else int(c) for c in column_types]
+                    # Per-row rescue scan for NULL-first-row columns;
+                    # see sync sibling at ``cursor.py`` for the full
+                    # rationale. Fall back to ``None`` only when EVERY
+                    # row at that column index is NULL (genuinely
+                    # unrecoverable).
+                    type_codes = []
+                    for col_idx, c in enumerate(column_types):
+                        if c != ValueType.NULL:
+                            type_codes.append(int(c))
+                            continue
+                        resolved: int | None = None
+                        for j in range(1, len(row_types)):
+                            if col_idx < len(row_types[j]):
+                                candidate = row_types[j][col_idx]
+                                if candidate != ValueType.NULL:
+                                    resolved = int(candidate)
+                                    break
+                        type_codes.append(resolved)
                 self._description = tuple(
                     (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)

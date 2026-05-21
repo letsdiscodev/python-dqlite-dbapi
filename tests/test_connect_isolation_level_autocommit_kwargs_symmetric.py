@@ -52,11 +52,12 @@ def test_sync_connect_accepts_autocommit_minus_one() -> None:
     _ctor.assert_called_once()
 
 
-def test_sync_connect_rejects_isolation_level_deferred() -> None:
-    """A non-sentinel value (an actual stdlib mode) is still
-    rejected."""
+def test_sync_connect_rejects_isolation_level_unknown_string() -> None:
+    """A value outside the stdlib pre-3.12 accept-set is still
+    rejected. The setter widened to accept ``{None, "", "DEFERRED",
+    "IMMEDIATE", "EXCLUSIVE"}`` but unknown strings stay rejected."""
     with pytest.raises(NotSupportedError, match="isolation_level"):
-        dqlitedbapi.connect("127.0.0.1:9001", isolation_level="DEFERRED")
+        dqlitedbapi.connect("127.0.0.1:9001", isolation_level="SERIALIZABLE")
 
 
 def test_sync_connect_rejects_autocommit_false() -> None:
@@ -74,11 +75,12 @@ def test_async_connect_accepts_isolation_level_none() -> None:
     _ctor.assert_called_once()
 
 
-def test_async_connect_rejects_isolation_level_deferred() -> None:
+def test_async_connect_rejects_isolation_level_unknown_string() -> None:
+    """Sibling on the async ``connect`` (the non-awaitable form)."""
     from dqlitedbapi.aio import connect as aio_connect
 
     with pytest.raises(NotSupportedError, match="isolation_level"):
-        aio_connect("127.0.0.1:9001", isolation_level="DEFERRED")
+        aio_connect("127.0.0.1:9001", isolation_level="SERIALIZABLE")
 
 
 # The awaitable ``aconnect`` is the recommended async entry-point
@@ -124,11 +126,11 @@ async def test_aconnect_accepts_autocommit_minus_one() -> None:
 
 
 @pytest.mark.asyncio
-async def test_aconnect_rejects_isolation_level_deferred() -> None:
+async def test_aconnect_rejects_isolation_level_unknown_string() -> None:
     from dqlitedbapi.aio import aconnect
 
     with pytest.raises(NotSupportedError, match="isolation_level"):
-        await aconnect("127.0.0.1:9001", isolation_level="DEFERRED")
+        await aconnect("127.0.0.1:9001", isolation_level="SERIALIZABLE")
 
 
 @pytest.mark.asyncio

@@ -1591,14 +1591,37 @@ class Cursor:
                         f"{len(column_types)} type codes"
                     )
                 else:
-                    # Map ValueType.NULL (5) to None: PEP 249 §6.1.2
-                    # says type_code "must compare equal to one of
-                    # Type Objects defined below" and NULL is not one
-                    # of the five Type Objects (STRING / BINARY /
-                    # NUMBER / DATETIME / ROWID). Surfacing None
-                    # instead matches the documented empty-result-set
-                    # deviation already in this module.
-                    type_codes = [None if c == ValueType.NULL else int(c) for c in column_types]
+                    # Map ValueType.NULL (5) to None ONLY when every
+                    # row's value at that column index is also NULL —
+                    # otherwise scan ``row_types[1:]`` for the first
+                    # non-NULL type tag and surface that as the
+                    # column's PEP 249 §6.1.2 ``type_code``. The wire
+                    # carries per-row type information (used by the
+                    # ``_convert_row`` dispatch below); without this
+                    # rescue scan, a SELECT whose first row's column
+                    # is NULL but whose subsequent rows carry typed
+                    # values lost the column-type signal entirely in
+                    # ``description`` even though the wire DID carry
+                    # the information. PEP 249 says ``type_code``
+                    # "must compare equal to one of Type Objects";
+                    # ``None`` does not. The narrower fallback only
+                    # fires when EVERY row's value at that column is
+                    # NULL — a genuinely unrecoverable case.
+                    type_codes = []
+                    for col_idx, c in enumerate(column_types):
+                        if c != ValueType.NULL:
+                            type_codes.append(int(c))
+                            continue
+                        # Scan subsequent rows for the first non-NULL
+                        # type tag at this column.
+                        resolved: int | None = None
+                        for j in range(1, len(row_types)):
+                            if col_idx < len(row_types[j]):
+                                candidate = row_types[j][col_idx]
+                                if candidate != ValueType.NULL:
+                                    resolved = int(candidate)
+                                    break
+                        type_codes.append(resolved)
                 self._description = tuple(
                     (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)

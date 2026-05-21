@@ -187,6 +187,20 @@ def _validate_timeout(timeout: float) -> None:
 MAX_CONTINUATION_FRAMES_UPPER_BOUND: Final[int] = _DEFAULT_MAX_CONTINUATION_FRAMES * 10
 
 
+# Stdlib ``sqlite3.Connection.isolation_level`` pre-3.12 accept-set
+# (less ``None``). The empty string ``""`` is the stdlib DEFAULT value
+# of the property; cross-driver round-trip code (``dst.isolation_level
+# = src.isolation_level`` against a stdlib ``sqlite3.Connection``)
+# silently broke on this driver because the setter only accepted
+# ``None``. dqlite is fixed-mode autocommit at the wire layer; these
+# five values collapse to the same behaviour, so accepting them as
+# no-ops preserves cross-driver portability without changing wire
+# behaviour.
+_STDLIB_IMPLICIT_TX_VALUES: Final[frozenset[str]] = frozenset(
+    {"", "DEFERRED", "IMMEDIATE", "EXCLUSIVE"}
+)
+
+
 def _wrap_positive_int(
     value: int | None,
     name: str,
@@ -2211,7 +2225,7 @@ class Connection:
         return bool(conn.in_transaction)
 
     @property
-    def autocommit(self) -> bool:
+    def autocommit(self) -> "bool | int":
         """``True`` — dqlite operates in autocommit-by-default mode.
 
         Mirrors the surface stdlib ``sqlite3`` added in Python 3.12 and
@@ -2226,19 +2240,18 @@ class Connection:
         BEGIN/COMMIT control — both are accurate for their respective
         layer.
 
-        **Always returns** ``True`` — dqlite is fixed-mode autocommit
-        at the wire layer; the getter does not reflect what the setter
-        was last given. The setter accepts ``True`` and stdlib's
-        ``LEGACY_TRANSACTION_CONTROL`` (``-1``) for cross-driver
-        porting compatibility, but those settings are no-op'd: the
-        getter still returns ``True`` regardless. Cross-driver code
-        expecting a setter / getter round-trip
-        (``conn.autocommit = -1; assert conn.autocommit == -1``) does
-        **not** see that round-trip on this driver. Setting to
-        ``False`` (or any non-``True``, non-``-1`` value) raises
-        ``NotSupportedError``. The annotation stays ``bool`` (not
-        ``Literal[True]``) for stdlib / PEP 249 parity — callers that
-        do ``isinstance(conn.autocommit, bool)`` continue to work.
+        **Setter / getter round-trip**: stores the setter input on
+        ``self._autocommit_value`` and returns it. ``True`` and
+        stdlib's ``LEGACY_TRANSACTION_CONTROL`` (``-1``) are both
+        accepted; both no-op the wire layer (dqlite is fixed-mode
+        autocommit) but the property reflects the caller's last
+        input. The stdlib 3.12+ idiom ``conn.autocommit =
+        sqlite3.LEGACY_TRANSACTION_CONTROL; assert conn.autocommit
+        == sqlite3.LEGACY_TRANSACTION_CONTROL`` round-trips on this
+        driver — the module exports ``LEGACY_TRANSACTION_CONTROL =
+        -1`` precisely so this idiom works. The default (never-set)
+        return is ``True``. Setting to ``False`` (or any non-
+        ``True``, non-``-1`` value) raises ``NotSupportedError``.
 
         **Closed-state behaviour**: raises
         ``InterfaceError("Connection is closed ...")`` on a closed
@@ -2250,7 +2263,7 @@ class Connection:
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        return True
+        return getattr(self, "_autocommit_value", True)
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
@@ -2276,11 +2289,19 @@ class Connection:
         # stdlib sentinel ``sqlite3.LEGACY_TRANSACTION_CONTROL``
         # (numerically ``-1``) — stdlib's 3.12+ surface uses the
         # sentinel as the "do not change isolation" signal that
-        # cross-driver code passes through. Any other value
-        # (including ``False`` / ``0`` / ``1`` / truthy non-bool)
-        # raises ``NotSupportedError`` — stdlib itself enforces a
-        # similarly strict gate (no PyObject_IsTrue coercion).
+        # cross-driver code passes through. Both no-op the wire
+        # layer (dqlite is fixed-mode autocommit) but we STORE the
+        # caller's input so the getter round-trips. Cross-driver
+        # idiom ``conn.autocommit = sqlite3.LEGACY_TRANSACTION_CONTROL;
+        # assert conn.autocommit == -1`` now works on this driver —
+        # the module exports ``LEGACY_TRANSACTION_CONTROL = -1``
+        # for precisely this idiom.
+        # Any other value (``False`` / ``0`` / ``1`` / truthy
+        # non-bool) raises ``NotSupportedError`` — stdlib itself
+        # enforces a similarly strict gate (no PyObject_IsTrue
+        # coercion).
         if value is True or value == -1:
+            self._autocommit_value: bool | int = value
             return
         raise NotSupportedError(
             "dqlite operates in autocommit-by-default mode; the autocommit "
@@ -2331,13 +2352,30 @@ class Connection:
         # Threadsafety=1 affinity contract — see ``autocommit.setter``
         # for the rationale (no-op accept-path is still an attempt).
         self._check_thread()
+        # Accept the stdlib pre-3.12 accept-set as no-ops: ``None``,
+        # ``""`` (the stdlib DEFAULT value of the property), and the
+        # implicit-BEGIN ``"DEFERRED"`` / ``"IMMEDIATE"`` /
+        # ``"EXCLUSIVE"`` variants. dqlite is fixed-mode autocommit
+        # at the wire layer, so all five collapse to the same
+        # behaviour — accepting them preserves the canonical
+        # cross-driver "mirror source config to dst" idiom (``dst
+        # .isolation_level = src.isolation_level`` where ``src`` is
+        # a stdlib ``sqlite3.Connection`` that defaults to ``""``).
+        # Genuinely invalid values (non-string, unknown string)
+        # raise ``ProgrammingError`` (PEP 249 §7 "caller-shape
+        # misuse"), NOT ``NotSupportedError`` (which is for
+        # features the database lacks).
         if value is None:
             return
-        raise NotSupportedError(
-            "dqlite operates in autocommit-by-default mode and does not "
-            "support stdlib sqlite3 implicit-transaction isolation_level "
-            "values; use explicit BEGIN/COMMIT via cursor.execute or set "
-            "isolation_level=None to acknowledge the existing mode."
+        if isinstance(value, str) and value.upper() in _STDLIB_IMPLICIT_TX_VALUES:
+            return
+        raise ProgrammingError(
+            f"isolation_level must be None or one of "
+            f"{sorted(_STDLIB_IMPLICIT_TX_VALUES)!r}; got {value!r}. "
+            f"dqlite is fixed-mode autocommit at the wire layer; the "
+            f"accepted values are stdlib pre-3.12 parity no-ops. Use "
+            f"explicit BEGIN/COMMIT via cursor.execute to control "
+            f"transaction boundaries."
         )
 
     def commit(self) -> None:
