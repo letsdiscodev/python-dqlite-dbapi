@@ -21,12 +21,15 @@ Limitations vs stdlib sqlite3
   functions are not classes. Use ``isinstance(value, datetime.date)``
   for cross-driver porting code that runs against both stdlib
   ``sqlite3`` and ``dqlitedbapi``.
-- ``DateFromTicks`` / ``TimeFromTicks`` / ``TimestampFromTicks`` use
-  ``datetime.fromtimestamp(ticks)`` rather than stdlib's
-  ``time.localtime(ticks)[:6]``. Sub-second precision in fractional
-  ``ticks`` is preserved in the returned ``datetime`` (stdlib's
-  ``time.localtime`` drops it). The local-time interpretation matches
-  stdlib.
+- ``DateFromTicks`` / ``TimeFromTicks`` / ``TimestampFromTicks``
+  delegate to ``datetime.date.fromtimestamp`` (Date) and
+  ``datetime.datetime.fromtimestamp`` (Time / Timestamp), rather
+  than stdlib's ``time.localtime(ticks)[:3]`` / ``[3:6]`` / ``[:6]``.
+  Sub-second precision in fractional ``ticks`` is preserved on the
+  ``Time`` and ``Timestamp`` results (stdlib's ``time.localtime``
+  truncates to integer seconds); ``Date`` returns ``datetime.date``
+  with no sub-second component on either driver. The local-time
+  interpretation matches stdlib on all three.
 - ``total_changes`` is a method (callable; ``conn.total_changes()``)
   rather than stdlib's int-property. The method-form keeps
   ``hasattr(conn, "total_changes")`` returning ``True`` consistently

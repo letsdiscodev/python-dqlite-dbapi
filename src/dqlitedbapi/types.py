@@ -609,6 +609,24 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
     ``datetime.time`` does NOT widen — ``HH:MM:SS`` has no date
     component so widening would require an arbitrary sentinel date.
 
+    **Sub-microsecond fractional seconds are silently truncated.**
+    CPython's ``datetime.fromisoformat`` (widened in 3.11 via gh-80010
+    to accept any fractional-digit count) drops digits beyond the
+    sixth without rounding — e.g. ``"2026-05-21 12:34:56.123456789"``
+    decodes to ``datetime(2026, 5, 21, 12, 34, 56, 123456)`` and
+    ``".999999999"`` decodes to ``...microsecond=999999`` (NOT
+    1_000_000 — truncation does NOT carry into the second). Peer
+    encoders that emit nanosecond-precision text (Go
+    ``time.RFC3339Nano``, Litestream-style millisecond triggers
+    widened with extra zeros, custom SQLite triggers via loadable
+    extensions, mixed-source clusters that round-trip through other
+    drivers) therefore do not round-trip byte-identically through
+    this decoder: the companion encoder ``_iso8601_from_datetime``
+    emits exactly six fractional digits, so a peer-written 9-digit
+    value read here and re-written becomes a 6-digit value on the
+    wire. Callers needing sub-microsecond precision must store the
+    raw text via a non-ISO8601 ``TEXT`` cell and parse client-side.
+
     A malformed string from the server (bug, corruption, or MitM) would
     otherwise escape as a raw ``ValueError``; wrap as ``DataError`` to
     satisfy PEP 249's "all DB errors funnel through Error" contract.
