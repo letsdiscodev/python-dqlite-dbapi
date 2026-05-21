@@ -1993,19 +1993,34 @@ class Cursor:
         ``fetchmany`` (after ITS single prelude clear/guards). PEP 249
         §6.1.1 requires the messages clear once per top-level method
         invocation, NOT once per inner row delivery.
+
+        Snapshot ``_rows`` / ``_row_index`` / ``_row_factory`` to
+        locals before the bounds check so a sibling-thread
+        ``force_close_transport`` whose ``_cascade_cursors`` rewrites
+        ``self._rows = []`` and ``self._row_index = 0`` between the
+        bounds check and the indexed read cannot turn the indexed read
+        into a bare ``IndexError`` that escapes the ``dbapi.Error``
+        hierarchy. The snapshot is atomic w.r.t. the cascade: either
+        the snapshot precedes the cascade (we deliver one stale row
+        and the next call observes ``_closed`` via the prelude check)
+        or it follows the cascade (we observe the empty list and
+        return ``None`` cleanly).
         """
-        if self._row_index >= len(self._rows):
+        rows = self._rows
+        idx = self._row_index
+        row_factory = self._row_factory
+        if idx >= len(rows):
             return None
-        row = self._rows[self._row_index]
+        row = rows[idx]
         # Apply row_factory BEFORE advancing ``_row_index`` so a raise
         # inside a custom factory leaves the index unchanged. Without
         # this ordering, ``fetchmany``'s snapshot/restore at
         # ``snapshot + len(result)`` underestimates by 1 for
         # factory-raised rows — silently REPLAYING a row on the next
         # call instead of either retrying or skipping cleanly.
-        if self._row_factory is not None:
+        if row_factory is not None:
             try:
-                transformed: tuple[Any, ...] = self._row_factory(self, row)
+                transformed: tuple[Any, ...] = row_factory(self, row)
             except TypeError as exc:
                 # The factory rejected ``self`` as the first argument
                 # — typical when the user wired a factory that requires
