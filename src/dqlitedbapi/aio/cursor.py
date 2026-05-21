@@ -744,7 +744,22 @@ class AsyncCursor:
         # factory-raised rows — silently REPLAYING a row on the next
         # call.
         if self._row_factory is not None:
-            transformed: tuple[Any, ...] = self._row_factory(self, row)
+            try:
+                transformed: tuple[Any, ...] = self._row_factory(self, row)
+            except TypeError as exc:
+                # Mirrors the sync sibling at ``cursor.py``: a factory
+                # that rejects ``self`` as its first argument (typical
+                # for ``sqlite3.Row``, whose C-extension constructor
+                # type-checks ``argument 1`` to be a stdlib
+                # ``pysqlite_CursorType``) leaks bare ``TypeError``
+                # past ``except dbapi.Error:`` clauses unless wrapped.
+                # PEP 249 §7 places this under ``DataError`` ("problems
+                # with the processed data").
+                raise DataError(
+                    f"row_factory call failed: {exc}",
+                    code=None,
+                    raw_message=str(exc),
+                ) from exc
             self._row_index += 1
             return transformed
         self._row_index += 1
@@ -840,7 +855,19 @@ class AsyncCursor:
             # discipline — a raise inside a custom factory leaves the
             # cursor index unchanged so the next fetchone returns the
             # same row.
-            transformed = [self._row_factory(self, row) for row in result]
+            try:
+                transformed = [self._row_factory(self, row) for row in result]
+            except TypeError as exc:
+                # Mirrors the sync sibling: wrap ``TypeError`` as
+                # ``DataError`` so a ``sqlite3.Row``-style factory
+                # rejection surfaces inside the PEP 249 hierarchy.
+                # Index is NOT advanced — the snapshot-restore
+                # discipline.
+                raise DataError(
+                    f"row_factory call failed: {exc}",
+                    code=None,
+                    raw_message=str(exc),
+                ) from exc
             self._row_index = len(self._rows)
             return transformed
         self._row_index = len(self._rows)

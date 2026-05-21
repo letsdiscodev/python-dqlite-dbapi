@@ -15,6 +15,7 @@ from dqliteclient import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import (
+    _SYNC_PHASES_MULTIPLIER,
     _build_and_connect,
     _is_no_transaction_error,
     _validate_close_timeout,
@@ -696,19 +697,24 @@ class AsyncConnection:
         op_lock = self._op_lock
         op_lock_timed_out = False
         try:
-            # Bound the op_lock acquire by ``self._timeout`` to mirror
-            # the sync sibling's ``_op_lock.acquire(timeout=self._timeout)``
-            # + InterfaceError on miss in ``Connection._run_sync``. Without
-            # the bound, ``close()`` waits indefinitely on a sibling
-            # task parked on a slow ``reader.read()`` — under SIGTERM
-            # / ``engine.dispose()``, an N-slot SA pool with stuck
-            # siblings hangs shutdown for ``N * timeout`` seconds.
+            # Bound the op_lock acquire by ``_SYNC_PHASES_MULTIPLIER *
+            # self._timeout`` to match the sync sibling's overall
+            # budget for ``_run_sync(_close_async())``. The sync side
+            # applies ``sync_timeout = _SYNC_PHASES_MULTIPLIER *
+            # self._timeout`` at the ``Future.result(timeout=...)``
+            # boundary; without the multiplier here the async surface
+            # false-times-out on benign latency (slow first-call-after-
+            # connect: handshake + open_database + read+drain
+            # combined) that the sync surface tolerates. The SIGTERM
+            # hang protection still holds — the bound is widened, not
+            # removed.
             #
             # ``self._timeout`` (NOT ``self._close_timeout``) is the
-            # right budget: ``_close_timeout`` is the transport-drain
-            # window, while siblings are bounded by the per-RPC
-            # ``timeout``.
-            async with asyncio.timeout(self._timeout):
+            # right per-phase budget: ``_close_timeout`` is the
+            # transport-drain window, while siblings are bounded by
+            # the per-RPC ``timeout``.
+            phases_budget = _SYNC_PHASES_MULTIPLIER * self._timeout
+            async with asyncio.timeout(phases_budget):
                 async with op_lock:
                     # Run the cursor cascade INSIDE the lock so concurrent
                     # in-flight fetches (which also hold the lock for their
@@ -1386,8 +1392,14 @@ class AsyncConnection:
         # deadline up to 300 s). Under shutdown — SA
         # ``engine.dispose()`` or app SIGTERM with a budget — the
         # caller would otherwise hang for the full per-read deadline.
+        # ``_SYNC_PHASES_MULTIPLIER * self._timeout`` mirrors the sync
+        # sibling ``Connection._run_sync``'s overall budget so async
+        # commit absorbs the same handshake + open + COMMIT phase
+        # combination the sync side tolerates. See ``close()`` for the
+        # full rationale.
+        commit_budget = _SYNC_PHASES_MULTIPLIER * self._timeout
         try:
-            async with asyncio.timeout(self._timeout):
+            async with asyncio.timeout(commit_budget):
                 async with op_lock:
                     # Re-check under the lock: a concurrent close() may have
                     # acquired op_lock before us, closed the connection, and
@@ -1435,14 +1447,15 @@ class AsyncConnection:
                         if not _is_no_transaction_error(e):
                             raise
         except TimeoutError as e:
-            # Sibling held op_lock past ``self._timeout``. Surface as
-            # ``OperationalError`` so SA's ``is_disconnect`` classifies
-            # the failure and the pool invalidates the slot. Connection
-            # state is ambiguous from the caller's perspective: the
-            # sibling may still be in flight or may have completed —
-            # the safe response is to drop and reconnect.
+            # Sibling held op_lock past the multi-phase budget. Surface
+            # as ``OperationalError`` so SA's ``is_disconnect``
+            # classifies the failure and the pool invalidates the slot.
+            # Connection state is ambiguous from the caller's
+            # perspective: the sibling may still be in flight or may
+            # have completed — the safe response is to drop and
+            # reconnect.
             raise OperationalError(
-                f"commit op_lock acquire timed out after {self._timeout}s "
+                f"commit op_lock acquire timed out after {commit_budget}s "
                 f"(id={id(self)}); a sibling task held the lock past the "
                 f"bound. Connection state ambiguous; reconnect.",
                 code=None,
@@ -1482,11 +1495,15 @@ class AsyncConnection:
                 "retrying commit / rollback."
             )
         _, op_lock = self._ensure_locks()
-        # Bound the op_lock acquire by ``self._timeout`` — same
-        # rationale as ``commit()``: avoid an unbounded shutdown hang
-        # under partition + ``trust_server_heartbeat=True``.
+        # Bound the op_lock acquire by ``_SYNC_PHASES_MULTIPLIER *
+        # self._timeout`` — same rationale as ``commit()``: avoid an
+        # unbounded shutdown hang under partition +
+        # ``trust_server_heartbeat=True`` while still absorbing the
+        # multi-phase first-call-after-connect budget the sync sibling
+        # tolerates.
+        rollback_budget = _SYNC_PHASES_MULTIPLIER * self._timeout
         try:
-            async with asyncio.timeout(self._timeout):
+            async with asyncio.timeout(rollback_budget):
                 async with op_lock:
                     # Re-check under the lock for the same race as commit().
                     if (
@@ -1515,7 +1532,7 @@ class AsyncConnection:
                             raise
         except TimeoutError as e:
             raise OperationalError(
-                f"rollback op_lock acquire timed out after {self._timeout}s "
+                f"rollback op_lock acquire timed out after {rollback_budget}s "
                 f"(id={id(self)}); a sibling task held the lock past the "
                 f"bound. Connection state ambiguous; reconnect.",
                 code=None,
