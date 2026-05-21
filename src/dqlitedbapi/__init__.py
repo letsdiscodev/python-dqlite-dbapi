@@ -55,7 +55,7 @@ from dqlitedbapi._constants import (
 from dqlitedbapi._constants import (
     SQLITE_VERSION_INFO as _SQLITE_VERSION_INFO,
 )
-from dqlitedbapi.connection import Connection
+from dqlitedbapi.connection import FAILED_TO_CONNECT_PREFIX, Connection
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import (
     DatabaseError,
@@ -154,6 +154,8 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "register_converter",
     "complete_statement",
     "enable_callback_tracebacks",
+    # Diagnostic prefix surface
+    "FAILED_TO_CONNECT_PREFIX",
     # Classes
     "Connection",
     "Cursor",

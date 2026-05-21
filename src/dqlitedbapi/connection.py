@@ -201,6 +201,16 @@ def _wrap_positive_int(value: int | None, name: str) -> int | None:
 _CLOSE_TIMEOUT_FLOOR: Final[float] = _client_close_timeout_floor
 
 
+# Canonical prefix for the wrap-as-OperationalError diagnostic emitted
+# by every connect-time arm in this module — eight raises across
+# ``_build_and_connect``'s post-construct exception branches. The SA
+# dialect's ``is_disconnect`` substring matcher reads the lowercase
+# truncation of this prefix; the dbapi-side assertion tests read the
+# full prefix verbatim. Single-source-of-truth so a future wording
+# change is a one-place edit and the SA matcher updates in lockstep.
+FAILED_TO_CONNECT_PREFIX: Final[str] = "Failed to connect: "
+
+
 def _validate_close_timeout(close_timeout: float) -> None:
     """Raise ProgrammingError if ``close_timeout`` is not a positive finite number ≥ 0.01.
 
@@ -589,13 +599,13 @@ async def _build_and_connect(
         # contract.
         if issubclass(exc_cls, DatabaseError) or issubclass(exc_cls, InterfaceError):
             raise exc_cls(
-                f"Failed to connect: {e.message}",
+                f"{FAILED_TO_CONNECT_PREFIX}{e.message}",
                 code=e.code,
                 raw_message=e.raw_message,
             ) from e
         # Fallback if a future class lands outside both umbrellas.
         raise OperationalError(
-            f"Failed to connect: {e.message}",
+            f"{FAILED_TO_CONNECT_PREFIX}{e.message}",
             code=e.code,
             raw_message=e.raw_message,
         ) from e
@@ -631,14 +641,18 @@ async def _build_and_connect(
         # code-based classifier expects — matching the query path.
         code = getattr(e, "code", None)
         raw_msg = getattr(e, "raw_message", None) or str(e)
-        raise OperationalError(f"Failed to connect: {e}", code=code, raw_message=raw_msg) from e
+        raise OperationalError(
+            f"{FAILED_TO_CONNECT_PREFIX}{e}", code=code, raw_message=raw_msg
+        ) from e
     except _client_exc.ClusterError as e:
         # Non-policy ClusterError — transient at the cluster discovery
         # layer (no leader yet, all nodes unreachable). Surface as
         # OperationalError so the SA pool's retry loop classifies it
         # correctly, with raw_message preserved.
         raw_msg = getattr(e, "raw_message", None) or str(e)
-        raise OperationalError(f"Failed to connect: {e}", code=None, raw_message=raw_msg) from e
+        raise OperationalError(
+            f"{FAILED_TO_CONNECT_PREFIX}{e}", code=None, raw_message=raw_msg
+        ) from e
     except _client_exc.ProtocolError as e:
         # Wire-level desync during handshake (very rare). Match the
         # cursor-path classifier's wording so SA's substring scan sees
@@ -683,7 +697,9 @@ async def _build_and_connect(
         # requires database-sourced failures to surface as Error
         # subclasses; OperationalError is the right shape for
         # transport.
-        raise OperationalError(f"Failed to connect: {e}", code=None, raw_message=str(e)) from e
+        raise OperationalError(
+            f"{FAILED_TO_CONNECT_PREFIX}{e}", code=None, raw_message=str(e)
+        ) from e
     except BaseExceptionGroup as eg:
         # See the sibling arm above the ``DqliteConnection(...)``
         # construction for the rationale. ``BaseExceptionGroup``
@@ -692,7 +708,7 @@ async def _build_and_connect(
         # connect) with the group on ``__cause__``.
         child_classes = {type(c).__name__ for c in eg.exceptions}
         raise OperationalError(
-            f"Failed to connect: aggregate {type(eg).__name__} with "
+            f"{FAILED_TO_CONNECT_PREFIX}aggregate {type(eg).__name__} with "
             f"{len(eg.exceptions)} child(ren) of class(es) {sorted(child_classes)}",
             code=None,
             raw_message=str(eg),
