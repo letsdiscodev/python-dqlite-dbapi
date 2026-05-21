@@ -21,7 +21,7 @@ import threading
 import pytest
 
 from dqlitedbapi.aio import AsyncConnection
-from dqlitedbapi.exceptions import ProgrammingError
+from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
 
 async def test_row_factory_setter_succeeds_on_bound_loop() -> None:
@@ -42,12 +42,19 @@ async def test_row_factory_setter_succeeds_on_bound_loop() -> None:
 
 
 def test_row_factory_setter_raises_on_foreign_loop() -> None:
-    """Pin: a foreign-loop caller setting ``row_factory`` raises
-    ``ProgrammingError`` rather than silently mutating state shared
-    with the legitimate loop.
+    """Pin: a foreign-loop caller setting ``row_factory`` raises a
+    PEP 249 ``Error`` subclass rather than silently mutating state
+    shared with the legitimate loop.
 
     The repro: bind the connection on loop A, then attempt to set
-    ``row_factory`` from inside a coroutine running on loop B.
+    ``row_factory`` from inside a coroutine running on loop B. Loop
+    A's ``asyncio.run`` closes the loop on exit, so by the time the
+    setter runs the bound loop is closed-or-GC'd — the diagnostic
+    class is ``InterfaceError`` (matches the client-layer sibling's
+    posture for "interface is gone, reconstruct"); a live-but-
+    different bound loop would surface ``ProgrammingError``. Accept
+    either subclass of ``Error`` here so a future refactor that
+    keeps the bound loop alive surfaces the more-specific class.
     """
     aconn = AsyncConnection("127.0.0.1:9999")
 
@@ -79,10 +86,12 @@ def test_row_factory_setter_raises_on_foreign_loop() -> None:
     aconn.force_close_transport()
 
     assert error_holder, (
-        "expected ProgrammingError from foreign-loop row_factory setter; got no exception"
+        "expected InterfaceError/ProgrammingError from foreign-loop row_factory "
+        "setter; got no exception"
     )
-    assert isinstance(error_holder[0], ProgrammingError), (
-        f"expected ProgrammingError, got {type(error_holder[0]).__name__}: {error_holder[0]}"
+    assert isinstance(error_holder[0], (InterfaceError, ProgrammingError)), (
+        f"expected InterfaceError or ProgrammingError, got "
+        f"{type(error_holder[0]).__name__}: {error_holder[0]}"
     )
 
 

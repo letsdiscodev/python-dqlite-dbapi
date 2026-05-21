@@ -1739,6 +1739,22 @@ class Connection:
             if self._finalizer is not None:
                 self._finalizer.detach()
                 self._finalizer = None
+            # Drop every parent-loop-bound reference so the child's GC
+            # can reap the inherited daemon loop ``Thread``, asyncio
+            # event loop, inner ``DqliteConnection``, and connect lock
+            # without pinning them via ``threading._active`` (the
+            # daemon-loop OS thread does not survive fork — only the
+            # calling thread crosses POSIX ``fork(2)`` — so the Thread
+            # object sits in ``_active`` indefinitely, pinning the
+            # loop, which pins the selector and inherited socket FDs).
+            # Mirrors the client-layer sibling ``DqliteConnection.close``
+            # fork branch which nulls its parent-loop-bound state, and
+            # the dbapi.aio ``AsyncConnection.close`` fork sibling.
+            self._async_conn = None
+            self._loop = None
+            self._thread = None
+            self._connect_lock = None
+            self._transaction_owner = None
             return
         self._check_thread()
         self._closed = True
@@ -1961,6 +1977,16 @@ class Connection:
             if self._finalizer is not None:
                 self._finalizer.detach()
                 self._finalizer = None
+            # Same parent-loop-bound nullification as close()'s fork
+            # branch — see the comment block there. Without it, the
+            # inherited daemon ``Thread`` + asyncio loop chain stays
+            # alive in the child via ``threading._active`` until
+            # interpreter exit.
+            self._async_conn = None
+            self._loop = None
+            self._thread = None
+            self._connect_lock = None
+            self._transaction_owner = None
             return
         # Cascade cursors — same shape as close()'s cascade.
         self._cascade_cursors()
@@ -2836,17 +2862,33 @@ class Connection:
     def _stub_unsupported(self, msg: str) -> NoReturn:
         """Shared helper for ``NotSupportedError`` stubs: clear
         ``self.messages`` per PEP 249 §6.4 messages-clear contract,
-        check closed-state per stdlib ``sqlite3`` precedence, then
-        raise. ``_check_thread()`` is intentionally NOT applied —
-        these are universally-unsupported regardless of state, and
-        bleeding thread-affinity into a pure rejection contract
-        would be discipline creep beyond what the stub represents.
+        check fork-after-init (canonical ``InterfaceError`` per the
+        project-wide convention) and closed-state per stdlib
+        ``sqlite3`` precedence, then raise.
+
+        Pid check runs BEFORE the closed-check so a forked child sees
+        the canonical fork diagnostic (``InterfaceError``, routes
+        through cross-driver retry middleware) instead of
+        ``NotSupportedError`` (``DatabaseError``-subtree class, not
+        recognised by ``is_disconnect`` classifiers). ``_check_thread``
+        is still NOT applied — these are universally-unsupported
+        regardless of state, and thread-affinity creep here is beyond
+        what the stub represents. The pid check is structurally
+        different: it surfaces an existential "this object is no
+        longer addressable" condition, not a per-thread misuse.
 
         ``contextlib.suppress(AttributeError)`` tolerates
         ``__new__``-built fixtures that bypass ``__init__`` and so
-        lack ``_closed`` / ``messages``."""
+        lack ``_closed`` / ``messages`` / ``_creator_pid``."""
         with contextlib.suppress(AttributeError):
             del self.messages[:]
+        creator_pid = getattr(self, "_creator_pid", None)
+        if creator_pid is not None and get_current_pid() != creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")

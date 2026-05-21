@@ -78,7 +78,7 @@ class TestLoopAffinityEnforcement:
         import asyncio
 
         from dqlitedbapi.aio.connection import AsyncConnection
-        from dqlitedbapi.exceptions import ProgrammingError
+        from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
         conn = AsyncConnection("localhost:19001", database="x")
 
@@ -89,7 +89,18 @@ class TestLoopAffinityEnforcement:
 
         loop2 = asyncio.new_event_loop()
         try:
-            with pytest.raises(ProgrammingError, match="loop"):
+            # The bound loop has been closed by ``asyncio.run`` above
+            # and may or may not have been GC'd before the next
+            # ``_ensure_locks`` call. Either way the loop-affinity
+            # discipline routes the diagnostic through
+            # ``InterfaceError`` (closed / GC'd loop — interface is
+            # gone, reconstruct) per PEP 249 §3, matching the client-
+            # layer sibling at
+            # ``dqliteclient.connection._check_in_use``. A live-but-
+            # different bound loop would raise ``ProgrammingError``;
+            # accept either subclass of ``Error`` so the pin is robust
+            # to GC timing.
+            with pytest.raises((InterfaceError, ProgrammingError), match="loop"):
                 loop2.run_until_complete(touch())
         finally:
             loop2.close()

@@ -101,6 +101,31 @@ def _async_unclosed_warning(
         )
 
 
+def _loop_affinity_exc_class(
+    bound: asyncio.AbstractEventLoop | None,
+) -> type[Exception]:
+    """Return the right PEP 249 §3 exception class for a loop-affinity
+    diagnostic.
+
+    A closed / GC'd loop is "the interface is gone, reconstruct the
+    connection" — ``InterfaceError`` in PEP 249's hierarchy, matching
+    the client-layer sibling at
+    ``dqliteclient.connection._check_in_use`` which already uses
+    ``InterfaceError`` for the closed-loop and different-loop arms.
+    Cross-driver retry middleware (psycopg parity) catches
+    ``InterfaceError`` to know when to reconnect; ``ProgrammingError``
+    escapes the reconnect path.
+
+    A live-but-different loop is genuinely a programmer mistake
+    (forgot to construct one connection per loop) — ``ProgrammingError``
+    is correct there. The message wording is the same in both cases;
+    only the class differs.
+    """
+    if bound is None or bound.is_closed():
+        return InterfaceError
+    return ProgrammingError
+
+
 def _format_loop_affinity_message(
     bound: asyncio.AbstractEventLoop | None,
     current: asyncio.AbstractEventLoop | None,
@@ -359,7 +384,9 @@ class AsyncConnection:
         else:
             bound = self._loop_ref() if self._loop_ref is not None else None
             if bound is not loop:
-                raise ProgrammingError(_format_loop_affinity_message(bound, loop, "was first used"))
+                raise _loop_affinity_exc_class(bound)(
+                    _format_loop_affinity_message(bound, loop, "was first used")
+                )
         # ``_op_lock`` is created together with ``_connect_lock`` above;
         # the assertion keeps mypy narrow without a runtime cost.
         assert self._op_lock is not None
@@ -432,12 +459,33 @@ class AsyncConnection:
             return
         bound = self._loop_ref()
         if bound is not loop:
-            raise ProgrammingError(_format_loop_affinity_message(bound, loop, "was first used"))
+            raise _loop_affinity_exc_class(bound)(
+                _format_loop_affinity_message(bound, loop, "was first used")
+            )
 
     async def _ensure_connection(self) -> DqliteConnection:
         """Ensure the underlying connection is established."""
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+
+        # Fork-after-init guard on the FAST path too. ``_ensure_locks``
+        # already enforces this on the lazy-create branch, but the
+        # already-connected fast-path return below would otherwise hand
+        # the parent's inner ``DqliteConnection`` to a forked child
+        # silently — the next ``cursor()`` / ``execute()`` re-checks
+        # and raises, but the eager ``await aconn.connect()`` health-
+        # probe shape (and ``transaction()``'s sibling pre-check at
+        # ``_check_loop_binding``) expect the diagnostic at this call
+        # site, not one frame downstream. Mirrors the sync sibling's
+        # pid check at the top of ``_ensure_loop`` and the symmetric
+        # ``_check_loop_binding()`` precall on ``transaction()``.
+        creator_pid = getattr(self, "_creator_pid", None)
+        if creator_pid is not None and get_current_pid() != creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
 
         if self._async_conn is not None:
             return self._async_conn
@@ -1612,7 +1660,7 @@ class AsyncConnection:
             else:
                 bound = self._loop_ref()
                 if bound is not None and bound is not current_loop:
-                    raise ProgrammingError(
+                    raise _loop_affinity_exc_class(bound)(
                         _format_loop_affinity_message(bound, current_loop, ".cursor()")
                     )
         cur = AsyncCursor(self)
@@ -1901,10 +1949,26 @@ class AsyncConnection:
     def _stub_unsupported(self, msg: str) -> NoReturn:
         """Shared helper for ``NotSupportedError`` stubs: clear
         ``self.messages`` per PEP 249 §6.4 messages-clear contract,
-        check closed-state per stdlib precedence, then raise. Mirrors
-        the sync sibling ``Connection._stub_unsupported``."""
+        check fork-after-init (canonical ``InterfaceError("after
+        fork")``) and closed-state per stdlib precedence, then raise.
+        Mirrors the sync sibling ``Connection._stub_unsupported``.
+
+        Pid check runs BEFORE the closed-check so a forked child sees
+        the canonical fork diagnostic (which routes through cross-
+        driver retry middleware as ``InterfaceError``) instead of
+        ``NotSupportedError`` — the latter is in the ``DatabaseError``
+        subtree and is NOT caught by ``is_disconnect`` classifiers.
+        Every other public method on this class runs the same pid
+        guard up front; the stub family is the missing twin."""
         with contextlib.suppress(AttributeError):
             del self.messages[:]
+        creator_pid = getattr(self, "_creator_pid", None)
+        if creator_pid is not None and get_current_pid() != creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
