@@ -13,6 +13,7 @@ from types import TracebackType
 from typing import Any, Final, NoReturn, Self
 
 import dqliteclient.exceptions as _client_exc
+from dqliteclient import CLOSE_TIMEOUT_FLOOR as _client_close_timeout_floor
 from dqliteclient import (
     ClusterClient,
     DqliteConnection,
@@ -191,7 +192,13 @@ def _wrap_positive_int(value: int | None, name: str) -> int | None:
         raise ProgrammingError(str(e)) from e
 
 
-_CLOSE_TIMEOUT_FLOOR: Final[float] = 0.01
+# Re-export the client-layer public constant under the established
+# underscore-private name so existing references (the validator below,
+# test fixtures, and the docstring at the top of this module) keep
+# working without churn. The single-source-of-truth lives in
+# ``dqliteclient.CLOSE_TIMEOUT_FLOOR``; a future tuning is a one-place
+# change in the client layer.
+_CLOSE_TIMEOUT_FLOOR: Final[float] = _client_close_timeout_floor
 
 
 def _validate_close_timeout(close_timeout: float) -> None:
