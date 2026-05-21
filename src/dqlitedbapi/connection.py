@@ -1416,40 +1416,6 @@ class Connection:
             except BaseException:
                 coro.close()
                 raise
-            try:
-                future = asyncio.run_coroutine_threadsafe(coro, loop)
-            except RuntimeError as e:
-                # ``asyncio.run_coroutine_threadsafe`` raises bare
-                # ``RuntimeError("Event loop is closed")`` when the
-                # loop is closed between ``_ensure_loop()`` returning
-                # and the schedule call landing — the canonical race
-                # is a sibling thread (``do_terminate`` from a
-                # finalizer thread, manual ``loop.close()``, SIGTERM-
-                # with-budget shutdown). Without this catch the bare
-                # RuntimeError escapes the PEP 249 ``Error`` hierarchy
-                # (SA's ``is_disconnect`` is gated on ``DatabaseError``
-                # so it cannot classify the failure correctly), AND
-                # the unscheduled coroutine emits
-                # ``RuntimeWarning("coroutine was never awaited")`` at
-                # GC — a warning whose traceback does not point at
-                # dqlite, sending operators chasing the wrong layer.
-                # Close the coroutine and remap to ``OperationalError``
-                # (a ``DatabaseError`` subclass) with the original
-                # RuntimeError chained for diagnostics. Narrow the
-                # remap to the closed-loop substring so unrelated
-                # RuntimeErrors ("Non-thread-safe operation invoked on
-                # an event loop other than the current one" — a
-                # programmer-bug shape) propagate as themselves
-                # rather than being silently classified as a database
-                # connection failure. Close the coroutine on every
-                # arm so neither path leaks the unawaited-coroutine
-                # warning.
-                coro.close()
-                if "Event loop is closed" not in str(e):
-                    raise
-                raise OperationalError(
-                    f"event loop closed before coroutine could be scheduled: {e}"
-                ) from e
             # ``self._timeout`` is the per-RPC-phase budget; a single
             # high-level sync call can stack up to
             # ``_SYNC_PHASES_MULTIPLIER`` phases (handshake + open + send
@@ -1460,11 +1426,63 @@ class Connection:
             # documented N × budget here or it silently fires false
             # positives on benign latency the async surface tolerates.
             sync_timeout = _SYNC_PHASES_MULTIPLIER * self._timeout
+            # ``future`` is bound inside the KI-aware ``try`` below so a
+            # KI/SystemExit landing between ``run_coroutine_threadsafe``
+            # returning and ``future.result(...)`` entering the wait
+            # still routes through the cleanup arm. The sentinel
+            # ``future = None`` makes the KI cleanup arm's ``locals()``
+            # lookup deterministic — if the schedule itself raised
+            # ``RuntimeError("Event loop is closed")`` the inner arm
+            # below remaps; if the schedule LANDED but a KI fires
+            # before we entered the result wait, ``future`` is bound
+            # to the scheduled future and the cleanup discipline
+            # (cancel + invalidate + bounded-wait) runs against it.
+            future: concurrent.futures.Future[T] | None = None
             try:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(coro, loop)
+                except RuntimeError as e:
+                    # ``asyncio.run_coroutine_threadsafe`` raises bare
+                    # ``RuntimeError("Event loop is closed")`` when the
+                    # loop is closed between ``_ensure_loop()`` returning
+                    # and the schedule call landing — the canonical race
+                    # is a sibling thread (``do_terminate`` from a
+                    # finalizer thread, manual ``loop.close()``, SIGTERM-
+                    # with-budget shutdown). Without this catch the bare
+                    # RuntimeError escapes the PEP 249 ``Error`` hierarchy
+                    # (SA's ``is_disconnect`` is gated on ``DatabaseError``
+                    # so it cannot classify the failure correctly), AND
+                    # the unscheduled coroutine emits
+                    # ``RuntimeWarning("coroutine was never awaited")`` at
+                    # GC — a warning whose traceback does not point at
+                    # dqlite, sending operators chasing the wrong layer.
+                    # Close the coroutine and remap to ``OperationalError``
+                    # (a ``DatabaseError`` subclass) with the original
+                    # RuntimeError chained for diagnostics. Narrow the
+                    # remap to the closed-loop substring so unrelated
+                    # RuntimeErrors ("Non-thread-safe operation invoked on
+                    # an event loop other than the current one" — a
+                    # programmer-bug shape) propagate as themselves
+                    # rather than being silently classified as a database
+                    # connection failure. Close the coroutine on every
+                    # arm so neither path leaks the unawaited-coroutine
+                    # warning.
+                    coro.close()
+                    if "Event loop is closed" not in str(e):
+                        raise
+                    raise OperationalError(
+                        f"event loop closed before coroutine could be scheduled: {e}"
+                    ) from e
                 # Future.result() provides a happens-before memory barrier,
                 # ensuring all writes by the event loop thread are visible here.
                 return future.result(timeout=sync_timeout)
             except TimeoutError as e:
+                # ``TimeoutError`` can only be raised by
+                # ``future.result(timeout=sync_timeout)`` above, which
+                # means ``future`` is bound by this point. The assert
+                # exists for mypy (which sees ``future: Future | None``
+                # post-gap-window-guard) and as a defensive invariant.
+                assert future is not None
                 # Race check BEFORE calling ``cancel()`` /
                 # ``_invalidate``: the coroutine may have completed
                 # successfully between ``result(timeout=...)`` raising
@@ -1630,6 +1648,21 @@ class Connection:
                 # calling thread — those must propagate to the caller
                 # via the standard exception path, NOT trigger
                 # invalidation.
+                #
+                # Gap-window guard: ``future`` may be ``None`` if the
+                # KI/SystemExit landed BEFORE ``run_coroutine_threadsafe``
+                # returned — e.g. PyErr_SetAsyncExc delivered to the
+                # calling thread between the outer try entering and
+                # the inner schedule call. ``coro`` is also unscheduled
+                # in that case; close it so it does not emit
+                # ``RuntimeWarning("coroutine was never awaited")`` at
+                # GC. Without the guard, the cleanup arms below
+                # would dereference ``future.done()`` and raise
+                # ``AttributeError`` from inside the BaseException
+                # handler, masking the original signal.
+                if future is None:
+                    coro.close()
+                    raise
                 #
                 # Race-recovery (mirror of the TimeoutError arm
                 # above): if the coroutine resolved the future
