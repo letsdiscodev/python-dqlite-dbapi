@@ -107,12 +107,30 @@ class AsyncCursor:
         outside the PEP 249 ``Error`` hierarchy. Catch and re-raise
         as ``InterfaceError`` so cross-driver code wrapping cursor
         introspection in ``except dbapi.Error:`` continues to match.
+
+        **Affinity note**: the getter itself does not run
+        ``_check_loop_only()`` — read-only property reads are
+        documented as bypass-permitted at the cursor surface. The
+        loop-affinity check fires at the NEXT method call boundary
+        on the returned handle (``aiocur.connection.execute(...)``
+        triggers ``AsyncConnection.cursor()``'s loop check).
+        Operators triaging cross-loop misuse should walk one frame
+        down from ``aiocur.connection.foo()``-style indirection.
         """
+        # ``AttributeError`` is included in the catch — see the sync
+        # sibling ``Cursor.connection`` for the rationale (partial-
+        # init / mock parents would otherwise leak bare
+        # ``AttributeError`` outside the PEP 249 hierarchy).
         try:
             _ = self._connection.address
         except ReferenceError as e:
             raise InterfaceError(
                 "Cursor's parent AsyncConnection has been garbage-collected"
+            ) from e
+        except AttributeError as e:
+            raise InterfaceError(
+                f"Cursor's parent AsyncConnection unavailable: "
+                f"{type(e).__name__}: {e}"
             ) from e
         return self._connection
 

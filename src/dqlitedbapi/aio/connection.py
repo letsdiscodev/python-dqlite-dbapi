@@ -1632,17 +1632,19 @@ class AsyncConnection:
                 ...
         """
         del self.messages[:]
-        # Closed-state precedence — see sync sibling at
+        # Affinity precedence: closed → pid → loop → kwarg-shape.
+        # Hoist the fork-after-init + loop-binding checks above the
+        # ``unknown_kwargs`` rejection so a forked / cross-loop
+        # caller using a bogus kwarg sees the canonical affinity
+        # diagnostic (``InterfaceError("after fork")`` or
+        # ``ProgrammingError("...different event loop...")``) rather
+        # than ``NotSupportedError(unknown kwarg)``. Otherwise the
+        # next no-kwarg call would still trip the affinity check and
+        # the operator gets two different diagnostics for the same
+        # underlying misuse. See sync sibling at
         # ``connection.py:Connection.cursor`` for the full rationale.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        if unknown_kwargs:
-            raise NotSupportedError(
-                f"dqlitedbapi cursor() rejects stdlib sqlite3 kwargs not "
-                f"supported by this driver: {sorted(unknown_kwargs)}. "
-                f"(stdlib's factory= is not honoured here — Cursor "
-                f"subclassing is not supported.)"
-            )
         if get_current_pid() != self._creator_pid:
             raise InterfaceError(
                 f"AsyncConnection used after fork; reconstruct from "
@@ -1663,6 +1665,13 @@ class AsyncConnection:
                     raise _loop_affinity_exc_class(bound)(
                         _format_loop_affinity_message(bound, current_loop, ".cursor()")
                     )
+        if unknown_kwargs:
+            raise NotSupportedError(
+                f"dqlitedbapi cursor() rejects stdlib sqlite3 kwargs not "
+                f"supported by this driver: {sorted(unknown_kwargs)}. "
+                f"(stdlib's factory= is not honoured here — Cursor "
+                f"subclassing is not supported.)"
+            )
         cur = AsyncCursor(self)
         self._cursors.add(cur)
         # Re-check ``_closed`` after add: ``cursor()`` is sync-on-loop

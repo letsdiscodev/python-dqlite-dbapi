@@ -2558,16 +2558,23 @@ class Connection:
         with ``NotSupportedError`` rather than silently ignoring them.
         """
         del self.messages[:]
-        # Closed-state precedence: surface the most-salient diagnostic
-        # first. Stdlib sqlite3 and the in-package ``Cursor.execute``
-        # rationale (cursor.py) both order closed-state ahead of
-        # input-shape rejection. Without this, a closed-conn caller
-        # using a bogus kwarg sees ``NotSupportedError`` and cannot
-        # tell whether the connection is alive — a cross-driver
-        # porting trap. Thread check fires after closed (the
-        # ``_stub_unsupported`` helper establishes the same order).
+        # Affinity precedence: closed → thread → kwarg-shape. Surface
+        # the most-salient diagnostic first. Stdlib sqlite3 and the
+        # in-package ``Cursor.execute`` rationale (cursor.py) both
+        # order closed-state ahead of input-shape rejection; the
+        # thread check is hoisted ABOVE the kwarg reject for the same
+        # reason — a foreign-thread caller passing ``factory=...``
+        # should see ``ProgrammingError("...same thread...")`` rather
+        # than ``NotSupportedError(unknown kwarg)``, otherwise the
+        # next no-kwarg call would still fail on the thread check and
+        # the operator gets two different diagnostics for the same
+        # underlying misuse. NOTE: ``_stub_unsupported`` deliberately
+        # skips the thread check (rejection is universal there —
+        # those features are unsupported in every state); the asymmetry
+        # is intentional, documented at ``_stub_unsupported``.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        self._check_thread()
         if unknown_kwargs:
             raise NotSupportedError(
                 f"dqlitedbapi cursor() rejects stdlib sqlite3 kwargs not "
@@ -2575,7 +2582,6 @@ class Connection:
                 f"(stdlib's factory= is not honoured here — Cursor "
                 f"subclassing is not supported.)"
             )
-        self._check_thread()
         cur = Cursor(self)
         self._cursors.add(cur)
         return cur

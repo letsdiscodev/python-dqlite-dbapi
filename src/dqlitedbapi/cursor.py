@@ -1225,7 +1225,28 @@ class Cursor:
         — outside the PEP 249 ``Error`` hierarchy. Catch and re-raise
         as ``InterfaceError`` so cross-driver code wrapping cursor
         introspection in ``except dbapi.Error:`` continues to match.
+
+        **Affinity note**: the getter itself does not run
+        ``_check_thread()`` — read-only property reads are documented
+        as bypass-permitted (matches the ``description`` / ``rowcount``
+        / ``lastrowid`` / etc. discipline at the cursor surface). The
+        affinity check fires at the NEXT method call boundary on the
+        returned handle (``cur.connection.execute(...)`` triggers
+        ``Connection.cursor()``'s ``_check_thread``). Operators
+        triaging cross-thread misuse should walk one frame down from
+        ``cur.connection.foo()``-style indirection — the traceback
+        will point at the called method, not the getter.
         """
+        # ``AttributeError`` is included in the catch because the
+        # probe reads ``.address`` to force the ``weakref.proxy`` to
+        # resolve; on a partially-constructed or mock-typed parent
+        # (``Cursor.__new__(Cursor); cur._connection = object()``)
+        # the probe raises bare ``AttributeError``, which would escape
+        # the PEP 249 ``Error`` hierarchy. The probe's reliance on
+        # ``.address`` being side-effect-free is structural — a
+        # future refactor adding a thread/loop check to ``.address``
+        # would break the probe for live parents on foreign
+        # threads/loops; keep ``.address`` side-effect-free.
         try:
             # Touch any attribute to force the proxy to resolve. If
             # the underlying Connection has been GC'd, this raises
@@ -1233,7 +1254,13 @@ class Cursor:
             # live Connection.
             _ = self._connection.address
         except ReferenceError as e:
-            raise InterfaceError("Cursor's parent Connection has been garbage-collected") from e
+            raise InterfaceError(
+                "Cursor's parent Connection has been garbage-collected"
+            ) from e
+        except AttributeError as e:
+            raise InterfaceError(
+                f"Cursor's parent Connection unavailable: {type(e).__name__}: {e}"
+            ) from e
         return self._connection
 
     @property
