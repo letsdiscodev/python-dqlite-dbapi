@@ -441,6 +441,20 @@ def _get_resolve_leader_cluster(
         # AF_UNIX vs TCP, custom KEEPALIVE, etc.) — sharing would let
         # the first dialer's connection serve a request that should
         # have used the second's.
+        #
+        # The callable itself goes in the key (NOT ``id(dial_func)``):
+        # CPython's ``id()`` is the memory address of the object and is
+        # recycled as soon as the object is GC'd. Function / lambda /
+        # ``functools.partial`` / bound-method objects all hash by
+        # identity and compare equal only to themselves, so using the
+        # callable directly yields the same effective key while pinning
+        # the dial_func for the lifetime of the cache entry — eliminating
+        # the post-eviction id-recycle window where a freshly-allocated
+        # lambda with a different transport contract could land at the
+        # same memory address. Cost: the cache pins the dial_func until
+        # the entry evicts (bounded by ``_RESOLVE_LEADER_CACHE_MAX=32``).
+        # The ``id(loop)`` pairing above is the analogous bounded-
+        # acceptable hazard documented at lines 398-403.
         key: tuple[object, ...] = (
             loop_id,
             address,
@@ -448,7 +462,7 @@ def _get_resolve_leader_cluster(
             max_total_rows,
             max_continuation_frames,
             trust_server_heartbeat,
-            id(dial_func) if dial_func is not None else None,
+            dial_func,
         )
         cluster = _RESOLVE_LEADER_CACHE.get(key)
         if cluster is None:
