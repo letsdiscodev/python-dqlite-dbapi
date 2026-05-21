@@ -902,6 +902,32 @@ def _cleanup_loop_thread(
     address: str,
     creator_pid: int,
     close_timeout: float = _LOOP_THREAD_JOIN_FALLBACK_SECONDS,
+    inner_handle: list[Any] | None = None,
+    *,
+    # Bind PURE-MODULE globals (``warnings`` / ``logger`` /
+    # ``contextlib``) as keyword-only default args so the
+    # ``Py_FinalizeEx`` phase-3 module-globals-None-set teardown
+    # (documented in ``Lib/weakref.py::_exitfunc`` /
+    # ``Python/pylifecycle.c::Py_FinalizeEx``) cannot replace the
+    # names this body dereferences with ``None`` between function
+    # definition and finalizer invocation. Stdlib precedent:
+    # ``Lib/tempfile.py::_TemporaryFileWrapper.close`` captures
+    # ``closer`` the same way; ``multiprocessing.util.Finalize`` is
+    # the same pattern. Names captured at definition time — if the
+    # module re-binds any of them after definition (none do today;
+    # not even test fixtures should), the captured value is stale.
+    #
+    # ``get_current_pid`` is INTENTIONALLY NOT captured: tests
+    # (``test_cleanup_loop_thread_finalizer_fork_safe.py``) patch
+    # the module-level name via ``unittest.mock.patch`` to simulate
+    # a forked child, and a kwarg-default capture would freeze the
+    # production value past the patch. The runtime dereference
+    # below is wrapped in a ``try`` block that catches the
+    # shutdown-time ``TypeError`` ('NoneType' is not callable) so
+    # the shutdown-safety goal is still met for ``get_current_pid``.
+    _warnings: Any = warnings,
+    _logger: Any = logger,
+    _contextlib: Any = contextlib,
 ) -> None:
     """Stop the background event loop and join its thread.
 
@@ -910,6 +936,18 @@ def _cleanup_loop_thread(
     the Connection mutates when ``close()`` is called — we use that
     rather than a direct reference to self to decide whether to emit
     a ``ResourceWarning``.
+
+    ``inner_handle`` is a 0-or-1-element list mutated by
+    ``Connection._publish_inner_finalize_handle`` once
+    ``self._async_conn`` is built. When populated, the single element
+    is a ``weakref.ref`` to the inner ``DqliteConnection``. The box
+    indirection is the canonical idiom for late-publishing a value
+    into a ``weakref.finalize``'s captured args (the finalize captures
+    args by reference at registration time; mutating a captured list
+    is observed at call time). A ``weakref.ref`` avoids strong-pinning
+    the inner from the finalize's args (which would create a
+    reference cycle: outer → ``_async_conn`` → inner; finalize args →
+    inner directly; cycle through the outer's ``__dict__``).
 
     ``close_timeout`` mirrors the operator's ``Connection._close_timeout``
     so the finalizer's join budget matches the graceful ``close()`` and
@@ -934,12 +972,54 @@ def _cleanup_loop_thread(
     fork). Mirror the discipline of ``Connection._check_thread`` /
     ``DqliteConnection.close`` / ``Pool.close``: pid-mismatch →
     no-op.
+
+    Shutdown-safety: when CPython's ``Py_FinalizeEx`` reaches phase 3
+    (cycle-collect after ``atexit``), ``PyImport_Cleanup`` walks
+    ``sys.modules`` and sets every module's globals to ``None``. A
+    finalize that dereferences imported names by NAME would then see
+    ``None`` for ``get_current_pid`` / ``warnings`` / ``logger`` /
+    ``contextlib`` and raise ``TypeError`` / ``AttributeError`` —
+    emitting an unraisable-hook traceback that buries whatever
+    actually caused the shutdown. Names are captured as kwarg
+    defaults at definition time to dodge this teardown phase. If
+    any of the captured names ends up ``None`` at call time anyway
+    (exotic reload paths), the body short-circuits silently.
     """
-    if get_current_pid() != creator_pid:
+    # Read ``get_current_pid`` from module globals at call time so
+    # the test fixture's ``patch("dqlitedbapi.connection."
+    # "get_current_pid", ...)`` is observed. Wrap in a broad except
+    # so the ``Py_FinalizeEx`` phase-3 ``get_current_pid = None``
+    # teardown surfaces as a silent no-op (not an unraisable-hook
+    # ``TypeError: 'NoneType' object is not callable`` traceback).
+    try:
+        current_pid = get_current_pid()
+    except Exception:
+        # Module global ``get_current_pid`` may be ``None`` under
+        # interpreter shutdown; return silently rather than emit an
+        # unraisable-hook traceback that buries whatever caused the
+        # shutdown.
+        return
+    if current_pid != creator_pid:
         # Forked child. The captured loop/thread/closed_flag belong
         # to the parent process. Skip cleanup entirely — both the
         # warning emission and the loop/thread teardown.
         return
+    # Resolve the inner ``DqliteConnection`` if the late-publish box
+    # has been populated. Use a weakref to avoid strong-pinning. If
+    # the inner has already been GC'd (e.g. the outer's
+    # ``self._async_conn = None`` arm ran before the outer itself
+    # was reclaimed), ``inner_ref()`` returns ``None`` and we skip
+    # the disarm / drain reap entirely.
+    inner: Any = None
+    if inner_handle:
+        inner_ref = inner_handle[0]
+        if inner_ref is not None:
+            inner_obj = inner_ref() if callable(inner_ref) else None
+            # Skip the inner-targeted disarm if the inner is already
+            # closed (``_closed_flag[0] is True``): no false-positive
+            # warning to suppress and no pending drain to reap.
+            if inner_obj is not None:
+                inner = inner_obj
     # Wrap the entire body in try/finally so the loop/thread teardown
     # ALWAYS runs, regardless of whether the warning emission raises.
     # Under ``pytest -W error::ResourceWarning`` the
@@ -952,18 +1032,21 @@ def _cleanup_loop_thread(
     # open socket — ironically *amplifying* the leak the warning was
     # supposed to surface.
     try:
-        if closed_flag[0] is False:
-            # User never called close() → leak warning (matches stdlib
-            # sqlite3). The narrow ``RuntimeError`` suppression here is
-            # for the specific interpreter-shutdown race where the
-            # warnings module's own finalization is mid-teardown; any
-            # other exception (including ResourceWarning being
-            # converted to a raise under -W error) is allowed to
-            # propagate through the surrounding finally so the
-            # finalizer's reporter (sys.unraisablehook) still surfaces
-            # it while the cleanup completes.
-            with contextlib.suppress(RuntimeError):
-                warnings.warn(
+        # User never called close() → leak warning (matches stdlib
+        # sqlite3). The narrow ``RuntimeError`` suppression here is
+        # for the specific interpreter-shutdown race where the
+        # warnings module's own finalization is mid-teardown; any
+        # other exception (including ResourceWarning being
+        # converted to a raise under -W error) is allowed to
+        # propagate through the surrounding finally so the
+        # finalizer's reporter (sys.unraisablehook) still surfaces
+        # it while the cleanup completes. The
+        # ``_warnings is not None and _contextlib is not None``
+        # guard handles the rare interpreter-reload path where the
+        # kwarg-default capture itself sees ``None`` mid-shutdown.
+        if closed_flag[0] is False and _warnings is not None and _contextlib is not None:
+            with _contextlib.suppress(RuntimeError):
+                _warnings.warn(
                     f"Connection(address={address!r}) was garbage-collected "
                     f"without close(); cleaning up event-loop thread. Call "
                     f"Connection.close() explicitly to avoid this warning.",
@@ -971,6 +1054,73 @@ def _cleanup_loop_thread(
                     stacklevel=2,
                 )
     finally:
+        # Disarm the inner client's ``_connection_unclosed_warning``
+        # finalizer BEFORE the loop teardown, mirroring the discipline
+        # at ``force_close_transport`` lines 2148-2155. Without this,
+        # the same GC sweep that fired this finalize would also
+        # eventually fire the inner's finalizer, emitting a misleading
+        # second ResourceWarning ("DqliteConnection ... was garbage-
+        # collected without await close()") for the SAME socket — one
+        # leak surfacing as two stderr lines. Mirrors what the explicit
+        # close paths already do at close.py / force_close_transport.
+        if inner is not None and _contextlib is not None:
+            inner_closed_flag = getattr(inner, "_closed_flag", None)
+            if isinstance(inner_closed_flag, list) and inner_closed_flag:
+                inner_closed_flag[0] = True
+            inner_finalizer = getattr(inner, "_finalizer", None)
+            if inner_finalizer is not None:
+                with _contextlib.suppress(Exception):
+                    inner_finalizer.detach()
+                with _contextlib.suppress(Exception):
+                    inner._finalizer = None
+            # Reap any pending invalidation-drain task on the inner
+            # BEFORE ``loop.stop`` lands, mirroring the bounded-
+            # resnapshot block in ``force_close_transport`` at
+            # ``connection.py:2156-2219``. Without this reap, the
+            # task survives ``loop.close()`` (CPython
+            # ``BaseEventLoop.close`` does NOT cancel pending tasks),
+            # ``Task.__del__`` fires with state PENDING, and asyncio
+            # writes "Task was destroyed but it is pending" to stderr
+            # via its default exception handler — bypassing
+            # ``warnings.catch_warnings`` and surfacing as a third
+            # stderr line per GC-leaked sync ``Connection``. FIFO of
+            # the ``call_soon_threadsafe`` ready queue ensures the
+            # cancel callbacks run before the queued ``loop.stop``.
+            if not loop.is_closed():
+                resnapshot_cap = 3
+                for _attempt in range(resnapshot_cap):
+                    pending = getattr(inner, "_pending_drain", None)
+                    with _contextlib.suppress(Exception):
+                        inner._pending_drain = None
+                    if pending is None or pending.done():
+                        break
+
+                    def _cancel_and_observe(target: asyncio.Task[Any]) -> None:
+                        target.cancel()
+
+                        def _observe(t: asyncio.Task[Any]) -> None:
+                            if not t.cancelled():
+                                with _contextlib.suppress(BaseException):
+                                    t.exception()
+
+                        target.add_done_callback(_observe)
+
+                    with _contextlib.suppress(RuntimeError):
+                        loop.call_soon_threadsafe(_cancel_and_observe, pending)
+                else:
+                    # Cap exhausted: final defensive null-out. Mirrors
+                    # the ``force_close_transport`` cap-exhausted
+                    # branch. Operator-visible warning only on the
+                    # pathological feedback-loop case.
+                    with _contextlib.suppress(Exception):
+                        inner._pending_drain = None
+                    if _logger is not None:
+                        _logger.warning(
+                            "Connection._cleanup_loop_thread: inner._pending_drain still "
+                            "set after %d re-snapshot iterations; cancelling residual task "
+                            "to avoid 'Task was destroyed but it is pending' at GC.",
+                            resnapshot_cap,
+                        )
         # Narrow suppression to the specific exceptions loop/thread
         # teardown can legitimately raise during finalization. Wider
         # ``except Exception: pass`` would hide programmer bugs like a
@@ -984,24 +1134,27 @@ def _cleanup_loop_thread(
             # operators triaging finalize-time anomalies; the
             # ``pragma: no cover`` stays because the path is genuinely
             # racy and not reproducible in tests.
-            logger.debug(
-                "Connection._cleanup_loop_thread: loop.call_soon_threadsafe "
-                "raised RuntimeError (loop likely closed mid-call)",
-                exc_info=True,
-            )
-        with contextlib.suppress(RuntimeError):
-            thread.join(timeout=max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS))
+            if _logger is not None:
+                _logger.debug(
+                    "Connection._cleanup_loop_thread: loop.call_soon_threadsafe "
+                    "raised RuntimeError (loop likely closed mid-call)",
+                    exc_info=True,
+                )
+        if _contextlib is not None:
+            with _contextlib.suppress(RuntimeError):
+                thread.join(timeout=max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS))
         try:
             if not loop.is_closed():
                 loop.close()
         except RuntimeError:  # pragma: no cover - race: loop restarted mid-finalize
             # Raised if the loop was somehow restarted mid-finalization.
             # Same operator-visibility rationale as above.
-            logger.debug(
-                "Connection._cleanup_loop_thread: loop.close() raised "
-                "RuntimeError (loop likely restarted mid-finalize)",
-                exc_info=True,
-            )
+            if _logger is not None:
+                _logger.debug(
+                    "Connection._cleanup_loop_thread: loop.close() raised "
+                    "RuntimeError (loop likely restarted mid-finalize)",
+                    exc_info=True,
+                )
 
 
 class Connection:
@@ -1211,6 +1364,17 @@ class Connection:
         # close() flips to True. Using a list avoids the finalizer
         # closing over ``self`` and preventing GC.
         self._closed_flag: list[bool] = [False]
+        # Box for late-publishing the inner ``DqliteConnection``
+        # handle into ``_cleanup_loop_thread``'s captured args. The
+        # finalize captures THIS list by reference at registration
+        # time (inside ``_ensure_loop``, before the inner is built);
+        # ``_publish_inner_finalize_handle`` mutates the slot to a
+        # ``weakref.ref(inner)`` once the inner is built so the
+        # finalize body can reach it without strong-pinning. Cleared
+        # back to ``[]`` when the inner is nulled on every explicit
+        # close path so the finalize does not observe a dead-weakref-
+        # to-already-disarmed-inner state.
+        self._inner_finalize_handle: list[Any] = []
         self._finalizer: weakref.finalize[Any, Any] | None = None
         # Track outstanding cursors weakly so Connection.close() can
         # scrub their state (stdlib sqlite3 cascades; buffered fetches
@@ -1284,6 +1448,14 @@ class Connection:
                 # Connection alive. Capture primitives only. The
                 # closed-flag list is mutated by close() so the
                 # finalizer knows whether to emit a leak warning.
+                # ``_inner_finalize_handle`` is a list captured by
+                # reference; ``_publish_inner_finalize_handle`` will
+                # populate it with ``weakref.ref(inner)`` once
+                # ``self._async_conn`` is built so the finalize can
+                # disarm the inner's ResourceWarning finalizer and
+                # reap any pending ``_invalidate`` drain task BEFORE
+                # ``loop.stop`` lands. See ``_cleanup_loop_thread``'s
+                # docstring for the boxed-handle rationale.
                 self._finalizer = weakref.finalize(
                     self,
                     _cleanup_loop_thread,
@@ -1293,6 +1465,7 @@ class Connection:
                     self._address,
                     self._creator_pid,
                     self._close_timeout,
+                    self._inner_finalize_handle,
                 )
         return self._loop
 
@@ -1777,6 +1950,19 @@ class Connection:
                 attempt_timeout=getattr(self, "_attempt_timeout", None),
                 dial_func=getattr(self, "_dial_func", None),
             )
+            # Late-publish the inner handle into the
+            # ``_cleanup_loop_thread`` finalize's captured args. The
+            # finalize was registered at ``_ensure_loop`` time before
+            # the inner existed; mutating the captured list slot is
+            # the canonical late-publish idiom for ``weakref.finalize``
+            # (the finalize captures args by reference at registration
+            # time). ``weakref.ref(inner)`` avoids strong-pinning the
+            # inner from the finalize args — without the weakref, the
+            # finalize args would form an outer→inner→outer reference
+            # cycle through the outer's ``__dict__`` that prevented
+            # the outer from being GC'd.
+            with contextlib.suppress(Exception):
+                self._inner_finalize_handle[:] = [weakref.ref(self._async_conn)]
 
         return self._async_conn
 

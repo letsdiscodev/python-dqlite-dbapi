@@ -168,11 +168,18 @@ def test_finalizer_captures_close_timeout(close_timeout: float) -> None:
     finalizer = conn._finalizer
     assert finalizer is not None
     # peek() returns ``(obj, func, args_tuple, kwargs_dict)``. The
-    # close_timeout is the final positional argument in ``args_tuple``.
+    # positional args in the finalize registration are
+    # ``(loop, thread, closed_flag, address, creator_pid,
+    # close_timeout, inner_finalize_handle)`` — close_timeout is
+    # at index 5 from the start; the inner_finalize_handle box
+    # follows it.
     peeked = finalizer.peek()
     assert peeked is not None
     _obj, _func, args, _kwargs = peeked
-    captured_close_timeout = args[-1]
+    # Look up by argspec position rather than args[-1] so a future
+    # addition of another positional after the inner_finalize_handle
+    # does not silently silence this pin.
+    captured_close_timeout = args[5]
     assert captured_close_timeout == close_timeout, (
         f"finalizer captured close_timeout={captured_close_timeout!r}; expected {close_timeout!r}"
     )
