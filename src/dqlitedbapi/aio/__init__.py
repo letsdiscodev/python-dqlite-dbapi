@@ -13,7 +13,11 @@ from typing import Literal as _Literal
 # ``dbapi.NotSupportedError`` rather than ``AttributeError`` —
 # matching the discipline already applied to ``register_adapter``
 # (re-exported from the sync surface for the same reason).
-from dqliteclient import DialFunc
+from dqliteclient import (
+    DEFAULT_CLOSE_TIMEOUT_SECONDS,
+    DEFAULT_TIMEOUT_SECONDS,
+    DialFunc,
+)
 from dqlitedbapi import (  # module-level re-export
     LEGACY_TRANSACTION_CONTROL,
     PARSE_COLNAMES,
@@ -167,11 +171,11 @@ def connect(
     address: str,
     *,
     database: str = "default",
-    timeout: float = 10.0,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
     max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
-    close_timeout: float = 0.5,
+    close_timeout: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
@@ -273,11 +277,11 @@ async def aconnect(
     address: str,
     *,
     database: str = "default",
-    timeout: float = 10.0,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
     max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
-    close_timeout: float = 0.5,
+    close_timeout: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,

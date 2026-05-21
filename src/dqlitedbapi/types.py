@@ -22,6 +22,7 @@ __all__ = [
     "Date",
     "DateFromTicks",
     "DescriptionTuple",
+    "PrepareProtocol",
     "RowFactory",
     "Time",
     "TimeFromTicks",

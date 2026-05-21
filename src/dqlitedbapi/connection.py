@@ -15,6 +15,8 @@ from typing import Any, Final, NoReturn, Self
 import dqliteclient.exceptions as _client_exc
 from dqliteclient import CLOSE_TIMEOUT_FLOOR as _client_close_timeout_floor
 from dqliteclient import (
+    DEFAULT_CLOSE_TIMEOUT_SECONDS,
+    DEFAULT_TIMEOUT_SECONDS,
     ClusterClient,
     DialFunc,
     DqliteConnection,
@@ -1043,11 +1045,11 @@ class Connection:
         address: str,
         *,
         database: str = "default",
-        timeout: float = 10.0,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
         max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
         trust_server_heartbeat: bool = False,
-        close_timeout: float = 0.5,
+        close_timeout: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
         dial_timeout: float | None = None,
         attempt_timeout: float | None = None,
         dial_func: DialFunc | None = None,

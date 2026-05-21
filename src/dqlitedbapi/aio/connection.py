@@ -10,7 +10,13 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from types import TracebackType
 from typing import Any, NoReturn, Self
 
-from dqliteclient import DialFunc, DqliteConnection, get_current_pid
+from dqliteclient import (
+    DEFAULT_CLOSE_TIMEOUT_SECONDS,
+    DEFAULT_TIMEOUT_SECONDS,
+    DialFunc,
+    DqliteConnection,
+    get_current_pid,
+)
 from dqliteclient import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
@@ -196,11 +202,11 @@ class AsyncConnection:
         address: str,
         *,
         database: str = "default",
-        timeout: float = 10.0,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
         max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
         trust_server_heartbeat: bool = False,
-        close_timeout: float = 0.5,
+        close_timeout: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
         dial_timeout: float | None = None,
         attempt_timeout: float | None = None,
         dial_func: DialFunc | None = None,
