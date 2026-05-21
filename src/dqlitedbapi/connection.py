@@ -180,10 +180,10 @@ def _validate_timeout(timeout: float) -> None:
 
 # Upper bound for ``max_continuation_frames`` enforced at the dbapi
 # boundary. Mirror of the SA URL/connect_args cap (which uses the same
-# 10× factor over the wire default per ``done/ISSUE-417``) so the same
-# input that SA rejects above-cap is also rejected by direct dbapi
-# callers — defence-in-depth against operator typos that would
-# otherwise propagate to the wire layer and grant an attacker /
+# 10x factor over the wire-default ``_DEFAULT_MAX_CONTINUATION_FRAMES``)
+# so the same input that SA rejects above-cap is also rejected by
+# direct dbapi callers — defence-in-depth against operator typos that
+# would otherwise propagate to the wire layer and grant an attacker /
 # misconfiguration ten-million-frame continuation budgets. Tightly
 # paired with the SA-side ``_CONNECT_KWARG_ALLOWED`` cap that uses
 # the same factor.

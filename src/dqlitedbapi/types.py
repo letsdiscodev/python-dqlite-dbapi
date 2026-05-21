@@ -563,9 +563,10 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
     server: a ``COALESCE(date_col, '')`` projection where the NULL
     branch is taken, or a ``CASE WHEN x THEN '' ELSE date_col END``
     expression on a column the server tags as ISO8601, both decode to
-    ``None`` here. The wire-layer NULL-vs-empty-string distinction is
-    preserved on TEXT cells (see ``ISSUE-1029``) but flattened to
-    ``None`` for ISO8601 cells. Callers needing to distinguish "the
+    ``None`` here. The wire-layer TEXT decoder distinguishes NULL from
+    the empty string by tagging the cell type, but ISO8601-tagged cells
+    go through this decoder and lose that distinction (flattened to
+    ``None``). Callers needing to distinguish "the
     column was NULL" from "the projection produced an empty string"
     must avoid ISO8601-tagged columns for that pattern (e.g. use a
     ``CAST(... AS TEXT)`` projection so the cell carries ``TEXT`` on
