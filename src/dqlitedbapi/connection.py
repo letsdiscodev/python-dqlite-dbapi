@@ -3048,13 +3048,17 @@ class Connection:
             cur._lastrowid = None
             cur._row_index = 0
             del cur.messages[:]
-            # ``contextlib.suppress(TypeError)`` for the rare path
-            # where the connection object does not support weakref
-            # (test fakes typed with plain ``object()``). Production
-            # ``Connection`` declares ``__weakref__`` so the swap
-            # succeeds; the suppress mirrors the async sibling.
-            with contextlib.suppress(TypeError):
-                cur._connection = weakref.proxy(cur._connection)
+            # Do NOT swap ``cur._connection`` to a ``weakref.proxy``
+            # here. The cursor is already scrubbed (``_closed=True``,
+            # fields cleared) and discarded from ``_cursors`` below,
+            # so the "no strong-pin of the closed Connection" rationale
+            # does not apply: a closed cursor's strong ref to its
+            # Connection is metadata-only (no operational state is
+            # reached through it). Preserving the strong ref keeps
+            # PEP 249 §6.5.1 identity (``cursor.connection is conn``)
+            # AND hashability (``weakref.proxy`` instances are not
+            # hashable) on the race-leaked path, matching what the
+            # non-race path already does for every other closed cursor.
             self._cursors.discard(cur)
         return cur
 

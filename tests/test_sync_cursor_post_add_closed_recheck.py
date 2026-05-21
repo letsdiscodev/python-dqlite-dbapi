@@ -85,12 +85,16 @@ def test_cursor_post_add_recheck_scrubs_late_added_cursor() -> None:
         f"_cursors postcondition (empty after close) is violated, "
         f"len={len(conn._cursors)}"
     )
-    # (c) ``_connection`` is a weakref proxy (no strong ref pinning
-    # the dead Connection's loop/thread state alive).
-    assert isinstance(cur._connection, weakref.ProxyTypes), (
-        "post-add recheck did not swap ``cur._connection`` to a "
-        "weakref proxy; the leaked cursor strong-pins the dead "
-        "Connection's loop / thread / async wrapper."
+    # (c) ``_connection`` is NOT swapped to a weakref proxy. PEP 249
+    # §6.5.1 requires ``cursor.connection`` to return the originating
+    # Connection (an identity contract); proxy swap silently violates
+    # it AND breaks hashability (``weakref.proxy`` is unhashable).
+    # The cursor is already scrubbed and discarded, so the proxy
+    # adds no real safety — strong-ref to a closed Connection is
+    # metadata-only.
+    assert cur._connection is conn, (
+        "post-add recheck must preserve ``cursor.connection is conn`` "
+        "identity per PEP 249 §6.5.1; observed swap or replacement."
     )
     # (d) cascade-scrub fields are zeroed.
     assert cur._rows == []
@@ -98,6 +102,10 @@ def test_cursor_post_add_recheck_scrubs_late_added_cursor() -> None:
     assert cur._rowcount == -1
     assert cur._lastrowid is None
     assert cur._row_index == 0
+    # Hashability invariant — ``weakref.proxy`` instances raise
+    # ``TypeError: unhashable type``; the unswapped Connection
+    # hashes cleanly.
+    assert hash(cur._connection) is not None
 
 
 def test_cursor_post_add_recheck_noop_in_normal_path() -> None:
@@ -113,21 +121,31 @@ def test_cursor_post_add_recheck_noop_in_normal_path() -> None:
 
 
 def test_cursor_post_add_recheck_mirrors_async_sibling_shape() -> None:
-    """Source-level pin: the sync ``cursor()`` body contains the same
-    discipline as the async sibling — the re-check arm references
-    ``_closed``, the scrubbed fields, and the ``weakref.proxy`` swap
-    that the async sibling uses. Anchors the sibling-parity claim so
-    a future divergence surfaces at review time, not in production."""
+    """Source-level pin: the sync ``cursor()`` body contains the
+    re-check arm (scrub + discard). The ``weakref.proxy`` swap that
+    the async sibling applies in its parallel arm is deliberately
+    omitted on the sync side to preserve PEP 249 §6.5.1 identity
+    (``cursor.connection is conn``) and hashability — the cursor is
+    already scrubbed and discarded so the proxy adds no real safety."""
     import inspect
 
     src = inspect.getsource(Connection.cursor)
     # The defining markers of the post-add recheck arm.
     assert "if self._closed:" in src
     assert "self._cursors.discard(cur)" in src
-    assert "weakref.proxy(cur._connection)" in src
     # The scrub fields the async sibling sets must all be present.
     for marker in ("cur._closed = True", "cur._rows = []", "cur._description = None"):
         assert marker in src, (
             f"sync cursor() post-add recheck no longer sets {marker!r}; "
             f"sibling-parity with aio/connection.py drifted."
         )
+    # The proxy swap must NOT be present on this arm — it would
+    # silently violate PEP 249 §6.5.1 (cursor.connection identity).
+    assert (
+        "weakref.proxy(cur._connection)"
+        not in src.split("self._cursors.discard(cur)")[0].split("if self._closed:")[-1]
+    ), (
+        "sync cursor() post-add recheck must NOT swap cur._connection "
+        "to a weakref.proxy; the scrub + discard already protects the "
+        "cursor and the swap breaks PEP 249 §6.5.1 identity."
+    )
