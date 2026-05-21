@@ -93,6 +93,7 @@ async def test_async_fetchall_with_factory_typeerror_end_to_end() -> None:
     minimal seeded cursor that bypasses the affinity / connection
     guards. We patch ``_check_closed`` and the ``_connection``
     loop-binding probe so the body reaches the row_factory call."""
+
     # Use a minimal stub connection so the affinity guard does not
     # raise. The connection's ``_check_loop_binding`` is a no-op.
     class _StubConn:

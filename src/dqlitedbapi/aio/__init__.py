@@ -13,6 +13,7 @@ from typing import Literal as _Literal
 # ``dbapi.NotSupportedError`` rather than ``AttributeError`` —
 # matching the discipline already applied to ``register_adapter``
 # (re-exported from the sync surface for the same reason).
+from dqliteclient import DialFunc
 from dqlitedbapi import (  # module-level re-export
     LEGACY_TRANSACTION_CONTROL,
     PARSE_COLNAMES,
@@ -118,6 +119,8 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     # Classes
     "AsyncConnection",
     "AsyncCursor",
+    # go-dqlite-parity types
+    "DialFunc",
     # Exceptions
     "Warning",
     "Error",
@@ -171,6 +174,7 @@ def connect(
     close_timeout: float = 0.5,
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
+    dial_func: DialFunc | None = None,
     **unknown_kwargs: object,
 ) -> AsyncConnection:
     """Create a dqlite connection (connects lazily on first use).
@@ -208,6 +212,11 @@ def connect(
             ``Config.AttemptTimeout``. ``None`` (default) collapses
             onto ``timeout``. Forwarded to the underlying
             AsyncConnection.
+        dial_func: Caller-supplied async dialer replacing the default
+            TCP path — mirrors go-dqlite's ``WithDialFunc``. ``None``
+            (default) uses the standard
+            ``asyncio.open_connection`` path. See
+            :data:`dqliteclient.DialFunc`.
 
     Returns:
         An AsyncConnection object
@@ -246,6 +255,7 @@ def connect(
         close_timeout=close_timeout,
         dial_timeout=dial_timeout,
         attempt_timeout=attempt_timeout,
+        dial_func=dial_func,
     )
 
 
@@ -260,6 +270,7 @@ async def aconnect(
     close_timeout: float = 0.5,
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
+    dial_func: DialFunc | None = None,
     **unknown_kwargs: object,
 ) -> AsyncConnection:
     """Connect to a dqlite database asynchronously.
@@ -295,6 +306,11 @@ async def aconnect(
             ``Config.AttemptTimeout``. ``None`` (default) collapses
             onto ``timeout``. Forwarded to the underlying
             AsyncConnection.
+        dial_func: Caller-supplied async dialer replacing the default
+            TCP path — mirrors go-dqlite's ``WithDialFunc``. ``None``
+            (default) uses the standard
+            ``asyncio.open_connection`` path. See
+            :data:`dqliteclient.DialFunc`.
 
     Returns:
         A connected AsyncConnection object
@@ -331,6 +347,7 @@ async def aconnect(
         close_timeout=close_timeout,
         dial_timeout=dial_timeout,
         attempt_timeout=attempt_timeout,
+        dial_func=dial_func,
     )
     try:
         await conn.connect()

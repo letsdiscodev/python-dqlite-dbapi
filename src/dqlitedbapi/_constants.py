@@ -50,7 +50,39 @@ version >= the value here.
 
 from typing import Final
 
-__all__ = ["SQLITE_VERSION", "SQLITE_VERSION_INFO"]
+__all__ = [
+    "CLUSTER_POLICY_REJECTION_PREFIX",
+    "SQLITE_VERSION",
+    "SQLITE_VERSION_INFO",
+    "cluster_policy_rejection_message",
+]
 
 SQLITE_VERSION_INFO: Final[tuple[int, int, int]] = (3, 35, 0)
 SQLITE_VERSION: Final[str] = ".".join(str(v) for v in SQLITE_VERSION_INFO)
+
+
+# Canonical prefix for ``ClusterPolicyError`` rewraps surfaced as
+# ``InterfaceError`` at the dbapi layer. Three raise sites (sync
+# connect-time leader-discovery, sync connect-time post-construct,
+# cursor-path rewrap) previously carried this prefix as a copy-paste
+# literal with two phrasings (one variant interposed " during leader
+# discovery" before the semicolon, breaking the documented "callers
+# can branch on the message prefix without importing client-layer
+# types" contract for that producer). Promoting to a single constant
+# + helper harmonises the three producers under one prefix that
+# ``str(exc).startswith(CLUSTER_POLICY_REJECTION_PREFIX)`` matches.
+# Mirror of ``FAILED_TO_CONNECT_PREFIX`` and ``WIRE_DECODE_FAILED_PREFIX``.
+CLUSTER_POLICY_REJECTION_PREFIX: Final[str] = "Cluster policy rejection"
+
+
+def cluster_policy_rejection_message(stage: str | None, inner: str) -> str:
+    """Build the documented ``ClusterPolicyError`` rewrap message.
+
+    ``stage`` is an optional sub-phase suffix appended before the
+    semicolon (e.g. ``"during leader discovery"``). The base prefix
+    and terminator are pinned so third-party callers' ``str(
+    exc).startswith(CLUSTER_POLICY_REJECTION_PREFIX)`` recipes match
+    every producer site.
+    """
+    suffix = f" {stage}" if stage else ""
+    return f"{CLUSTER_POLICY_REJECTION_PREFIX}{suffix}; {inner}"

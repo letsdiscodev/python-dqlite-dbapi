@@ -49,13 +49,19 @@ from typing import Final as _Final
 from typing import Literal as _Literal
 from typing import NoReturn as _NoReturn
 
+from dqliteclient import DialFunc
+from dqlitedbapi._constants import CLUSTER_POLICY_REJECTION_PREFIX
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
 )
 from dqlitedbapi._constants import (
     SQLITE_VERSION_INFO as _SQLITE_VERSION_INFO,
 )
-from dqlitedbapi.connection import FAILED_TO_CONNECT_PREFIX, Connection
+from dqlitedbapi.connection import (
+    FAILED_TO_CONNECT_PREFIX,
+    MAX_CONTINUATION_FRAMES_UPPER_BOUND,
+    Connection,
+)
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import (
     DatabaseError,
@@ -155,10 +161,15 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "complete_statement",
     "enable_callback_tracebacks",
     # Diagnostic prefix surface
+    "CLUSTER_POLICY_REJECTION_PREFIX",
     "FAILED_TO_CONNECT_PREFIX",
+    # Validator caps
+    "MAX_CONTINUATION_FRAMES_UPPER_BOUND",
     # Classes
     "Connection",
     "Cursor",
+    # go-dqlite-parity types
+    "DialFunc",
     # Exceptions
     "Warning",
     "Error",
@@ -200,6 +211,7 @@ def connect(
     close_timeout: float = 0.5,
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
+    dial_func: DialFunc | None = None,
     **unknown_kwargs: object,
 ) -> Connection:
     """Connect to a dqlite database.
@@ -234,6 +246,13 @@ def connect(
             ``Config.AttemptTimeout``. ``None`` (default) collapses
             onto ``timeout``. Forwarded to the underlying
             :class:`Connection`.
+        dial_func: Caller-supplied async dialer replacing the default
+            TCP path — mirrors go-dqlite's ``WithDialFunc``. Used for
+            TLS, unix-socket transport, custom KEEPALIVE, etc.
+            ``None`` (default) uses the standard
+            ``asyncio.open_connection`` path. Forwarded to the
+            underlying :class:`Connection`. See
+            :data:`dqliteclient.DialFunc` for the protocol.
 
     Returns:
         A Connection object
@@ -289,6 +308,7 @@ def connect(
         close_timeout=close_timeout,
         dial_timeout=dial_timeout,
         attempt_timeout=attempt_timeout,
+        dial_func=dial_func,
     )
 
 

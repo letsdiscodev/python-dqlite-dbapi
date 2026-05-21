@@ -88,8 +88,7 @@ async def test_commit_completes_within_multi_phase_window() -> None:
     async def slow_execute(*_a: object, **_kw: object) -> object:
         await asyncio.sleep(delay)
 
-        class _Sentinel:
-            ...
+        class _Sentinel: ...
 
         return _Sentinel()
 

@@ -129,8 +129,7 @@ class AsyncCursor:
             ) from e
         except AttributeError as e:
             raise InterfaceError(
-                f"Cursor's parent AsyncConnection unavailable: "
-                f"{type(e).__name__}: {e}"
+                f"Cursor's parent AsyncConnection unavailable: {type(e).__name__}: {e}"
             ) from e
         return self._connection
 

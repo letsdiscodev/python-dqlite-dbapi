@@ -16,6 +16,7 @@ import dqliteclient.exceptions as _client_exc
 from dqliteclient import CLOSE_TIMEOUT_FLOOR as _client_close_timeout_floor
 from dqliteclient import (
     ClusterClient,
+    DialFunc,
     DqliteConnection,
     MemoryNodeStore,
     get_current_pid,
@@ -174,7 +175,24 @@ def _validate_timeout(timeout: float) -> None:
         raise ProgrammingError(str(e)) from e
 
 
-def _wrap_positive_int(value: int | None, name: str) -> int | None:
+# Upper bound for ``max_continuation_frames`` enforced at the dbapi
+# boundary. Mirror of the SA URL/connect_args cap (which uses the same
+# 10× factor over the wire default per ``done/ISSUE-417``) so the same
+# input that SA rejects above-cap is also rejected by direct dbapi
+# callers — defence-in-depth against operator typos that would
+# otherwise propagate to the wire layer and grant an attacker /
+# misconfiguration ten-million-frame continuation budgets. Tightly
+# paired with the SA-side ``_CONNECT_KWARG_ALLOWED`` cap that uses
+# the same factor.
+MAX_CONTINUATION_FRAMES_UPPER_BOUND: Final[int] = _DEFAULT_MAX_CONTINUATION_FRAMES * 10
+
+
+def _wrap_positive_int(
+    value: int | None,
+    name: str,
+    *,
+    upper: int | None = None,
+) -> int | None:
     """Wrap the client-layer ``validate_positive_int_or_none``'s
     ``TypeError`` / ``ValueError`` into PEP 249 ``ProgrammingError``.
 
@@ -185,11 +203,26 @@ def _wrap_positive_int(value: int | None, name: str) -> int | None:
     that translates to PEP 249 shapes. Sibling pattern to the
     ``_client_parse_address`` ``ValueError → InterfaceError`` wrap and
     to ``_validate_timeout``'s direct ``ProgrammingError``.
+
+    ``upper`` (if given) caps the accepted value. Mirrors the SA URL/
+    connect_args validator's upper bound so direct dbapi callers get
+    the same defence-in-depth that SA already provides for the
+    ``?max_continuation_frames=N`` URL form and the
+    ``connect_args={"max_continuation_frames": N}`` form.
     """
     try:
-        return validate_positive_int_or_none(value, name)
+        validated = validate_positive_int_or_none(value, name)
     except (TypeError, ValueError) as e:
         raise ProgrammingError(str(e)) from e
+    if validated is not None and upper is not None and validated > upper:
+        raise ProgrammingError(
+            f"{name}={validated} exceeds the upper bound of {upper}; "
+            f"a value above this cap is almost certainly a typo and "
+            f"would grant a hostile or misconfigured server an "
+            f"unreasonable Python-side decode budget. Reduce the value "
+            f"or omit the kwarg to inherit the wire-layer default."
+        )
+    return validated
 
 
 # Re-export the client-layer public constant under the established
@@ -209,6 +242,14 @@ _CLOSE_TIMEOUT_FLOOR: Final[float] = _client_close_timeout_floor
 # full prefix verbatim. Single-source-of-truth so a future wording
 # change is a one-place edit and the SA matcher updates in lockstep.
 FAILED_TO_CONNECT_PREFIX: Final[str] = "Failed to connect: "
+
+
+# Re-export the cluster-policy-rejection prefix + helper from the
+# shared ``_constants`` module so the cursor-side rewrap site can
+# share the SSOT without a circular import.
+from dqlitedbapi._constants import (  # noqa: E402
+    cluster_policy_rejection_message,
+)
 
 
 def _validate_close_timeout(close_timeout: float) -> None:
@@ -470,6 +511,7 @@ async def _build_and_connect(
     close_timeout: float,
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
+    dial_func: DialFunc | None = None,
 ) -> DqliteConnection:
     """Build a DqliteConnection with the given governors and connect it.
 
@@ -505,7 +547,7 @@ async def _build_and_connect(
         # the post-construct ClusterPolicyError arm below.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(
-            f"Cluster policy rejection during leader discovery; {e}",
+            cluster_policy_rejection_message("during leader discovery", str(e)),
             code=None,
             raw_message=raw_msg,
         ) from e
@@ -570,6 +612,7 @@ async def _build_and_connect(
         close_timeout=close_timeout,
         dial_timeout=dial_timeout,
         attempt_timeout=attempt_timeout,
+        dial_func=dial_func,
     )
     try:
         await conn.connect()
@@ -623,7 +666,7 @@ async def _build_and_connect(
         # ``raw_message`` as the verbatim server text.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(
-            f"Cluster policy rejection; {e}",
+            cluster_policy_rejection_message(None, str(e)),
             code=None,
             raw_message=raw_msg,
         ) from e
@@ -960,6 +1003,7 @@ class Connection:
         close_timeout: float = 0.5,
         dial_timeout: float | None = None,
         attempt_timeout: float | None = None,
+        dial_func: DialFunc | None = None,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -1006,6 +1050,14 @@ class Connection:
                 handshaking peers (TLS-terminating proxies with stuck
                 welcomes, partial-restart nodes). Forwarded to the
                 underlying :class:`DqliteConnection`.
+            dial_func: Caller-supplied async dialer replacing the
+                default TCP path — mirrors go-dqlite's
+                ``WithDialFunc``. Use cases: TLS, unix-socket
+                transport, custom SO_KEEPALIVE policy, out-of-band
+                health probes. ``None`` (default) uses the standard
+                ``asyncio.open_connection`` path. Forwarded to the
+                underlying :class:`DqliteConnection`. See
+                :data:`dqliteclient.DialFunc` for the protocol.
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
@@ -1049,12 +1101,15 @@ class Connection:
         self._timeout = timeout
         self._max_total_rows = _wrap_positive_int(max_total_rows, "max_total_rows")
         self._max_continuation_frames = _wrap_positive_int(
-            max_continuation_frames, "max_continuation_frames"
+            max_continuation_frames,
+            "max_continuation_frames",
+            upper=MAX_CONTINUATION_FRAMES_UPPER_BOUND,
         )
         self._trust_server_heartbeat = trust_server_heartbeat
         self._close_timeout = close_timeout
         self._dial_timeout = dial_timeout
         self._attempt_timeout = attempt_timeout
+        self._dial_func = dial_func
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # stdlib ``sqlite3.Connection.row_factory`` parity. None means
@@ -1623,6 +1678,7 @@ class Connection:
                 close_timeout=self._close_timeout,
                 dial_timeout=getattr(self, "_dial_timeout", None),
                 attempt_timeout=getattr(self, "_attempt_timeout", None),
+                dial_func=getattr(self, "_dial_func", None),
             )
 
         return self._async_conn

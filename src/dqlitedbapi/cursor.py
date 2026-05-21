@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, Self
 
 import dqliteclient.exceptions as _client_exc
+from dqlitedbapi._constants import cluster_policy_rejection_message
 from dqlitedbapi.exceptions import (
     DatabaseError,
     DataError,
@@ -269,7 +270,7 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # un-modified server-text accessor.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(
-            f"Cluster policy rejection; {e}",
+            cluster_policy_rejection_message(None, str(e)),
             code=None,
             raw_message=raw_msg,
         ) from e
@@ -1254,9 +1255,7 @@ class Cursor:
             # live Connection.
             _ = self._connection.address
         except ReferenceError as e:
-            raise InterfaceError(
-                "Cursor's parent Connection has been garbage-collected"
-            ) from e
+            raise InterfaceError("Cursor's parent Connection has been garbage-collected") from e
         except AttributeError as e:
             raise InterfaceError(
                 f"Cursor's parent Connection unavailable: {type(e).__name__}: {e}"

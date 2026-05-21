@@ -10,12 +10,13 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from types import TracebackType
 from typing import Any, NoReturn, Self
 
-from dqliteclient import DqliteConnection, get_current_pid
+from dqliteclient import DialFunc, DqliteConnection, get_current_pid
 from dqliteclient import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import (
     _SYNC_PHASES_MULTIPLIER,
+    MAX_CONTINUATION_FRAMES_UPPER_BOUND,
     _build_and_connect,
     _is_no_transaction_error,
     _validate_close_timeout,
@@ -201,6 +202,7 @@ class AsyncConnection:
         close_timeout: float = 0.5,
         dial_timeout: float | None = None,
         attempt_timeout: float | None = None,
+        dial_func: DialFunc | None = None,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -232,6 +234,14 @@ class AsyncConnection:
                 ``Config.AttemptTimeout``. ``None`` (default) collapses
                 onto ``timeout``. Forwarded to the underlying
                 DqliteConnection.
+            dial_func: Caller-supplied async dialer replacing the
+                default TCP path — mirrors go-dqlite's
+                ``WithDialFunc``. Use cases: TLS, unix-socket,
+                custom KEEPALIVE, out-of-band health probes.
+                ``None`` (default) uses the standard
+                ``asyncio.open_connection`` path. Forwarded to the
+                underlying DqliteConnection. See
+                :data:`dqliteclient.DialFunc`.
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
@@ -265,12 +275,15 @@ class AsyncConnection:
         self._timeout = timeout
         self._max_total_rows = _wrap_positive_int(max_total_rows, "max_total_rows")
         self._max_continuation_frames = _wrap_positive_int(
-            max_continuation_frames, "max_continuation_frames"
+            max_continuation_frames,
+            "max_continuation_frames",
+            upper=MAX_CONTINUATION_FRAMES_UPPER_BOUND,
         )
         self._trust_server_heartbeat = trust_server_heartbeat
         self._close_timeout = close_timeout
         self._dial_timeout = dial_timeout
         self._attempt_timeout = attempt_timeout
+        self._dial_func = dial_func
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # Tracks the asyncio.Task that currently owns the
@@ -507,6 +520,7 @@ class AsyncConnection:
                 close_timeout=self._close_timeout,
                 dial_timeout=getattr(self, "_dial_timeout", None),
                 attempt_timeout=getattr(self, "_attempt_timeout", None),
+                dial_func=getattr(self, "_dial_func", None),
             )
             # A concurrent close() may have flipped _closed while we were
             # suspended in _build_and_connect. close() observes
