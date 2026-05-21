@@ -2833,6 +2833,43 @@ class Connection:
             )
         cur = Cursor(self)
         self._cursors.add(cur)
+        # Re-check ``_closed`` after add: ``cursor()`` is creator-
+        # thread-only but ``force_close_transport`` is documented as
+        # callable from finalize threads / signal handlers / SA-pool
+        # reclaim threads (no ``_check_thread`` / no ``_op_lock``
+        # acquire; see ``force_close_transport`` docstring). The
+        # cascade snapshot at ``list(self._cursors)`` can therefore
+        # run on a sibling thread between this method's prelude
+        # ``if self._closed:`` check and the WeakSet add — and the
+        # freshly-built cursor would skip the cascade scrub and be
+        # returned to the caller with ``_closed=False`` and a strong
+        # ref to the now-dead Connection. Mirrors the async sibling
+        # at ``aio/connection.py`` (the verbatim re-check + scrub +
+        # discard block). Defense-in-depth: if ``_closed`` flipped
+        # during the construction-and-add window, apply the same
+        # scrub the cascade would have applied AND discard the entry
+        # so ``self._cursors`` matches the ``_cascade_cursors``
+        # postcondition (empty after close). Without ``discard()``,
+        # post-close diagnostics that read ``len(conn._cursors)``
+        # see a stale count, and any future cascade field added
+        # (e.g. a buffer pointer) would silently leak on the late-
+        # added cursor.
+        if self._closed:
+            cur._closed = True
+            cur._rows = []
+            cur._description = None
+            cur._rowcount = -1
+            cur._lastrowid = None
+            cur._row_index = 0
+            del cur.messages[:]
+            # ``contextlib.suppress(TypeError)`` for the rare path
+            # where the connection object does not support weakref
+            # (test fakes typed with plain ``object()``). Production
+            # ``Connection`` declares ``__weakref__`` so the swap
+            # succeeds; the suppress mirrors the async sibling.
+            with contextlib.suppress(TypeError):
+                cur._connection = weakref.proxy(cur._connection)
+            self._cursors.discard(cur)
         return cur
 
     def execute(
