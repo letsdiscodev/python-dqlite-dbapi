@@ -343,6 +343,18 @@ class _DBAPIType:
 STRING: Final[_DBAPIType] = _DBAPIType(
     "TEXT", "VARCHAR", "CHAR", "CLOB", ValueType.TEXT, _name="STRING"
 )
+# NOTE: ``ValueType.ISO8601`` is intentionally NOT in ``STRING`` — even
+# though the wire cell IS text-encoded, the dbapi layer converts it to
+# ``datetime.datetime`` / ``datetime.time`` before the user sees the
+# result. Type-code introspection against ``STRING`` for an ISO8601
+# column returns False (the right answer post-conversion); against
+# ``DATETIME`` it returns True. The wire-level text-encoding is an
+# implementation detail invisible at the dbapi surface. The
+# declared-type-name vocabulary (``"TEXT"``, ``"VARCHAR"``, ``"CHAR"``,
+# ``"CLOB"``) is a separate matching surface for ``description[i][1]``
+# decltype strings — independent of the wire ``ValueType`` matching.
+# psycopg2/3 use the same partition (timestamp types match DATETIME,
+# not STRING).
 BINARY: Final[_DBAPIType] = _DBAPIType(
     "BLOB", "BINARY", "VARBINARY", ValueType.BLOB, _name="BINARY"
 )
@@ -542,6 +554,21 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
     sometimes emit empty text for NULL datetime cells, and the modern
     server still tolerates empty ISO8601 values. Returning None matches
     PEP 249 NULL semantics.
+
+    **Silent NULL collision.** An empty ISO8601 cell ``""`` decodes to
+    ``None`` — indistinguishable from a wire NULL. This is a deliberate
+    tolerance for pre-null-patch dqlite servers, but the same empty
+    decoding fires for legitimate empty-string projections on the modern
+    server: a ``COALESCE(date_col, '')`` projection where the NULL
+    branch is taken, or a ``CASE WHEN x THEN '' ELSE date_col END``
+    expression on a column the server tags as ISO8601, both decode to
+    ``None`` here. The wire-layer NULL-vs-empty-string distinction is
+    preserved on TEXT cells (see ``ISSUE-1029``) but flattened to
+    ``None`` for ISO8601 cells. Callers needing to distinguish "the
+    column was NULL" from "the projection produced an empty string"
+    must avoid ISO8601-tagged columns for that pattern (e.g. use a
+    ``CAST(... AS TEXT)`` projection so the cell carries ``TEXT`` on
+    the wire instead).
 
     Two-step fallback (in order):
 
@@ -794,6 +821,37 @@ def _convert_bind_param(value: Any) -> Any:
     precedence — it can override the built-in datetime / date / time
     handlers and is the canonical hook for binding Decimal, UUID,
     Path, Enum, etc.
+
+    **Adapter output chains into the built-in datetime arm.** A
+    user-registered adapter (or a ``__conform__`` hook) that returns
+    a ``datetime.datetime`` / ``datetime.date`` / ``datetime.time``
+    is further processed by the built-in ISO 8601 stringifier below.
+    Diverges from stdlib ``sqlite3.register_adapter``, which performs
+    a single pass and rejects non-primitive adapter output with
+    ``ProgrammingError("type 'X' is not supported")``. To match
+    stdlib semantics, ensure adapters return a wire primitive
+    (``int`` / ``float`` / ``str`` / ``bytes`` / ``None``) directly;
+    the dqlite leniency is a deliberate convenience (a
+    ``register_adapter(Money, money_to_aware_datetime)`` is the
+    natural shape on this driver) but cross-driver code is
+    silently driver-specific.
+
+    **datetime / date / time subclasses match via isinstance.** The
+    built-in arms below use ``isinstance(value, datetime.datetime |
+    datetime.date)`` (not exact-type), so a user-defined
+    ``class MyDate(datetime.date): pass`` binds silently via ISO 8601
+    encoding. Diverges from stdlib's exact-type adapter lookup, which
+    raises ``ProgrammingError`` for subclasses with no exact-type
+    adapter registered. To get stdlib-parity rejection, register a
+    no-op adapter for the subclass that raises ``DataError``
+    explicitly. To get a custom encoding for ``MyDate``, register an
+    adapter for the **exact** subclass via
+    ``register_adapter(MyDate, ...)`` — adapter lookup at the
+    registry is exact-type-keyed (matches stdlib), so a parent-class
+    registration does NOT cover subclasses. Two leniencies stack:
+    the isinstance built-in arm fires when no exact-type adapter
+    matches, then chains the result (the adapter-output chain above)
+    if the produced value is itself a datetime/date/time.
     """
     # User-registered adapter takes precedence. ``type(value)`` not
     # isinstance: stdlib's contract is exact-class match (subclasses

@@ -976,15 +976,22 @@ class Connection:
     cancellation-atomicity contract.
 
     Thread-affinity: every public method enforces the
-    ``threadsafety=1`` contract via ``_check_thread()`` — calls from a
-    foreign OS thread raise ``ProgrammingError``. Read-only property
-    reads (``closed``, ``address``, ``autocommit``,
-    ``isolation_level``, ``row_factory``) bypass the check and are
-    GIL-atomic at the CPython level — safe to read from any thread.
-    The ``in_transaction`` property is the exception: it retains
-    ``_check_thread()`` for shipped-API compatibility (callers depend
-    on the cross-thread raise; removing it would be a behavioural
-    change).
+    ``threadsafety=1`` contract — sync side via ``_check_thread()``,
+    async side via ``_check_loop_binding()`` / ``_check_loop_only()``
+    (the asymmetry exists because the sync class is thread-bound and
+    the async class is loop-bound). Calls from a foreign OS thread
+    (sync) or foreign event loop (async) raise ``ProgrammingError``.
+    Read-only property reads (``closed``, ``address``, ``autocommit``,
+    ``isolation_level``, ``row_factory``) bypass the affinity check
+    and are GIL-atomic at the CPython level — safe to read from any
+    thread / loop, but may still raise ``InterfaceError`` on a closed
+    connection (``autocommit`` / ``isolation_level`` also raise
+    ``InterfaceError`` if read from a forked child). The
+    ``in_transaction`` property is the exception: it retains the
+    affinity check (``_check_thread()`` on the sync class,
+    ``_check_loop_only()`` on the async class) for shipped-API
+    compatibility (callers depend on the cross-thread / cross-loop
+    raise; removing it would be a behavioural change).
     """
 
     # PEP 249 optional extension ("Attributes from Module Exceptions"):

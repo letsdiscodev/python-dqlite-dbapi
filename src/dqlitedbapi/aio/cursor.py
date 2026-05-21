@@ -148,6 +148,11 @@ class AsyncCursor:
         ``sqlite3.Cursor.description``). A tuple is structurally
         immutable so no defensive copy is needed to keep the cursor's
         internal state safe from caller mutation.
+
+        **Mixed-type columns flatten to the FIRST non-NULL row's wire
+        tag.** See sync sibling ``Cursor.description`` for full
+        rationale and the recommended ``row_types[i]`` per-row path
+        for callers needing column-uniformity-free parsing.
         """
         return self._description
 

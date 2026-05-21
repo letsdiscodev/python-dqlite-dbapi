@@ -1262,6 +1262,27 @@ class Cursor:
         ``sqlite3.Cursor.description``). A tuple is structurally
         immutable so no defensive copy is needed to keep the cursor's
         internal state safe from caller mutation.
+
+        **Mixed-type columns flatten to the FIRST non-NULL row's wire
+        tag.** When row 0's column is NULL but subsequent rows carry
+        typed values, ``type_code`` is resolved by scanning forward to
+        the first non-NULL row at that column — see the
+        ``row_types`` rescue-scan block in ``execute``. SQLite per-cell
+        typing (see
+        sqlite.org/datatype3.html §3.3) does not constrain per-row
+        storage class, so two rows in the same column may carry
+        different wire types; the resolver picks the FIRST non-NULL
+        and the per-row dispatch via ``row_types[i]`` (the data path)
+        still handles the actual conversion per row. Callers using
+        ``description`` for parser-shape decisions should NOT assume
+        column uniformity; for mixed-type columns the
+        per-row ``row_types[i]`` (exposed via ``_convert_row``) is the
+        correct source. The all-NULL column case (every row's value
+        at that column is NULL) genuinely returns ``type_code=None``
+        — the only PEP 249 §6.1.2 unrecoverable case. Stdlib
+        ``sqlite3`` always returns ``None`` for ``type_code``; this
+        driver is more informative but loses fidelity on mixed-type
+        columns.
         """
         return self._description
 
