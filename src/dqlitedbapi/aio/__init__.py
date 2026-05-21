@@ -6,6 +6,9 @@ import logging
 from typing import Final as _Final
 from typing import Literal as _Literal
 
+from dqliteclient import DEFAULT_CLOSE_TIMEOUT_SECONDS as _DEFAULT_CLOSE_TIMEOUT_SECONDS
+from dqliteclient import DEFAULT_TIMEOUT_SECONDS as _DEFAULT_TIMEOUT_SECONDS
+
 # Re-export the stdlib-sqlite3-parity NotSupportedError stubs from
 # the sync surface so cross-driver code porting from aiosqlite (which
 # mirrors stdlib's full register_* / complete_statement /
@@ -13,26 +16,16 @@ from typing import Literal as _Literal
 # ``dbapi.NotSupportedError`` rather than ``AttributeError`` —
 # matching the discipline already applied to ``register_adapter``
 # (re-exported from the sync surface for the same reason).
-from dqliteclient import (
-    DEFAULT_CLOSE_TIMEOUT_SECONDS,
-    DEFAULT_TIMEOUT_SECONDS,
-    DialFunc,
-)
+from dqliteclient import DialFunc
+from dqlitedbapi import LEGACY_TRANSACTION_CONTROL as _LEGACY_TRANSACTION_CONTROL
+from dqlitedbapi import PARSE_COLNAMES as _PARSE_COLNAMES
+from dqlitedbapi import PARSE_DECLTYPES as _PARSE_DECLTYPES
+from dqlitedbapi import __version__ as _parent_version
 from dqlitedbapi import (  # module-level re-export
-    LEGACY_TRANSACTION_CONTROL,
-    PARSE_COLNAMES,
-    PARSE_DECLTYPES,
     complete_statement,
     enable_callback_tracebacks,
     register_converter,
 )
-from dqlitedbapi import __version__ as _parent_version
-
-# ``Final`` does not propagate through ``from X import Y`` aliases —
-# the re-export creates a new module-level binding that needs its
-# own annotation to match the sync sibling's discipline. Mirrors
-# the four sibling ``__version__`` Final pins across the workspace.
-__version__: _Final[str] = _parent_version
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
 )
@@ -77,6 +70,17 @@ from dqlitewire import (
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
 )
+
+# ``Final`` does not propagate through ``from X import Y`` aliases —
+# the re-export creates a new module-level binding that needs its
+# own annotation to match the sync sibling's discipline. Mirrors
+# the four sibling ``__version__`` Final pins across the workspace.
+__version__: _Final[str] = _parent_version
+LEGACY_TRANSACTION_CONTROL: _Final[int] = _LEGACY_TRANSACTION_CONTROL
+PARSE_COLNAMES: _Final[int] = _PARSE_COLNAMES
+PARSE_DECLTYPES: _Final[int] = _PARSE_DECLTYPES
+DEFAULT_CLOSE_TIMEOUT_SECONDS: _Final[float] = _DEFAULT_CLOSE_TIMEOUT_SECONDS
+DEFAULT_TIMEOUT_SECONDS: _Final[float] = _DEFAULT_TIMEOUT_SECONDS
 
 # SQLAlchemy's async dialect discovery reads ``dbapi.apilevel`` to
 # confirm a PEP 249 shape; we expose ``"2.0"`` for that handshake.
