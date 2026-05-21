@@ -46,6 +46,7 @@ from dqlitewire import (
     SQLITE_WARNING,
     ValueType,
     primary_sqlite_code,
+    sanitize_for_log,
 )
 from dqlitewire import EncodeError as _WireEncodeError
 
@@ -2465,8 +2466,13 @@ class Cursor:
         # the repr is self-disambiguating in logs that fan multiple
         # cursors across pooled connections. ``getattr`` with ``'?'``
         # fallback tolerates mock-backed test fixtures whose stub
-        # connection lacks ``_address``.
-        address = getattr(self._connection, "_address", "?")
+        # connection lacks ``_address``. Route through
+        # ``sanitize_for_log`` for sibling-discipline parity with the
+        # client / dbapi ``Connection`` reprs: attacker-influenced
+        # bidi / zero-width / line-separator codepoints render as
+        # ``?`` rather than ``\uXXXX``, matching everywhere else the
+        # address appears in logs.
+        address = sanitize_for_log(str(getattr(self._connection, "_address", "?")))
         return f"<Cursor address={address!r} rowcount={self._rowcount} {state} at 0x{id(self):x}>"
 
     def __reduce__(self) -> NoReturn:

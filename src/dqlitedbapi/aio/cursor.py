@@ -29,7 +29,7 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
 )
 from dqlitedbapi.types import RowFactory, _Description
-from dqlitewire import ValueType
+from dqlitewire import ValueType, sanitize_for_log
 
 if TYPE_CHECKING:
     from dqlitedbapi.aio.connection import AsyncConnection
@@ -1247,8 +1247,12 @@ class AsyncCursor:
         state = "closed" if self._closed else "open"
         # Include the parent connection's address and ``id(self)`` so
         # the repr disambiguates cursors fanned across pooled
-        # connections in logs. See sync ``Cursor.__repr__``.
-        address = getattr(self._connection, "_address", "?")
+        # connections in logs. See sync ``Cursor.__repr__``. Route
+        # through ``sanitize_for_log`` for sibling-discipline parity:
+        # attacker-influenced control / bidi / ZW chars render as ``?``
+        # rather than ``\uXXXX``, matching the client + dbapi
+        # ``Connection`` reprs.
+        address = sanitize_for_log(str(getattr(self._connection, "_address", "?")))
         return (
             f"<AsyncCursor address={address!r} rowcount={self._rowcount} {state} at 0x{id(self):x}>"
         )

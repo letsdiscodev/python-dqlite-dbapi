@@ -44,6 +44,9 @@ from dqlitewire import (
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
 )
+from dqlitewire import (
+    sanitize_for_log,
+)
 
 __all__ = ["AsyncConnection"]
 
@@ -2196,7 +2199,14 @@ class AsyncConnection:
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
-        return f"<AsyncConnection address={self._address!r} database={self._database!r} {state}>"
+        # Sibling-discipline parity with ``DqliteConnection.__repr__`` and
+        # the sync ``Connection.__repr__``: sanitize ``_address`` before
+        # the ``!r`` interpolation so attacker-influenced bidi /
+        # zero-width / line-separator codepoints render as ``?`` rather
+        # than the cosmetically-different ``\uXXXX`` escape Python's
+        # ``str.__repr__`` produces. Log-reader UX parity across layers.
+        safe_addr = sanitize_for_log(str(self._address))
+        return f"<AsyncConnection address={safe_addr!r} database={self._database!r} {state}>"
 
     def __reduce__(self) -> NoReturn:
         # AsyncConnections own a loop-bound socket and asyncio Locks

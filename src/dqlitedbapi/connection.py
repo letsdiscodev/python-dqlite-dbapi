@@ -46,6 +46,7 @@ from dqlitewire import (
     NO_TRANSACTION_MESSAGE_SUBSTRINGS,
     WIRE_DECODE_FAILED_PREFIX,
     primary_sqlite_code,
+    sanitize_for_log,
 )
 
 __all__ = ["Connection"]
@@ -3252,7 +3253,19 @@ class Connection:
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
-        return f"<Connection address={self._address!r} database={self._database!r} {state}>"
+        # Sibling-discipline with the client-layer ``DqliteConnection.__repr__``
+        # at ``dqliteclient/connection.py``: route ``_address`` through
+        # ``sanitize_for_log`` before ``!r`` so an attacker-influenced
+        # address (custom ``dial_func`` or leader-redirect target that
+        # survived ``parse_address``) renders with the same operator-
+        # readable ``?`` substitution everywhere the address appears in
+        # logs, not the cosmetically-different `` `` escape Python's
+        # ``str.__repr__`` would produce. The client commit
+        # ``Strip invisible-character class from address and server-text
+        # interpolations`` motivated the discipline; this is the one-
+        # layer-up sibling for the dbapi surface.
+        safe_addr = sanitize_for_log(str(self._address))
+        return f"<Connection address={safe_addr!r} database={self._database!r} {state}>"
 
     def __reduce__(self) -> NoReturn:
         # Connections own a live socket, an event-loop thread, and a
