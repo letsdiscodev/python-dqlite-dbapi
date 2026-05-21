@@ -2400,6 +2400,14 @@ class Connection:
         # non-bool) raises ``NotSupportedError`` — stdlib itself
         # enforces a similarly strict gate (no PyObject_IsTrue
         # coercion).
+        #
+        # **Inner-AsyncConnection slot is INDEPENDENT** — see the
+        # same paragraph on ``isolation_level.setter`` below. The
+        # sync setter stores on ``self._autocommit_value`` only;
+        # ``self._async_conn._autocommit_value`` is not mirrored.
+        # No wire-layer effect (dqlite is fixed-mode autocommit);
+        # divergence is pinned by
+        # ``test_property_setters_do_not_mirror_to_inner_async_conn.py``.
         if value is True or value == -1:
             self._autocommit_value: bool | int = value
             return
@@ -2487,6 +2495,25 @@ class Connection:
         # cross-driver idiom assigns the value silently and the next
         # read returns the default. Mirrors the ``autocommit.setter``
         # storage discipline established in the same widening round.
+        #
+        # **Inner-AsyncConnection slot is INDEPENDENT.** The setter
+        # stores on the sync wrapper only; ``self._async_conn
+        # ._isolation_level_value`` is not mirrored. The wire layer
+        # no-ops every accepted value (dqlite is fixed-mode
+        # autocommit), so divergence between the sync and inner slot
+        # has no observable effect on SQL execution. Callers reading
+        # the inner's view explicitly via ``conn._async_conn
+        # .isolation_level`` (a private accessor) get the inner's
+        # default, not the outer's last-set value — by design.
+        # Threading the setter write across the loop-thread boundary
+        # to mirror would introduce ordering hazards the rest of the
+        # sync surface deliberately avoids, with zero behavioural
+        # benefit. The pin in
+        # ``test_property_setters_do_not_mirror_to_inner_async_conn.py``
+        # locks the divergence so a future refactor that accidentally
+        # couples the slots without re-thinking the threading model
+        # surfaces fast.
+        #
         # Genuinely invalid values (non-string, unknown string)
         # raise ``ProgrammingError`` (PEP 249 §7 "caller-shape
         # misuse"), NOT ``NotSupportedError`` (which is for
