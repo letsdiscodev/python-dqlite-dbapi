@@ -373,6 +373,7 @@ def _get_resolve_leader_cluster(
     max_total_rows: int | None,
     max_continuation_frames: int | None,
     trust_server_heartbeat: bool,
+    dial_func: DialFunc | None = None,
 ) -> ClusterClient:
     """Return a process-shared :class:`ClusterClient` for the
     leader-discovery probe, keyed by the (loop, address, governor)
@@ -427,6 +428,16 @@ def _get_resolve_leader_cluster(
             _RESOLVE_LEADER_CACHE.clear()
             _RESOLVE_LEADER_CACHE_PID = pid
 
+        # ``dial_func`` is keyed by callable identity — operators
+        # constructing a single module-level dialer get a single cache
+        # entry (the common case); operators constructing a fresh
+        # lambda per request degrade to one cache entry per identity
+        # (wasteful but correct, bounded by ``_RESOLVE_LEADER_CACHE_MAX``).
+        # Distinct dialers MUST NOT share a ``ClusterClient`` because
+        # they carry different transport contracts (TLS vs plaintext,
+        # AF_UNIX vs TCP, custom KEEPALIVE, etc.) — sharing would let
+        # the first dialer's connection serve a request that should
+        # have used the second's.
         key: tuple[object, ...] = (
             loop_id,
             address,
@@ -434,6 +445,7 @@ def _get_resolve_leader_cluster(
             max_total_rows,
             max_continuation_frames,
             trust_server_heartbeat,
+            id(dial_func) if dial_func is not None else None,
         )
         cluster = _RESOLVE_LEADER_CACHE.get(key)
         if cluster is None:
@@ -463,6 +475,7 @@ def _get_resolve_leader_cluster(
                 max_total_rows=max_total_rows,
                 max_continuation_frames=max_continuation_frames,
                 trust_server_heartbeat=trust_server_heartbeat,
+                dial_func=dial_func,
             )
             _RESOLVE_LEADER_CACHE[key] = cluster
         return cluster
@@ -475,6 +488,7 @@ async def _resolve_leader(
     max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
     trust_server_heartbeat: bool = False,
+    dial_func: DialFunc | None = None,
 ) -> str:
     """Resolve the cluster's current leader address from a seed.
 
@@ -498,6 +512,16 @@ async def _resolve_leader(
     for admin paths (``cluster_info`` / ``dump``) reachable through
     the resolved client.
 
+    ``dial_func`` is threaded for the same reason: an operator
+    requiring a TLS/AF_UNIX/custom-KEEPALIVE dialer must see it
+    honoured on the leader-discovery probe (the FIRST round-trip),
+    not just the post-resolve data session. Without forwarding, a
+    TLS-required deployment opens a plaintext leader-probe socket
+    against the seed — either failing the TLS-only listener with an
+    unhelpful "connection reset" diagnostic or (worse) succeeding
+    against a TLS-terminating proxy that tolerates plaintext, making
+    the first round-trip silently unencrypted.
+
     Wraps the seed in a single-node :class:`MemoryNodeStore` and
     delegates to :meth:`ClusterClient.find_leader`. Returns the
     leader's address on success; raises the underlying
@@ -510,6 +534,7 @@ async def _resolve_leader(
         max_total_rows=max_total_rows,
         max_continuation_frames=max_continuation_frames,
         trust_server_heartbeat=trust_server_heartbeat,
+        dial_func=dial_func,
     )
     return await cluster.find_leader()
 
@@ -554,6 +579,7 @@ async def _build_and_connect(
             max_total_rows=max_total_rows,
             max_continuation_frames=max_continuation_frames,
             trust_server_heartbeat=trust_server_heartbeat,
+            dial_func=dial_func,
         )
     except _client_exc.ClusterPolicyError as e:
         # Operator allowlist rejected a redirect target. Surface as
