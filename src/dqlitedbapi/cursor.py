@@ -326,36 +326,21 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
             code=None,
             raw_message=raw_msg,
         ) from e
-    except (TypeError, ValueError) as e:
-        # PEP 249 §7 mandates ``DataError`` for "problems with the
-        # processed data". The wire encoder in ``dqlitewire.types``
-        # raises ``TypeError`` / ``ValueError`` when a bind parameter is
-        # not one of the accepted primitives (bool/int/float/str/bytes/
-        # None). Without this wrap, those exceptions leak past
-        # ``except dqlitedbapi.Error`` boundaries.
-        # ``_convert_bind_param`` handles datetime / date / time up
-        # front; everything else — Decimal, UUID, Path, Enum, arbitrary
-        # user classes — reaches the wire encoder and lands here.
-        # Callers who want to support those types should register an
-        # adapter (stdlib sqlite3 convention).
-        #
-        # Surface the original exception class in the message rather
-        # than the previous ``"cannot bind parameter: ..."`` prefix.
-        # The prefix wrongly attributed every in-coro ``TypeError`` /
-        # ``ValueError`` to the user's bind value, even when the
-        # actual root cause was a different in-flight fault (a future
-        # ``asyncio.timeout(invalid)`` / ``asyncio.wait_for`` misuse,
-        # a refactor-bug, etc.). The new shape — ``"caller-input
-        # fault (TypeError): ..."`` — lets operators triaging logs
-        # distinguish a real bind rejection from a coro-level
-        # contributor bug while keeping the PEP 249 ``DataError``
-        # wrap discipline that the prior `"cannot bind parameter:"`
-        # was meant to enforce.
-        raise DataError(
-            f"caller-input fault ({type(e).__name__}): {e}",
-            code=None,
-            raw_message=str(e),
-        ) from e
+    # Note: the previous ``(TypeError, ValueError)`` blanket catch
+    # was REMOVED. The wire encoder (``dqlitewire.types``) consistently
+    # raises ``EncodeError`` (already caught above as
+    # ``_WireEncodeError``) for bind-shape rejections; the bare
+    # ``TypeError`` / ``ValueError`` catch over-attributed every
+    # coro-internal fault (driver refactor bugs, third-party retry
+    # middleware typos, ``asyncio.timeout(invalid)`` misuse) to the
+    # caller's bind values and mis-classified driver-internal bugs
+    # as ``DataError("caller-input fault ...")``. Operators reading
+    # the diagnostic class and message would audit the bind shape
+    # while the real root cause sat un-attributed on
+    # ``__cause__``. The narrow path is: wire-encode rejection →
+    # ``EncodeError`` → ``DataError`` (the arm above); coro-internal
+    # ``TypeError`` / ``ValueError`` propagates raw so the
+    # originating frame surfaces honestly.
     except BaseExceptionGroup as eg:
         # PEP 249 §7 mandates Error-class surface for every database-
         # related fault. ``BaseExceptionGroup`` does NOT inherit from
@@ -1344,7 +1329,28 @@ class Cursor:
         active (no query executed, or last statement was DML without
         RETURNING); otherwise returns the index of the row that the next
         ``fetchone()`` would produce.
+
+        **Thread affinity**: runs ``_check_thread()`` so a foreign-
+        thread reader does not observe a mid-fetch ``_row_index``
+        (mutated by ``fetchone``/``fetchmany`` on the creator
+        thread). Mirrors the ``in_transaction`` discipline at the
+        connection layer — both are getters consumed by callers to
+        drive state decisions (rownumber is the de facto streaming-
+        result diagnostic in psycopg2/3 ports), so a stale or
+        partially-mutated read is materially wrong, not merely
+        suboptimal.
         """
+        # ``getattr`` defensively in case a ``Cursor.__new__``-built
+        # fixture has no ``_connection`` slot yet, or the parent
+        # ``Connection`` has been GC'd (the proxy is alive but every
+        # attribute access raises ``ReferenceError``).
+        conn = getattr(self, "_connection", None)
+        try:
+            check = getattr(conn, "_check_thread", None)
+        except ReferenceError:
+            check = None
+        if check is not None:
+            check()
         if self._description is None:
             return None
         return self._row_index

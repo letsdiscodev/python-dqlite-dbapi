@@ -200,7 +200,21 @@ class AsyncCursor:
         active (no query executed, or last statement was DML without
         RETURNING); otherwise returns the index of the row that the next
         ``fetchone()`` would produce.
+
+        **Loop affinity**: runs ``_check_loop_only()`` so a foreign-
+        loop reader does not observe a mid-fetch ``_row_index``
+        (mutated by ``fetchone``/``fetchmany`` on the bound loop).
+        Mirrors the ``in_transaction`` discipline and the sync
+        ``Cursor.rownumber`` sibling. See sync sibling for the full
+        rationale.
         """
+        conn = getattr(self, "_connection", None)
+        try:
+            check = getattr(conn, "_check_loop_only", None)
+        except ReferenceError:
+            check = None
+        if check is not None:
+            check()
         if self._description is None:
             return None
         return self._row_index

@@ -123,3 +123,76 @@ def test_ki_arm_invalidates_when_future_still_pending() -> None:
     assert conn._async_conn is None, "wedge cleanup should null _async_conn"
     # _invalidate WAS scheduled.
     assert invalidate_calls, "wedge cleanup should schedule _invalidate"
+
+
+# IMPORTANT: the drain ``future.result(timeout=0)`` inside the
+# race-recovery branch uses ``contextlib.suppress(BaseException)`` —
+# intentionally WIDE. This is one of the few sites in the codebase
+# where a wide suppress is correct: the outer ``raise`` re-raises
+# the user's KeyboardInterrupt, and any exception leaking from the
+# drain would mask the signal. The pins below cover the four arms
+# that exercise the wide-suppress absorption.
+import asyncio  # noqa: E402
+
+import dqlitedbapi as _dbapi  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("drain_exc", "exc_label"),
+    [
+        (_dbapi.OperationalError("coroutine resolved with wire error"), "Exception"),
+        (asyncio.CancelledError("coroutine ran to cancellation"), "CancelledError"),
+        (KeyboardInterrupt(), "KeyboardInterrupt"),
+        (SystemExit(2), "SystemExit"),
+    ],
+    ids=["Exception", "CancelledError", "KeyboardInterrupt", "SystemExit"],
+)
+def test_ki_race_recovery_drain_absorbs_future_result_raise(
+    drain_exc: BaseException,
+    exc_label: str,
+) -> None:
+    """The drain call ``future.result(timeout=0)`` must absorb any
+    exception class (including ``BaseException`` subclasses) so the
+    outer ``KeyboardInterrupt`` re-raise is not masked.
+
+    Without the wide ``BaseException`` suppress at this site, a
+    ``CancelledError`` or nested ``KeyboardInterrupt`` from the drain
+    would replace the user's ``Ctrl-C`` in the traceback, breaking
+    the signal-propagation contract. A future "narrow-suppress
+    sweep" PR that flips this site to ``suppress(Exception)`` is
+    the regression these pins catch."""
+    conn = _prime_connection()
+    sentinel_conn = conn._async_conn
+
+    fake_future = MagicMock(spec=concurrent.futures.Future)
+    fake_future.result = MagicMock(side_effect=[KeyboardInterrupt(), drain_exc])
+    fake_future.cancel = MagicMock()
+    fake_future.done = MagicMock(return_value=True)
+    fake_future.cancelled = MagicMock(return_value=False)
+
+    fake_loop = MagicMock()
+    fake_loop.call_soon_threadsafe = lambda cb, *args: None
+
+    async def _victim() -> None:
+        return None
+
+    coro = _victim()
+    try:
+        with (
+            patch.object(conn, "_ensure_loop", return_value=fake_loop),
+            patch(
+                "dqlitedbapi.connection.asyncio.run_coroutine_threadsafe",
+                return_value=fake_future,
+            ),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            conn._run_sync(coro)
+    finally:
+        coro.close()
+
+    # The outer KI propagated; the drain exception was absorbed (not
+    # surfaced in the exception chain) and _async_conn stays bound
+    # (race-recovery semantics — see the sibling test above).
+    assert conn._async_conn is sentinel_conn, (
+        f"{exc_label}: race-recovery should preserve _async_conn"
+    )
