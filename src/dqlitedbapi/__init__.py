@@ -357,6 +357,15 @@ from dqlitedbapi.types import (  # noqa: E402
 
 
 def register_converter(*args: object, **kwargs: object) -> _NoReturn:
+    """Stdlib ``sqlite3.register_converter`` parity stub.
+
+    Always raises :class:`NotSupportedError`. The dqlite wire protocol
+    does not surface declared column types for converter dispatch, so
+    the stdlib's typename-keyed converter registry has no anchor here.
+    Use :func:`register_adapter` for the bind-side hook (Python value
+    to wire) — the read-side hook is genuinely unimplementable on the
+    dqlite wire.
+    """
     raise NotSupportedError(
         "dqlitedbapi does not support stdlib sqlite3 register_converter; "
         "the wire protocol does not surface declared column types for "
@@ -365,6 +374,13 @@ def register_converter(*args: object, **kwargs: object) -> _NoReturn:
 
 
 def complete_statement(*args: object, **kwargs: object) -> _NoReturn:
+    """Stdlib ``sqlite3.complete_statement`` parity stub.
+
+    Always raises :class:`NotSupportedError`. This is a stdlib REPL
+    utility outside PEP 249's surface; dqlitedbapi ships PEP 249 only.
+    Callers needing SQL completeness detection should use a third-party
+    SQL parser.
+    """
     raise NotSupportedError(
         "dqlitedbapi does not support stdlib sqlite3 complete_statement; "
         "REPL-helper utility not in PEP 249's surface"
@@ -372,6 +388,15 @@ def complete_statement(*args: object, **kwargs: object) -> _NoReturn:
 
 
 def enable_callback_tracebacks(*args: object, **kwargs: object) -> _NoReturn:
+    """Stdlib ``sqlite3.enable_callback_tracebacks`` parity stub.
+
+    Always raises :class:`NotSupportedError`. This toggle controls
+    traceback printing for stdlib ``sqlite3``'s
+    ``create_function``/``create_aggregate``/``create_collation``
+    callback family; dqlitedbapi has no Python callback handlers
+    (the wire layer does not surface user-defined SQL functions) for
+    the toggle to apply to.
+    """
     raise NotSupportedError(
         "dqlitedbapi does not support stdlib sqlite3 enable_callback_tracebacks; "
         "this driver has no callback-handler family for the toggle to apply to"

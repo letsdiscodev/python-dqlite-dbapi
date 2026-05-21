@@ -2305,6 +2305,22 @@ class AsyncConnection:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        """Commit on clean exit, rollback on exception, do NOT close.
+
+        Matches stdlib ``sqlite3.Connection`` parity: ``__aexit__``
+        finishes the transaction (commit on clean exit, rollback on
+        exception) but leaves the underlying connection open so the
+        same instance is reusable in a subsequent ``async with`` block.
+        This diverges from ``aiosqlite.Connection.__aexit__`` (which
+        closes the connection) — see the README "Differences from
+        aiosqlite" section for the rationale.
+
+        Both arms tolerate cancel/signal during commit-or-rollback:
+        the server-side state may be ambiguous if the request reached
+        the leader before the cancel landed, but the cancel still
+        propagates faithfully to the caller (with a DEBUG breadcrumb
+        for operator forensics).
+        """
         if self._async_conn is None:
             # Nothing ever ran; keep the connection reusable, matching
             # stdlib sqlite3 / aiosqlite / psycopg semantics.

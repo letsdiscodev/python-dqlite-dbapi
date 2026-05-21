@@ -3320,21 +3320,33 @@ class Connection:
     # leak bare ``TypeError`` outside the hierarchy, breaking cross-
     # driver feature-probe code (``except dbapi.Error: ...``).
     def tpc_begin(self, *args: object, **kwargs: object) -> NoReturn:
+        """PEP 249 two-phase-commit stub. Always raises ``NotSupportedError`` —
+        dqlite does not support two-phase commit (single-leader Raft)."""
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def tpc_prepare(self, *args: object, **kwargs: object) -> NoReturn:
+        """PEP 249 two-phase-commit stub. Always raises ``NotSupportedError`` —
+        dqlite does not support two-phase commit (single-leader Raft)."""
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def tpc_commit(self, *args: object, **kwargs: object) -> NoReturn:
+        """PEP 249 two-phase-commit stub. Always raises ``NotSupportedError`` —
+        dqlite does not support two-phase commit (single-leader Raft)."""
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def tpc_rollback(self, *args: object, **kwargs: object) -> NoReturn:
+        """PEP 249 two-phase-commit stub. Always raises ``NotSupportedError`` —
+        dqlite does not support two-phase commit (single-leader Raft)."""
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def tpc_recover(self, *args: object, **kwargs: object) -> NoReturn:
+        """PEP 249 two-phase-commit stub. Always raises ``NotSupportedError`` —
+        dqlite does not support two-phase commit (single-leader Raft)."""
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def xid(self, *args: object, **kwargs: object) -> NoReturn:
+        """PEP 249 two-phase-commit stub. Always raises ``NotSupportedError`` —
+        dqlite does not support two-phase commit (single-leader Raft)."""
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def _stub_unsupported(self, msg: str) -> NoReturn:
@@ -3408,12 +3420,21 @@ class Connection:
     # PEP 249 §6.4 + stdlib precedence.
 
     def set_authorizer(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.set_authorizer`` parity stub. Always
+        raises ``NotSupportedError`` — dqlite-server does not expose a
+        per-prepare authorization callback."""
         self._stub_unsupported("dqlite-server does not expose a per-prepare authorization callback")
 
     def set_progress_handler(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.set_progress_handler`` parity stub.
+        Always raises ``NotSupportedError`` — dqlite-server does not expose
+        a VDBE progress callback."""
         self._stub_unsupported("dqlite-server does not expose a VDBE progress callback")
 
     def set_trace_callback(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.set_trace_callback`` parity stub. Always
+        raises ``NotSupportedError`` — dqlite-server does not expose a
+        per-statement trace callback."""
         self._stub_unsupported("dqlite-server does not expose a per-statement trace callback")
 
     def total_changes(self, *args: object, **kwargs: object) -> NoReturn:
@@ -3432,39 +3453,64 @@ class Connection:
         self._stub_unsupported("dqlite-server does not surface a total_changes counter on the wire")
 
     def getlimit(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.getlimit`` parity stub. Always raises
+        ``NotSupportedError`` — dqlite-server does not expose
+        ``sqlite3_db_status`` getlimit/setlimit on the wire."""
         self._stub_unsupported(
             "dqlite-server does not expose sqlite3_db_status getlimit/setlimit on the wire"
         )
 
     def setlimit(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.setlimit`` parity stub. Always raises
+        ``NotSupportedError`` — dqlite-server does not expose
+        ``sqlite3_db_status`` getlimit/setlimit on the wire."""
         self._stub_unsupported(
             "dqlite-server does not expose sqlite3_db_status getlimit/setlimit on the wire"
         )
 
     def getconfig(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.getconfig`` parity stub. Always raises
+        ``NotSupportedError`` — dqlite-server does not expose
+        ``sqlite3_db_config`` getconfig/setconfig on the wire."""
         self._stub_unsupported(
             "dqlite-server does not expose sqlite3_db_config getconfig/setconfig on the wire"
         )
 
     def setconfig(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.setconfig`` parity stub. Always raises
+        ``NotSupportedError`` — dqlite-server does not expose
+        ``sqlite3_db_config`` getconfig/setconfig on the wire."""
         self._stub_unsupported(
             "dqlite-server does not expose sqlite3_db_config getconfig/setconfig on the wire"
         )
 
     def serialize(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.serialize`` parity stub. Always raises
+        ``NotSupportedError`` — dqlite does not support
+        ``sqlite3_serialize`` (conflicts with the distributed Raft model)."""
         self._stub_unsupported(
             "dqlite does not support sqlite3_serialize; conflicts with the distributed Raft model"
         )
 
     def deserialize(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.deserialize`` parity stub. Always raises
+        ``NotSupportedError`` — dqlite does not support
+        ``sqlite3_deserialize`` (conflicts with the distributed Raft
+        model)."""
         self._stub_unsupported(
             "dqlite does not support sqlite3_deserialize; conflicts with the distributed Raft model"
         )
 
     def blobopen(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.blobopen`` parity stub. Always raises
+        ``NotSupportedError`` — dqlite does not expose ``sqlite3_blob_open``
+        on the wire."""
         self._stub_unsupported("dqlite does not expose sqlite3_blob_open on the wire")
 
     def enable_load_extension(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.enable_load_extension`` parity stub.
+        Always raises ``NotSupportedError`` — dqlite-server does not support
+        runtime extension loading."""
         # ``*args/**kwargs`` shape so any caller signature — including
         # the zero-arg form a typing-confused operator might write —
         # reaches ``_stub_unsupported`` and surfaces a
@@ -3475,10 +3521,17 @@ class Connection:
         self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
     def load_extension(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.load_extension`` parity stub. Always
+        raises ``NotSupportedError`` — dqlite-server does not support
+        runtime extension loading."""
         # See ``enable_load_extension`` rationale.
         self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
     def backup(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.backup`` parity stub. Always raises
+        ``NotSupportedError`` — dqlite does not support the stdlib sqlite3
+        online backup API; use the dqlite-server dump/restore mechanism
+        instead."""
         self._stub_unsupported(
             "dqlite does not support the stdlib sqlite3 online backup API; "
             "use the dqlite-server dump/restore mechanism instead"
@@ -3504,15 +3557,27 @@ class Connection:
         )
 
     def create_function(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.create_function`` parity stub. Always
+        raises ``NotSupportedError`` — dqlite-server does not support
+        user-defined SQL functions."""
         self._stub_unsupported("dqlite-server does not support user-defined SQL functions")
 
     def create_aggregate(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.create_aggregate`` parity stub. Always
+        raises ``NotSupportedError`` — dqlite-server does not support
+        user-defined SQL aggregates."""
         self._stub_unsupported("dqlite-server does not support user-defined SQL aggregates")
 
     def create_collation(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.create_collation`` parity stub. Always
+        raises ``NotSupportedError`` — dqlite-server does not support
+        user-defined SQL collations."""
         self._stub_unsupported("dqlite-server does not support user-defined SQL collations")
 
     def create_window_function(self, *args: object, **kwargs: object) -> NoReturn:
+        """Stdlib ``sqlite3.Connection.create_window_function`` parity stub.
+        Always raises ``NotSupportedError`` — dqlite-server does not support
+        user-defined SQL window functions."""
         self._stub_unsupported("dqlite-server does not support user-defined SQL window functions")
 
     def __repr__(self) -> str:
@@ -3581,6 +3646,21 @@ class Connection:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        """Commit on clean exit, rollback on exception, do NOT close.
+
+        Matches stdlib ``sqlite3.Connection`` parity: ``__exit__``
+        finishes the transaction (commit on clean exit, rollback on
+        exception) but leaves the underlying connection open so the
+        same instance is reusable in a subsequent ``with`` block. This
+        is the sync sibling of ``AsyncConnection.__aexit__`` and
+        carries the same no-close contract.
+
+        Both arms tolerate KeyboardInterrupt / SystemExit landing
+        mid-COMMIT or mid-ROLLBACK: server-side state may be ambiguous
+        if the request reached the leader before the signal landed,
+        but the signal still propagates faithfully (with a DEBUG
+        breadcrumb for operator forensics).
+        """
         # If no query has ever run, there's no transaction to commit or
         # roll back — nothing to do; the connection remains reusable,
         # matching stdlib sqlite3 / psycopg semantics.

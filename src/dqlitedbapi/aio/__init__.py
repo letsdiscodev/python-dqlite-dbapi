@@ -1,4 +1,26 @@
-"""Async PEP 249-style interface for dqlite."""
+"""Async PEP 249-style interface for dqlite.
+
+Two top-level entry points with deliberately asymmetric sync/async
+shapes:
+
+* ``connect(address, ...)`` is a **sync** function returning an
+  ``AsyncConnection`` whose TCP open is deferred to the first query.
+  This matches the stdlib factory shape (sync function returning a
+  Connection) and is the shape SQLAlchemy's async dialect glue
+  (``DqliteDialect_aio.connect``) requires from
+  ``import_dbapi().connect``. Cross-driver code porting from
+  aiosqlite ports unchanged.
+
+* ``aconnect(address, ...)`` is an **async** function that awaits
+  the TCP open before returning. Use this when driving the async
+  dbapi directly (no SA dialect involved); errors surface at the
+  ``await`` site rather than on the first query.
+
+The naming-inversion vs ``dqliteclient.connect`` (which is async) is
+deliberate: this module ships the PEP 249 surface where stdlib
+factory-shape parity is load-bearing. See the per-function docstrings
+for the full contract of each entry point.
+"""
 
 import asyncio
 import contextlib
