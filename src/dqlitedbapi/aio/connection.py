@@ -1269,9 +1269,23 @@ class AsyncConnection:
         closed connection, matching stdlib `sqlite3`'s
         ``ProgrammingError("Cannot operate on a closed database.")``.
         Sibling discipline to the sync ``Connection.autocommit``.
+
+        **Fork-after-init**: raises ``InterfaceError("...used after
+        fork...")`` when read from a forked child process. The
+        ``_autocommit_value`` instance attribute is fork-inheritable
+        (a plain attribute); mirrors the sibling ``_stub_unsupported``
+        / ``_ensure_locks`` canonical guard so every public surface
+        on this class surfaces fork-after-init before any value read.
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        creator_pid = getattr(self, "_creator_pid", None)
+        if creator_pid is not None and get_current_pid() != creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
         return getattr(self, "_autocommit_value", True)
 
     @autocommit.setter
@@ -1304,17 +1318,34 @@ class AsyncConnection:
         )
 
     @property
-    def isolation_level(self) -> None:
+    def isolation_level(self) -> "str | None":
         """stdlib pre-3.12 ``sqlite3.Connection.isolation_level``-
         parity surface. See sync sibling for full rationale.
-        Returns None (autocommit sentinel).
+
+        **Setter / getter round-trip**: stores the setter input on
+        ``self._isolation_level_value`` and returns it. The default
+        (never-set) return is ``None`` — the autocommit sentinel.
+        Cross-driver ``dst.isolation_level = src.isolation_level``
+        round-trips on this driver.
 
         **Closed-state**: raises ``InterfaceError`` on a closed
         connection, matching stdlib `sqlite3`'s
-        ``ProgrammingError("Cannot operate on a closed database.")``."""
+        ``ProgrammingError("Cannot operate on a closed database.")``.
+
+        **Fork-after-init**: raises ``InterfaceError("...used after
+        fork...")`` when read from a forked child process —
+        ``_isolation_level_value`` is fork-inheritable. Mirrors the
+        sibling ``autocommit`` getter's guard."""
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        return None
+        creator_pid = getattr(self, "_creator_pid", None)
+        if creator_pid is not None and get_current_pid() != creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
+        return getattr(self, "_isolation_level_value", None)
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
@@ -1324,10 +1355,14 @@ class AsyncConnection:
         # Loop-binding affinity contract — see ``autocommit.setter``.
         self._check_loop_binding()
         # See sync sibling for accept-set + ProgrammingError-vs-
-        # NotSupportedError class rationale.
+        # NotSupportedError class rationale. We STORE the caller's
+        # input on ``self._isolation_level_value`` so the getter
+        # round-trips — matches the sync sibling's storage discipline.
         if value is None:
+            self._isolation_level_value: str | None = value
             return
         if isinstance(value, str) and value.upper() in _STDLIB_IMPLICIT_TX_VALUES:
+            self._isolation_level_value = value
             return
         raise ProgrammingError(
             f"isolation_level must be None or one of "

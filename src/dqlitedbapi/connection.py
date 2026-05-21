@@ -2260,9 +2260,26 @@ class Connection:
         Cross-driver teardown probes consulting the getter during
         dispose see a sharp diagnostic rather than the misleading
         ``True`` sentinel against a closed connection.
+
+        **Fork-after-init**: raises ``InterfaceError("...used after
+        fork...")`` when read from a forked child process. The
+        ``_autocommit_value`` instance attribute is fork-inheritable
+        (a plain attribute), so without the pid guard a forked child
+        would read the parent's last setter input against a dead
+        inner transport. Mirrors the canonical guard shape used by
+        ``_stub_unsupported`` / ``_ensure_locks`` so every public
+        surface on this class surfaces fork-after-init with the same
+        diagnostic before any value read.
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        creator_pid = getattr(self, "_creator_pid", None)
+        if creator_pid is not None and get_current_pid() != creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
         return getattr(self, "_autocommit_value", True)
 
     @autocommit.setter
@@ -2311,17 +2328,26 @@ class Connection:
         )
 
     @property
-    def isolation_level(self) -> None:
+    def isolation_level(self) -> "str | None":
         """stdlib pre-3.12 ``sqlite3.Connection.isolation_level``-
-        parity surface. Returns ``None`` — stdlib's autocommit
-        sentinel; truthful for dqlite's autocommit-by-default mode
-        (the bijection ``autocommit=True`` ↔ ``isolation_level=None``).
+        parity surface.
 
-        Setter accepts ``None`` (acknowledges the existing mode);
-        the implicit-transaction values (``""``, ``"DEFERRED"``,
-        ``"IMMEDIATE"``, ``"EXCLUSIVE"``) raise
-        ``NotSupportedError`` because the wire protocol does not
-        surface server-side implicit-transaction semantics.
+        **Setter / getter round-trip**: stores the (validated) setter
+        input on ``self._isolation_level_value`` and returns it.
+        ``None`` (the default), ``""`` (stdlib's default value of
+        the property), and the implicit-BEGIN ``"DEFERRED"`` /
+        ``"IMMEDIATE"`` / ``"EXCLUSIVE"`` variants are all accepted;
+        every value no-ops the wire layer (dqlite is fixed-mode
+        autocommit) but the property reflects the caller's last
+        input. This preserves the canonical cross-driver
+        "mirror source config to dst" idiom
+        (``dst.isolation_level = src.isolation_level`` where ``src``
+        is a stdlib ``sqlite3.Connection`` that defaults to ``""``)
+        — the round-trip is the point of the widening.
+
+        The default (never-set) return is ``None`` — truthful for
+        dqlite's autocommit-by-default mode (the bijection
+        ``autocommit=True`` ↔ ``isolation_level=None``).
 
         Without this property, ``conn.isolation_level = None``
         succeeded silently (Python allows arbitrary instance
@@ -2333,10 +2359,22 @@ class Connection:
         closed connection, matching stdlib `sqlite3`'s
         ``ProgrammingError("Cannot operate on a closed database.")``
         on the equivalent getter.
+
+        **Fork-after-init**: raises ``InterfaceError("...used after
+        fork...")`` when read from a forked child process —
+        ``_isolation_level_value`` is fork-inheritable. Mirrors the
+        sibling ``autocommit`` getter's discipline.
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        return None
+        creator_pid = getattr(self, "_creator_pid", None)
+        if creator_pid is not None and get_current_pid() != creator_pid:
+            raise InterfaceError(
+                f"Connection used after fork; reconstruct from configuration "
+                f"in the target process. (created in pid {creator_pid}, "
+                f"current pid {get_current_pid()})"
+            )
+        return getattr(self, "_isolation_level_value", None)
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
@@ -2361,13 +2399,20 @@ class Connection:
         # cross-driver "mirror source config to dst" idiom (``dst
         # .isolation_level = src.isolation_level`` where ``src`` is
         # a stdlib ``sqlite3.Connection`` that defaults to ``""``).
+        # We STORE the caller's input on ``self._isolation_level_value``
+        # so the getter round-trips — without storage, the canonical
+        # cross-driver idiom assigns the value silently and the next
+        # read returns the default. Mirrors the ``autocommit.setter``
+        # storage discipline established in the same widening round.
         # Genuinely invalid values (non-string, unknown string)
         # raise ``ProgrammingError`` (PEP 249 §7 "caller-shape
         # misuse"), NOT ``NotSupportedError`` (which is for
         # features the database lacks).
         if value is None:
+            self._isolation_level_value: str | None = value
             return
         if isinstance(value, str) and value.upper() in _STDLIB_IMPLICIT_TX_VALUES:
+            self._isolation_level_value = value
             return
         raise ProgrammingError(
             f"isolation_level must be None or one of "
