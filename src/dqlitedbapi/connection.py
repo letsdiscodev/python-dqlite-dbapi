@@ -649,15 +649,25 @@ async def _build_and_connect(
         # a future dbapi-side pool or third-party retry middleware
         # wrapping the connect coro could route a group here. Mirror
         # the ``_call_client`` discipline. See
-        # ``cursor.py::_call_client`` for the full rationale.
-        child_classes = {type(c).__name__ for c in eg.exceptions}
+        # ``cursor.py::_call_client`` for the full rationale —
+        # including the PEP 654 cancel-class split that re-raises any
+        # ``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit``
+        # children rather than silently wrapping them as
+        # ``OperationalError``.
+        cancel_group, remainder = eg.split(
+            lambda e: isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit))
+        )
+        if cancel_group is not None:
+            raise cancel_group from None
+        assert remainder is not None
+        child_classes = {type(c).__name__ for c in remainder.exceptions}
         raise OperationalError(
             f"Failed to find leader from {address}: aggregate "
-            f"{type(eg).__name__} with {len(eg.exceptions)} child(ren) "
+            f"{type(remainder).__name__} with {len(remainder.exceptions)} child(ren) "
             f"of class(es) {sorted(child_classes)}",
             code=None,
-            raw_message=str(eg),
-        ) from eg
+            raw_message=str(remainder),
+        ) from remainder
 
     conn = DqliteConnection(
         leader_address,
@@ -805,14 +815,23 @@ async def _build_and_connect(
         # construction for the rationale. ``BaseExceptionGroup``
         # bypasses every per-class arm; wrap as ``OperationalError``
         # (transport flavour, since this block surrounds the actual
-        # connect) with the group on ``__cause__``.
-        child_classes = {type(c).__name__ for c in eg.exceptions}
+        # connect) with the remainder on ``__cause__``. PEP 654
+        # cancel-class split runs first so any
+        # ``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit``
+        # children are re-raised rather than silently wrapped.
+        cancel_group, remainder = eg.split(
+            lambda e: isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit))
+        )
+        if cancel_group is not None:
+            raise cancel_group from None
+        assert remainder is not None
+        child_classes = {type(c).__name__ for c in remainder.exceptions}
         raise OperationalError(
-            f"{FAILED_TO_CONNECT_PREFIX}aggregate {type(eg).__name__} with "
-            f"{len(eg.exceptions)} child(ren) of class(es) {sorted(child_classes)}",
+            f"{FAILED_TO_CONNECT_PREFIX}aggregate {type(remainder).__name__} with "
+            f"{len(remainder.exceptions)} child(ren) of class(es) {sorted(child_classes)}",
             code=None,
-            raw_message=str(eg),
-        ) from eg
+            raw_message=str(remainder),
+        ) from remainder
     return conn
 
 
