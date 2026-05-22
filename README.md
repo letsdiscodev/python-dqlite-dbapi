@@ -246,6 +246,15 @@ borrowed from one.
   to get the id back through the row-returning path. (PEP 249
   doesn't mandate `lastrowid` correctness for INSERT-via-CTE.)
 
+- **`SQLITE_TOOBIG` maps to `DataError`, not `DatabaseError`.** CPython
+  `Modules/_sqlite/util.c::get_exception_class` maps `SQLITE_TOOBIG`
+  (code 18, "string or BLOB exceeds size limit") to the generic
+  `DatabaseError`. The dqlite dbapi maps it to the more specific
+  `DataError` since the error is unambiguously a value-size violation.
+  Cross-driver code catching `DatabaseError` keeps working
+  (`DataError ⊂ DatabaseError`); code that distinguishes on the
+  specific subclass catches more here than against stdlib.
+
 ## Cross-version semantic shift: NULL in BOOLEAN/DATETIME columns
 
 Upstream dqlite commit `f30fc99` (`query: preserve SQLITE_NULL type
