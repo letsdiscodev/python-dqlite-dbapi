@@ -1019,6 +1019,15 @@ class AsyncCursor:
         self._lastrowid = None
         # Mirror the sync cursor's scrub contract.
         self._row_index = 0
+        # The execute / executemany entry points re-check
+        # ``_check_closed`` first, so a stale ``_executing_task``
+        # is not load-bearing on the operational path. Scrubbing it
+        # alongside the rest of the per-execute state keeps the
+        # closed-cursor invariant uniform: any introspection path that
+        # reads ``_executing_task`` on a closed cursor sees ``None``
+        # rather than the now-completed task that ran the final
+        # ``execute()``.
+        self._executing_task = None
         # Drop the strong back-reference to the parent
         # ``AsyncConnection`` so a closed cursor the user retains
         # does not pin the connection's loop-bound ``asyncio.Lock``,
