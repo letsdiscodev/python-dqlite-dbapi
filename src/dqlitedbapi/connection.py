@@ -2499,8 +2499,15 @@ class Connection:
         except scaffold. Cross-driver code that relies on stdlib's
         raise behaviour to detect a closed connection should use the
         ``closed``-state probe directly, not ``in_transaction``.
+
+        **Closed-state precedence**: the closed short-circuit runs
+        BEFORE ``_check_thread()`` so a foreign-thread reader of a
+        closed connection (e.g. a shutdown hook running on another
+        thread) gets the documented ``False`` rather than a
+        ``ProgrammingError`` thread-affinity violation. A closed
+        connection is observably immutable; thread affinity becomes
+        moot once close() has run.
         """
-        self._check_thread()
         # Snapshot the reference once so a concurrent close() that nulls
         # ``_async_conn`` cannot land between the None-check and the
         # attribute read. ``bool(...)`` keeps the mock-adapter safety
@@ -2508,6 +2515,7 @@ class Connection:
         conn = self._async_conn
         if conn is None or self._closed:
             return False
+        self._check_thread()
         return bool(conn.in_transaction)
 
     @property
