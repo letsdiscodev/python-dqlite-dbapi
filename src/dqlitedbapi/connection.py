@@ -659,7 +659,12 @@ async def _build_and_connect(
         )
         if cancel_group is not None:
             raise cancel_group from None
-        assert remainder is not None
+        # Defensive narrowing via ``if`` instead of ``assert`` so the
+        # subsequent ``remainder.exceptions`` access doesn't surface
+        # ``AttributeError`` under ``python -O``. Logically
+        # unreachable under the BaseExceptionGroup.split contract.
+        if remainder is None:
+            raise eg
         child_classes = {type(c).__name__ for c in remainder.exceptions}
         raise OperationalError(
             f"Failed to find leader from {address}: aggregate "
@@ -824,7 +829,12 @@ async def _build_and_connect(
         )
         if cancel_group is not None:
             raise cancel_group from None
-        assert remainder is not None
+        # Defensive narrowing via ``if`` instead of ``assert`` so the
+        # subsequent ``remainder.exceptions`` access doesn't surface
+        # ``AttributeError`` under ``python -O``. Logically
+        # unreachable under the BaseExceptionGroup.split contract.
+        if remainder is None:
+            raise eg
         child_classes = {type(c).__name__ for c in remainder.exceptions}
         raise OperationalError(
             f"{FAILED_TO_CONNECT_PREFIX}aggregate {type(remainder).__name__} with "

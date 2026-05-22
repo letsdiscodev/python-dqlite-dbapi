@@ -378,8 +378,14 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # The split contract guarantees ``remainder is not None`` when
         # ``cancel_group is None``: the group must have had at least
         # one child for the arm to trigger, and that child wasn't in
-        # the cancel partition.
-        assert remainder is not None
+        # the cancel partition. Defensive narrowing via ``if`` instead
+        # of ``assert`` so the subsequent ``remainder.exceptions``
+        # access doesn't surface ``AttributeError`` under ``python -O``
+        # (which strips ``assert``). The branch is logically
+        # unreachable under the BaseExceptionGroup contract; raising
+        # the original ``eg`` is the safe fallback.
+        if remainder is None:
+            raise eg
         # Wrap as ``DatabaseError`` (the most generic Error subclass
         # for "errors during database operation"; see PEP 249 §6.5 +
         # §7) preserving the remainder on ``__cause__`` so SA's
