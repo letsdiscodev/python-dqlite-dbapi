@@ -2589,7 +2589,21 @@ class Cursor:
         # bidi / zero-width / line-separator codepoints render as
         # ``?`` rather than ``\uXXXX``, matching everywhere else the
         # address appears in logs.
-        address = sanitize_for_log(str(getattr(self._connection, "_address", "?")))
+        # Defence against ``ReferenceError``: ``close()`` swaps
+        # ``self._connection`` to a ``weakref.proxy``. If the parent
+        # ``Connection`` is GC'd thereafter, every attribute access
+        # on the proxy raises ``ReferenceError`` BEFORE the
+        # ``getattr`` default is consulted. ``ReferenceError`` is
+        # outside the ``dbapi.Error`` hierarchy — every
+        # ``except dbapi.Error:`` block misses it, and ``repr()``
+        # crashes debugging tooling. Fall back to ``'?'`` (matching
+        # the existing missing-attribute placeholder) so ``repr()``
+        # stays safe under the GC'd-proxy condition. Mirrors the
+        # sibling ``Cursor.connection`` property's discipline.
+        try:
+            address = sanitize_for_log(str(getattr(self._connection, "_address", "?")))
+        except ReferenceError:
+            address = "?"
         return f"<Cursor address={address!r} rowcount={self._rowcount} {state} at 0x{id(self):x}>"
 
     def __reduce__(self) -> NoReturn:
