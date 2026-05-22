@@ -67,7 +67,11 @@ def _drive_coroutine_to_first_exception(coro: Any) -> BaseException:
 def test_executemany_async_classifier_raise_resets_state_first_empty_sql() -> None:
     """A classifier-raise on empty SQL leaves the cursor's prior
     SELECT state scrubbed: ``description`` is ``None``, ``rowcount``
-    is ``-1``, ``_rows`` is empty, ``_completed_iterations`` is 0."""
+    is ``-1``, ``_rows`` is empty. ``_completed_iterations`` is
+    restored to the pre-batch snapshot (5) — the input-validation
+    raise leaves the prior batch's progress observable for
+    cross-batch compensation code.
+    """
     cur = _prime_sync_cursor()
 
     coro = cur._executemany_async("", iter([]))
@@ -78,12 +82,14 @@ def test_executemany_async_classifier_raise_resets_state_first_empty_sql() -> No
     assert cur._description is None
     assert cur._rowcount == -1
     assert cur._rows == []
-    assert cur._completed_iterations == 0
+    assert cur._completed_iterations == 5
 
 
 def test_executemany_async_classifier_raise_resets_state_first_multi_statement() -> None:
     """Multi-statement classifier raise on empty seq also resets
-    state first, mirroring the empty-SQL pin."""
+    state first, mirroring the empty-SQL pin. ``_completed_iterations``
+    restored to pre-batch (5).
+    """
     cur = _prime_sync_cursor()
 
     coro = cur._executemany_async("SELECT 1; SELECT 2", iter([]))
@@ -94,11 +100,13 @@ def test_executemany_async_classifier_raise_resets_state_first_multi_statement()
     assert cur._description is None
     assert cur._rowcount == -1
     assert cur._rows == []
-    assert cur._completed_iterations == 0
+    assert cur._completed_iterations == 5
 
 
 def test_executemany_async_classifier_raise_resets_state_first_nul_byte() -> None:
-    """NUL-in-SQL classifier raise resets state too."""
+    """NUL-in-SQL classifier raise resets state too;
+    ``_completed_iterations`` restored to pre-batch (5).
+    """
     cur = _prime_sync_cursor()
 
     coro = cur._executemany_async("SELECT \x00", iter([]))
@@ -109,4 +117,4 @@ def test_executemany_async_classifier_raise_resets_state_first_nul_byte() -> Non
     assert cur._description is None
     assert cur._rowcount == -1
     assert cur._rows == []
-    assert cur._completed_iterations == 0
+    assert cur._completed_iterations == 5

@@ -69,13 +69,20 @@ def _assert_scrubbed_to_baseline(cur: Cursor | AsyncCursor) -> None:
     assert cur._row_index == 0, f"row_index must scrub to 0; got {cur._row_index}"
     # Per the lastrowid lifecycle contract, rejection preserves it.
     assert cur._lastrowid == 4242, f"lastrowid must survive rejection; got {cur._lastrowid}"
-    # Async cursor only: ``_reset_execute_state`` zeroes the mid-loop
-    # progress counter so an empty / rejected ``seq_of_parameters``
-    # ends with the same shape as empty ``execute``.
+    # Outer-dispatch verb-reject / row-returning / PRAGMA paths run
+    # ``_reset_execute_state`` BEFORE the rejection raise, so the
+    # mid-loop progress counter is scrubbed to 0 — the inner
+    # snapshot/restore arm at ``_executemany_async`` is not reached
+    # on these paths. The classifier-raise path (empty SQL / multi-
+    # statement / NUL byte INSIDE ``_executemany_async``) is the
+    # only path where the snapshot fires, since that runs after the
+    # snapshot is taken; see
+    # ``test_executemany_classifier_resets_state_first.py`` for those
+    # pins.
     if hasattr(cur, "_completed_iterations"):
         assert cur._completed_iterations == 0, (
-            f"_completed_iterations must scrub to 0 after rejection; "
-            f"got {cur._completed_iterations}"
+            f"_completed_iterations must scrub to 0 after outer-dispatch "
+            f"rejection; got {cur._completed_iterations}"
         )
 
 

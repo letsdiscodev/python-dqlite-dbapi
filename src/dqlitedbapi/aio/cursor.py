@@ -601,6 +601,10 @@ class AsyncCursor:
                 f"cursor is already executing in another task (id={id(self)}); "
                 "use one cursor per task"
             )
+        # Snapshot ``_completed_iterations`` BEFORE the
+        # ``_reset_execute_state()`` call. See sync sibling for the
+        # input-validation-vs-mid-batch contract rationale.
+        completed_iterations_pre_batch = self._completed_iterations
         # Prepare-stage path begins here. Scrub per-execute state so
         # a rejected ``executemany`` (verb-reject / row-returning /
         # PRAGMA) lands at the stdlib "no result set" baseline rather
@@ -718,16 +722,27 @@ class AsyncCursor:
                     # messages be cleared by every cursor method call;
                     # clear here so the contract holds even on the
                     # BaseException re-raise path.
-                    # ``_completed_iterations`` is intentionally PRESERVED
-                    # — it's the observability signal for "how many
-                    # iterations committed before the failure"; callers
-                    # reading it after cancel get the count for
-                    # idempotent compensation. Mirrors the sync sibling.
+                    # ``_completed_iterations`` is the observability
+                    # signal for "how many iterations committed
+                    # before the failure"; callers reading it after
+                    # cancel get the count for idempotent
+                    # compensation. Conditional restore (see sync
+                    # sibling for full rationale): if the in-batch
+                    # counter is still zero (input-validation
+                    # rejection BEFORE any iteration ran), restore
+                    # the pre-batch snapshot so a caller who ran a
+                    # prior ``executemany`` (completed=N) then
+                    # triggered a validation-rejected ``executemany``
+                    # still observes the prior batch's count.
+                    # Mid-batch raises (counter > 0) preserve the
+                    # in-batch progress as before.
                     self._rowcount = -1
                     self._rows = []
                     self._description = None
                     self._row_index = 0
                     self._lastrowid = lastrowid_pre_batch
+                    if self._completed_iterations == 0:
+                        self._completed_iterations = completed_iterations_pre_batch
                     del self.messages[:]
                     raise
                 # Final guard before apply; pairs with the ``_closed``

@@ -1889,6 +1889,16 @@ class Cursor:
         Pure queries (SELECT / VALUES / PRAGMA) are rejected in the
         sync ``executemany`` wrapper before this helper is scheduled.
         """
+        # Snapshot ``_completed_iterations`` BEFORE the
+        # ``_reset_execute_state()`` call. The reset zeros the counter
+        # so the loop body can accumulate per-iteration progress;
+        # the snapshot lets the BaseException arm distinguish
+        # "input-validation raise (zero in-batch progress)" from
+        # "mid-batch raise (partial progress)" and restore the
+        # pre-batch value on the former while preserving the
+        # partial-progress count on the latter — both observability
+        # contracts hold simultaneously.
+        completed_iterations_pre_batch = self._completed_iterations
         # Single source of truth for per-execute reset; see
         # ``_reset_execute_state``. Also zeroes ``_rowcount`` to -1 so
         # an empty ``seq_of_parameters`` ends with the same
@@ -1909,7 +1919,17 @@ class Cursor:
         # would cost. ``skip_param_count_check=True`` skips the
         # placeholder length-check (the classifier still runs the
         # empty/multi/NUL guards, which are pure SQL parses).
-        _classify_caller_sql(operation, None, skip_param_count_check=True)
+        # On a classifier raise (empty SQL / multi-statement / NUL
+        # byte), restore the pre-batch ``_completed_iterations``
+        # snapshot so the observability counter reflects the prior
+        # batch's progress instead of the just-zeroed baseline.
+        # See the BaseException arm below for the conditional
+        # restore that handles the mid-batch raise case.
+        try:
+            _classify_caller_sql(operation, None, skip_param_count_check=True)
+        except BaseException:
+            self._completed_iterations = completed_iterations_pre_batch
+            raise
         cleaned = _strip_sql_noise(operation)
         placeholder_count = cleaned.count("?")
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
@@ -1998,15 +2018,26 @@ class Cursor:
             # also requires messages be cleared by every cursor
             # method call; clear here so the contract holds even on
             # the BaseException re-raise. ``_completed_iterations``
-            # is intentionally PRESERVED — it's the observability
-            # signal for "how many iterations committed before the
-            # failure"; callers reading it after cancel get the
-            # count for idempotent compensation.
+            # is the observability signal for "how many iterations
+            # committed before the failure"; callers reading it
+            # after cancel get the count for idempotent
+            # compensation. Conditional restore: if the in-batch
+            # counter is still zero (the raise came from
+            # ``_classify_caller_sql`` BEFORE any iteration ran —
+            # input-validation rejection), restore the pre-batch
+            # snapshot so a caller who ran ``executemany([A, B, C])``
+            # (completed=2) then triggered a validation-rejected
+            # ``executemany("BAD SQL", ...)`` still observes the
+            # prior batch's count. Mid-batch raises (counter > 0)
+            # preserve the in-batch progress as before so the
+            # partial-progress contract is honoured.
             self._rowcount = -1
             self._rows = []
             self._description = None
             self._row_index = 0
             self._lastrowid = lastrowid_pre_batch
+            if self._completed_iterations == 0:
+                self._completed_iterations = completed_iterations_pre_batch
             del self.messages[:]
             raise
         acc.apply(self)

@@ -38,6 +38,10 @@ def _bare_async_cursor() -> Any:
     acur._connection = aconn
     acur._executing_task = None
     acur.messages = []
+    # ``_completed_iterations`` is snapshotted in ``executemany``
+    # before ``_reset_execute_state`` runs; seed so the bare-cursor
+    # fixture supports the validation-reject paths.
+    acur._completed_iterations = 0
     return acur
 
 
