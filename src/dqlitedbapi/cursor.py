@@ -1361,6 +1361,19 @@ class Cursor:
         result diagnostic in psycopg2/3 ports), so a stale or
         partially-mutated read is materially wrong, not merely
         suboptimal.
+
+        **Closed-state read returns** ``None`` (not ``Error``). This is
+        intentional and ambiguous with the legitimate "no result set
+        active" return. ``close()`` scrubs ``_description`` to ``None``
+        so the property short-circuits at the same branch as a fresh
+        cursor that has not yet executed. Cross-driver code treating
+        a ``None`` rownumber as "DML cursor, no rows" will misclassify
+        a closed cursor as a healthy DML cursor; gate on
+        ``cur._closed`` (or the parent ``cur.connection`` raising
+        ``InterfaceError``) before consulting ``rownumber`` if the
+        distinction matters. Matches the bypass discipline of sibling
+        read-only accessors ``description`` and ``rowcount`` — none of
+        the three raise on a closed cursor.
         """
         # ``getattr`` defensively in case a ``Cursor.__new__``-built
         # fixture has no ``_connection`` slot yet, or the parent

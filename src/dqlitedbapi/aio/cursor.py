@@ -212,6 +212,13 @@ class AsyncCursor:
         Mirrors the ``in_transaction`` discipline and the sync
         ``Cursor.rownumber`` sibling. See sync sibling for the full
         rationale.
+
+        **Closed-state read returns** ``None`` (not ``Error``). See
+        the sync sibling's docstring — closed-cursor ``rownumber``
+        is intentionally ambiguous with the "no result set active"
+        return because ``close()`` scrubs ``_description`` to
+        ``None``. Cross-driver code that distinguishes "DML cursor"
+        from "closed cursor" must gate on ``cur._closed`` first.
         """
         conn = getattr(self, "_connection", None)
         try:
