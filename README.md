@@ -246,6 +246,19 @@ borrowed from one.
   to get the id back through the row-returning path. (PEP 249
   doesn't mandate `lastrowid` correctness for INSERT-via-CTE.)
 
+- **Result sets are fully materialised at `execute()` time.** Stdlib
+  `sqlite3` streams rows from the C engine via `Cursor.fetchone`,
+  yielding one row per call. dqlite drains every continuation frame
+  inside `Cursor.execute()` before returning, materialising the full
+  result into the cursor's in-memory `_rows`. The `fetchone` /
+  `fetchmany` / `fetchall` surface then iterates the in-memory
+  buffer; `Cursor.close()` is purely in-memory and does not send
+  `INTERRUPT` to the server. For large queries, set `max_total_rows`
+  (forwarded from `connect()`) to cap memory at the wire layer, or
+  shape queries with explicit `LIMIT` to control batch size. This
+  matches the dqlite wire protocol (continuation frames are
+  server-pushed) but diverges from go-dqlite's lazy `Rows.Next`.
+
 - **`SQLITE_TOOBIG` maps to `DataError`, not `DatabaseError`.** CPython
   `Modules/_sqlite/util.c::get_exception_class` maps `SQLITE_TOOBIG`
   (code 18, "string or BLOB exceeds size limit") to the generic
