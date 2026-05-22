@@ -848,15 +848,11 @@ class AsyncCursor:
         parity with ``sqlite3.Cursor.fetchmany`` for the "no result
         set" case matching the ``fetchone`` parity already in place.
 
-        **``size=0`` divergence (cross-driver matrix)**: dqlite
-        returns ``[]`` deterministically. This differs from stdlib
-        ``sqlite3`` (whose behaviour for ``fetchmany(0)`` is
-        version-dependent — some Python/sqlite releases drain the
-        result set, others return ``[]``) and from psycopg3 (which
-        treats ``0`` as the sentinel "use ``self.arraysize``").
-        Cross-driver code should pass an explicit positive size,
-        use ``None`` / omit ``size`` to default to ``self.arraysize``,
-        or rely on ``fetchall()`` to drain. See sync sibling for the
+        **``size=0`` cross-driver matrix**: dqlite returns ``[]``
+        deterministically without consuming rows — same as stdlib
+        ``sqlite3`` on Python 3.13+ (the supported floor). The
+        divergence is with psycopg3, which treats ``0`` as the
+        sentinel "use ``self.arraysize``". See sync sibling for the
         full rationale.
         """
         del self.messages[:]

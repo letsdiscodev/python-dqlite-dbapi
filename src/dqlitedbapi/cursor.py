@@ -2150,19 +2150,15 @@ class Cursor:
         polls ``cur.fetchmany(N) or default`` after a connect-and-
         cursor sequence works on stdlib and dqlite.
 
-        **``size=0`` divergence (cross-driver matrix)**: dqlite
-        returns ``[]`` deterministically. This differs from stdlib
-        ``sqlite3`` (which has historically drained the result set on
-        some Python/sqlite versions and returned ``[]`` on others —
-        the behaviour is version-dependent and was never a reliable
-        parity guarantee) and from psycopg3 (which treats ``0`` as
-        the sentinel "use ``self.arraysize``", since its default IS
-        ``size: int = 0``, not ``None``). Cross-driver code should
-        pass an explicit positive size, use ``None`` / omit the
-        argument to default to ``self.arraysize``, or rely on
-        ``fetchall()`` to drain. Code ported from psycopg that calls
-        ``cur.fetchmany(0)`` thinking it requests "default batch"
-        gets an empty list under dqlite.
+        **``size=0`` cross-driver matrix**: dqlite returns ``[]``
+        deterministically without consuming rows — same as stdlib
+        ``sqlite3`` on Python 3.13+ (the supported floor). The
+        divergence is with psycopg3, which treats ``0`` as the
+        sentinel "use ``self.arraysize``" since its default IS
+        ``size: int = 0``, not ``None``. Cross-driver code ported
+        from psycopg that calls ``cur.fetchmany(0)`` thinking it
+        requests "default batch" gets an empty list under dqlite
+        and stdlib ``sqlite3``.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
