@@ -1898,8 +1898,9 @@ class AsyncConnection:
         parameters: Sequence[Any] | None = None,
         /,
     ) -> AsyncCursor:
-        """PEP 249 optional extension — open a cursor, run ``execute``,
-        return the cursor.
+        """Stdlib ``sqlite3.Connection`` / aiosqlite convenience extension
+        (NOT part of PEP 249 §10 optional extensions) — open a cursor,
+        run ``execute``, return the cursor.
 
         Mirrors stdlib ``sqlite3.Connection.execute`` and
         aiosqlite's ``Connection.execute``. Sync sibling
@@ -1951,8 +1952,9 @@ class AsyncConnection:
         seq_of_parameters: Iterable[Sequence[Any]],
         /,
     ) -> AsyncCursor:
-        """PEP 249 optional extension — open a cursor, run
-        ``executemany``, return the cursor. Mirrors stdlib
+        """Stdlib ``sqlite3.Connection`` / aiosqlite convenience extension
+        (NOT part of PEP 249 §10 optional extensions) — open a cursor,
+        run ``executemany``, return the cursor. Mirrors stdlib
         ``sqlite3.Connection.executemany`` and aiosqlite's
         ``Connection.executemany``.
 

@@ -3085,8 +3085,9 @@ class Connection:
         parameters: Sequence[Any] | None = None,
         /,
     ) -> Cursor:
-        """PEP 249 optional extension — open a cursor, run ``execute``,
-        return the cursor.
+        """Stdlib ``sqlite3.Connection`` convenience extension (NOT part
+        of PEP 249 §10 optional extensions) — open a cursor, run
+        ``execute``, return the cursor.
 
         Parity with stdlib ``sqlite3.Connection.execute`` and with the
         async-side ``AsyncAdaptedConnection.execute``. SA-internal code
@@ -3126,7 +3127,8 @@ class Connection:
         seq_of_parameters: Iterable[Sequence[Any]],
         /,
     ) -> Cursor:
-        """PEP 249 optional extension — open a cursor, run
+        """Stdlib ``sqlite3.Connection`` convenience extension (NOT part
+        of PEP 249 §10 optional extensions) — open a cursor, run
         ``executemany``, return the cursor.
 
         Parity with stdlib ``sqlite3.Connection.executemany`` and with
