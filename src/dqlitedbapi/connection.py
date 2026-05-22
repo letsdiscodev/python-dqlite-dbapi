@@ -48,6 +48,9 @@ from dqlitewire import (
     primary_sqlite_code,
     sanitize_for_log,
 )
+from dqlitewire import (
+    EncodeError as _WireEncodeError,
+)
 
 __all__ = ["Connection"]
 
@@ -802,6 +805,27 @@ async def _build_and_connect(
         # per PEP 249 §7 — symmetric with the cursor-path classifier.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise DataError(str(e), code=None, raw_message=raw_msg) from e
+    except _WireEncodeError as e:
+        # Raw wire-layer ``EncodeError`` leaking past the client
+        # layer's wrap discipline. ``DqliteProtocol.open_database``
+        # does not wrap the ``OpenRequest(name=database).encode()``
+        # site (the request is built once per connect and
+        # encode-failures are caller-input faults: NUL byte in the
+        # database name, oversize TEXT, surrogate codepoint, etc.).
+        # The client's ``_connect_impl`` bare ``except BaseException``
+        # at connection.py:1709 propagates this unchanged.
+        # ``dqlitewire.EncodeError`` is NOT a subclass of
+        # ``_client_exc.ProtocolError`` (the multi-inheritance shape
+        # at exceptions.py is one-way — the client class inherits
+        # FROM the wire class, not vice versa), so without this
+        # bespoke arm, the raw wire exception escapes past every
+        # ``except dbapi.Error:`` block — PEP 249 §7 violation.
+        # Symmetric with the cursor-path classifier
+        # at cursor.py's ``_call_client`` which has the same arm
+        # for the bind-time encode case.
+        raise DataError(
+            f"wire encode failed: {e}", code=None, raw_message=str(e)
+        ) from e
     except _client_exc.InterfaceError as e:
         # Driver-misuse on the connect path (e.g. cross-loop reuse of
         # an inner DqliteConnection). Surface as InterfaceError per
