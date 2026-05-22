@@ -208,6 +208,7 @@ class AsyncConnection:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
         max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
+        max_message_size: int | None = None,
         trust_server_heartbeat: bool = False,
         close_timeout: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
         dial_timeout: float | None = None,
@@ -289,6 +290,9 @@ class AsyncConnection:
             "max_continuation_frames",
             upper=MAX_CONTINUATION_FRAMES_UPPER_BOUND,
         )
+        # See sync sibling for rationale: ``None`` falls back to the
+        # wire-layer default; the wire layer revalidates.
+        self._max_message_size = max_message_size
         self._trust_server_heartbeat = trust_server_heartbeat
         self._close_timeout = close_timeout
         self._dial_timeout = dial_timeout
@@ -526,6 +530,7 @@ class AsyncConnection:
                 timeout=self._timeout,
                 max_total_rows=self._max_total_rows,
                 max_continuation_frames=self._max_continuation_frames,
+                max_message_size=getattr(self, "_max_message_size", None),
                 trust_server_heartbeat=self._trust_server_heartbeat,
                 close_timeout=self._close_timeout,
                 dial_timeout=getattr(self, "_dial_timeout", None),

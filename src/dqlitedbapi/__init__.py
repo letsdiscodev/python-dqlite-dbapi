@@ -214,6 +214,7 @@ def connect(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
+    max_message_size: int | None = None,
     trust_server_heartbeat: bool = False,
     close_timeout: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
     dial_timeout: float | None = None,
@@ -239,6 +240,12 @@ def connect(
             :class:`Connection`. ``None`` disables the cap.
         max_continuation_frames: Per-query continuation-frame cap.
             Forwarded to the underlying :class:`Connection`.
+        max_message_size: Maximum allowed inbound frame size in
+            bytes. ``None`` (default) falls back to the wire-layer
+            default (64 MiB). Forwarded to the underlying
+            :class:`Connection`. The wire layer validates the value
+            (positive int, non-bool); pathological values raise
+            ``ValueError`` from the wire layer at construction.
         trust_server_heartbeat: Let the server-advertised heartbeat
             widen the per-read deadline. Default False.
         close_timeout: Budget (seconds) for the transport-drain during
@@ -325,6 +332,7 @@ def connect(
         timeout=timeout,
         max_total_rows=max_total_rows,
         max_continuation_frames=max_continuation_frames,
+        max_message_size=max_message_size,
         trust_server_heartbeat=trust_server_heartbeat,
         close_timeout=close_timeout,
         dial_timeout=dial_timeout,

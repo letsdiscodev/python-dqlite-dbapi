@@ -377,6 +377,7 @@ def _get_resolve_leader_cluster(
     max_continuation_frames: int | None,
     trust_server_heartbeat: bool,
     dial_func: DialFunc | None = None,
+    max_message_size: int | None = None,
 ) -> ClusterClient:
     """Return a process-shared :class:`ClusterClient` for the
     leader-discovery probe, keyed by the (loop, address, governor)
@@ -461,6 +462,7 @@ def _get_resolve_leader_cluster(
             timeout,
             max_total_rows,
             max_continuation_frames,
+            max_message_size,
             trust_server_heartbeat,
             dial_func,
         )
@@ -486,6 +488,19 @@ def _get_resolve_leader_cluster(
                 # cache size cap (_RESOLVE_LEADER_CACHE_MAX) bounds
                 # the per-loop memory pressure.
                 _RESOLVE_LEADER_CACHE.pop(next(iter(_RESOLVE_LEADER_CACHE)))
+            # ``max_message_size`` is intentionally NOT forwarded to
+            # ``ClusterClient.__init__``: ClusterClient lacks the
+            # constructor kwarg today (only its per-call ``connect()``
+            # method accepts it). The leader-probe RPC returns
+            # ``LeaderResponse`` which is bounded well below the
+            # wire-default 64 MiB; the operator's larger cap matters
+            # only for the eventual ``DqliteConnection`` data session,
+            # which IS built with ``max_message_size`` at the call
+            # site below in ``_build_and_connect``. Cache-key membership
+            # is still kept on ``max_message_size`` so the dbapi
+            # connect() variant produces independent cache entries —
+            # avoids cross-contamination if ``ClusterClient`` ever
+            # grows the kwarg.
             cluster = ClusterClient(
                 MemoryNodeStore([address]),
                 timeout=timeout,
@@ -504,6 +519,7 @@ async def _resolve_leader(
     timeout: float,
     max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
     max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
+    max_message_size: int | None = None,
     trust_server_heartbeat: bool = False,
     dial_func: DialFunc | None = None,
 ) -> str:
@@ -550,6 +566,7 @@ async def _resolve_leader(
         timeout=timeout,
         max_total_rows=max_total_rows,
         max_continuation_frames=max_continuation_frames,
+        max_message_size=max_message_size,
         trust_server_heartbeat=trust_server_heartbeat,
         dial_func=dial_func,
     )
@@ -568,6 +585,7 @@ async def _build_and_connect(
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
+    max_message_size: int | None = None,
 ) -> DqliteConnection:
     """Build a DqliteConnection with the given governors and connect it.
 
@@ -595,6 +613,7 @@ async def _build_and_connect(
             timeout=timeout,
             max_total_rows=max_total_rows,
             max_continuation_frames=max_continuation_frames,
+            max_message_size=max_message_size,
             trust_server_heartbeat=trust_server_heartbeat,
             dial_func=dial_func,
         )
@@ -680,6 +699,7 @@ async def _build_and_connect(
         timeout=timeout,
         max_total_rows=max_total_rows,
         max_continuation_frames=max_continuation_frames,
+        max_message_size=max_message_size,
         trust_server_heartbeat=trust_server_heartbeat,
         close_timeout=close_timeout,
         dial_timeout=dial_timeout,
@@ -1257,6 +1277,7 @@ class Connection:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
         max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
+        max_message_size: int | None = None,
         trust_server_heartbeat: bool = False,
         close_timeout: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
         dial_timeout: float | None = None,
@@ -1363,6 +1384,12 @@ class Connection:
             "max_continuation_frames",
             upper=MAX_CONTINUATION_FRAMES_UPPER_BOUND,
         )
+        # ``max_message_size``: ``None`` falls back to the wire-layer
+        # default (64 MiB). The wire layer revalidates the value at
+        # protocol construction; the dbapi layer just stores and
+        # forwards. Passing the value through without dbapi-side
+        # validation keeps a single source of truth.
+        self._max_message_size = max_message_size
         self._trust_server_heartbeat = trust_server_heartbeat
         self._close_timeout = close_timeout
         self._dial_timeout = dial_timeout
@@ -1990,6 +2017,7 @@ class Connection:
                 timeout=self._timeout,
                 max_total_rows=self._max_total_rows,
                 max_continuation_frames=self._max_continuation_frames,
+                max_message_size=getattr(self, "_max_message_size", None),
                 trust_server_heartbeat=self._trust_server_heartbeat,
                 close_timeout=self._close_timeout,
                 dial_timeout=getattr(self, "_dial_timeout", None),
