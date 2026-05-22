@@ -188,6 +188,10 @@ borrowed from one.
   stdlib preserves `description` and `lastrowid` post-close; dqlite
   scrubs to `None` to enforce the closed-cursor "no operation
   performed" surface.
+- **`Cursor.lastrowid` returns `None` after a fresh CREATE TABLE.**
+  stdlib `sqlite3` returns `0` for a never-INSERTed cursor; dqlite
+  returns `None`. After the first INSERT/REPLACE both drivers agree
+  on the sticky value through subsequent UPDATE / DELETE / DDL.
 - **`Cursor.fetchmany(0)` returns `[]`.** stdlib (verified 3.12.3) and
   psycopg3 both treat `size=0` as "fetch arraysize" or "fetch all
   remaining"; dqlite reads PEP 249 literally (size=0 → 0 rows). Pass
