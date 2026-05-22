@@ -1237,8 +1237,17 @@ class AsyncConnection:
         same without breaking SA's lazy-construct-without-loop adapter
         pattern. Code that needs the eager cross-context check on a
         never-awaited connection must call ``connect()`` first.
+
+        **Closed-state precedence**: the closed short-circuit runs
+        BEFORE ``_check_loop_only()`` so a foreign-loop reader of a
+        closed connection (e.g. a shutdown coroutine running on
+        loop B that decides commit-vs-rollback against a connection
+        opened on loop A) gets the documented ``False`` rather than
+        a ``LoopError`` cross-loop violation. A closed connection
+        is observably immutable; loop affinity becomes moot once
+        ``close()`` has run. Mirrors the sync sibling's
+        closed-then-thread ordering.
         """
-        self._check_loop_only()
         # Snapshot the reference once: ``close()`` running concurrently
         # may null ``_async_conn`` between a None-check and an attribute
         # read. The local binding is immutable for the duration of the
@@ -1247,6 +1256,7 @@ class AsyncConnection:
         conn = self._async_conn
         if conn is None or self._closed:
             return False
+        self._check_loop_only()
         return bool(conn.in_transaction)
 
     @property
