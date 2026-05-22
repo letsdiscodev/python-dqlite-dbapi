@@ -105,9 +105,11 @@ class TestRownumberProperty:
 
 
 class TestFetchmanyNegativeSize:
-    def test_sync_fetchmany_negative_returns_all(self) -> None:
-        # Stdlib ``sqlite3.Cursor.fetchmany`` parity: negative size
-        # returns all remaining rows.
+    def test_sync_fetchmany_negative_raises_programmingerror(self) -> None:
+        # Current stdlib (Python 3.13+) rejects negative size with
+        # ValueError. The dbapi follows current stdlib but wraps the
+        # rejection as ProgrammingError to keep it in dbapi.Error per
+        # PEP 249 §7.
         from dqlitedbapi.cursor import Cursor
 
         class _FakeConn:
@@ -116,7 +118,8 @@ class TestFetchmanyNegativeSize:
         cursor = Cursor(_FakeConn())  # type: ignore[arg-type]
         cursor._description = [("x", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = [(1,), (2,)]
-        assert cursor.fetchmany(-5) == [(1,), (2,)]
+        with pytest.raises(ProgrammingError, match=r"fetchmany size must be non-negative"):
+            cursor.fetchmany(-5)
 
     def test_sync_fetchmany_zero_returns_empty(self) -> None:
         from dqlitedbapi.cursor import Cursor
@@ -130,7 +133,7 @@ class TestFetchmanyNegativeSize:
         # 0 is allowed per PEP 249.
         assert cursor.fetchmany(0) == []
 
-    def test_async_fetchmany_negative_returns_all(self) -> None:
+    def test_async_fetchmany_negative_raises_programmingerror(self) -> None:
         from dqlitedbapi.aio.cursor import AsyncCursor
 
         class _FakeAsyncConn:
@@ -146,8 +149,8 @@ class TestFetchmanyNegativeSize:
         cursor._rows = [(1,), (2,)]
 
         async def _run() -> None:
-            assert await cursor.fetchmany(-3) == [(1,), (2,)]
-            cursor._row_index = 0
+            with pytest.raises(ProgrammingError, match=r"fetchmany size must be non-negative"):
+                await cursor.fetchmany(-3)
             assert await cursor.fetchmany(0) == []
 
         asyncio.run(_run())

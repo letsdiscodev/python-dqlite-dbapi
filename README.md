@@ -192,6 +192,12 @@ borrowed from one.
   psycopg3 both treat `size=0` as "fetch arraysize" or "fetch all
   remaining"; dqlite reads PEP 249 literally (size=0 → 0 rows). Pass
   `None` or omit the argument to default to `arraysize`.
+- **`Cursor.fetchmany(negative)` raises `ProgrammingError`.** Stdlib
+  `sqlite3.Cursor.fetchmany` on Python 3.13+ rejects negative sizes
+  with `ValueError`; older stdlib drained "fetch all remaining". The
+  dbapi follows current stdlib but wraps the rejection in
+  `ProgrammingError` to keep it in the dbapi.Error hierarchy per
+  PEP 249 §7.
 - **`cursor.execute("")` raises `ProgrammingError("empty statement")`.**
   stdlib silently accepts empty / whitespace-only / comment-only SQL
   as a no-op; the driver pre-flight rejects per PEP 249 §7 to surface

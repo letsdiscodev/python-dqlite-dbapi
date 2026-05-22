@@ -2147,12 +2147,17 @@ class Cursor:
             # to 1 (a common caller-bug trap, not a useful affordance).
             raise ProgrammingError(f"fetchmany expects an int or None, got {type(size).__name__}")
         if size < 0:
-            # Stdlib ``sqlite3.Cursor.fetchmany`` documents negative
-            # ``size`` as "fetch all remaining rows"; mirror that
-            # behaviour for cross-driver parity. The ``arraysize``
-            # SETTER still validates >= 1 (it's a stored-state
-            # invariant), but the per-call argument follows stdlib.
-            return self.fetchall()
+            # Stdlib ``sqlite3.Cursor.fetchmany`` rejects negative
+            # ``size`` on Python 3.13+ (``ValueError: value must be
+            # positive`` on 3.13; ``ValueError: Cannot convert
+            # negative int`` on 3.14). The historical "fetch all
+            # remaining rows" semantic was settled under an older
+            # stdlib that drained on negative; current stdlib raises.
+            # PEP 249 §7 requires cursor methods to raise Error
+            # subclasses; ``ProgrammingError`` keeps the failure in
+            # the dbapi.Error hierarchy, matching the sibling
+            # rejection on non-int / bool ``size`` at line 2148.
+            raise ProgrammingError(f"fetchmany size must be non-negative; got {size}")
 
         # Snapshot _row_index before the loop; restore on
         # cancel/exception so partially-iterated rows are not

@@ -852,10 +852,12 @@ class AsyncCursor:
             # See sync sibling at cursor.py for matching guard.
             raise ProgrammingError(f"fetchmany expects an int or None, got {type(size).__name__}")
         if size < 0:
-            # Stdlib parity: ``sqlite3.Cursor.fetchmany`` documents
-            # negative ``size`` as "fetch all remaining rows". Mirror
-            # the sync sibling.
-            return await self.fetchall()
+            # Stdlib parity (current Python): ``sqlite3.Cursor.fetchmany``
+            # rejects negative ``size`` on 3.13+ with ``ValueError``.
+            # Mirror the sync sibling's ``ProgrammingError`` wrap so the
+            # rejection stays in the dbapi.Error hierarchy per PEP 249
+            # §7.
+            raise ProgrammingError(f"fetchmany size must be non-negative; got {size}")
 
         # Snapshot ``_row_index`` BEFORE the loop. On cancel/exception
         # mid-loop, restore to (snapshot + delivered count) so rows
