@@ -246,6 +246,19 @@ borrowed from one.
   to get the id back through the row-returning path. (PEP 249
   doesn't mandate `lastrowid` correctness for INSERT-via-CTE.)
 
+- **`description[i][1]` is `None` on empty result sets.** PEP 249 §6.1.2
+  requires `type_code` to compare equal to one of the Type Objects
+  (`STRING` / `NUMBER` / `BINARY` / `DATETIME` / `ROWID`). On an empty
+  result (zero rows AND zero per-column type tags — the wire layer
+  derives types from the first row's header), the per-column affinity
+  is genuinely unrecoverable from the wire; the driver emits `None`
+  rather than synthesise a misleading default. Cross-driver
+  `type_code == STRING` tests silently fail to match. Callers needing
+  column types on empty result sets should issue
+  `PRAGMA table_info(<table>)` separately. The sibling NULL-first-row
+  case is handled by a row-scan rescue (see `Cursor.description`
+  docstring).
+
 - **Result sets are fully materialised at `execute()` time.** Stdlib
   `sqlite3` streams rows from the C engine via `Cursor.fetchone`,
   yielding one row per call. dqlite drains every continuation frame
