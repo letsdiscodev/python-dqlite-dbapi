@@ -426,9 +426,17 @@ async def aconnect(
         # original connect error remains user-visible. Mirrors the
         # sibling ``dqliteclient.connect`` shape (commit 1ba9371) and
         # the SA-glue ``aio_close`` discipline.
+        # Schedule the cleanup-close as a Task with an explicit
+        # ``_observe_drain_exception`` done-callback BEFORE awaiting
+        # the shielded close. See sibling ``dqliteclient.connect``
+        # for the orphan-task rationale.
+        from dqliteclient.cluster import _observe_drain_exception
+
+        inner_drain = asyncio.ensure_future(conn.close())
+        inner_drain.add_done_callback(_observe_drain_exception)
         try:
             with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.shield(conn.close())
+                await asyncio.shield(inner_drain)
         except Exception:
             logger.debug(
                 "aconnect: exception during cleanup-close after failed connect",

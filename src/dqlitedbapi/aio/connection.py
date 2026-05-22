@@ -556,8 +556,17 @@ class AsyncConnection:
             # ``task.cancel()`` / ``asyncio.timeout(...)`` / TaskGroup
             # siblings.
             if self._closed:
+                # Schedule the cleanup-close as a Task with an explicit
+                # ``_observe_drain_exception`` done-callback so the
+                # implicit Task ``asyncio.shield(coro)`` would otherwise
+                # create is not orphaned. See sibling pattern at
+                # connection.py:2310 / 2300-2308 commentary.
+                from dqliteclient.cluster import _observe_drain_exception
+
+                inner_drain = asyncio.ensure_future(built.close())
+                inner_drain.add_done_callback(_observe_drain_exception)
                 with contextlib.suppress(Exception):
-                    await asyncio.shield(built.close())
+                    await asyncio.shield(inner_drain)
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
             self._async_conn = built
             # Flip the finalizer's "anything to clean up" gate. From
@@ -780,8 +789,20 @@ class AsyncConnection:
             # short-circuits via ``_pool_released`` / ``_in_use``).
             # Then the lock-cleanup runs unconditionally.
             if self._async_conn is not None:
+                # Schedule the underlying close as a Task with an
+                # explicit ``_observe_drain_exception`` done-callback
+                # so the implicit Task ``asyncio.shield(coro)`` would
+                # otherwise create is not orphaned. The explicit
+                # observer absorbs any eventual non-OSError raise on
+                # the abandoned task path (interpreter shutdown,
+                # transport tear-down) so no "Task exception was
+                # never retrieved" warning surfaces.
+                from dqliteclient.cluster import _observe_drain_exception
+
+                inner_drain = asyncio.ensure_future(self._async_conn.close())
+                inner_drain.add_done_callback(_observe_drain_exception)
                 try:
-                    await asyncio.shield(self._async_conn.close())
+                    await asyncio.shield(inner_drain)
                 except InterfaceError as exc:
                     # The underlying connection is still in_use by a
                     # sibling task (op_lock contract violation: cross-task
@@ -2306,8 +2327,17 @@ class AsyncConnection:
             # preservation is the project-wide structured-concurrency
             # posture. Mirrors the SA-adapter cleanup-on-failure
             # discipline.
+            # Schedule the cleanup-close as a Task with an explicit
+            # ``_observe_drain_exception`` done-callback so the
+            # implicit Task ``asyncio.shield(coro)`` would otherwise
+            # create is not orphaned. See sibling pattern at
+            # ``connect()`` line 564-573 / __init__.py.
+            from dqliteclient.cluster import _observe_drain_exception
+
+            inner_drain = asyncio.ensure_future(self.close())
+            inner_drain.add_done_callback(_observe_drain_exception)
             try:
-                await asyncio.shield(self.close())
+                await asyncio.shield(inner_drain)
             except Exception:
                 logger.debug(
                     "AsyncConnection.__aenter__ (id=%s, address=%s): "
