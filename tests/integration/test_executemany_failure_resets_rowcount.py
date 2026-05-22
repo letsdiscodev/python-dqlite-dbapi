@@ -18,6 +18,13 @@ def test_sync_executemany_failure_clears_rowcount(cluster_address: str) -> None:
         cur = conn.cursor()
         cur.execute("DROP TABLE IF EXISTS test_em_fail")
         cur.execute("CREATE TABLE test_em_fail (id INTEGER PRIMARY KEY)")
+        # Seed a pre-batch INSERT so the snapshot/restore semantics
+        # of executemany's BaseException arm are observable. The
+        # rowid the caller observes here is the value the arm must
+        # restore after the mid-batch failure.
+        cur.execute("INSERT INTO test_em_fail (id) VALUES (?)", (42,))
+        pre_batch_lastrowid = cur.lastrowid
+        assert pre_batch_lastrowid is not None
         with pytest.raises(IntegrityError):
             # The third row collides with the first; the loop fails
             # mid-batch.
@@ -29,12 +36,13 @@ def test_sync_executemany_failure_clears_rowcount(cluster_address: str) -> None:
         # behaviour so callers don't observe a misleading
         # last-iteration rowcount.
         assert cur.rowcount == -1
-        # ``_lastrowid`` is intentionally preserved across a failed
-        # executemany — stdlib ``sqlite3.Cursor.lastrowid`` is
-        # documented as not being cleared by failed/cancelled
-        # operations. The successful iteration before the failure DID
-        # insert id=2; that rowid survives the mid-batch IntegrityError.
-        assert cur.lastrowid == 2
+        # ``lastrowid`` is restored to the pre-batch snapshot —
+        # stdlib ``sqlite3.Cursor.lastrowid`` is documented as not
+        # being cleared by failed/cancelled operations, and the
+        # snapshot/restore arm overwrites the intra-batch write
+        # (which would otherwise leak whichever row the loop touched
+        # last) with the value the caller observed before the batch.
+        assert cur.lastrowid == pre_batch_lastrowid
         assert cur._rows == []
         assert cur._description is None
     finally:
@@ -49,14 +57,19 @@ async def test_async_executemany_failure_clears_rowcount(
         cur = conn.cursor()
         await cur.execute("DROP TABLE IF EXISTS test_em_fail_aio")
         await cur.execute("CREATE TABLE test_em_fail_aio (id INTEGER PRIMARY KEY)")
+        # Seed a pre-batch INSERT so the snapshot/restore semantics
+        # of executemany's BaseException arm are observable.
+        await cur.execute("INSERT INTO test_em_fail_aio (id) VALUES (?)", (42,))
+        pre_batch_lastrowid = cur.lastrowid
+        assert pre_batch_lastrowid is not None
         with pytest.raises(IntegrityError):
             await cur.executemany(
                 "INSERT INTO test_em_fail_aio (id) VALUES (?)",
                 [(1,), (2,), (1,)],
             )
         assert cur.rowcount == -1
-        # _lastrowid preserved across failed executemany (stdlib parity).
-        assert cur.lastrowid == 2
+        # lastrowid restored to pre-batch snapshot (stdlib parity).
+        assert cur.lastrowid == pre_batch_lastrowid
         assert cur._rows == []
         assert cur._description is None
     finally:

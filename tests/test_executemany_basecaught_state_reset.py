@@ -30,11 +30,17 @@ from dqlitedbapi.cursor import Cursor
 
 def _seed_post_iteration_state(cur: Cursor | AsyncCursor) -> None:
     """Mimic state that a successfully-applied iteration would
-    have left behind — so the reset's effect is observable."""
+    have left behind — so the reset's effect is observable.
+
+    ``_lastrowid`` is deliberately *not* mutated here: the per-iteration
+    rowid write happens via the snapshot/restore arm inside
+    ``executemany``, and the BaseException arm restores
+    ``_lastrowid`` to its pre-batch value. Mutating ``_lastrowid`` in
+    this helper would mask the restore.
+    """
     cur._rowcount = 42
     cur._rows = [(1,), (2,)]
     cur._description = (("col0", None, None, None, None, None, None),)
-    cur._lastrowid = 99
     cur._row_index = 1
 
 
@@ -46,9 +52,17 @@ async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> N
         raise raised
 
     cur = Cursor(conn)
+    # Pre-batch lastrowid — the value the caller observed from a prior
+    # single-row INSERT. The BaseException arm restores this snapshot
+    # so callers see the rowid they had before executemany.
+    cur._lastrowid = 99
 
     async def _seeded_execute(*args: object, **kwargs: object) -> None:
         _seed_post_iteration_state(cur)
+        # Intra-batch rowid write — what _execute_async does on the
+        # row-returning DML path. Without the snapshot/restore arm,
+        # this value would leak past the BaseException re-raise.
+        cur._lastrowid = 101
         await _execute_then_fail()
 
     with (
@@ -58,15 +72,17 @@ async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> N
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
     # Every field is reset to the "no operation performed" surface;
-    # rowcount=-1 (PEP 249 "undetermined"). _lastrowid is intentionally
-    # NOT reset — stdlib sqlite3.Cursor.lastrowid is documented as not
-    # being cleared by failed/cancelled operations, and the cursor's
-    # docstring at module top pins close() as the single lifecycle
-    # event that scrubs it.
+    # rowcount=-1 (PEP 249 "undetermined"). _lastrowid is restored to
+    # the pre-batch snapshot — stdlib sqlite3.Cursor.lastrowid is
+    # documented as not being cleared by failed/cancelled operations,
+    # and the cursor's docstring at module top pins close() as the
+    # single lifecycle event that scrubs it. The intra-batch write
+    # (101) is overwritten by the restore so cross-driver code reading
+    # ``cur.lastrowid`` after the failure sees the pre-batch value.
     assert cur._rowcount == -1
     assert cur._rows == []
     assert cur._description is None
-    assert cur._lastrowid == 99  # preserved (stdlib parity)
+    assert cur._lastrowid == 99  # restored to pre-batch snapshot
     assert cur._row_index == 0
 
 
@@ -134,9 +150,16 @@ async def test_async_executemany_basecaught_resets_all_fields_and_reraises() -> 
         raise raised
 
     aconn_cursor = AsyncCursor(conn)
+    # Pre-batch lastrowid — the value the caller observed from a prior
+    # single-row INSERT. The BaseException arm restores this snapshot.
+    aconn_cursor._lastrowid = 99
 
     async def _seeded_execute(*args: object, **kwargs: object) -> None:
         _seed_post_iteration_state(aconn_cursor)
+        # Intra-batch rowid write — what _execute_unlocked does on the
+        # row-returning DML path. The snapshot/restore arm overwrites
+        # this on the BaseException re-raise.
+        aconn_cursor._lastrowid = 101
         await _execute_then_fail()
 
     import asyncio
@@ -154,7 +177,7 @@ async def test_async_executemany_basecaught_resets_all_fields_and_reraises() -> 
     assert aconn_cursor._rowcount == -1
     assert list(aconn_cursor._rows) == []
     assert aconn_cursor._description is None
-    assert aconn_cursor._lastrowid == 99  # preserved (stdlib parity)
+    assert aconn_cursor._lastrowid == 99  # restored to pre-batch snapshot
     assert aconn_cursor._row_index == 0
 
 

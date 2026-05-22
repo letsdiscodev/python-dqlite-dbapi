@@ -676,6 +676,18 @@ class AsyncCursor:
                 # rationale.
                 del self.messages[:]
                 self._check_closed()
+                # Snapshot the pre-batch lastrowid so a mid-batch
+                # cancel can restore it. Without this snapshot,
+                # ``_execute_unlocked``'s per-iteration write of
+                # ``self._lastrowid`` on INSERT/REPLACE rows leaks
+                # into the cursor surface: a caller who read
+                # ``cur.lastrowid == 5`` from a prior single-row
+                # INSERT, then cancelled an ``executemany`` mid-batch,
+                # would observe whichever rowid the last in-batch
+                # iteration wrote (e.g. ``6`` or ``7``) instead of
+                # the pre-batch ``5``. The BaseException arm below
+                # restores this snapshot. Mirrors the sync sibling.
+                lastrowid_pre_batch = self._lastrowid
                 try:
                     for params in seq_of_parameters:
                         # Re-check before each iteration so a concurrent
@@ -694,20 +706,18 @@ class AsyncCursor:
                     # iteration's value (misleading), so reset to
                     # PEP 249's "undetermined" sentinel and clear the
                     # other state fields. Mirrors the sync sibling.
-                    # ``_lastrowid`` is intentionally NOT reset — stdlib
-                    # ``sqlite3.Cursor.lastrowid`` is documented as
-                    # "the rowid of the last row inserted" and is NOT
-                    # cleared by a failed/cancelled subsequent operation.
-                    # A user who did ``cur.execute("INSERT ...")``, saw
-                    # ``cur.lastrowid``, then ran an ``executemany`` that
-                    # failed mid-batch should still see the prior INSERT's
-                    # rowid (per the cursor docstring at module top:
-                    # "ROLLBACK / UPDATE / DELETE / DDL do NOT clear it
-                    # (mirroring stdlib), but close() scrubs it").
-                    # PEP 249 §6.1.1 also requires messages be cleared
-                    # by every cursor method call; clear here so the
-                    # contract holds even on the BaseException re-raise
-                    # path.
+                    # ``_lastrowid`` is restored to the pre-batch
+                    # snapshot so the caller observes the rowid they
+                    # had before ``executemany`` was called — NOT
+                    # whichever intra-batch row ``_execute_unlocked``
+                    # last wrote. The intent matches the stdlib
+                    # ``sqlite3.Cursor.lastrowid`` contract ("the rowid
+                    # of the last row inserted" — and across the full
+                    # failed/cancelled batch, no row is the canonical
+                    # last-inserted-row). PEP 249 §6.1.1 also requires
+                    # messages be cleared by every cursor method call;
+                    # clear here so the contract holds even on the
+                    # BaseException re-raise path.
                     # ``_completed_iterations`` is intentionally PRESERVED
                     # — it's the observability signal for "how many
                     # iterations committed before the failure"; callers
@@ -717,6 +727,7 @@ class AsyncCursor:
                     self._rows = []
                     self._description = None
                     self._row_index = 0
+                    self._lastrowid = lastrowid_pre_batch
                     del self.messages[:]
                     raise
                 # Final guard before apply; pairs with the ``_closed``

@@ -1881,6 +1881,16 @@ class Cursor:
         cleaned = _strip_sql_noise(operation)
         placeholder_count = cleaned.count("?")
         acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
+        # Snapshot the pre-batch lastrowid so a mid-batch cancel can
+        # restore it. Without this snapshot, ``_execute_async``'s
+        # per-iteration write of ``self._lastrowid`` on
+        # INSERT/REPLACE rows leaks into the cursor surface: a caller
+        # who read ``cur.lastrowid == 5`` from a prior single-row
+        # INSERT, then cancelled an ``executemany`` mid-batch, would
+        # observe whichever rowid the last in-batch iteration wrote
+        # (e.g. ``6`` or ``7``) instead of the pre-batch ``5``. The
+        # BaseException arm below restores this snapshot.
+        lastrowid_pre_batch = self._lastrowid
         try:
             for params in seq_of_parameters:
                 # Per-iteration structural reject + ``?``-count check.
@@ -1942,25 +1952,29 @@ class Cursor:
             # rowcount=-1 ("undetermined"); use that signal so callers
             # cannot mistake the last iteration's rowcount for the
             # cumulative count of successfully-applied iterations.
-            # ``_lastrowid`` is intentionally NOT reset — stdlib
-            # ``sqlite3.Cursor.lastrowid`` is documented as "the
-            # rowid of the last row inserted" and is NOT cleared by
-            # a failed/cancelled subsequent operation. A user who
-            # saw ``cur.lastrowid`` after an INSERT, then ran an
-            # ``executemany`` that failed mid-batch, should still see
-            # the prior INSERT's rowid (per the lastrowid property
-            # docstring: "close() is the single lifecycle event that
-            # scrubs it"). PEP 249 §6.1.1 also requires messages be
-            # cleared by every cursor method call; clear here so the
-            # contract holds even on the BaseException re-raise.
-            # ``_completed_iterations`` is intentionally PRESERVED
-            # — it's the observability signal for "how many iterations
-            # committed before the failure"; callers reading it after
-            # cancel get the count for idempotent compensation.
+            # ``_lastrowid`` is restored to the pre-batch snapshot so
+            # the caller observes the rowid they had before
+            # ``executemany`` was called — NOT whichever intra-batch
+            # row ``_execute_async`` last wrote. The intent here
+            # matches the stdlib ``sqlite3.Cursor.lastrowid`` contract
+            # ("the rowid of the last row inserted" — and across the
+            # full failed/cancelled batch, no row is the canonical
+            # last-inserted-row). The original implementation
+            # preserved ``self._lastrowid`` in-place which leaked the
+            # intra-batch rowid; snapshotting at loop entry and
+            # restoring here is the correct shape. PEP 249 §6.1.1
+            # also requires messages be cleared by every cursor
+            # method call; clear here so the contract holds even on
+            # the BaseException re-raise. ``_completed_iterations``
+            # is intentionally PRESERVED — it's the observability
+            # signal for "how many iterations committed before the
+            # failure"; callers reading it after cancel get the
+            # count for idempotent compensation.
             self._rowcount = -1
             self._rows = []
             self._description = None
             self._row_index = 0
+            self._lastrowid = lastrowid_pre_batch
             del self.messages[:]
             raise
         acc.apply(self)
