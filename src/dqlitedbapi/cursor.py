@@ -2021,16 +2021,23 @@ class Cursor:
             # is the observability signal for "how many iterations
             # committed before the failure"; callers reading it
             # after cancel get the count for idempotent
-            # compensation. Conditional restore: if the in-batch
-            # counter is still zero (the raise came from
-            # ``_classify_caller_sql`` BEFORE any iteration ran —
-            # input-validation rejection), restore the pre-batch
-            # snapshot so a caller who ran ``executemany([A, B, C])``
-            # (completed=2) then triggered a validation-rejected
-            # ``executemany("BAD SQL", ...)`` still observes the
+            # compensation. Conditional restore: the
+            # ``_classify_caller_sql`` (input-validation) path is
+            # already handled by the inner try/except above which
+            # restores the snapshot and re-raises BEFORE control
+            # reaches this arm; the outer arm here only fires when
+            # the iteration loop itself raises — per-iteration
+            # structural rejects (str/bytes/Mapping/set/frozenset),
+            # placeholder count mismatch, or ``_execute_async``
+            # raising before its ``_completed_iterations += 1``
+            # runs. If the in-batch counter is still zero
+            # (iteration 0 raised before its ``+= 1`` — zero in-batch
+            # progress), restore the pre-batch snapshot so a caller
+            # who ran ``executemany([A, B, C])`` (completed=3) then
+            # triggered a per-iteration reject still observes the
             # prior batch's count. Mid-batch raises (counter > 0)
-            # preserve the in-batch progress as before so the
-            # partial-progress contract is honoured.
+            # preserve the in-batch progress for idempotent
+            # compensation.
             self._rowcount = -1
             self._rows = []
             self._description = None

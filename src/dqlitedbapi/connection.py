@@ -823,9 +823,7 @@ async def _build_and_connect(
         # Symmetric with the cursor-path classifier
         # at cursor.py's ``_call_client`` which has the same arm
         # for the bind-time encode case.
-        raise DataError(
-            f"wire encode failed: {e}", code=None, raw_message=str(e)
-        ) from e
+        raise DataError(f"wire encode failed: {e}", code=None, raw_message=str(e)) from e
     except _client_exc.InterfaceError as e:
         # Driver-misuse on the connect path (e.g. cross-loop reuse of
         # an inner DqliteConnection). Surface as InterfaceError per

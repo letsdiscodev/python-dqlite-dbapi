@@ -727,15 +727,25 @@ class AsyncCursor:
                     # before the failure"; callers reading it after
                     # cancel get the count for idempotent
                     # compensation. Conditional restore (see sync
-                    # sibling for full rationale): if the in-batch
-                    # counter is still zero (input-validation
-                    # rejection BEFORE any iteration ran), restore
-                    # the pre-batch snapshot so a caller who ran a
-                    # prior ``executemany`` (completed=N) then
-                    # triggered a validation-rejected ``executemany``
-                    # still observes the prior batch's count.
-                    # Mid-batch raises (counter > 0) preserve the
-                    # in-batch progress as before.
+                    # sibling for full rationale): this aio sibling
+                    # has no inner ``_classify_caller_sql`` layer —
+                    # the outer ``executemany`` runs validation
+                    # (None seq, bad shape, non-str operation) BEFORE
+                    # the ``_reset_execute_state`` call, so those
+                    # paths never reach the snapshot/restore site.
+                    # THIS arm fires only when the iteration loop
+                    # itself raises: ``_execute_unlocked`` raising
+                    # before its ``_completed_iterations += 1``
+                    # runs, ``_check_closed`` raising mid-loop, or
+                    # any other per-iteration BaseException. If the
+                    # in-batch counter is still zero (iteration 0
+                    # raised before its ``+= 1`` — zero in-batch
+                    # progress), restore the pre-batch snapshot so a
+                    # caller who ran a prior ``executemany``
+                    # (completed=N) still observes the prior batch's
+                    # count. Mid-batch raises (counter > 0) preserve
+                    # the in-batch progress for idempotent
+                    # compensation.
                     self._rowcount = -1
                     self._rows = []
                     self._description = None
