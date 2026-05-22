@@ -1,5 +1,6 @@
 """PEP 249 Cursor implementation for dqlite."""
 
+import asyncio
 import contextlib
 import re
 import weakref
@@ -354,21 +355,46 @@ async def _call_client[T](coro: Awaitable[T]) -> T:
         # primary raise — would otherwise propagate as-is past every
         # ``except dbapi.Error:`` clause.
         #
+        # PEP 654 + the asyncio cancellation invariant require that
+        # ``CancelledError`` (and ``KeyboardInterrupt`` /
+        # ``SystemExit``) propagate or be explicitly acknowledged —
+        # they must NOT be silently converted into ordinary
+        # ``Exception`` subclasses. Split the group: any
+        # ``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit``
+        # children re-raise as their own group so the caller's
+        # structured-concurrency parent (asyncio.TaskGroup, anyio,
+        # third-party telemetry middleware) sees the cancel signal.
+        # Only the ``Exception``-subclass remainder is wrapped as
+        # ``DatabaseError`` for the PEP 249 §7 contract.
+        cancel_group, remainder = eg.split(
+            lambda e: isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit))
+        )
+        if cancel_group is not None:
+            # ``raise ... from None`` because the cancel-class
+            # children are not "errors during exception handling" —
+            # they are the original signal we are forwarding to the
+            # caller's structured-concurrency parent.
+            raise cancel_group from None
+        # The split contract guarantees ``remainder is not None`` when
+        # ``cancel_group is None``: the group must have had at least
+        # one child for the arm to trigger, and that child wasn't in
+        # the cancel partition.
+        assert remainder is not None
         # Wrap as ``DatabaseError`` (the most generic Error subclass
         # for "errors during database operation"; see PEP 249 §6.5 +
-        # §7) preserving the group on ``__cause__`` so SA's
+        # §7) preserving the remainder on ``__cause__`` so SA's
         # ``_walk_cause_chain`` can still descend the children and
         # ``is_disconnect`` can classify the leaf exceptions. The
         # message names the group size and the children-type
         # cardinality so an operator can triage without walking the
         # chain manually.
-        child_classes = {type(c).__name__ for c in eg.exceptions}
+        child_classes = {type(c).__name__ for c in remainder.exceptions}
         raise DatabaseError(
-            f"aggregate {type(eg).__name__} with {len(eg.exceptions)} child(ren) "
+            f"aggregate {type(remainder).__name__} with {len(remainder.exceptions)} child(ren) "
             f"of class(es) {sorted(child_classes)}",
             code=None,
-            raw_message=str(eg),
-        ) from eg
+            raw_message=str(remainder),
+        ) from remainder
 
 
 if TYPE_CHECKING:
