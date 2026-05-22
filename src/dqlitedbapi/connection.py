@@ -2648,8 +2648,21 @@ class Connection:
         # No wire-layer effect (dqlite is fixed-mode autocommit);
         # divergence is pinned by
         # ``test_property_setters_do_not_mirror_to_inner_async_conn.py``.
-        if value is True or value == -1:
+        if value is True:
             self._autocommit_value: bool | int = value
+            return
+        # Tight ``-1`` gate matching stdlib's exact-int discipline at
+        # ``Modules/_sqlite/connection.c::pysqlite_connection_autocommit_setter``:
+        # loose ``value == -1`` previously accepted ``-1.0`` /
+        # ``Decimal('-1')`` / custom ``__eq__`` objects and stored
+        # them on ``_autocommit_value``, breaking the cross-driver
+        # ``isinstance(conn.autocommit, int)`` introspection idiom.
+        # Reject non-int (and bool, which is an int subclass we
+        # already covered above); on accept, canonicalise-store as
+        # ``int(-1)`` so the getter always round-trips a canonical
+        # int even if the caller passed an ``IntEnum`` / subclass.
+        if isinstance(value, int) and not isinstance(value, bool) and value == -1:
+            self._autocommit_value = -1
             return
         raise NotSupportedError(
             "dqlite operates in autocommit-by-default mode; the autocommit "

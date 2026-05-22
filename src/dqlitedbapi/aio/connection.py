@@ -1322,12 +1322,20 @@ class AsyncConnection:
         # invoked from a foreign loop. Sibling sync setter calls
         # ``_check_thread()`` for the same reason.
         self._check_loop_binding()
-        # See sync sibling for full rationale: accept True or
-        # ``sqlite3.LEGACY_TRANSACTION_CONTROL`` (==-1) and store the
-        # caller's input so the getter round-trips. Reject everything
-        # else.
-        if value is True or value == -1:
+        # See sync sibling for full rationale: accept True or the
+        # stdlib sentinel ``sqlite3.LEGACY_TRANSACTION_CONTROL`` (==-1)
+        # and reject everything else. The ``-1`` arm uses an exact-int
+        # gate (``isinstance(value, int) and not isinstance(value, bool)
+        # and value == -1``) matching stdlib's
+        # ``Modules/_sqlite/connection.c`` discipline — loose ``value
+        # == -1`` previously accepted ``-1.0`` / ``Decimal('-1')`` /
+        # custom ``__eq__`` objects. On accept, canonicalise-store
+        # as ``int(-1)``.
+        if value is True:
             self._autocommit_value: bool | int = value
+            return
+        if isinstance(value, int) and not isinstance(value, bool) and value == -1:
+            self._autocommit_value = -1
             return
         raise NotSupportedError(
             "dqlite operates in autocommit-by-default mode; the autocommit "
