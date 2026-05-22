@@ -382,6 +382,21 @@ DATETIME: Final[_DBAPIType] = _DBAPIType(
     ValueType.UNIXTIME,
     _name="DATETIME",
 )
+# NOTE: ``ROWID.values`` deliberately overlaps ``NUMBER.values`` on the
+# wire-level ``ValueType.INTEGER`` code. For any INTEGER column ``i``,
+# BOTH ``cur.description[i][1] == NUMBER`` AND
+# ``cur.description[i][1] == ROWID`` return ``True``. The wire protocol
+# carries no "this column is a rowid alias" hint, so the dbapi cannot
+# distinguish a generic INTEGER column from a rowid; the type sentinels
+# advertise the union. PEP 249 §3 does not outlaw overlap between Type
+# Objects. Cross-driver callers iterating type sentinels with the
+# chained-``==`` idiom (the documented PEP 249 form) get both
+# predicates true for INTEGER columns; psycopg2 and stdlib ``sqlite3``
+# treat ``ROWID`` / ``NUMBER`` disjointly (sqlite3 does not export
+# ``ROWID`` at all), so this is a deliberate cross-driver portability
+# caveat. Match in order (``ROWID`` first if the distinction matters)
+# or consult the decltype string via ``description[i][0]`` against the
+# declared-type vocabulary.
 ROWID: Final[_DBAPIType] = _DBAPIType(
     "ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER, _name="ROWID"
 )
