@@ -92,8 +92,10 @@ class AsyncCursor:
             if isinstance(connection, _AsyncConnection)
             else None
         )
-        # PEP 249 optional extension; see Cursor.messages.
-        self.messages: list[tuple[type[Exception], Exception | str]] = []
+        # PEP 249 optional extension; see Cursor.messages. Tuple-value
+        # type is the ``exception value`` per PEP 249 §13 — an
+        # Exception instance, not a string.
+        self.messages: list[tuple[type[Exception], Exception]] = []
 
     @property
     def connection(self) -> "AsyncConnection":

@@ -49,7 +49,7 @@ async def test_commit_rejects_cross_loop_before_clearing_messages() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     conn._ensure_locks()  # bind to this loop
 
-    sentinel: tuple[type[Exception], str] = (RuntimeError, "sentinel")
+    sentinel: tuple[type[Exception], Exception] = (RuntimeError, RuntimeError("sentinel"))
     conn.messages.append(sentinel)
 
     err = _invoke_on_other_loop(conn, lambda c: c.commit())
@@ -71,7 +71,10 @@ async def test_rollback_rejects_cross_loop_before_clearing_messages() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     conn._ensure_locks()
 
-    sentinel: tuple[type[Exception], str] = (RuntimeError, "sentinel-rollback")
+    sentinel: tuple[type[Exception], Exception] = (
+        RuntimeError,
+        RuntimeError("sentinel-rollback"),
+    )
     conn.messages.append(sentinel)
 
     err = _invoke_on_other_loop(conn, lambda c: c.rollback())

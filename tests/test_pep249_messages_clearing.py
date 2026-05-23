@@ -50,7 +50,7 @@ def _build_cursor() -> Cursor:
 
 
 def _seed(obj: Any) -> None:
-    obj.messages.append((DbApiWarning, "stale-warning"))
+    obj.messages.append((DbApiWarning, DbApiWarning("stale-warning")))
     assert obj.messages, "seed failed"
 
 

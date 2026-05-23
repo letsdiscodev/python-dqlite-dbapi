@@ -43,7 +43,7 @@ def test_async_row_factory_setter_closed_raises_interface_error() -> None:
 def test_sync_row_factory_setter_clears_messages() -> None:
     c = dqlitedbapi.connect("127.0.0.1:9999")
     try:
-        c.messages.append((Exception, "stale"))
+        c.messages.append((Exception, Exception("stale")))
         c.row_factory = lambda cur, row: row
         assert c.messages == []
     finally:
@@ -52,6 +52,6 @@ def test_sync_row_factory_setter_clears_messages() -> None:
 
 def test_async_row_factory_setter_clears_messages() -> None:
     c = AsyncConnection("127.0.0.1:9999")
-    c.messages.append((Exception, "stale"))
+    c.messages.append((Exception, Exception("stale")))
     c.row_factory = lambda cur, row: row
     assert c.messages == []

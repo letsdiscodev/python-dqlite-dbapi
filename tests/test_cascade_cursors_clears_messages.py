@@ -49,7 +49,7 @@ def _prime_connection() -> tuple[dqlitedbapi.Connection, Cursor]:
     cur._lastrowid = 7
     cur._row_index = 1
     cur._connection = conn
-    cur.messages = [(RuntimeError, "stale message")]
+    cur.messages = [(RuntimeError, RuntimeError("stale message"))]
     conn._cursors.add(cur)
 
     return conn, cur

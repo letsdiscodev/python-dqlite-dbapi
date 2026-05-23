@@ -1451,8 +1451,10 @@ class Connection:
         # guards on this class.
         self._creator_pid = os.getpid()
         # PEP 249 optional extension. No driver path currently appends
-        # here; callers can rely on the attribute existing.
-        self.messages: list[tuple[type[Exception], Exception | str]] = []
+        # here; callers can rely on the attribute existing. The tuple-
+        # value type is the ``exception value`` per PEP 249 §13 — an
+        # Exception instance, not a string.
+        self.messages: list[tuple[type[Exception], Exception]] = []
         # ``transaction()`` context-manager owner sentinel. Stores the
         # OS thread id of the body owner while a ``with conn.transaction()``
         # block is active; ``commit`` / ``rollback`` reject from inside

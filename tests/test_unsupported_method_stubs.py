@@ -324,7 +324,7 @@ class TestTpcStubsRouteThroughHelper:
         invoke: Callable[[dqlitedbapi.Connection], None],
     ) -> None:
         # Pre-load a stale message so the clear-or-not is observable.
-        conn.messages.append((Exception, "stale"))
+        conn.messages.append((Exception, Exception("stale")))
         with pytest.raises(NotSupportedError):
             invoke(conn)
         assert conn.messages == [], (
@@ -359,7 +359,7 @@ class TestTpcStubsRouteThroughHelper:
     ) -> None:
         # All six async stubs are plain ``def`` (the call-line raise
         # discipline) so no ``await`` is needed for the raise.
-        aconn.messages.append((Exception, "stale"))
+        aconn.messages.append((Exception, Exception("stale")))
         with pytest.raises(NotSupportedError):
             invoke(aconn)
         assert aconn.messages == [], (
@@ -386,7 +386,7 @@ def test_close_clears_messages() -> None:
     import contextlib as _contextlib
 
     c = dqlitedbapi.connect("127.0.0.1:9999")
-    c.messages.append((Exception, "stale"))
+    c.messages.append((Exception, Exception("stale")))
     with _contextlib.suppress(Exception):
         c.close()
     assert c.messages == []
@@ -397,7 +397,7 @@ async def test_async_close_clears_messages() -> None:
     import contextlib as _contextlib
 
     c = AsyncConnection("127.0.0.1:9999")
-    c.messages.append((Exception, "stale"))
+    c.messages.append((Exception, Exception("stale")))
     with _contextlib.suppress(Exception):
         await c.close()
     assert c.messages == []

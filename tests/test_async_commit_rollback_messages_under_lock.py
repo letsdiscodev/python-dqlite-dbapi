@@ -20,6 +20,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from dqlitedbapi.aio.connection import AsyncConnection
 
+_RUNTIMEERROR_SYNTHETIC: tuple[type[Exception], Exception] = (
+    RuntimeError,
+    RuntimeError("synthetic"),
+)
+_RUNTIMEERROR_LEFTOVER: tuple[type[Exception], Exception] = (RuntimeError, RuntimeError("leftover"))
+
 
 async def _prime() -> AsyncConnection:
     """Build an AsyncConnection in the post-_ensure_locks state on the
@@ -45,8 +51,8 @@ class TestAsyncCommitMessagesUnderLock:
         # Let commit() park; it should NOT have cleared messages yet
         # (clear is now inside the lock).
         await asyncio.sleep(0)
-        conn.messages.append((RuntimeError, "synthetic"))
-        assert conn.messages == [(RuntimeError, "synthetic")]
+        conn.messages.append(_RUNTIMEERROR_SYNTHETIC)
+        assert conn.messages == [_RUNTIMEERROR_SYNTHETIC]
         # Release the lock; commit() resumes, clears messages, runs COMMIT.
         conn._op_lock.release()  # type: ignore[union-attr]
         await commit_task
@@ -57,7 +63,7 @@ class TestAsyncCommitMessagesUnderLock:
         clear runs there too so callers see consistent semantics."""
         conn = AsyncConnection("localhost:9001", database="x")
         # No async conn assigned — never connected.
-        conn.messages.append((RuntimeError, "leftover"))
+        conn.messages.append(_RUNTIMEERROR_LEFTOVER)
         await conn.commit()
         assert conn.messages == []
 
@@ -68,14 +74,14 @@ class TestAsyncRollbackMessagesUnderLock:
         await conn._op_lock.acquire()  # type: ignore[union-attr]
         rollback_task = asyncio.create_task(conn.rollback())
         await asyncio.sleep(0)
-        conn.messages.append((RuntimeError, "synthetic"))
-        assert conn.messages == [(RuntimeError, "synthetic")]
+        conn.messages.append(_RUNTIMEERROR_SYNTHETIC)
+        assert conn.messages == [_RUNTIMEERROR_SYNTHETIC]
         conn._op_lock.release()  # type: ignore[union-attr]
         await rollback_task
         assert conn.messages == []
 
     async def test_messages_cleared_on_no_op_path(self) -> None:
         conn = AsyncConnection("localhost:9001", database="x")
-        conn.messages.append((RuntimeError, "leftover"))
+        conn.messages.append(_RUNTIMEERROR_LEFTOVER)
         await conn.rollback()
         assert conn.messages == []

@@ -65,7 +65,7 @@ async def test_execute_clears_messages_on_closed_path(cursor: AsyncCursor) -> No
     regress the closed-path branch.
     """
     cursor._closed = True
-    cursor.messages.append((RuntimeError, "leftover"))
+    cursor.messages.append((RuntimeError, RuntimeError("leftover")))
     with pytest.raises(InterfaceError):
         await cursor.execute("SELECT 1")
     assert cursor.messages == []
@@ -76,7 +76,7 @@ async def test_executemany_clears_messages_on_closed_path(
 ) -> None:
     """Same contract for ``executemany``."""
     cursor._closed = True
-    cursor.messages.append((RuntimeError, "leftover"))
+    cursor.messages.append((RuntimeError, RuntimeError("leftover")))
     with pytest.raises(InterfaceError):
         await cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
     assert cursor.messages == []

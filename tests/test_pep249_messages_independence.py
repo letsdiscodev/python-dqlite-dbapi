@@ -36,7 +36,7 @@ def _make_cursor() -> Cursor:
     return cur
 
 
-_SESSION_DIAGNOSTIC = (RuntimeError, "session-level diagnostic")
+_SESSION_DIAGNOSTIC = (RuntimeError, RuntimeError("session-level diagnostic"))
 
 
 @pytest.mark.parametrize(
@@ -83,6 +83,6 @@ def test_cursor_methods_still_clear_cursor_messages() -> None:
     ``Cursor.messages`` is preserved — only the over-clear of
     ``Connection.messages`` is removed."""
     cur = _make_cursor()
-    cur.messages.append((Warning, "cursor-level diag"))
+    cur.messages.append((Warning, Warning("cursor-level diag")))
     cur.fetchone()
     assert cur.messages == []

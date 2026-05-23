@@ -337,8 +337,10 @@ class AsyncConnection:
         # loop" RuntimeError. Weakref avoids pinning a closed loop
         # alive once the caller has moved on.
         self._loop_ref: weakref.ref[asyncio.AbstractEventLoop] | None = None
-        # PEP 249 optional extension; see Connection.messages.
-        self.messages: list[tuple[type[Exception], Exception | str]] = []
+        # PEP 249 optional extension; see Connection.messages. Tuple-
+        # value type is the ``exception value`` per PEP 249 §13 —
+        # an Exception instance, not a string.
+        self.messages: list[tuple[type[Exception], Exception]] = []
         # Track outstanding cursors weakly so close() can scrub their
         # state (stdlib sqlite3 cascades). Buffered fetches on a
         # cursor whose AsyncConnection was externally closed used to

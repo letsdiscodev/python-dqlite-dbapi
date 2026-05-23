@@ -66,7 +66,7 @@ def test_setter_clears_messages_first(name: str, value: Any) -> None:
     state-mutating method clears ``self.messages`` first."""
     c = dqlitedbapi.connect("127.0.0.1:9999")
     try:
-        c.messages.append((Exception, "stale"))
+        c.messages.append((Exception, Exception("stale")))
         setattr(c, name, value)
         assert c.messages == []
     finally:

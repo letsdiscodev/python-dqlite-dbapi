@@ -1228,8 +1228,12 @@ class Cursor:
         )
         # PEP 249 optional extension. Currently no driver path appends
         # to this list; it's here so consumers can rely on the
-        # attribute existing and being mutable.
-        self.messages: list[tuple[type[Exception], Exception | str]] = []
+        # attribute existing and being mutable. The tuple-value type
+        # is the ``exception value`` per PEP 249 §13 — an Exception
+        # instance, not a string. Tightening the annotation to
+        # ``Exception`` prevents future producer drift away from the
+        # specification.
+        self.messages: list[tuple[type[Exception], Exception]] = []
 
     @property
     def connection(self) -> "Connection":

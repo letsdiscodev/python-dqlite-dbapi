@@ -36,7 +36,7 @@ def _build_conn_with_mocked_async() -> Connection:
 class TestCommitAsyncClearsMessagesInLock:
     def test_commit_async_clears_messages(self) -> None:
         conn = _build_conn_with_mocked_async()
-        conn.messages.append((RuntimeError, "synthetic"))
+        conn.messages.append((RuntimeError, RuntimeError("synthetic")))
         asyncio.run(conn._commit_async())
         assert conn.messages == []
 
@@ -46,7 +46,7 @@ class TestCommitAsyncClearsMessagesInLock:
         — consistent with PEP 249 "cleared prior to executing the
         call"."""
         conn = _build_conn_with_mocked_async()
-        conn.messages.append((RuntimeError, "stale"))
+        conn.messages.append((RuntimeError, RuntimeError("stale")))
         # Make the COMMIT raise; messages should still be cleared.
         from dqlitedbapi import OperationalError
 
@@ -61,13 +61,13 @@ class TestCommitAsyncClearsMessagesInLock:
 class TestRollbackAsyncClearsMessagesInLock:
     def test_rollback_async_clears_messages(self) -> None:
         conn = _build_conn_with_mocked_async()
-        conn.messages.append((RuntimeError, "synthetic"))
+        conn.messages.append((RuntimeError, RuntimeError("synthetic")))
         asyncio.run(conn._rollback_async())
         assert conn.messages == []
 
     def test_rollback_async_clears_messages_before_execute(self) -> None:
         conn = _build_conn_with_mocked_async()
-        conn.messages.append((RuntimeError, "stale"))
+        conn.messages.append((RuntimeError, RuntimeError("stale")))
         from dqlitedbapi import OperationalError
 
         conn._async_conn.execute = AsyncMock(  # type: ignore[union-attr]

@@ -30,12 +30,15 @@ import pytest
 
 from dqlitedbapi import Connection, ProgrammingError
 
+_STALE_CURSOR: tuple[type[Exception], Exception] = (Warning, Warning("stale-cursor"))
+_STALE_CONN: tuple[type[Exception], Exception] = (Warning, Warning("stale-conn"))
+
 
 def _seed(cur: Any) -> None:
     """Seed both cursor- and connection-level ``messages`` lists so
     we can observe the clear."""
-    cur.messages.append((Warning, "stale-cursor"))
-    cur._connection.messages.append((Warning, "stale-conn"))
+    cur.messages.append(_STALE_CURSOR)
+    cur._connection.messages.append(_STALE_CONN)
 
 
 def _expect_messages_cleared_after_cross_thread_call(invoke: Callable[[], None], cur: Any) -> None:
@@ -62,7 +65,7 @@ def _expect_messages_cleared_after_cross_thread_call(invoke: Callable[[], None],
     # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
     # are independent surfaces. Cursor methods must NOT clear
     # Connection.messages.
-    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
+    assert list(cur._connection.messages) == [_STALE_CONN]
 
 
 @pytest.fixture

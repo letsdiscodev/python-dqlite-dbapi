@@ -55,7 +55,7 @@ def _bare_async_connection() -> Any:
 
 def test_sync_force_close_transport_clears_messages() -> None:
     c = _bare_sync_connection()
-    c.messages.append((Exception, "stale-pre-force-close"))
+    c.messages.append((Exception, Exception("stale-pre-force-close")))
     c.force_close_transport()
     assert c.messages == [], (
         "Connection.force_close_transport must clear self.messages, "
@@ -65,7 +65,7 @@ def test_sync_force_close_transport_clears_messages() -> None:
 
 def test_async_force_close_transport_clears_messages() -> None:
     c = _bare_async_connection()
-    c.messages.append((Exception, "stale-pre-force-close"))
+    c.messages.append((Exception, Exception("stale-pre-force-close")))
     c.force_close_transport()
     assert c.messages == [], "AsyncConnection.force_close_transport must clear self.messages."
 
@@ -74,10 +74,10 @@ def test_sync_force_close_transport_idempotent_clears_each_call() -> None:
     """Re-arming messages between calls and re-clearing — pin the
     idempotence + clear contract jointly."""
     c = _bare_sync_connection()
-    c.messages.append((Exception, "first"))
+    c.messages.append((Exception, Exception("first")))
     c.force_close_transport()
     assert c.messages == []
-    c.messages.append((Exception, "second-after-already-closed"))
+    c.messages.append((Exception, Exception("second-after-already-closed")))
     c.force_close_transport()
     assert c.messages == [], (
         "force_close_transport must clear messages on every call, "
@@ -87,9 +87,9 @@ def test_sync_force_close_transport_idempotent_clears_each_call() -> None:
 
 def test_async_force_close_transport_idempotent_clears_each_call() -> None:
     c = _bare_async_connection()
-    c.messages.append((Exception, "first"))
+    c.messages.append((Exception, Exception("first")))
     c.force_close_transport()
     assert c.messages == []
-    c.messages.append((Exception, "second"))
+    c.messages.append((Exception, Exception("second")))
     c.force_close_transport()
     assert c.messages == []

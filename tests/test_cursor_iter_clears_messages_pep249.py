@@ -14,14 +14,20 @@ from __future__ import annotations
 from dqlitedbapi import Connection
 from dqlitedbapi.aio.connection import AsyncConnection
 
+_WARNING_STALE: tuple[type[Exception], Exception] = (Warning, Warning("stale"))
+_WARNING_STALE_AFTER_CLOSE: tuple[type[Exception], Exception] = (
+    Warning,
+    Warning("stale-after-close"),
+)
+
 
 def test_sync_iter_clears_messages() -> None:
     conn = Connection("127.0.0.1:9001")
     try:
         cur = conn.cursor()
         try:
-            cur.messages.append((Warning, "stale"))
-            assert list(cur.messages) == [(Warning, "stale")]
+            cur.messages.append(_WARNING_STALE)
+            assert list(cur.messages) == [_WARNING_STALE]
             it = iter(cur)
             assert it is cur
             assert list(cur.messages) == []
@@ -35,8 +41,8 @@ async def test_async_aiter_clears_messages() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = conn.cursor()
     try:
-        cur.messages.append((Warning, "stale"))
-        assert list(cur.messages) == [(Warning, "stale")]
+        cur.messages.append(_WARNING_STALE)
+        assert list(cur.messages) == [_WARNING_STALE]
         it = cur.__aiter__()
         assert it is cur
         assert list(cur.messages) == []
@@ -65,7 +71,7 @@ def test_sync_enter_clears_messages_on_closed_cursor() -> None:
         # Append AFTER close (close itself clears messages). Simulates
         # a future driver path that publishes to messages from a
         # background producer.
-        cur.messages.append((Warning, "stale-after-close"))
+        cur.messages.append(_WARNING_STALE_AFTER_CLOSE)
         with cur:
             assert list(cur.messages) == [], (
                 "Cursor.__enter__ must clear messages on entry (PEP 249 §6.4) "
@@ -82,7 +88,7 @@ async def test_async_aenter_clears_messages_on_closed_cursor() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = conn.cursor()
     cur.close()
-    cur.messages.append((Warning, "stale-after-close"))
+    cur.messages.append(_WARNING_STALE_AFTER_CLOSE)
     async with cur:
         assert list(cur.messages) == [], (
             "AsyncCursor.__aenter__ must clear messages on entry "

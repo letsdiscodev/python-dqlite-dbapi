@@ -11,7 +11,7 @@ def test_connection_messages_attribute() -> None:
     assert isinstance(conn.messages, list)
     assert conn.messages == []
     # Must be mutable.
-    conn.messages.append((RuntimeError, "x"))
+    conn.messages.append((RuntimeError, RuntimeError("x")))
 
 
 def test_cursor_messages_attribute() -> None:

@@ -22,7 +22,7 @@ def test_cursor_enter_clears_messages() -> None:
     conn = Connection("localhost:9001", timeout=2.0)
     try:
         cur = conn.cursor()
-        cur.messages.append((Warning, "stale entry"))
+        cur.messages.append((Warning, Warning("stale entry")))
         with cur:
             assert cur.messages == [], (
                 f"Cursor.__enter__ must clear messages per PEP 249 §6.4; got {cur.messages!r}"
@@ -53,7 +53,7 @@ async def test_async_cursor_aenter_clears_messages() -> None:
     conn = AsyncConnection("localhost:9001")
     try:
         cur = conn.cursor()
-        cur.messages.append((Warning, "stale entry"))
+        cur.messages.append((Warning, Warning("stale entry")))
         async with cur:
             assert cur.messages == [], (
                 f"AsyncCursor.__aenter__ must clear messages per PEP 249 §6.4; got {cur.messages!r}"
@@ -68,7 +68,7 @@ async def test_async_connection_transaction_clears_messages() -> None:
     ``conn.messages`` on entry. Sync sibling already clears."""
     conn = AsyncConnection("localhost:9001")
     try:
-        conn.messages.append((Warning, "stale entry"))
+        conn.messages.append((Warning, Warning("stale entry")))
         try:
             async with conn.transaction():
                 assert conn.messages == [], (

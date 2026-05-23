@@ -28,12 +28,15 @@ from dqlitedbapi import ProgrammingError
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 
+_WARNING_STALE_CURSOR: tuple[type[Exception], Exception] = (Warning, Warning("stale-cursor"))
+_WARNING_STALE_CONN: tuple[type[Exception], Exception] = (Warning, Warning("stale-conn"))
+
 
 def _seed(cur: Any) -> None:
     """Seed both cursor- and connection-level ``messages`` lists so
     we can observe the clear."""
-    cur.messages.append((Warning, "stale-cursor"))
-    cur._connection.messages.append((Warning, "stale-conn"))
+    cur.messages.append(_WARNING_STALE_CURSOR)
+    cur._connection.messages.append(_WARNING_STALE_CONN)
 
 
 def _expect_messages_cleared_after_closed_call(invoke: Callable[[Any], None], cur: Any) -> None:
@@ -49,7 +52,7 @@ def _expect_messages_cleared_after_closed_call(invoke: Callable[[Any], None], cu
     # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
     # are independent surfaces. Cursor methods must NOT clear
     # Connection.messages.
-    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
+    assert list(cur._connection.messages) == [_WARNING_STALE_CONN]
 
 
 def _drive_other_loop(invoke_async: Callable[[], Any]) -> list[BaseException]:
@@ -85,7 +88,7 @@ async def test_setinputsizes_closed_cursor_clears_messages_first() -> None:
     assert list(cur.messages) == []
     # Connection.messages is the connection's surface; cursor methods
     # must not clear it (PEP 249 §6.1.1 / §6.1.2 independent surfaces).
-    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
+    assert list(cur._connection.messages) == [_WARNING_STALE_CONN]
 
 
 async def test_setoutputsize_closed_cursor_clears_messages_first() -> None:
@@ -98,7 +101,7 @@ async def test_setoutputsize_closed_cursor_clears_messages_first() -> None:
     assert list(cur.messages) == []
     # Connection.messages is the connection's surface; cursor methods
     # must not clear it (PEP 249 §6.1.1 / §6.1.2 independent surfaces).
-    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
+    assert list(cur._connection.messages) == [_WARNING_STALE_CONN]
 
 
 async def test_callproc_closed_cursor_clears_messages_first() -> None:
@@ -138,4 +141,4 @@ async def test_callproc_cross_loop_clears_messages_first() -> None:
     assert list(cur.messages) == []
     # Connection.messages is the connection's surface; cursor methods
     # must not clear it (PEP 249 §6.1.1 / §6.1.2 independent surfaces).
-    assert list(cur._connection.messages) == [(Warning, "stale-conn")]
+    assert list(cur._connection.messages) == [_WARNING_STALE_CONN]

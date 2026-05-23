@@ -12,14 +12,16 @@ import pytest
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.connection import Connection
 
+_RUNTIMEERROR_STALE: tuple[type[Exception], Exception] = (RuntimeError, RuntimeError("stale"))
+
 
 def test_sync_connect_clears_messages_even_when_connect_raises() -> None:
     """Pre-populate ``messages`` then drive ``connect()``. The
     connect attempt will raise (no real cluster), but ``messages``
     must already be cleared by the time the body raises."""
     conn = Connection("localhost:9999", timeout=0.1)
-    conn.messages.append((RuntimeError, "stale"))
-    assert conn.messages == [(RuntimeError, "stale")]
+    conn.messages.append(_RUNTIMEERROR_STALE)
+    assert conn.messages == [_RUNTIMEERROR_STALE]
 
     with pytest.raises(Exception):  # noqa: PT011, BLE001, B017
         conn.connect()
@@ -32,8 +34,8 @@ def test_sync_connect_clears_messages_even_when_connect_raises() -> None:
 
 async def test_async_connect_clears_messages_even_when_connect_raises() -> None:
     aconn = AsyncConnection("localhost:9999", database="x")
-    aconn.messages.append((RuntimeError, "stale"))
-    assert aconn.messages == [(RuntimeError, "stale")]
+    aconn.messages.append(_RUNTIMEERROR_STALE)
+    assert aconn.messages == [_RUNTIMEERROR_STALE]
 
     with pytest.raises(Exception):  # noqa: PT011, BLE001, B017
         await aconn.connect()

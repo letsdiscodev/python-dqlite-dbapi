@@ -37,28 +37,28 @@ def _make_cursor() -> Cursor:
 class TestConnectionMessagesNotClearedByCursorMethods:
     def test_fetchone_does_not_clear_connection_messages(self) -> None:
         cur = _make_cursor()
-        seed = (RuntimeError, "session-level diagnostic")
+        seed = (RuntimeError, RuntimeError("session-level diagnostic"))
         cur._connection.messages.append(seed)
         cur.fetchone()
         assert cur._connection.messages == [seed]
 
     def test_fetchmany_does_not_clear_connection_messages(self) -> None:
         cur = _make_cursor()
-        seed = (RuntimeError, "session-level diagnostic")
+        seed = (RuntimeError, RuntimeError("session-level diagnostic"))
         cur._connection.messages.append(seed)
         cur.fetchmany(1)
         assert cur._connection.messages == [seed]
 
     def test_fetchall_does_not_clear_connection_messages(self) -> None:
         cur = _make_cursor()
-        seed = (RuntimeError, "session-level diagnostic")
+        seed = (RuntimeError, RuntimeError("session-level diagnostic"))
         cur._connection.messages.append(seed)
         cur.fetchall()
         assert cur._connection.messages == [seed]
 
     def test_nextset_does_not_clear_connection_messages_before_raising(self) -> None:
         cur = _make_cursor()
-        seed = (RuntimeError, "session-level diagnostic")
+        seed = (RuntimeError, RuntimeError("session-level diagnostic"))
         cur._connection.messages.append(seed)
         with pytest.raises(NotSupportedError):
             cur.nextset()
