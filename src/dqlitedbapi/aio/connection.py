@@ -905,6 +905,23 @@ class AsyncConnection:
                         pending = getattr(inner, "_pending_drain", None)
                         if pending is not None and not pending.done():
                             pending.cancel()
+                    # Force-close the transport synchronously so the
+                    # writer / FD is reaped regardless of which cancel
+                    # delivered us here. The shielded ``inner_drain``
+                    # would normally drive ``_close_impl``'s writer
+                    # close; if a fresh cancel landed during the
+                    # shielded await (Python's ``asyncio.shield`` only
+                    # blocks the FIRST cancel) the writer is still
+                    # open and the FD would leak to GC. Outer
+                    # ``asyncio.timeout`` deadlines also hit this arm
+                    # (the inner ``except TimeoutError`` only fires on
+                    # the INNER scope's expiry); without this call
+                    # operators wrapping ``await conn.close()`` in
+                    # their own deadline lost the transport-hygiene
+                    # backstop. ``force_close_transport`` is
+                    # synchronous, idempotent, and never raises — and
+                    # it sets ``self._async_conn = None`` itself.
+                    self.force_close_transport()
                     self._async_conn = None
                     self._connect_lock = None
                     self._op_lock = None
@@ -933,6 +950,13 @@ class AsyncConnection:
                         id(self),
                         exc_info=True,
                     )
+                    # Symmetric with the cancel arm above: a non-cancel
+                    # raise from the underlying ``close()`` mid-drain
+                    # could leave the writer open. Force-close the
+                    # transport synchronously so the FD is reaped.
+                    # Idempotent and never raises.
+                    if self._async_conn is not None:
+                        self.force_close_transport()
                 self._async_conn = None
             # Reset the locks *after* closing so any task that was
             # parked on ``op_lock`` observes the
@@ -1468,6 +1492,21 @@ class AsyncConnection:
         write may or may not have been persisted — callers should use
         idempotent DML or out-of-band state-checks before retrying.
         Same caveat applies to ``__aexit__``'s clean-exit commit.
+
+        Outer-cancel caveat: ``asyncio.timeout`` re-classifies
+        ``CancelledError`` to ``TimeoutError`` only when the
+        CURRENT scope's deadline expires. If an OUTER deadline
+        (operator-wrapped ``async with asyncio.timeout(N): await
+        conn.commit()`` where ``N < commit_budget``) cancels this
+        method, the inner ``except TimeoutError`` arm does NOT fire
+        and the phase-aware ``OperationalError`` diagnostic is
+        bypassed — the caller observes raw ``CancelledError``
+        instead, and the connection state is ambiguous (the COMMIT
+        may or may not have reached the leader). Operators
+        wrapping this method in an outer deadline should treat
+        ``CancelledError`` as "invalidate the connection" — call
+        ``force_close_transport()`` or drop the connection from
+        the pool before retry.
         """
         # Loop-affinity check BEFORE the messages-clear so a stray
         # cross-loop ``await aconn.commit()`` does NOT scribble the
@@ -1619,6 +1658,12 @@ class AsyncConnection:
         Same no-op rules as :meth:`commit`, including the autocommit-
         by-default contract: "no active transaction" is the common
         case unless the caller issued an explicit ``BEGIN``.
+
+        Outer-cancel caveat: same as :meth:`commit` — an outer
+        ``asyncio.timeout`` deadline cancels this method without
+        re-classifying to ``TimeoutError``, bypassing the
+        phase-aware ``OperationalError`` diagnostic. Treat
+        ``CancelledError`` as "invalidate the connection".
         """
         # Loop-affinity check before the messages-clear; see commit()
         # above for the foreign-loop / state-mutation rationale.
