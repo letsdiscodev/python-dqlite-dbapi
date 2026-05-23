@@ -1152,8 +1152,37 @@ class AsyncConnection:
         proto = getattr(inner, "_protocol", None)
         writer = getattr(proto, "_writer", None) if proto is not None else None
         if writer is not None:
+            # ``StreamWriter.close()`` mutates the transport's
+            # _SelectorSocketTransport state and is documented as
+            # not thread-safe. The typical caller chain (SA
+            # do_terminate / pool.dispose from an AsyncEngine
+            # running its own loop in another thread) can land here
+            # with the loop STILL ALIVE on a different thread; a
+            # direct ``writer.close()`` then races the selector's
+            # transport-state bookkeeping. Mirror the loop-aware
+            # discipline applied to the pending-drain cancel below:
+            # ``call_soon_threadsafe`` when the loop is alive on a
+            # foreign thread, direct call when on the owning thread
+            # or when the loop is already closed.
+            bound_loop_ref = getattr(self, "_loop_ref", None)
+            bound_loop = bound_loop_ref() if bound_loop_ref is not None else None
+            running = None
+            with contextlib.suppress(RuntimeError):
+                running = asyncio.get_running_loop()
             try:
-                writer.close()
+                if bound_loop is None or bound_loop.is_closed():
+                    # Loop is dead; safe to call directly (the
+                    # writer's transport teardown runs synchronously
+                    # without touching the dead selector).
+                    writer.close()
+                elif running is bound_loop:
+                    # Owning thread — direct mutation is safe.
+                    writer.close()
+                else:
+                    # Live loop on a foreign thread: schedule via
+                    # call_soon_threadsafe so the selector mutation
+                    # runs on the owning thread.
+                    bound_loop.call_soon_threadsafe(writer.close)
             except Exception:  # noqa: BLE001 - last-resort cleanup
                 logger.debug(
                     "AsyncConnection.force_close_transport (id=%s): "
