@@ -2245,6 +2245,22 @@ class Connection:
                 # ``coroutine 'Connection._close_async' was never
                 # awaited`` at gc time.
                 if self._op_lock.locked() and threading.get_ident() == self._creator_thread:
+                    # Same-thread re-entry: a SIGINT delivered between
+                    # ``_run_sync``'s ``acquire`` succeeding and the
+                    # trailing ``finally`` release running can leave
+                    # the lock latched by this very thread (KI raises
+                    # before ``release()`` executes). Without a
+                    # best-effort release here, the bypass path returns
+                    # with the lock still held; the next ``_run_sync``
+                    # on the same connection then deadlocks for the
+                    # full ``self._timeout`` and surfaces "op_lock
+                    # acquire timed out" with no operator-visible hint
+                    # of the SIGINT root cause. ``release()`` raises
+                    # ``RuntimeError`` only if the lock is already
+                    # released; suppress narrows the catch so a true
+                    # logic error elsewhere still propagates.
+                    with contextlib.suppress(RuntimeError):
+                        self._op_lock.release()
                     coro = self._close_async()
                     coro.close()
                 else:
