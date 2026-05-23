@@ -39,15 +39,18 @@ from dqliteclient import DEFAULT_TIMEOUT_SECONDS as _DEFAULT_TIMEOUT_SECONDS
 # matching the discipline already applied to ``register_adapter``
 # (re-exported from the sync surface for the same reason).
 from dqliteclient import DialFunc
-from dqlitedbapi import LEGACY_TRANSACTION_CONTROL as _LEGACY_TRANSACTION_CONTROL
-from dqlitedbapi import PARSE_COLNAMES as _PARSE_COLNAMES
-from dqlitedbapi import PARSE_DECLTYPES as _PARSE_DECLTYPES
-from dqlitedbapi import __version__ as _parent_version
 from dqlitedbapi import (  # module-level re-export
+    CLUSTER_POLICY_REJECTION_PREFIX,
+    FAILED_TO_CONNECT_PREFIX,
+    MAX_CONTINUATION_FRAMES_UPPER_BOUND,
     complete_statement,
     enable_callback_tracebacks,
     register_converter,
 )
+from dqlitedbapi import LEGACY_TRANSACTION_CONTROL as _LEGACY_TRANSACTION_CONTROL
+from dqlitedbapi import PARSE_COLNAMES as _PARSE_COLNAMES
+from dqlitedbapi import PARSE_DECLTYPES as _PARSE_DECLTYPES
+from dqlitedbapi import __version__ as _parent_version
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
 )
@@ -190,6 +193,16 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "register_converter",
     "complete_statement",
     "enable_callback_tracebacks",
+    # Diagnostic-surface constants — the canonical substring
+    # anchors classifier middleware uses to discriminate disconnect
+    # / retry classes. Re-exported here for parity with the sync
+    # surface so an async-only retry middleware author imports them
+    # from ``dqlitedbapi.aio`` rather than reaching into the sync
+    # module. ``is``-identity holds because these are the same
+    # module-global objects.
+    "CLUSTER_POLICY_REJECTION_PREFIX",
+    "FAILED_TO_CONNECT_PREFIX",
+    "MAX_CONTINUATION_FRAMES_UPPER_BOUND",
 ]
 
 
