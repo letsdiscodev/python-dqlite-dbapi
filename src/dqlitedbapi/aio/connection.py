@@ -1504,9 +1504,11 @@ class AsyncConnection:
         # combination the sync side tolerates. See ``close()`` for the
         # full rationale.
         commit_budget = _SYNC_PHASES_MULTIPLIER * self._timeout
+        entered_lock = False
         try:
             async with asyncio.timeout(commit_budget):
                 async with op_lock:
+                    entered_lock = True
                     # Re-check under the lock: a concurrent close() may have
                     # acquired op_lock before us, closed the connection, and
                     # released. The ``_protocol is None`` check is repeated
@@ -1553,17 +1555,22 @@ class AsyncConnection:
                         if not _is_no_transaction_error(e):
                             raise
         except TimeoutError as e:
-            # Sibling held op_lock past the multi-phase budget. Surface
-            # as ``OperationalError`` so SA's ``is_disconnect``
-            # classifies the failure and the pool invalidates the slot.
-            # Connection state is ambiguous from the caller's
-            # perspective: the sibling may still be in flight or may
-            # have completed — the safe response is to drop and
-            # reconnect.
+            # The budget covers both lock acquire and the COMMIT
+            # round-trip. ``entered_lock`` distinguishes which phase
+            # exhausted the budget so operators triaging the partial-
+            # commit ambiguity see the right diagnostic:
+            # - "op_lock acquire" when a sibling held the lock past the
+            #   bound (programmer bug — two tasks on one connection),
+            # - "COMMIT round-trip" when the lock was acquired but the
+            #   wire RTT timed out (network bug — leader flip, server
+            #   stall). Surface as ``OperationalError`` so SA's
+            #   ``is_disconnect`` classifies the failure and the pool
+            #   invalidates the slot. Connection state is ambiguous
+            #   from the caller's perspective either way.
+            phase = "COMMIT round-trip" if entered_lock else "op_lock acquire"
             raise OperationalError(
-                f"commit op_lock acquire timed out after {commit_budget}s "
-                f"(id={id(self)}); a sibling task held the lock past the "
-                f"bound. Connection state ambiguous; reconnect.",
+                f"commit {phase} timed out after {commit_budget}s "
+                f"(id={id(self)}); connection state ambiguous; reconnect.",
                 code=None,
             ) from e
 
@@ -1608,9 +1615,11 @@ class AsyncConnection:
         # multi-phase first-call-after-connect budget the sync sibling
         # tolerates.
         rollback_budget = _SYNC_PHASES_MULTIPLIER * self._timeout
+        entered_lock = False
         try:
             async with asyncio.timeout(rollback_budget):
                 async with op_lock:
+                    entered_lock = True
                     # Re-check under the lock for the same race as commit().
                     if (
                         self._closed
@@ -1637,10 +1646,13 @@ class AsyncConnection:
                         if not _is_no_transaction_error(e):
                             raise
         except TimeoutError as e:
+            # See commit() — phase-aware diagnostic so the operator
+            # can distinguish lock contention (programmer bug) from a
+            # stalled ROLLBACK RTT (network bug).
+            phase = "ROLLBACK round-trip" if entered_lock else "op_lock acquire"
             raise OperationalError(
-                f"rollback op_lock acquire timed out after {rollback_budget}s "
-                f"(id={id(self)}); a sibling task held the lock past the "
-                f"bound. Connection state ambiguous; reconnect.",
+                f"rollback {phase} timed out after {rollback_budget}s "
+                f"(id={id(self)}); connection state ambiguous; reconnect.",
                 code=None,
             ) from e
 
