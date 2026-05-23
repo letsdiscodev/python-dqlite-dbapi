@@ -275,7 +275,14 @@ def connect(
             f"[None, {', '.join(repr(v) for v in sorted(_IL_OK))}]; "
             f"got {iso!r}"
         )
-    if autoc is not _SENTINEL and autoc is not True and autoc != -1:
+    # Tight exact-int gate symmetric with the
+    # ``AsyncConnection.autocommit`` setter — sync sibling for
+    # rationale (Decimal('-1') / -1.0 / custom-__eq__ rejected).
+    if (
+        autoc is not _SENTINEL
+        and autoc is not True
+        and not (isinstance(autoc, int) and not isinstance(autoc, bool) and autoc == -1)
+    ):
         raise NotSupportedError(
             f"dqlite connect() accepts autocommit=True or autocommit=-1 "
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
@@ -292,7 +299,7 @@ def connect(
     # Validation happens in ``AsyncConnection.__init__`` (both
     # ``timeout`` and ``close_timeout``); re-calling
     # ``_validate_timeout`` here was redundant and asymmetric.
-    return AsyncConnection(
+    conn = AsyncConnection(
         address,
         database=database,
         timeout=timeout,
@@ -305,6 +312,14 @@ def connect(
         attempt_timeout=attempt_timeout,
         dial_func=dial_func,
     )
+    # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
+    # via the setters on the freshly-constructed connection — sync
+    # sibling for cross-driver porting-idiom rationale.
+    if iso is not _SENTINEL:
+        conn.isolation_level = iso
+    if autoc is not _SENTINEL:
+        conn.autocommit = autoc
+    return conn
 
 
 async def aconnect(
@@ -387,7 +402,13 @@ async def aconnect(
             f"[None, {', '.join(repr(v) for v in sorted(_IL_OK))}]; "
             f"got {iso!r}"
         )
-    if autoc is not _SENTINEL and autoc is not True and autoc != -1:
+    # Tight exact-int gate symmetric with the setter — sync sibling
+    # for rationale.
+    if (
+        autoc is not _SENTINEL
+        and autoc is not True
+        and not (isinstance(autoc, int) and not isinstance(autoc, bool) and autoc == -1)
+    ):
         raise NotSupportedError(
             f"dqlite aconnect() accepts autocommit=True or autocommit=-1 "
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
@@ -459,4 +480,16 @@ async def aconnect(
                 exc_info=True,
             )
         raise
+    # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
+    # via the setters on the freshly-connected AsyncConnection. Stdlib
+    # parity: ``sqlite3.connect(":memory:", isolation_level=X)`` makes
+    # ``conn.isolation_level == X``. See the sync ``connect()`` sibling
+    # for the cross-driver porting-idiom rationale. Done after a
+    # successful ``conn.connect()`` so a partially-constructed
+    # connection cannot land on a thawed-out setter; the cleanup-close
+    # arm above unwinds the partial-connect state separately.
+    if iso is not _SENTINEL:
+        conn.isolation_level = iso
+    if autoc is not _SENTINEL:
+        conn.autocommit = autoc
     return conn

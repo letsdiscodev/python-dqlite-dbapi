@@ -303,7 +303,19 @@ def connect(
             f"[None, {', '.join(repr(v) for v in sorted(_IL_OK))}]; "
             f"got {iso!r}"
         )
-    if autoc is not _SENTINEL and autoc is not True and autoc != -1:
+    # Tight gate matching the ``Connection.autocommit`` setter: only
+    # exact-bool ``True`` and exact-int ``-1`` are accepted. Stdlib
+    # parity (``sqlite3.connect`` requires ``int`` or
+    # ``sqlite3.LEGACY_TRANSACTION_CONTROL`` exactly). The looser
+    # ``autoc != -1`` predicate previously accepted ``Decimal('-1')``,
+    # ``-1.0``, custom ``__eq__`` objects, etc. — breaking the
+    # ``isinstance(conn.autocommit, int)`` cross-driver introspection
+    # idiom that the setter docstring promises.
+    if (
+        autoc is not _SENTINEL
+        and autoc is not True
+        and not (isinstance(autoc, int) and not isinstance(autoc, bool) and autoc == -1)
+    ):
         raise NotSupportedError(
             f"dqlite connect() accepts autocommit=True or autocommit=-1 "
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
@@ -326,7 +338,7 @@ def connect(
     # and ``close_timeout``); re-calling ``_validate_timeout`` here
     # was redundant and leaked the private symbol onto
     # ``dqlitedbapi.dir()``.
-    return Connection(
+    conn = Connection(
         address,
         database=database,
         timeout=timeout,
@@ -339,6 +351,22 @@ def connect(
         attempt_timeout=attempt_timeout,
         dial_func=dial_func,
     )
+    # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
+    # via the setters on the freshly-constructed connection. Stdlib
+    # parity: ``sqlite3.connect(":memory:", isolation_level=X)`` makes
+    # ``conn.isolation_level == X``. The prior path popped + validated
+    # these kwargs and then silently dropped them, breaking the
+    # cross-driver porting idiom the setter docstrings explicitly
+    # promised. Routing through the setters preserves the strict
+    # validation each setter encodes (the connect-side gate is the
+    # outer accept-set; the setter-side gate is the strict-int /
+    # exact-string check). The setters tolerate the _SENTINEL no-op
+    # via the same accept-set, so this is a single uniform path.
+    if iso is not _SENTINEL:
+        conn.isolation_level = iso
+    if autoc is not _SENTINEL:
+        conn.autocommit = autoc
+    return conn
 
 
 # Module-level stdlib ``sqlite3``-parity hook: ``register_adapter``
