@@ -3,6 +3,7 @@
 import datetime
 import math
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Any, Final, final
 
 from dqlitedbapi.exceptions import DataError, ProgrammingError
@@ -166,16 +167,18 @@ def _validate_ticks(ticks: float) -> float:
         raise DataError(f"Invalid timestamp ticks: {ticks!r} (str)")
     # Reject non-numeric types (numpy.bool_, custom ``__index__`` /
     # ``__float__`` types, etc.) explicitly. The plain ``isinstance``
-    # check covers Python int / float and their subclasses, but DOES
-    # NOT cover ``numpy.bool_(True)`` which slips past the bool guard
-    # (numpy bools are not Python bool subclasses on most versions)
-    # and silently coerces to ``1.0`` -- yielding an epoch+1-second
-    # date. Mirror the wire-layer ``encode_double`` discipline that
-    # rejects numpy bool at the same boundary.
-    if not isinstance(ticks, (int, float)):
-        raise DataError(
-            f"Invalid timestamp ticks: {ticks!r} ({type(ticks).__name__})"
-        )
+    # check covers Python int / float / Decimal (the practical
+    # numeric types callers pass for ticks) and their subclasses, but
+    # DOES NOT cover ``numpy.bool_(True)`` which slips past the bool
+    # guard (numpy bools are not Python bool subclasses on most
+    # versions) and silently coerces to ``1.0`` -- yielding an
+    # epoch+1-second date. Mirror the wire-layer ``encode_double``
+    # discipline that rejects numpy bool at the same boundary.
+    # Decimal is included so historical callers passing
+    # ``Decimal(timestamp_str)`` continue to round-trip without
+    # change.
+    if not isinstance(ticks, (int, float, Decimal)):
+        raise DataError(f"Invalid timestamp ticks: {ticks!r} ({type(ticks).__name__})")
     try:
         coerced = float(ticks)
     except (TypeError, ValueError) as exc:
@@ -748,13 +751,9 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
     # — the wire path always delivers plain int here, but this helper
     # is also reachable via ``register_converter`` direct calls.
     if isinstance(value, bool):
-        raise DataError(
-            f"UNIXTIME value {value!r} must not be bool"
-        )
+        raise DataError(f"UNIXTIME value {value!r} must not be bool")
     if not isinstance(value, int):
-        raise DataError(
-            f"UNIXTIME value {value!r} must be int, got {type(value).__name__}"
-        )
+        raise DataError(f"UNIXTIME value {value!r} must be int, got {type(value).__name__}")
     if not (0 <= value <= _MAX_UNIXTIME_SECONDS):
         raise DataError(
             f"UNIXTIME value {value!r} out of representable range "

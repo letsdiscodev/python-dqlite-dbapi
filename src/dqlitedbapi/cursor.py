@@ -1404,12 +1404,28 @@ class Cursor:
         so the property short-circuits at the same branch as a fresh
         cursor that has not yet executed. Cross-driver code treating
         a ``None`` rownumber as "DML cursor, no rows" will misclassify
-        a closed cursor as a healthy DML cursor; gate on
-        ``cur._closed`` (or the parent ``cur.connection`` raising
-        ``InterfaceError``) before consulting ``rownumber`` if the
-        distinction matters. Matches the bypass discipline of sibling
-        read-only accessors ``description`` and ``rowcount`` — none of
-        the three raise on a closed cursor.
+        a closed cursor as a healthy DML cursor; gate on the public
+        ``cur.closed`` attribute BEFORE consulting ``rownumber`` if
+        the distinction matters:
+
+        .. code-block:: python
+
+            if cur.closed:
+                ...
+            elif cur.rownumber is None:
+                # truly no result set
+                ...
+            else:
+                # streaming result; rownumber is the index of next row
+                ...
+
+        Matches the bypass discipline of sibling read-only accessors
+        ``description`` and ``rowcount`` — none of the three raise on
+        a closed cursor. Forward-compat note: a future major version
+        may switch these accessors to raising on a closed cursor
+        (matching psycopg2/3 semantics); callers wishing to be
+        forward-compatible should use the ``cur.closed`` gate today
+        rather than relying on the silent-``None`` alias.
         """
         # ``getattr`` defensively in case a ``Cursor.__new__``-built
         # fixture has no ``_connection`` slot yet, or the parent
