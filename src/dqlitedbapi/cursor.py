@@ -754,6 +754,43 @@ def _is_multi_statement(sql: str) -> bool:
     return False
 
 
+def _validate_caller_param_shape(parameters: Sequence[Any] | None) -> None:
+    """Reject structural outer-shape mistakes in caller-supplied
+    parameters (str / bytes / bytearray / memoryview / Mapping for
+    qmark / set / frozenset).
+
+    Hoisted out of :func:`_classify_caller_sql` so callers can invoke
+    it BEFORE the ``_reset_execute_state`` scrub. The shape is a
+    caller-shape misuse (no SQL has been prepared yet); per
+    ``Cursor.execute``'s documented contract the reset must NOT
+    fire for these — the cursor's prior result-set state stays
+    intact so a caller's retry-with-coerce idiom can inspect
+    ``cur.description`` to shape the retry.
+
+    Unsized iterables (generators / iterators) deliberately skip the
+    Mapping / set / frozenset checks via type-tagging — the
+    binding-layer's ``_reject_non_sequence_params`` handles those.
+    """
+    if parameters is None:
+        return
+    if isinstance(parameters, (str, bytes, bytearray, memoryview)):
+        raise ProgrammingError(
+            f"parameters must be a sequence of values, not "
+            f"{type(parameters).__name__!r}; did you mean to pass a tuple "
+            f"like (value,) with a single element?"
+        )
+    if isinstance(parameters, Mapping):
+        raise ProgrammingError(
+            "qmark paramstyle requires a sequence; got a mapping. "
+            "Use a list or tuple positionally matching the ? placeholders."
+        )
+    if isinstance(parameters, (set, frozenset)):
+        raise ProgrammingError(
+            "qmark paramstyle requires an ordered sequence; got a set. "
+            "Use a list or tuple positionally matching the ? placeholders."
+        )
+
+
 def _classify_caller_sql(
     operation: str,
     parameters: Sequence[Any] | None,
@@ -821,37 +858,13 @@ def _classify_caller_sql(
     if skip_param_count_check:
         return
     if parameters is not None:
-        # Reject structural outer-shape mistakes (str/bytes/bytearray/
-        # memoryview, Mapping, set/frozenset) BEFORE the placeholder-
-        # count check. Otherwise ``len("abc") == 3`` surfaces the
-        # misleading count-mismatch diagnostic ("uses 1, and there
-        # are 3 supplied") for a single string passed as the outer
-        # params, blaming the caller for the wrong reason.
-        # ``_reject_non_sequence_params`` (called later from
-        # ``_convert_bind_params``) is the same discipline; hoisting
-        # the structural arms here surfaces the diagnostic at the
-        # caller's frame with the sharper "did you mean (value,)?"
-        # tutorial. Unsized iterables (generators / iterators)
-        # deliberately skip this reject and fall through to the
-        # ``TypeError`` arm below — preserving the documented
-        # "binding-layer handles unsized" contract pinned by
-        # ``test_classify_caller_sql.test_non_sized_iterable_silently_skips_count_check``.
-        if isinstance(parameters, (str, bytes, bytearray, memoryview)):
-            raise ProgrammingError(
-                f"parameters must be a sequence of values, not "
-                f"{type(parameters).__name__!r}; did you mean to pass a tuple "
-                f"like (value,) with a single element?"
-            )
-        if isinstance(parameters, Mapping):
-            raise ProgrammingError(
-                "qmark paramstyle requires a sequence; got a mapping. "
-                "Use a list or tuple positionally matching the ? placeholders."
-            )
-        if isinstance(parameters, (set, frozenset)):
-            raise ProgrammingError(
-                "qmark paramstyle requires an ordered sequence; got a set. "
-                "Use a list or tuple positionally matching the ? placeholders."
-            )
+        # Structural outer-shape rejection has already happened at the
+        # caller (execute / executemany) BEFORE _reset_execute_state,
+        # to preserve the cursor's prior result-set state on
+        # caller-shape misuse. Re-invoke the helper here so callers
+        # going through the executemany loop's per-iteration path get
+        # the same diagnostic without bypassing the structural gate.
+        _validate_caller_param_shape(parameters)
         try:
             param_count = len(parameters)
         except TypeError:
@@ -1611,6 +1624,14 @@ class Cursor:
                 code=None,
             )
 
+        # Caller-shape rejection BEFORE the reset: passing a Mapping
+        # (for qmark), set, str, bytes, etc. for ``parameters`` is a
+        # caller-shape misuse symmetric with the non-str ``operation``
+        # arm above. Per the documented preservation contract (stdlib
+        # parity), the prior result set must survive these rejections
+        # so a retry-with-coerce idiom can inspect ``cur.description``.
+        _validate_caller_param_shape(parameters)
+
         # Prepare-stage path: scrub per-execute state (description /
         # rowcount / rows / row_index) so a rejected ``execute`` lands
         # at the stdlib "no result set" baseline rather than reporting
@@ -1985,32 +2006,14 @@ class Cursor:
             for params in seq_of_parameters:
                 # Per-iteration structural reject + ``?``-count check.
                 # Mirrors ``_classify_caller_sql``'s discipline: the
-                # structural-type reject (``str``/``bytes``/
-                # ``bytearray``/``memoryview``/``Mapping``/``set``/
-                # ``frozenset``) runs BEFORE ``len(params)`` so a
-                # single string/bytes row surfaces with the sharp
-                # structural diagnostic rather than a misleading
-                # per-character count. Unsized iterables deliberately
-                # skip the count check and fall through to the bind
-                # layer's rejection (matches the sibling pin at
-                # ``_classify_caller_sql``).
+                # structural-type reject runs BEFORE ``len(params)``
+                # so a single string/bytes row surfaces with the
+                # sharp structural diagnostic rather than a
+                # misleading per-character count. Unsized iterables
+                # deliberately skip the count check and fall through
+                # to the bind layer's rejection.
+                _validate_caller_param_shape(params)
                 if params is not None:
-                    if isinstance(params, (str, bytes, bytearray, memoryview)):
-                        raise ProgrammingError(
-                            f"parameters must be a sequence of values, not "
-                            f"{type(params).__name__!r}; did you mean to pass a tuple "
-                            f"like (value,) with a single element?"
-                        )
-                    if isinstance(params, Mapping):
-                        raise ProgrammingError(
-                            "qmark paramstyle requires a sequence; got a mapping. "
-                            "Use a list or tuple positionally matching the ? placeholders."
-                        )
-                    if isinstance(params, (set, frozenset)):
-                        raise ProgrammingError(
-                            "qmark paramstyle requires an ordered sequence; got a set. "
-                            "Use a list or tuple positionally matching the ? placeholders."
-                        )
                     try:
                         param_count = len(params)
                     except TypeError:

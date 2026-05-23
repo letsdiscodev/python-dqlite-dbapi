@@ -20,6 +20,7 @@ from dqlitedbapi.cursor import (
     _is_row_returning,
     _strip_leading_comments,
     _to_signed_int64,
+    _validate_caller_param_shape,
     _validate_executemany_seq_shape,
 )
 from dqlitedbapi.exceptions import (
@@ -510,6 +511,13 @@ class AsyncCursor:
                 f"cursor is already executing in another task (id={id(self)}); "
                 "use one cursor per task"
             )
+        # Caller-shape rejection BEFORE the reset: passing a Mapping
+        # for qmark, set, str, bytes, etc. is a caller-shape misuse
+        # symmetric with the non-str ``operation`` arm above. Per the
+        # documented preservation contract (stdlib parity), the prior
+        # result set must survive these rejections so a retry-with-
+        # coerce idiom can inspect ``cur.description``.
+        _validate_caller_param_shape(parameters)
         # Prepare-stage path: scrub per-execute state so a rejected
         # ``execute`` (empty SQL / multi-statement / wrong ?-count)
         # lands at the stdlib "no result set" baseline rather than
