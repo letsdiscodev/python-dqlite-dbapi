@@ -531,6 +531,20 @@ class AsyncConnection:
                 f"current pid {get_current_pid()})"
             )
 
+        # Cross-loop diagnostic on the fast path. ``transaction()``
+        # already pre-calls ``_check_loop_binding`` before reaching
+        # ``_ensure_connection``; ``connect()`` (the documented
+        # eager-TCP-open / fail-fast entry point used by SA
+        # pool_pre_ping-style probes) does not. Without the check
+        # here a cross-loop ``await aconn.connect()`` on an
+        # already-bound connection returns silently from the
+        # fast-path arm below and the diagnostic is deferred until
+        # the next ``cursor()`` / ``execute()`` — defeating the
+        # health-probe shape. Mirrors the symmetric pre-check on
+        # ``transaction()``; idempotent so double invocation from
+        # callers that pre-check is safe.
+        self._check_loop_binding()
+
         if self._async_conn is not None:
             return self._async_conn
 
