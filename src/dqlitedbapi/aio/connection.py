@@ -2541,9 +2541,16 @@ class AsyncConnection:
         propagates faithfully to the caller (with a DEBUG breadcrumb
         for operator forensics).
         """
-        if self._async_conn is None:
-            # Nothing ever ran; keep the connection reusable, matching
-            # stdlib sqlite3 / aiosqlite / psycopg semantics.
+        if self._closed or self._async_conn is None:
+            # Nothing ever ran (``_async_conn is None``), OR a foreign
+            # thread closed mid-``async with`` block via
+            # ``force_close_transport`` (publicly documented entry
+            # point — SA pool reclaim threads, signal handlers).
+            # Without the ``_closed`` arm the subsequent
+            # ``await self.commit()`` raises ``InterfaceError`` from
+            # the closed-state guard and supplants the body exception
+            # (or the clean exit's success) with a closed-state
+            # misuse error.
             return
         if exc_type is None:
             try:

@@ -32,6 +32,7 @@ def test_clean_exit_commit_signal_interrupt_logs_breadcrumb_and_re_raises(
     propagate without a trace.
     """
     conn = Connection.__new__(Connection)
+    conn._closed = False
     conn._address = "127.0.0.1:9999"
     conn._async_conn = MagicMock()  # not None — so __exit__ does not early-return
     conn.commit = MagicMock(side_effect=signal_cls("simulated"))
@@ -66,6 +67,7 @@ def test_clean_exit_commit_normal_exception_does_not_log_breadcrumb(
     from dqlitedbapi.exceptions import OperationalError
 
     conn = Connection.__new__(Connection)
+    conn._closed = False
     conn._address = "127.0.0.1:9999"
     conn._async_conn = MagicMock()
     conn.commit = MagicMock(side_effect=OperationalError("server-side"))
@@ -92,6 +94,7 @@ def test_exit_no_async_conn_short_circuit_unaffected() -> None:
     wrap must not change this short-circuit.
     """
     conn = Connection.__new__(Connection)
+    conn._closed = False
     conn._address = "127.0.0.1:9999"
     conn._async_conn = None
     conn.commit = MagicMock()

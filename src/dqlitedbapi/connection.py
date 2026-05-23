@@ -3843,8 +3843,15 @@ class Connection:
         """
         # If no query has ever run, there's no transaction to commit or
         # roll back — nothing to do; the connection remains reusable,
-        # matching stdlib sqlite3 / psycopg semantics.
-        if self._async_conn is None:
+        # matching stdlib sqlite3 / psycopg semantics. Also short-circuit
+        # if a foreign thread closed the connection mid-``with`` block
+        # (publicly documented surface: ``force_close_transport`` is
+        # callable from SA pool reclaim threads, signal handlers,
+        # finalize threads). Without the ``_closed`` arm the subsequent
+        # ``self.commit()`` raises ``InterfaceError`` from the closed-
+        # state guard and supplants the body exception (or the clean
+        # exit's success) with a closed-state misuse error.
+        if self._closed or self._async_conn is None:
             return
         if exc_type is None:
             # Clean exit: commit. Let exceptions propagate; silent
