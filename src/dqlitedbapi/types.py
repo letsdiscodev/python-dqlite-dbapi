@@ -519,11 +519,17 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
         # must surface as DataError too — symmetric with the
         # ``_validate_ticks`` and ``_datetime_from_unixtime`` discipline,
         # so every plausible tzinfo failure stays inside the
-        # ``dbapi.Error`` hierarchy.
+        # ``dbapi.Error`` hierarchy. Catch ``Exception`` (NOT
+        # ``BaseException`` — that would swallow ``CancelledError`` /
+        # ``KeyboardInterrupt``) so KeyError / AttributeError / OSError
+        # / OverflowError raised by zoneinfo lookups or custom subclasses
+        # are uniformly wrapped.
         try:
             offset = value.utcoffset()
-        except (TypeError, ValueError) as exc:
-            raise DataError(f"tzinfo.utcoffset() raised for {value!r}: {exc}") from exc
+        except Exception as exc:
+            raise DataError(
+                f"tzinfo.utcoffset() raised {type(exc).__name__} for {value!r}: {exc}"
+            ) from exc
         if offset is None:
             raise DataError(
                 f"datetime is tz-aware but tzinfo.utcoffset() returned None for "
@@ -551,10 +557,15 @@ def _iso8601_from_time(value: datetime.time) -> str:
         return base
     # See ``_iso8601_from_datetime`` for the wrap rationale: a raising
     # custom tzinfo must surface as DataError, not bare exception class.
+    # Catch ``Exception`` (NOT ``BaseException``) so KeyError /
+    # AttributeError / OSError / OverflowError raised by zoneinfo
+    # lookups or custom subclasses are uniformly wrapped.
     try:
         offset = value.utcoffset()
-    except (TypeError, ValueError) as exc:
-        raise DataError(f"tzinfo.utcoffset() raised for {value!r}: {exc}") from exc
+    except Exception as exc:
+        raise DataError(
+            f"tzinfo.utcoffset() raised {type(exc).__name__} for {value!r}: {exc}"
+        ) from exc
     if offset is None:
         raise DataError(
             f"time is tz-aware but tzinfo.utcoffset() returned None for "
