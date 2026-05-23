@@ -1,10 +1,11 @@
-"""Pin: sync ``Connection.commit`` and ``Connection.rollback`` check
-``_closed`` BEFORE ``_check_thread()``, mirroring the async siblings
-and stdlib ``sqlite3``'s closed-first precedence. Cross-thread call
-on a closed connection should surface ``InterfaceError("Connection
-is closed")`` — the more salient diagnostic — not
-``ProgrammingError("Connection objects ... must be used in same
-thread...")``.
+"""Pin: sync ``Connection.commit`` and ``Connection.rollback`` order
+``_check_thread()`` FIRST, then ``_closed``, then ``messages`` clear.
+Cross-thread call on any connection (closed or open) surfaces the
+thread-affinity ``ProgrammingError`` -- the project-wide reversal
+aligns the sync methods with the async sibling's discipline
+(``aio/connection.py:1576-1582``) so cross-thread misuse cannot
+mutate the owner thread's ``messages`` list before the diagnostic
+fires.
 """
 
 from __future__ import annotations
@@ -14,11 +15,15 @@ import threading
 import pytest
 
 import dqlitedbapi
-from dqlitedbapi.exceptions import InterfaceError
+from dqlitedbapi.exceptions import ProgrammingError
 
 
 @pytest.mark.parametrize("op", ["commit", "rollback"])
-def test_sync_op_on_closed_from_foreign_thread_raises_interface_error(op: str) -> None:
+def test_sync_op_on_closed_from_foreign_thread_raises_thread_affinity(op: str) -> None:
+    """Thread-affinity precedence: foreign-thread commit/rollback even
+    on a closed conn raises ProgrammingError (thread), not
+    InterfaceError (closed). The thread check runs BEFORE the closed
+    check so the cross-thread caller cannot reach the messages-clear."""
     c = dqlitedbapi.connect("127.0.0.1:9999")
     c._closed = True
     c._closed_flag[0] = True
@@ -35,8 +40,8 @@ def test_sync_op_on_closed_from_foreign_thread_raises_interface_error(op: str) -
     t.start()
     t.join()
     assert len(captured) == 1
-    assert isinstance(captured[0], InterfaceError), (
-        f"sync Connection.{op}() on a closed connection from a foreign thread "
-        f"must raise InterfaceError (closed-state precedence per stdlib + "
-        f"async sibling); got {type(captured[0]).__name__}: {captured[0]}"
+    assert isinstance(captured[0], ProgrammingError), (
+        f"sync Connection.{op}() from a foreign thread (even on closed "
+        f"conn) must raise ProgrammingError (thread-affinity precedence); "
+        f"got {type(captured[0]).__name__}: {captured[0]}"
     )

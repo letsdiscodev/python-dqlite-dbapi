@@ -2109,26 +2109,25 @@ class Connection:
         when the cluster is unreachable, without allocating a cursor.
         Mirrors :meth:`AsyncConnection.connect`.
         """
+        # Thread-affinity check FIRST — match the async sibling's
+        # discipline (``_check_loop_only`` runs before the messages
+        # clear at ``aio/connection.py:1576``). A foreign-thread
+        # caller must not mutate the owner thread's ``messages``
+        # list before the diagnostic fires; otherwise PEP 249
+        # §6.1.1's "messages cleared by every standard method call"
+        # invariant gets violated by a thread that has no business
+        # touching the list.
+        self._check_thread()
         # PEP 249 §6.4: ``Connection.messages`` is "cleared by all
         # standard methods". ``connect()`` is a dqlite extension
         # (not in PEP 249), but the project-wide invariant — every
-        # public Connection method clears messages first — covers
-        # this method too. Without the clear, a stale entry from
-        # any prior path would survive an eager-connect call,
-        # breaking the uniform "method-call resets messages"
-        # contract that ``cursor`` / ``commit`` / ``rollback`` /
-        # ``close`` already follow.
+        # public Connection method clears messages — covers this
+        # method too. Mirror the async sibling: clear AFTER the
+        # thread-affinity check so cross-thread callers don't
+        # mutate the owner thread's list.
         del self.messages[:]
-        # Closed-first precedence — rationale at the canonical site
-        # (``commit``): closed-conn diagnostic is more salient than
-        # thread-affinity, and stdlib sqlite3 raises closed-first
-        # regardless of thread. Every other public Connection method
-        # (commit/rollback/cursor/transaction/execute/executemany/
-        # autocommit/isolation_level/row_factory/text_factory setters)
-        # orders the same way.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        self._check_thread()
         # _get_async_connection is a coroutine; route through _run_sync
         # so we share the same loop-in-thread the cursor path uses.
         self._run_sync(self._get_async_connection())
@@ -2181,12 +2180,6 @@ class Connection:
         # short-circuit. Mirrors the cursor-side resolution.
         if self._closed:
             return
-        # PEP 249 §6.1.1: Connection.messages should be cleared on
-        # any standard Connection method invocation. The sibling
-        # commit/rollback/cursor paths already clear; align close()
-        # so the contract is uniform across the four required
-        # methods.
-        del self.messages[:]
         # Fork-after-init: the inherited connection FDs are shared
         # with the parent, the inherited daemon loop thread did not
         # survive fork (only the calling thread crosses), and
@@ -2231,6 +2224,16 @@ class Connection:
             self._transaction_owner = None
             return
         self._check_thread()
+        # PEP 249 §6.1.1: Connection.messages should be cleared on
+        # any standard Connection method invocation. The sibling
+        # commit/rollback/cursor paths already clear; align close()
+        # so the contract is uniform across the four required methods.
+        # Hoisted AFTER ``_check_thread`` (and AFTER the fork-check
+        # short-circuit above) so a foreign-thread first-close on an
+        # alive connection does not scrub the owner thread's list
+        # before the diagnostic fires -- mirrors the async sibling's
+        # ordering at ``aio/connection.py:1576-1582``.
+        del self.messages[:]
         self._closed = True
         # Flip the flag the finalizer reads so it knows this was an
         # explicit close (no ResourceWarning).
@@ -2712,11 +2715,17 @@ class Connection:
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
+        # Thread-affinity check FIRST -- mirror ``commit``/``rollback``
+        # and the async sibling's discipline at
+        # ``aio/connection.py:1576``. Threadsafety=1 affinity contract
+        # applies even to the no-op accept-path: a cross-thread caller
+        # must not scrub the owner thread's ``messages`` list before
+        # the diagnostic fires.
+        self._check_thread()
         # PEP 249 §6.4 + project discipline: every public state-
-        # mutating method clears ``messages`` first. Closed-state
-        # precedence: closed-conn diagnostic is more salient than
-        # thread-affinity (matches ``row_factory.setter``,
-        # ``commit``/``rollback``, ``cursor()`` discipline).
+        # mutating method clears ``messages``. Hoisted AFTER the
+        # thread check so cross-thread misuse doesn't mutate the
+        # owner thread's list.
         # ``contextlib.suppress(AttributeError)`` tolerates
         # ``__new__``-built fixtures that bypass ``__init__``.
         with contextlib.suppress(AttributeError):
@@ -2724,12 +2733,6 @@ class Connection:
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # Threadsafety=1 affinity contract — even the no-op accept-path
-        # is an attempt that must surface as a contract violation if
-        # invoked cross-thread. Sibling ``row_factory.setter`` calls
-        # ``_check_thread()`` for the same reason; the no-op-accept
-        # arms here previously bypassed it.
-        self._check_thread()
         # Accept ``True`` (acknowledges the existing mode) and the
         # stdlib sentinel ``sqlite3.LEGACY_TRANSACTION_CONTROL``
         # (numerically ``-1``) — stdlib's 3.12+ surface uses the
@@ -2827,18 +2830,21 @@ class Connection:
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
-        # PEP 249 §6.4 + closed-first precedence — see
-        # ``autocommit.setter`` for the rationale.
-        # ``contextlib.suppress(AttributeError)`` tolerates
-        # ``__new__``-built fixtures that bypass ``__init__``.
+        # Thread-affinity check FIRST -- see ``autocommit.setter`` for
+        # the rationale (no-op accept-path is still an attempt and
+        # cross-thread misuse must not mutate the owner thread's
+        # ``messages`` list before the diagnostic fires).
+        self._check_thread()
+        # PEP 249 §6.4: clear ``messages``. Hoisted AFTER the thread
+        # check so cross-thread misuse doesn't mutate the owner
+        # thread's list. ``contextlib.suppress(AttributeError)``
+        # tolerates ``__new__``-built fixtures that bypass
+        # ``__init__``.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # Threadsafety=1 affinity contract — see ``autocommit.setter``
-        # for the rationale (no-op accept-path is still an attempt).
-        self._check_thread()
         # Accept the stdlib pre-3.12 accept-set as no-ops: ``None``,
         # ``""`` (the stdlib DEFAULT value of the property), and the
         # implicit-BEGIN ``"DEFERRED"`` / ``"IMMEDIATE"`` /
@@ -2918,15 +2924,19 @@ class Connection:
         writes. The same caveat applies to ``__exit__``'s clean-exit
         commit.
         """
+        # Thread-affinity check FIRST -- mirror async sibling at
+        # ``aio/connection.py:1576``. A foreign-thread caller must
+        # not scrub the owner thread's ``messages`` list before the
+        # diagnostic fires; PEP 249 §6.1.1's "messages cleared by
+        # every standard method call" invariant scopes to the owning
+        # caller.
+        self._check_thread()
+        # PEP 249 §6.1.1: clear ``messages`` on every standard method
+        # call. Hoisted AFTER the thread-affinity check so cross-
+        # thread misuse doesn't mutate the owner thread's list.
         del self.messages[:]
-        # Closed-state precedence: closed-conn diagnostic is more
-        # salient than thread-affinity. Async sibling at
-        # ``aio/connection.py`` orders closed-first; sync siblings
-        # historically diverged. Stdlib sqlite3 also raises closed-
-        # first regardless of thread.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        self._check_thread()
         # Reject explicit ``commit()`` from inside ``with
         # conn.transaction():`` body. The ctxmgr owns transaction
         # boundaries — a stray commit ends the transaction without
@@ -3021,11 +3031,14 @@ class Connection:
         on this driver — see the class docstring for the autocommit-
         by-default contract.
         """
+        # Thread-affinity check FIRST -- see ``commit`` for the
+        # full rationale. Cross-thread caller must not mutate the
+        # owner thread's ``messages`` list before the diagnostic
+        # fires.
+        self._check_thread()
         del self.messages[:]
-        # Closed-state precedence — see ``commit`` for full rationale.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        self._check_thread()
         # Reject stray ``rollback()`` from inside ``with
         # conn.transaction():`` body — the ctxmgr owns boundaries.
         # Mirrors the async sibling and the same-shape guard in
