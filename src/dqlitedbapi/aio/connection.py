@@ -1636,6 +1636,20 @@ class AsyncConnection:
         # full rationale.
         commit_budget = _SYNC_PHASES_MULTIPLIER * self._timeout
         entered_lock = False
+        # ``request_in_flight`` tracks whether the COMMIT wire round-
+        # trip has been initiated AND not yet confirmed-complete. If
+        # an outer cancel / signal / timeout lands while this flag is
+        # True the wire state is partial: the COMMIT bytes may have
+        # reached the leader, the Raft log entry may or may not be
+        # appended, the response may or may not be in flight. The
+        # transport cannot be trusted on the next op. Force-close so
+        # SA's ``is_disconnect`` invalidates the slot (raw
+        # CancelledError doesn't trigger is_disconnect; without the
+        # force-close, the slot stays in the pool with ambiguous
+        # server-side state). Mirrors the close() arm's
+        # force-close-on-cancel discipline. Sync sibling lives at
+        # ``Connection._commit_async``.
+        request_in_flight = False
         try:
             async with asyncio.timeout(commit_budget):
                 async with op_lock:
@@ -1681,8 +1695,14 @@ class AsyncConnection:
                         # Parity with ``Connection._commit_async``;
                         # ``_call_client`` maps raw client errors onto
                         # PEP 249 ``Error`` subclasses.
+                        request_in_flight = True
                         await _call_client(self._async_conn.execute("COMMIT"))
+                        request_in_flight = False
                     except OperationalError as e:
+                        # The wire round-trip completed (even if with
+                        # a non-success FailureResponse the server
+                        # acknowledged); state is well-defined.
+                        request_in_flight = False
                         if _is_no_transaction_error(e):
                             return
                         # Leader flip mid-COMMIT: the Raft log entry
@@ -1717,12 +1737,24 @@ class AsyncConnection:
             #   ``is_disconnect`` classifies the failure and the pool
             #   invalidates the slot. Connection state is ambiguous
             #   from the caller's perspective either way.
+            if request_in_flight:
+                self.force_close_transport()
             phase = "COMMIT round-trip" if entered_lock else "op_lock acquire"
             raise OperationalError(
                 f"commit {phase} timed out after {commit_budget}s "
                 f"(id={id(self)}); connection state ambiguous; reconnect.",
                 code=None,
             ) from e
+        except BaseException:
+            # Outer-cancel / signal landed during the COMMIT round-
+            # trip. The wire state is partial; force-close so SA's
+            # is_disconnect classifier (substring scan on the next
+            # op) invalidates the slot. Without the force-close, a
+            # raw CancelledError doesn't trip is_disconnect and the
+            # ambiguous-state connection stays in the pool.
+            if request_in_flight:
+                self.force_close_transport()
+            raise
 
     async def rollback(self) -> None:
         """Roll back any pending transaction.
@@ -1775,6 +1807,10 @@ class AsyncConnection:
         # tolerates.
         rollback_budget = _SYNC_PHASES_MULTIPLIER * self._timeout
         entered_lock = False
+        # ``request_in_flight`` tracks whether the ROLLBACK wire round-
+        # trip is in flight; see commit() for the partial-state +
+        # force-close rationale.
+        request_in_flight = False
         try:
             async with asyncio.timeout(rollback_budget):
                 async with op_lock:
@@ -1800,20 +1836,33 @@ class AsyncConnection:
                     try:
                         # Parity with ``Connection._rollback_async``;
                         # see ``commit``.
+                        request_in_flight = True
                         await _call_client(self._async_conn.execute("ROLLBACK"))
+                        request_in_flight = False
                     except OperationalError as e:
+                        request_in_flight = False
                         if not _is_no_transaction_error(e):
                             raise
         except TimeoutError as e:
             # See commit() — phase-aware diagnostic so the operator
             # can distinguish lock contention (programmer bug) from a
             # stalled ROLLBACK RTT (network bug).
+            if request_in_flight:
+                self.force_close_transport()
             phase = "ROLLBACK round-trip" if entered_lock else "op_lock acquire"
             raise OperationalError(
                 f"rollback {phase} timed out after {rollback_budget}s "
                 f"(id={id(self)}); connection state ambiguous; reconnect.",
                 code=None,
             ) from e
+        except BaseException:
+            # Outer-cancel / signal landed during the ROLLBACK round-
+            # trip. The wire state is partial; force-close so SA's
+            # is_disconnect classifier invalidates the slot on the
+            # next op. See commit() for full rationale.
+            if request_in_flight:
+                self.force_close_transport()
+            raise
 
     @contextlib.asynccontextmanager
     async def transaction(self) -> "AsyncIterator[None]":
