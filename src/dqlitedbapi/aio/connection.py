@@ -32,6 +32,7 @@ from dqlitedbapi.connection import (
 )
 from dqlitedbapi.cursor import _call_client, _validate_executemany_seq_shape
 from dqlitedbapi.exceptions import (
+    AmbiguousCommitError,
     InterfaceError,
     NotSupportedError,
     OperationalError,
@@ -43,6 +44,9 @@ from dqlitewire import (
 )
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
+)
+from dqlitewire import (
+    LEADER_ERROR_CODES as _LEADER_ERROR_CODES,
 )
 from dqlitewire import (
     sanitize_for_log,
@@ -1659,8 +1663,27 @@ class AsyncConnection:
                         # PEP 249 ``Error`` subclasses.
                         await _call_client(self._async_conn.execute("COMMIT"))
                     except OperationalError as e:
-                        if not _is_no_transaction_error(e):
-                            raise
+                        if _is_no_transaction_error(e):
+                            return
+                        # Leader flip mid-COMMIT: the Raft log entry
+                        # MAY have been replicated before the flip,
+                        # OR the flip may have occurred before append.
+                        # Rewrap as ``AmbiguousCommitError`` so
+                        # middleware that catches ``OperationalError``
+                        # still receives the failure but cross-driver
+                        # retry code can branch on the in-doubt shape
+                        # via ``isinstance(exc, AmbiguousCommitError)``.
+                        # Retrying non-idempotent DML against this case
+                        # risks silent duplicate writes.
+                        if e.code in _LEADER_ERROR_CODES:
+                            raise AmbiguousCommitError(
+                                "ambiguous commit: leader flipped during "
+                                "COMMIT; the write may or may not have "
+                                f"been persisted. Original: {e}",
+                                code=e.code,
+                                raw_message=getattr(e, "raw_message", None),
+                            ) from e
+                        raise
         except TimeoutError as e:
             # The budget covers both lock acquire and the COMMIT
             # round-trip. ``entered_lock`` distinguishes which phase

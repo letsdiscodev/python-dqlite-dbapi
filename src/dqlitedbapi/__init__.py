@@ -71,6 +71,7 @@ from dqlitedbapi.connection import (
 )
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import (
+    AmbiguousCommitError,
     DatabaseError,
     DataError,
     Error,
@@ -184,6 +185,7 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "DatabaseError",
     "DataError",
     "OperationalError",
+    "AmbiguousCommitError",
     "IntegrityError",
     "InternalError",
     "ProgrammingError",

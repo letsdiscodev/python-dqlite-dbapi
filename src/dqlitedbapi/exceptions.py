@@ -347,6 +347,33 @@ class OperationalError(_DatabaseErrorWithCode):
     pass
 
 
+class AmbiguousCommitError(OperationalError):
+    """Surfaced when COMMIT raced a leader flip — the write may or
+    may not have been persisted.
+
+    A leader flip mid-COMMIT produces a ``LEADER_ERROR_CODES``-class
+    failure. The Raft log entry MAY have been replicated to the new
+    leader's quorum before the flip, OR the flip may have occurred
+    before the entry was appended; the client cannot tell from the
+    exception alone. Retrying non-idempotent DML against this case
+    risks silent duplicate writes.
+
+    The class inherits from :class:`OperationalError` so existing
+    ``except OperationalError:`` arms continue to catch it; new
+    callers that want to distinguish the in-doubt commit shape from
+    other operational faults can branch on
+    ``isinstance(exc, AmbiguousCommitError)``. SA's ``is_disconnect``
+    classifies via ``LEADER_ERROR_CODES`` regardless, so the SA pool
+    still recycles the slot.
+
+    Callers retrying after this error MUST use idempotent DML
+    (``INSERT OR REPLACE``, UPDATE keyed on a unique constraint) or
+    perform an out-of-band state check before retry.
+    """
+
+    pass
+
+
 class IntegrityError(_DatabaseErrorWithCode):
     """Error related to database integrity.
 

@@ -28,6 +28,7 @@ from dqliteclient import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client, _validate_executemany_seq_shape
 from dqlitedbapi.exceptions import (
+    AmbiguousCommitError,
     DatabaseError,
     DataError,
     InterfaceError,
@@ -41,6 +42,9 @@ from dqlitewire import (
 )
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
+)
+from dqlitewire import (
+    LEADER_ERROR_CODES as _LEADER_ERROR_CODES,
 )
 from dqlitewire import (
     NO_TRANSACTION_MESSAGE_SUBSTRINGS,
@@ -2970,8 +2974,20 @@ class Connection:
             # subclasses, not raw client exceptions.
             await _call_client(self._async_conn.execute("COMMIT"))
         except OperationalError as e:
-            if not _is_no_transaction_error(e):
-                raise
+            if _is_no_transaction_error(e):
+                return
+            # Leader flip mid-COMMIT: see async sibling for the
+            # AmbiguousCommitError rationale (in-doubt Raft log
+            # entry; retry hazards).
+            if e.code in _LEADER_ERROR_CODES:
+                raise AmbiguousCommitError(
+                    "ambiguous commit: leader flipped during COMMIT; "
+                    "the write may or may not have been persisted. "
+                    f"Original: {e}",
+                    code=e.code,
+                    raw_message=getattr(e, "raw_message", None),
+                ) from e
+            raise
 
     def rollback(self) -> None:
         """Roll back any pending transaction.
