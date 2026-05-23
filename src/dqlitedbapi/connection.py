@@ -1294,6 +1294,12 @@ class Connection:
     InternalError = _exc.InternalError
     ProgrammingError = _exc.ProgrammingError
     NotSupportedError = _exc.NotSupportedError
+    # dqlite-specific extension subclass of OperationalError. Mirrored
+    # at the class level (sibling discipline with the nine PEP 249
+    # mandated names above) so introspection / IDE autocomplete on a
+    # ``conn`` instance surfaces the class symmetrically with how it's
+    # exported from the module.
+    AmbiguousCommitError = _exc.AmbiguousCommitError
 
     def __init__(
         self,

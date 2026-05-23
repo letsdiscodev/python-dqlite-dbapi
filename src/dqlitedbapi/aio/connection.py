@@ -203,6 +203,10 @@ class AsyncConnection:
     InternalError = _exc.InternalError
     ProgrammingError = _exc.ProgrammingError
     NotSupportedError = _exc.NotSupportedError
+    # dqlite-specific extension subclass of OperationalError. Mirrors
+    # the sync Connection's class-attribute table for the same
+    # introspection / autocomplete symmetry.
+    AmbiguousCommitError = _exc.AmbiguousCommitError
 
     def __init__(
         self,

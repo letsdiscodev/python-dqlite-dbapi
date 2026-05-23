@@ -60,6 +60,7 @@ from dqlitedbapi._constants import (
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.exceptions import (
+    AmbiguousCommitError,
     DatabaseError,
     DataError,
     Error,
@@ -165,6 +166,10 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "InternalError",
     "ProgrammingError",
     "NotSupportedError",
+    # dqlite-specific OperationalError subclass marking an in-doubt
+    # commit (leader flip mid-COMMIT). Exposed alongside the PEP 249
+    # standard set for cross-driver introspection symmetry.
+    "AmbiguousCommitError",
     # Type constructors
     "Date",
     "Time",

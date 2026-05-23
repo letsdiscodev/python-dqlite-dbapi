@@ -28,6 +28,10 @@ _PEP249_ALIAS_NAMES = (
     "InternalError",
     "ProgrammingError",
     "NotSupportedError",
+    # dqlite-specific extension subclass of OperationalError, exported
+    # at the module level and mirrored as a class attribute to match
+    # the sibling discipline of the nine PEP 249 mandated names.
+    "AmbiguousCommitError",
 )
 
 
