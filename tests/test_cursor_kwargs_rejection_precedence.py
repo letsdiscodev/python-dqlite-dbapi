@@ -33,7 +33,7 @@ def test_sync_cursor_factory_kwarg_from_foreign_thread_raises_thread_error_first
     affinity), not ``NotSupportedError`` (unknown-kwarg)."""
     conn = Connection.__new__(Connection)
     conn._closed = False
-    conn._creator_pid = _client_conn_mod._current_pid
+    conn._creator_pid = _client_conn_mod.get_current_pid()
     conn._creator_thread = threading.get_ident()
     conn.messages = []
 
@@ -63,13 +63,14 @@ def test_async_cursor_factory_kwarg_after_fork_raises_interface_error_first(
     ``InterfaceError("after fork")``, not ``NotSupportedError``."""
     aconn = AsyncConnection.__new__(AsyncConnection)
     aconn._closed = False
-    aconn._creator_pid = _client_conn_mod._current_pid
+    aconn._creator_pid = _client_conn_mod.get_current_pid()
     aconn._loop_ref = None
     aconn._async_conn = None
     aconn._cursors = weakref.WeakSet()
     aconn.messages = []
 
-    monkeypatch.setattr(_client_conn_mod, "_current_pid", os.getpid() + 1)
+    _real_getpid = os.getpid
+    monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: _real_getpid() + 1)
 
     with pytest.raises(InterfaceError, match="after fork"):
         aconn.cursor(factory=object)

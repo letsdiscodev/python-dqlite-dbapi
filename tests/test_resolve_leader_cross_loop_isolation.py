@@ -25,7 +25,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from dqliteclient import connection as _client_conn_mod
 from dqlitedbapi import connection as _conn_mod
 from dqlitedbapi.connection import _get_resolve_leader_cluster
 from dqlitedbapi.exceptions import InterfaceError
@@ -224,7 +223,7 @@ async def test_fork_pid_change_invalidates_cache() -> None:
 
     with patch("dqlitedbapi.connection.ClusterClient", side_effect=fake_cluster_client):
         _get_resolve_leader_cluster(**_make_cluster_kwargs())
-        with patch.object(_client_conn_mod, "_current_pid", os.getpid() + 1):
+        with patch("dqliteclient.connection.os.getpid", return_value=os.getpid() + 1):
             _get_resolve_leader_cluster(**_make_cluster_kwargs())
 
     # Two constructions: pre-fork and post-fork.

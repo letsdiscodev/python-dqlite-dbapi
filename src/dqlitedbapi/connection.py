@@ -1532,8 +1532,20 @@ class Connection:
                 f"in the target process. (created in pid {self._creator_pid}, "
                 f"current pid {get_current_pid()})"
             )
-        if self._loop is not None and not self._loop.is_closed():
-            return self._loop
+        # Snapshot ``self._loop`` into a local before the second
+        # attribute access to defend against a concurrent close()
+        # nulling the field between the two reads (classic double-
+        # checked-locking defect). ``close()`` nulls ``self._loop``
+        # under ``_loop_lock``; the fast path does NOT take the lock
+        # so a racing finalize / atexit / force_close_transport
+        # caller (each of which intentionally bypasses
+        # ``_check_thread``) could leave the second access reading
+        # the already-nulled attribute and raise ``AttributeError``
+        # on ``.is_closed()``. The slow path's lock-held re-check
+        # below keeps the construction sequence race-free.
+        snapshot = self._loop
+        if snapshot is not None and not snapshot.is_closed():
+            return snapshot
         with self._loop_lock:
             if self._loop is None or self._loop.is_closed():
                 self._loop = asyncio.new_event_loop()

@@ -16,6 +16,7 @@ guard cannot regress.
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -44,10 +45,10 @@ def test_cursor_raises_when_current_pid_diverged_from_creator_pid(
     a fork. ``AsyncConnection.cursor()`` must surface InterfaceError
     rather than returning a live cursor that the user mistakes for a
     usable handle."""
-    from dqliteclient import connection as _client_conn_mod
 
     aconn = _make_async_connection_with_creator_pid(creator_pid=99999)
-    monkeypatch.setattr(_client_conn_mod, "_current_pid", 12345)
+    _real_getpid = os.getpid
+    monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: 12345)
 
     with pytest.raises(InterfaceError, match="used after fork"):
         aconn.cursor()
@@ -59,12 +60,12 @@ def test_cursor_does_not_register_in_cursors_set_when_pid_diverged(
     """Defence pin: the cursors WeakSet must remain empty on the
     forked-child fast path. A regression that registers the cursor
     before the guard fires would surface here."""
-    from dqliteclient import connection as _client_conn_mod
 
     aconn = _make_async_connection_with_creator_pid(creator_pid=99999)
     aconn._cursors = MagicMock()
     aconn._cursors.add = MagicMock(side_effect=AssertionError("must not register"))
-    monkeypatch.setattr(_client_conn_mod, "_current_pid", 12345)
+    _real_getpid = os.getpid
+    monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: 12345)
 
     with pytest.raises(InterfaceError, match="used after fork"):
         aconn.cursor()
@@ -75,7 +76,7 @@ def test_cursor_works_when_pid_matches_creator(monkeypatch: pytest.MonkeyPatch) 
     """Positive control: same-process call still returns a live cursor."""
     from dqliteclient import connection as _client_conn_mod
 
-    aconn = _make_async_connection_with_creator_pid(creator_pid=_client_conn_mod._current_pid)
+    aconn = _make_async_connection_with_creator_pid(creator_pid=_client_conn_mod.get_current_pid())
     cur = aconn.cursor()
     assert cur is not None
     assert cur in aconn._cursors

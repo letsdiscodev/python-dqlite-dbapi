@@ -25,7 +25,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import dqliteclient.connection as _client_conn_mod
 import dqliteclient.exceptions as _client_exc
 import dqlitedbapi
 from dqlitedbapi.aio import AsyncConnection
@@ -326,8 +325,9 @@ def test_sync_force_close_transport_post_fork_short_circuits(
     cur.messages = []
     conn._cursors.add(cur)
 
-    # Simulate fork: bump _client_conn_mod._current_pid.
-    monkeypatch.setattr(_client_conn_mod, "_current_pid", os.getpid() + 1)
+    # Simulate fork: bump _client_conn_mod.get_current_pid().
+    _real_getpid = os.getpid
+    monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: _real_getpid() + 1)
 
     conn.force_close_transport()
 

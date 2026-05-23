@@ -18,6 +18,7 @@ Intended for SQLAlchemy's sync ``do_terminate`` during
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from unittest.mock import MagicMock
@@ -142,7 +143,6 @@ def test_force_close_transport_fork_branch_skips_loop_teardown(
     inherited socket FDs (still owned by the parent). Mirrors
     :meth:`close`'s pid guard.
     """
-    from dqliteclient import connection as _client_conn_mod
 
     conn = _make_unconnected()
     # Stand up a fake inner / loop / thread so the assertions below
@@ -160,7 +160,8 @@ def test_force_close_transport_fork_branch_skips_loop_teardown(
     conn._thread = fake_thread
 
     # Simulate fork: pid mismatch.
-    monkeypatch.setattr(_client_conn_mod, "_current_pid", conn._creator_pid + 1)
+    _real_getpid = os.getpid
+    monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: conn._creator_pid + 1)
 
     conn.force_close_transport()
     # The fork branch must NOT schedule writer.close on a loop the

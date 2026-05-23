@@ -23,7 +23,6 @@ from unittest.mock import MagicMock
 import pytest
 
 import dqlitedbapi
-from dqliteclient import connection as _client_conn_mod
 from dqlitedbapi.cursor import Cursor
 
 
@@ -76,7 +75,8 @@ def test_force_close_transport_post_fork_clears_messages_on_cursor(
     cascade-closed cursor in a forked child must have empty
     messages, NOT the parent's stale entries."""
     conn, cur = _prime_connection()
-    monkeypatch.setattr(_client_conn_mod, "_current_pid", os.getpid() + 1)
+    _real_getpid = os.getpid
+    monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: _real_getpid() + 1)
     conn.force_close_transport()
     assert cur._closed is True
     # The drift fix: messages cleared on fork-branch.
@@ -91,7 +91,8 @@ def test_close_post_fork_clears_messages_on_cursor(
 ) -> None:
     """Same pin for ``close()`` fork-branch."""
     conn, cur = _prime_connection()
-    monkeypatch.setattr(_client_conn_mod, "_current_pid", os.getpid() + 1)
+    _real_getpid = os.getpid
+    monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: _real_getpid() + 1)
     conn.close()
     assert cur._closed is True
     assert cur.messages == []

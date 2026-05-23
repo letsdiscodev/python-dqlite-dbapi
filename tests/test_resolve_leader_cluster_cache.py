@@ -17,7 +17,6 @@ underlying ``DqliteConnection`` fork-safety machinery.
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from dqliteclient import connection as _client_conn_mod
 from dqlitedbapi import connection as _conn_mod
 from dqlitedbapi.connection import _resolve_leader
 
@@ -90,7 +89,7 @@ async def test_resolve_leader_cache_invalidates_on_fork_pid_change() -> None:
         # Simulate fork: the client-side _current_pid is what
         # _refresh_pid_cache writes after_in_child. Bump it to a
         # value that cannot collide with the cache's recorded pid.
-        with patch.object(_client_conn_mod, "_current_pid", os.getpid() + 1):
+        with patch("dqliteclient.connection.os.getpid", return_value=os.getpid() + 1):
             await _resolve_leader("seed:9001", timeout=5.0)
 
     # Two constructions: one pre-fork, one post-fork.
