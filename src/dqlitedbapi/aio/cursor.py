@@ -220,6 +220,17 @@ class AsyncCursor:
         ``None``. Cross-driver code that distinguishes "DML cursor"
         from "closed cursor" must gate on ``cur._closed`` first.
         """
+        # Closed-state short-circuit BEFORE the loop check so the
+        # docstring contract ("closed-state read returns None")
+        # holds across loops. The previous order ran
+        # ``_check_loop_only`` first, which raises for a cross-loop
+        # read on a closed cursor and bubbled an
+        # InterfaceError / ProgrammingError out instead of None.
+        # stdlib ``sqlite3.Cursor.rownumber`` returns ``None`` when
+        # closed; loop binding is a dqlite concern that must not
+        # weaponise that path.
+        if self._closed:
+            return None
         conn = getattr(self, "_connection", None)
         try:
             check = getattr(conn, "_check_loop_only", None)
