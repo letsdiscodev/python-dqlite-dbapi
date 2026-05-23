@@ -807,41 +807,36 @@ def register_adapter(type_: type, adapter: Callable[[Any], Any]) -> None:
     _ADAPTERS[type_] = adapter
 
 
-_BUILT_IN_ADAPTER_TYPES: frozenset[type] = frozenset(
-    {datetime.date, datetime.datetime, datetime.time}
-)
-
-
 def unregister_adapter(type_: type) -> None:
     """Remove a previously-registered adapter for ``type_``.
 
-    No-op if no adapter was registered for ``type_``. Counterpart to
-    :func:`register_adapter`. Module-scoped, mirroring the registration
-    side. Safe to call from test cleanup helpers (``finally:`` blocks,
-    ``pytest`` fixtures) without first checking whether the type is in
-    the registry.
+    Counterpart to :func:`register_adapter`. Module-scoped, mirroring
+    the registration side. Removes a user-installed override; the
+    underlying built-in default (ISO 8601 stringification for
+    ``datetime.date`` / ``datetime.datetime`` / ``datetime.time``)
+    is hardcoded inside ``_convert_bind_param`` and is unaffected.
 
-    ``datetime.date`` / ``datetime.datetime`` / ``datetime.time`` are
-    rejected with ``ProgrammingError``: their ISO 8601 encoding is
-    hardcoded inside ``_convert_bind_param`` rather than going through
-    the ``_ADAPTERS`` registry, so a silent ``_ADAPTERS.pop()`` no-op
-    would mislead the caller into thinking the default was uninstalled.
-    Use :func:`register_adapter` to override the built-in encoding
-    instead.
+    Asymmetric semantics fix: ``register_adapter`` accepts overrides
+    for built-in types (the registry consult wins over the hardcoded
+    isinstance branch), so ``unregister_adapter`` must also accept
+    them — removing the override restores the built-in default. The
+    prior unconditional rejection left user-installed overrides
+    permanently installed with no public removal path. Matches stdlib
+    ``sqlite3.unregister_adapter`` (Python 3.13+) which accepts any
+    previously-registered type.
+
+    Raises ``ProgrammingError`` if ``type_`` has no entry in the
+    registry — this is the cross-driver-portable "no adapter to
+    remove" signal.
     """
-    if type_ in _BUILT_IN_ADAPTER_TYPES:
+    if type_ not in _ADAPTERS:
         from dqlitedbapi.exceptions import ProgrammingError
 
         raise ProgrammingError(
-            f"cannot unregister built-in adapter for {type_.__name__}; "
-            f"the default ISO 8601 encoding is hardcoded inside "
-            f"_convert_bind_param. Use register_adapter("
-            f"{type_.__name__}, custom_fn) to override the default "
-            f"instead — register_adapter wins over the hardcoded "
-            f"isinstance branch.",
+            f"no adapter registered for {type_.__name__}",
             code=None,
         )
-    _ADAPTERS.pop(type_, None)
+    del _ADAPTERS[type_]
 
 
 def _convert_bind_param(value: Any) -> Any:

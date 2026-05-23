@@ -22,14 +22,20 @@ def test_unregister_adapter_round_trip() -> None:
     assert _Foo not in _ADAPTERS
 
 
-def test_unregister_adapter_idempotent() -> None:
-    """Calling unregister on a never-registered type is a no-op."""
+def test_unregister_adapter_raises_when_no_adapter_registered() -> None:
+    """Calling unregister on a never-registered type raises
+    ``ProgrammingError`` — matches stdlib ``sqlite3.unregister_adapter``
+    (Python 3.13+) which surfaces "no adapter to remove" as a clear
+    contract violation rather than silently no-op'ing."""
+    import pytest
+
+    from dqlitedbapi.exceptions import ProgrammingError
 
     class _Bar:
         pass
 
-    # No raise.
-    dqlitedbapi.unregister_adapter(_Bar)
+    with pytest.raises(ProgrammingError, match="no adapter registered"):
+        dqlitedbapi.unregister_adapter(_Bar)
     assert _Bar not in _ADAPTERS
 
 
