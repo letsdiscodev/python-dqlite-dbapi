@@ -2538,7 +2538,7 @@ class AsyncConnection:
                     "AsyncConnection.__aenter__ (id=%s, address=%s): "
                     "exception during cleanup-close after failed connect",
                     id(self),
-                    self._address,
+                    sanitize_for_log(str(self._address)),
                     exc_info=True,
                 )
             raise
@@ -2592,7 +2592,7 @@ class AsyncConnection:
                     "AsyncConnection.__aexit__ (address=%s, id=%s): "
                     "commit interrupted by cancel/signal; "
                     "server-side commit state may be ambiguous",
-                    self._address,
+                    sanitize_for_log(str(self._address)),
                     id(self),
                     exc_info=True,
                 )
@@ -2635,7 +2635,7 @@ class AsyncConnection:
                     "raised %s; cancel re-raised per structured-"
                     "concurrency policy — body exception survives on "
                     "__context__ only, not __cause__",
-                    self._address,
+                    sanitize_for_log(str(self._address)),
                     id(self),
                     exc_type.__name__,
                     exc_info=True,
@@ -2649,7 +2649,7 @@ class AsyncConnection:
                 logger.debug(
                     "AsyncConnection.__aexit__ (address=%s, id=%s): "
                     "rollback failed after body raised %s",
-                    self._address,
+                    sanitize_for_log(str(self._address)),
                     id(self),
                     exc_type.__name__,
                     exc_info=True,

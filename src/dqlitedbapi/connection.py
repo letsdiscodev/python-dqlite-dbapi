@@ -1008,6 +1008,7 @@ def _cleanup_loop_thread(
     _warnings: Any = warnings,
     _logger: Any = logger,
     _contextlib: Any = contextlib,
+    _sanitize_for_log: Any = sanitize_for_log,
 ) -> None:
     """Stop the background event loop and join its thread.
 
@@ -1138,10 +1139,19 @@ def _cleanup_loop_thread(
         # kwarg-default capture itself sees ``None`` mid-shutdown.
         if closed_flag[0] is False and _warnings is not None and _contextlib is not None:
             with _contextlib.suppress(RuntimeError):
+                # Sanitise the address before interpolation: a
+                # custom ``dial_func`` that bypassed ``parse_address``
+                # could otherwise carry LF / U+2028 into journald via
+                # the ResourceWarning emission and split the record.
+                # Defence-in-depth -- the address normally goes
+                # through ``_client_parse_address`` at __init__, but
+                # the ``__repr__`` discipline at line 3776 is the
+                # established convention for this class.
                 _warnings.warn(
-                    f"Connection(address={address!r}) was garbage-collected "
-                    f"without close(); cleaning up event-loop thread. Call "
-                    f"Connection.close() explicitly to avoid this warning.",
+                    f"Connection(address={_sanitize_for_log(str(address))!r}) "
+                    f"was garbage-collected without close(); cleaning up "
+                    f"event-loop thread. Call Connection.close() explicitly "
+                    f"to avoid this warning.",
                     ResourceWarning,
                     stacklevel=2,
                 )
@@ -3871,7 +3881,7 @@ class Connection:
                     "clean-exit commit interrupted by signal; "
                     "transaction state may be ambiguous (commit-or-not "
                     "on the leader)",
-                    self._address,
+                    sanitize_for_log(str(self._address)),
                     id(self),
                     exc_info=True,
                 )
@@ -3893,7 +3903,7 @@ class Connection:
                 logger.debug(
                     "Connection.__exit__ (address=%s, id=%s): "
                     "rollback interrupted by signal after body raised",
-                    self._address,
+                    sanitize_for_log(str(self._address)),
                     id(self),
                     exc_info=True,
                 )
@@ -3902,7 +3912,7 @@ class Connection:
                 logger.debug(
                     "Connection.__exit__ (address=%s, id=%s): "
                     "rollback failed; propagating original body exception",
-                    self._address,
+                    sanitize_for_log(str(self._address)),
                     id(self),
                     exc_info=True,
                 )
