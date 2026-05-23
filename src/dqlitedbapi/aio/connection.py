@@ -2319,19 +2319,16 @@ class AsyncConnection:
             # original ``connect()`` failure is the SAME inner cancel
             # chain — without the shield, ``close()`` would itself be
             # cancelled before draining and the original
-            # ``CancelledError`` context would be lost mid-flight. (This
-            # is the load-bearing property; see the historical fix in
-            # the package.) The shield does NOT preserve the original
-            # connect-time exception against a FRESH outer cancel
-            # landing during this cleanup: ``await asyncio.shield(...)``
-            # still raises a new ``CancelledError`` in the outer
-            # awaiter, which is a ``BaseException`` subclass and so
-            # escapes the ``except Exception`` arm below, replacing the
-            # original (which survives only as ``__context__``).
-            # Cancellation propagation winning over exception
-            # preservation is the project-wide structured-concurrency
-            # posture. Mirrors the SA-adapter cleanup-on-failure
-            # discipline.
+            # ``CancelledError`` context would be lost mid-flight.
+            # ``contextlib.suppress(asyncio.CancelledError)`` absorbs a
+            # FRESH outer cancel landing during this cleanup so the
+            # bare ``raise`` below re-delivers the ORIGINAL connect-
+            # time exception (asyncio re-raises the cancel at the next
+            # await on this task). Sibling ``aconnect()`` at
+            # ``aio/__init__.py:454`` uses the same discipline; without
+            # this suppress the two entry points behaved differently
+            # on outer-cancel-during-cleanup (``aconnect()`` re-raised
+            # the original; ``__aenter__`` re-raised the cancel).
             # Schedule the cleanup-close as a Task with an explicit
             # ``_observe_drain_exception`` done-callback so the
             # implicit Task ``asyncio.shield(coro)`` would otherwise
@@ -2342,7 +2339,8 @@ class AsyncConnection:
             inner_drain = asyncio.ensure_future(self.close())
             inner_drain.add_done_callback(_observe_drain_exception)
             try:
-                await asyncio.shield(inner_drain)
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(inner_drain)
             except Exception:
                 logger.debug(
                     "AsyncConnection.__aenter__ (id=%s, address=%s): "
