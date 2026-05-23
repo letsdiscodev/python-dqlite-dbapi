@@ -4,8 +4,8 @@ import sqlite3 as _stdlib_sqlite3
 from functools import lru_cache
 from typing import Final
 
-from dqlitewire._truncate import _DEFAULT_MAX_RAW_MESSAGE
-from dqlitewire._truncate import _cap_raw_message as _wire_cap_raw_message
+from dqlitewire import DEFAULT_MAX_RAW_MESSAGE as _DEFAULT_MAX_RAW_MESSAGE
+from dqlitewire import cap_raw_message as _wire_cap_raw_message
 
 __all__ = [
     "DataError",
@@ -131,7 +131,7 @@ class Warning(Exception):  # noqa: A001, N818 - PEP 249 §7 mandated class name
 
 
 # Cap on ``raw_message`` carried by any code-bearing dbapi Error.
-# Hosted in ``dqlitewire._truncate._DEFAULT_MAX_RAW_MESSAGE`` as the
+# Hosted in ``dqlitewire.DEFAULT_MAX_RAW_MESSAGE`` as the
 # cross-package single source of truth shared with
 # ``dqliteclient.exceptions.DqliteError._MAX_RAW_MESSAGE``. The
 # rationale (~64 KiB FailureResponse, BaseExceptionGroup fan-out,
