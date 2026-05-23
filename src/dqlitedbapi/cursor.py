@@ -1848,8 +1848,12 @@ class Cursor:
                 "take no parameters and cannot be batched."
             )
         if _is_row_returning(operation) and not _is_dml_with_returning(operation):
-            head_upper = operation.lstrip().upper()
-            if head_upper.startswith("PRAGMA"):
+            # Use the already-computed comment-stripped uppercase form
+            # so ``-- comment\nPRAGMA foreign_keys`` still routes to the
+            # PRAGMA-specific diagnostic. The prior raw lstrip().upper()
+            # left the user with the less actionable "use execute() for
+            # SELECT / VALUES / PRAGMA / EXPLAIN / WITH" message.
+            if head_normalised.startswith("PRAGMA"):
                 # Specific guidance for PRAGMA: it has per-call
                 # side-effect semantics and is never meaningfully
                 # batchable, even when the syntactic shape would fit

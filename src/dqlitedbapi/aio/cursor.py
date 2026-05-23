@@ -645,8 +645,11 @@ class AsyncCursor:
                     "take no parameters and cannot be batched."
                 )
             if _is_row_returning(operation) and not _is_dml_with_returning(operation):
-                head_upper = operation.lstrip().upper()
-                if head_upper.startswith("PRAGMA"):
+                # Use the already-computed comment-stripped uppercase
+                # form so a leading SQL comment doesn't route the user
+                # past the PRAGMA-specific diagnostic into the less
+                # actionable generic message. Sync sibling for context.
+                if head_normalised.startswith("PRAGMA"):
                     # See sync sibling: PRAGMA has per-call semantics and
                     # is never meaningfully batchable; surface the
                     # PRAGMA-specific guidance so the caller does not
