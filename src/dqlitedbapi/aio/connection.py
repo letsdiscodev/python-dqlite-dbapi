@@ -879,6 +879,26 @@ class AsyncConnection:
                     # The shielded close should have absorbed cancel;
                     # if a fresh signal lands here, allow it to
                     # propagate after best-effort cleanup state.
+                    #
+                    # Cancel the inner client conn's ``_pending_drain``
+                    # task BEFORE nulling our reference: the orderly
+                    # ``_close_impl`` path normally drains it under
+                    # bounded resnapshot; on this cancel arm the
+                    # shielded close was cancelled mid-drain, so the
+                    # inner conn may still own a pending Task. Once
+                    # we null ``self._async_conn`` the inner is
+                    # unreachable from us, and GC of the inner emits
+                    # the exact "Task was destroyed but it is
+                    # pending" warning that ``force_close_transport``
+                    # goes to extensive lengths to prevent. Mirror
+                    # that discipline here with a best-effort
+                    # ``cancel()`` — we are already on a cancel arm
+                    # so do NOT await; the next loop tick reaps it.
+                    inner = self._async_conn
+                    if inner is not None:
+                        pending = getattr(inner, "_pending_drain", None)
+                        if pending is not None and not pending.done():
+                            pending.cancel()
                     self._async_conn = None
                     self._connect_lock = None
                     self._op_lock = None

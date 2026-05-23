@@ -37,9 +37,8 @@ def _make_conn(
     conn._closed_flag = [False]
     conn._timeout = 0.05
     conn._transaction_owner = None
-    import weakref
-
     import os as _os
+    import weakref
 
     conn._creator_pid = _os.getpid()
     conn._connect_lock = asyncio.Lock()
