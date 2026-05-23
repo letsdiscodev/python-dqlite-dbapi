@@ -172,6 +172,39 @@ def _format_loop_affinity_message(
     )
 
 
+def _cascade_cursors_closed(cursors: list[Any]) -> None:
+    """Mark every cursor in ``cursors`` closed and scrub its result-
+    set state.
+
+    Extracted so ``force_close_transport`` can route through
+    ``loop.call_soon_threadsafe`` on a foreign-thread / live-loop
+    combo. Without that routing the cursor cascade mutates loop-
+    owned state without synchronisation; sibling tasks parked
+    mid-fetch on the bound loop could observe a partially-cascaded
+    snapshot on resume (``_closed=True`` but ``_description`` still
+    populated, or vice-versa).
+
+    Direct attribute writes only — ``AsyncCursor.close`` is async
+    and would produce un-awaited coroutines from this sync /
+    threadsafe-scheduled context. ``_closed = True`` is the load-
+    bearing write; the cursor's own ``_check_closed`` gates all
+    reads and is checked first by every method, so a cursor whose
+    later field-writes are skipped on signal arrival still rejects
+    fetch attempts cleanly.
+    """
+    for cur in cursors:
+        cur._closed = True
+        cur._rows = []
+        cur._description = None
+        cur._rowcount = -1
+        cur._lastrowid = None
+        cur._row_index = 0
+        with contextlib.suppress(AttributeError):
+            del cur.messages[:]
+        with contextlib.suppress(TypeError):
+            cur._connection = weakref.proxy(cur._connection)
+
+
 class AsyncConnection:
     """Async database connection, loop-bound.
 
@@ -1107,22 +1140,31 @@ class AsyncConnection:
         # arrival still rejects fetch attempts cleanly. Tolerate
         # ``_cursors`` being absent on ``__new__``-constructed
         # fixtures that bypass ``__init__``.
+        #
+        # Loop-aware routing: a foreign-thread caller (SA
+        # do_terminate / pool.dispose from an AsyncEngine running its
+        # own loop in another thread) mutating the cursor fields
+        # directly races sibling tasks on the bound loop that may be
+        # mid-fetch and observing the cursor's state. Each individual
+        # attribute write is GIL-atomic but the SEQUENCE is not —
+        # a sibling reading ``description`` then ``rowcount`` could
+        # see a partially-cascaded snapshot. Mirror the writer-close
+        # discipline below: ``call_soon_threadsafe`` when the loop is
+        # alive on a foreign thread, direct call when on the owning
+        # thread or when the loop is already closed.
         cursors = getattr(self, "_cursors", None)
         if cursors is not None:
-            try:
-                for cur in list(cursors):
-                    cur._closed = True
-                    cur._rows = []
-                    cur._description = None
-                    cur._rowcount = -1
-                    cur._lastrowid = None
-                    cur._row_index = 0
-                    with contextlib.suppress(AttributeError):
-                        del cur.messages[:]
-                    with contextlib.suppress(TypeError):
-                        cur._connection = weakref.proxy(cur._connection)
-            finally:
-                cursors.clear()
+            bound_loop_ref = getattr(self, "_loop_ref", None)
+            bound_loop = bound_loop_ref() if bound_loop_ref is not None else None
+            running = None
+            with contextlib.suppress(RuntimeError):
+                running = asyncio.get_running_loop()
+            cursors_snapshot = list(cursors)
+            cursors.clear()
+            if bound_loop is None or bound_loop.is_closed() or running is bound_loop:
+                _cascade_cursors_closed(cursors_snapshot)
+            else:
+                bound_loop.call_soon_threadsafe(_cascade_cursors_closed, cursors_snapshot)
         # Detach the finalizer — symmetric with the sync sibling's
         # ``self._finalizer.detach()`` call paths in
         # ``force_close_transport``. Keeps the ``weakref`` global
