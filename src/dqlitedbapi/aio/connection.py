@@ -2017,7 +2017,15 @@ class AsyncConnection:
             else:
                 await cur.execute(operation, parameters)
         except BaseException:
-            with contextlib.suppress(Exception):
+            # Widened suppress: ``cur.close()`` is sync (GIL-atomic
+            # attribute writes + a weakref.proxy swap), but a
+            # KeyboardInterrupt landing at a bytecode boundary inside
+            # the close body could escape a narrower
+            # ``suppress(Exception)`` and replace the original
+            # ``BaseException`` we are about to ``raise``. Aligning
+            # with the sibling ``aconnect()`` discipline at
+            # ``aio/__init__.py:454`` keeps the original visible.
+            with contextlib.suppress(Exception, asyncio.CancelledError):
                 cur.close()
             raise
         return cur
@@ -2064,13 +2072,15 @@ class AsyncConnection:
         try:
             _validate_executemany_seq_shape(seq_of_parameters)
         except ProgrammingError:
-            with contextlib.suppress(Exception):
+            # See ``execute`` above for the widened-suppress rationale.
+            with contextlib.suppress(Exception, asyncio.CancelledError):
                 cur.close()
             raise
         try:
             await cur.executemany(operation, seq_of_parameters)
         except BaseException:
-            with contextlib.suppress(Exception):
+            # See ``execute`` above for the widened-suppress rationale.
+            with contextlib.suppress(Exception, asyncio.CancelledError):
                 cur.close()
             raise
         return cur
