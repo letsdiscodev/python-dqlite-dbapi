@@ -492,19 +492,21 @@ def _reject_non_sequence_params(params: Any) -> None:
 
 
 # Outer shapes that ``executemany`` must reject before iteration begins.
-# A ``dict`` / ``str`` / ``bytes`` / ``bytearray`` / ``memoryview`` would
-# silently iterate over keys / characters / bytes (each yielded element
-# becoming a "parameter set" — almost always a caller bug). ``set`` /
-# ``frozenset`` iterate in non-deterministic order, scrambling row order.
-# The ``Mapping`` ABC at large is NOT in the reject list so an
-# ``OrderedDict([(0, params0), (1, params1)])``-of-rows pattern still
-# works — only literal ``dict`` (the common single-row misuse) is denied.
+# ``str`` / ``bytes`` / ``bytearray`` / ``memoryview`` would silently
+# iterate over characters / bytes (each yielded element becoming a
+# "parameter set" — almost always a caller bug). ``set`` / ``frozenset``
+# iterate in non-deterministic order, scrambling row order. ``dict`` is
+# handled separately below via an exact-type check so dict SUBCLASSES
+# (``OrderedDict``, ``defaultdict``, ``Counter``, ...) remain accepted
+# as ordered iterables of parameter sets — the common
+# ``OrderedDict([(0, params0), (1, params1)])``-of-rows pattern works
+# unchanged. Only a literal ``dict`` (the common single-row misuse) is
+# denied.
 _REJECTED_EXECUTEMANY_SEQ_TYPES: Final[tuple[type, ...]] = (
     str,
     bytes,
     bytearray,
     memoryview,
-    dict,
     set,
     frozenset,
 )
@@ -529,6 +531,18 @@ def _validate_executemany_seq_shape(seq_of_parameters: object) -> None:
             f"{type(seq_of_parameters).__name__}. Iterating a "
             f"{type(seq_of_parameters).__name__} parameter-set is "
             f"almost certainly a bug."
+        )
+    # Exact-type check for ``dict`` only — subclasses (OrderedDict,
+    # defaultdict, Counter, ChainMap-via-dict-adapter) iterate keys in
+    # insertion order and are legitimate ordered iterables of parameter
+    # sets when the caller deliberately uses an indexed mapping for
+    # batch ordering.
+    if type(seq_of_parameters) is dict:
+        raise ProgrammingError(
+            "executemany seq_of_parameters must be an iterable of "
+            "parameter sets (e.g. list of tuples), not dict. Iterating "
+            "a dict parameter-set is almost certainly a bug; wrap as "
+            "[params] for a single-row batch."
         )
 
 
