@@ -27,7 +27,6 @@ import pytest
 
 from dqlitedbapi import connection as _conn_mod
 from dqlitedbapi.connection import _get_resolve_leader_cluster
-from dqlitedbapi.exceptions import InterfaceError
 
 
 @pytest.fixture(autouse=True)
@@ -52,8 +51,12 @@ def _make_cluster_kwargs() -> dict[str, Any]:
 def test_resolve_leader_outside_running_loop_raises() -> None:
     """The function is async-only by design; calling it from sync
     context fails loud rather than silently caching against a None
-    loop_id."""
-    with pytest.raises(InterfaceError, match="running event loop"):
+    loop_id. Raises bare ``RuntimeError`` (matching what
+    ``asyncio.get_running_loop`` itself raises) rather than the
+    misclassified ``InterfaceError`` — the helper is structurally
+    private and a missing event loop is a programmer-invariant
+    violation, not a database-interface problem."""
+    with pytest.raises(RuntimeError, match="running event loop"):
         _get_resolve_leader_cluster(**_make_cluster_kwargs())
 
 

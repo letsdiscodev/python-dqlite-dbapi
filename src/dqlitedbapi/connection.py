@@ -418,19 +418,24 @@ def _get_resolve_leader_cluster(
     equality) and runs only on the cache-lookup path.
 
     Async-only: must be called from inside a running event loop.
-    The function raises ``InterfaceError`` if no running loop is
+    The function raises ``RuntimeError`` if no running loop is
     found — fail loud rather than silently caching against a
     sentinel ``loop_id``. Today the only callers are
     ``_resolve_leader`` (async) and the cross-loop test fixtures.
+    Reaching this branch is a programmer-invariant violation on a
+    structurally private helper (``_``-prefixed); ``RuntimeError``
+    matches what ``asyncio.get_running_loop()`` itself raises and is
+    PEP 249 §7-correct (``InterfaceError`` is reserved for
+    "problems with the database interface rather than the database
+    itself", neither of which describes a missing loop).
     """
     global _RESOLVE_LEADER_CACHE_PID
     try:
         loop_id = id(asyncio.get_running_loop())
     except RuntimeError as e:
-        raise InterfaceError(
-            "_get_resolve_leader_cluster called outside a running event loop; "
-            "the cache key requires a loop identity to keep ClusterClient "
-            "tasks from leaking across loops."
+        raise RuntimeError(
+            "_get_resolve_leader_cluster must be invoked from within a "
+            "running event loop (via _run_sync)."
         ) from e
 
     with _RESOLVE_LEADER_CACHE_LOCK:
