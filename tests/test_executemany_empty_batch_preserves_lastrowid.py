@@ -63,4 +63,3 @@ def test_sync_empty_executemany_async_with_none_pre_batch_value() -> None:
 
 # Quiet pytest import lint.
 _ = pytest
-

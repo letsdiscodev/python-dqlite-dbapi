@@ -476,7 +476,13 @@ class AsyncConnection:
                 f"in the target process. (created in pid {creator_pid}, "
                 f"current pid {get_current_pid()})"
             )
-        if self._loop_ref is None:
+        # ``getattr``-safe for ``_loop_ref`` mirrors the
+        # ``_creator_pid`` arm above — bare-instantiation /
+        # ``__new__`` test patterns can reach
+        # ``_check_loop_only`` from the new commit/rollback pre-clear
+        # site without the binding having been initialised.
+        loop_ref = getattr(self, "_loop_ref", None)
+        if loop_ref is None:
             return  # not yet bound — don't bind from here
         try:
             loop = asyncio.get_running_loop()
@@ -485,7 +491,7 @@ class AsyncConnection:
             # NotSupportedError or no-op anyway. Don't manufacture a
             # different error.
             return
-        bound = self._loop_ref()
+        bound = loop_ref()
         if bound is not loop:
             raise _loop_affinity_exc_class(bound)(
                 _format_loop_affinity_message(bound, loop, "was first used")
@@ -1463,6 +1469,19 @@ class AsyncConnection:
         idempotent DML or out-of-band state-checks before retrying.
         Same caveat applies to ``__aexit__``'s clean-exit commit.
         """
+        # Loop-affinity check BEFORE the messages-clear so a stray
+        # cross-loop ``await aconn.commit()`` does NOT scribble the
+        # bound-loop's ``messages`` list. ``_check_loop_only`` is the
+        # closed-state-tolerant variant — it raises ``ProgrammingError``
+        # on cross-loop misuse and ``InterfaceError`` on post-fork pid
+        # mismatch, but is a no-op on closed conns, on not-yet-bound
+        # conns, and on same-loop callers. The closed-path clear
+        # below therefore still runs for the PEP 249 §6.1.1 contract
+        # (messages cleared on every invocation including the raise
+        # arm). The owner-Task identity check further below would
+        # also have misfired across loops — putting the loop check
+        # first short-circuits that branch on the wrong-loop path.
+        self._check_loop_only()
         # PEP 249 §6.1.1: ``Connection.messages`` is cleared "prior to
         # executing the call" on every standard connection method —
         # including the closed-path raise below. Sync sibling clears
@@ -1601,6 +1620,9 @@ class AsyncConnection:
         by-default contract: "no active transaction" is the common
         case unless the caller issued an explicit ``BEGIN``.
         """
+        # Loop-affinity check before the messages-clear; see commit()
+        # above for the foreign-loop / state-mutation rationale.
+        self._check_loop_only()
         # PEP 249 §6.1.1 messages-clear contract; see commit() above.
         del self.messages[:]
         if self._closed:
