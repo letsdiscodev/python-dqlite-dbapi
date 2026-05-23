@@ -490,7 +490,17 @@ async def aconnect(
         inner_drain = asyncio.ensure_future(conn.close())
         inner_drain.add_done_callback(_observe_drain_exception)
         try:
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                # Absorb KeyboardInterrupt / SystemExit during the
+                # cleanup-close too. The function's outer
+                # ``except BaseException`` catch is designed to preserve
+                # the original connect-time exception across cleanup;
+                # a KI/SE delivered inside the shielded close (or its
+                # done-callback chain) would otherwise propagate and
+                # SUPPLANT the saved original via Python's
+                # implicit-context machinery -- defeating the
+                # "preserve original" invariant for the two signal
+                # types that fell outside the narrower suppress.
                 await asyncio.shield(inner_drain)
         except Exception:
             logger.debug(
