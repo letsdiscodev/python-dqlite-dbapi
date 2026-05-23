@@ -773,6 +773,23 @@ class AsyncCursor:
                 # check inside ``_ExecuteManyAccumulator.apply``.
                 self._check_closed()
                 acc.apply(self)
+                # stdlib parity (matches sync sibling at
+                # ``cursor.py`` post-loop): a successful non-empty
+                # ``executemany`` clears ``_lastrowid`` (per
+                # ``sqlite3.Cursor.executemany`` "left unchanged" /
+                # "no single row is the canonical last-inserted-row"
+                # contract). The empty-batch case
+                # (``_completed_iterations == 0``) preserves the
+                # pre-batch snapshot so a caller's prior single-row
+                # INSERT's lastrowid survives a follow-on empty
+                # batch — sibling
+                # ``_ExecuteManyAccumulator.apply()`` already special-
+                # cases ``_pushed == 0`` for rowcount; the symmetric
+                # lastrowid treatment lives here.
+                if self._completed_iterations > 0:
+                    self._lastrowid = None
+                else:
+                    self._lastrowid = lastrowid_pre_batch
         finally:
             # Clear unconditionally — see ``execute`` finally for the
             # rationale (closes the bytecode-tight signal window

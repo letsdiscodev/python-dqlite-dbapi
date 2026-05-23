@@ -1992,15 +1992,22 @@ class Cursor:
                 self._completed_iterations += 1
             # stdlib ``sqlite3.Cursor.executemany`` does NOT update
             # ``lastrowid`` — the value reflects no single row across
-            # the batch and is "left unchanged" per the docs. We clear
-            # after a successful loop (including the empty-batch case)
-            # so per-iteration writes inside ``_execute_async`` don't
-            # leak the last batch row's id to the caller. Keeps cross-
-            # driver code that reads ``cur.lastrowid`` after executemany
-            # observing ``None``. Rejection paths in the sync wrapper
-            # short-circuit before reaching this point and preserve the
-            # prior ``lastrowid`` per the docstring contract.
-            self._lastrowid = None
+            # the batch and is "left unchanged" per the docs.
+            #
+            # We clear after a SUCCESSFUL NON-EMPTY loop so per-
+            # iteration writes inside ``_execute_async`` don't leak
+            # the last batch row's id to the caller. For the
+            # empty-batch case (``seq_of_parameters`` had zero
+            # iterations), no per-iteration write happened — restoring
+            # the pre-batch snapshot matches stdlib's "left unchanged"
+            # contract precisely. The sibling
+            # ``_ExecuteManyAccumulator.apply()`` already special-
+            # cases ``_pushed == 0`` for the rowcount=0 result; the
+            # symmetric treatment here closes the lastrowid parity.
+            if self._completed_iterations > 0:
+                self._lastrowid = None
+            else:
+                self._lastrowid = lastrowid_pre_batch
         except BaseException:
             # Mid-batch failure leaves _rowcount at the last
             # iteration's value (which is misleading) and _rows /
