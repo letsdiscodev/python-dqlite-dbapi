@@ -774,6 +774,23 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
 # common ergonomic on the existing ecosystem).
 _ADAPTERS: dict[type, Callable[[Any], Any]] = {}
 
+# Wire-primitive types the codec accepts after adapter / __conform__
+# chaining. The post-chain validation in ``_convert_bind_param``
+# rejects any non-primitive output so the diagnostic names the
+# registered adapter site rather than the opaque wire-layer
+# ``EncodeError``. ``bool`` is included explicitly even though it's
+# an ``int`` subclass, to make the wire-acceptable set greppable.
+_WIRE_PRIMITIVES: tuple[type, ...] = (
+    int,
+    float,
+    str,
+    bytes,
+    bytearray,
+    memoryview,
+    bool,
+    type(None),
+)
+
 
 class PrepareProtocol:
     """Stdlib ``sqlite3.PrepareProtocol`` parity sentinel.
@@ -920,7 +937,8 @@ def _convert_bind_param(value: Any) -> Any:
     # do not inherit the parent class's adapter unless explicitly
     # registered). This keeps the contract predictable and matches
     # ``sqlite3.register_adapter``.
-    adapter = _ADAPTERS.get(type(value))
+    original_type = type(value)
+    adapter = _ADAPTERS.get(original_type)
     if adapter is not None:
         value = adapter(value)
     else:
@@ -967,4 +985,24 @@ def _convert_bind_param(value: Any) -> Any:
         return _iso8601_from_datetime(value)
     if isinstance(value, datetime.time):
         return _iso8601_from_time(value)
+    # Post-chain validation: an adapter (or ``__conform__``) that
+    # returned a non-wire-primitive would otherwise reach the wire
+    # encoder and surface as ``EncodeError`` → ``DataError`` naming
+    # the post-chain type, hiding the actual registration site from
+    # the operator. Validate explicitly so the diagnostic names the
+    # original input type AND the adapter-produced type, pointing
+    # operators back at the ``register_adapter`` / ``__conform__``
+    # site that returned the invalid value. Raise ``DataError`` to
+    # preserve the existing wire-layer mapping that consumers
+    # (TestUnsupportedBindParameterTypes integration tests, PEP 249
+    # §7 "errors due to problems with the processed data") rely on;
+    # the diagnostic clarity is the substantive improvement, not the
+    # class flip.
+    if not isinstance(value, _WIRE_PRIMITIVES):
+        raise DataError(
+            f"adapter for {original_type.__name__} produced "
+            f"non-primitive {type(value).__name__}; wire layer accepts "
+            f"only int / float / str / bytes / bytearray / memoryview / "
+            f"bool / None. Register an adapter that returns one of those."
+        )
     return value

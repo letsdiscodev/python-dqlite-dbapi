@@ -60,8 +60,13 @@ class TestExceptionWrapping:
 
     def test_client_data_error_becomes_data_error(self) -> None:
         c = _cursor_with_async_conn_raising(client_exc.DataError("bad param"))
+        # Use a wire-primitive bind (int) so the post-chain wire-
+        # primitive guard in _convert_bind_param doesn't intercept
+        # first. This test exercises the client-layer DataError →
+        # dbapi DataError mapping at the protocol level, not the
+        # bind-validation layer.
         with pytest.raises(dbapi_exc.DataError, match="bad param"):
-            c.execute("INSERT INTO t VALUES (?)", [object()])
+            c.execute("INSERT INTO t VALUES (?)", [1])
 
     def test_chained_cause_preserved(self) -> None:
         original = client_exc.OperationalError("original", 1)

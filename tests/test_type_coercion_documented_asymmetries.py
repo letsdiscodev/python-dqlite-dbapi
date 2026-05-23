@@ -154,10 +154,15 @@ def test_register_adapter_for_parent_does_not_fire_for_subclass_pin() -> None:
         # Base instance — registry hit
         assert _convert_bind_param(Base(5)) == "custom:5"
         # Child instance — registry MISS (exact-type lookup), no
-        # __conform__, no datetime isinstance match, so the value
-        # passes through unchanged.
-        child = Child(5)
-        assert _convert_bind_param(child) is child
+        # __conform__, no datetime isinstance match. The post-chain
+        # wire-primitive guard rejects the non-primitive with
+        # ``ProgrammingError`` (stdlib parity).
+        import pytest
+
+        from dqlitedbapi.exceptions import DataError
+
+        with pytest.raises(DataError, match="Child"):
+            _convert_bind_param(Child(5))
     finally:
         unregister_adapter(Base)
 

@@ -49,17 +49,21 @@ def test_conform_typeerror_propagates_unwrapped() -> None:
         _convert_bind_param(Bad())
 
 
-def test_conform_returning_none_falls_through() -> None:
-    """The protocol-decline path (``__conform__`` returns ``None``)
-    leaves the value unchanged so the wire encoder's normal type
-    rejection runs — unaffected by the propagate-exception change."""
+def test_conform_returning_none_rejects_non_primitive_at_dbapi_layer() -> None:
+    """When ``__conform__`` returns ``None`` (protocol decline), the
+    value is left unchanged; the post-chain wire-primitive guard
+    then rejects the non-primitive at the dbapi layer with
+    ``ProgrammingError`` (not at the wire encoder with
+    ``EncodeError``). The diagnostic names the original input type
+    so operators can locate the misregistration site."""
+    from dqlitedbapi.exceptions import DataError
 
     class Declines:
         def __conform__(self, protocol: object) -> object:
             return None
 
-    inst = Declines()
-    assert _convert_bind_param(inst) is inst
+    with pytest.raises(DataError, match="Declines"):
+        _convert_bind_param(Declines())
 
 
 def test_conform_returning_adapted_value_used() -> None:

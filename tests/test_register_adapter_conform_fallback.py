@@ -72,31 +72,38 @@ def test_register_adapter_precedence_over_conform() -> None:
         unregister_adapter(Money)
 
 
-def test_conform_returning_none_falls_through_unchanged() -> None:
+def test_conform_returning_none_rejected_at_dbapi_layer() -> None:
     """If ``__conform__`` returns None for the asked-for protocol the
-    value is left unchanged so the wire encoder's normal type
-    rejection runs."""
+    value is left unchanged; the post-chain wire-primitive guard
+    then rejects the non-primitive with ``ProgrammingError``
+    (stdlib parity — non-primitive adapter output rejects at the
+    microprotocols layer, not the wire encoder)."""
+    import pytest
+
+    from dqlitedbapi.exceptions import DataError
 
     class Opaque:
         def __conform__(self, protocol: type) -> object:
             return None
 
-    obj = Opaque()
-    out = _convert_bind_param(obj)
-    # Unchanged — the wire encoder will surface the rejection later.
-    assert out is obj
+    with pytest.raises(DataError, match="Opaque"):
+        _convert_bind_param(Opaque())
 
 
-def test_no_conform_method_passes_through_unchanged() -> None:
+def test_no_conform_method_no_adapter_rejected_at_dbapi_layer() -> None:
     """A value without ``__conform__`` and no registered adapter
-    passes through unchanged (regression guard for the existing path)."""
+    fails the post-chain wire-primitive guard with
+    ``ProgrammingError`` -- stdlib parity for "no adapter / no
+    conform / not a wire primitive"."""
+    import pytest
+
+    from dqlitedbapi.exceptions import DataError
 
     class Plain:
         pass
 
-    obj = Plain()
-    out = _convert_bind_param(obj)
-    assert out is obj
+    with pytest.raises(DataError, match="Plain"):
+        _convert_bind_param(Plain())
 
 
 def test_instance_level_conform_is_honoured() -> None:
