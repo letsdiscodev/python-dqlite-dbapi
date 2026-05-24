@@ -174,6 +174,38 @@ def retry_sync_on_busy[T](
 
     ``busy_timeout <= 0`` short-circuits to a single ``run_sync``
     call with no retry (stdlib parity for ``timeout=0``).
+
+    **Cross-thread caveat under** ``check_same_thread=False``:
+
+    The retry loop releases the connection's ``_op_lock`` between
+    attempts. ``run_sync`` acquires the lock at the START of each
+    attempt and releases it before returning; the ``time.sleep``
+    that follows runs OUTSIDE the lock so the sleep doesn't starve
+    sibling threads. By design — holding ``_op_lock`` across a
+    100ms sleep would defeat cross-thread sharing.
+
+    On a Connection shared across threads via
+    ``check_same_thread=False``, a BUSY-retried statement may
+    observe interleaved writes from sibling threads between retry
+    attempts. Example:
+
+        Thread A: cur.execute("UPDATE t SET v=v+1 WHERE k=?") -> BUSY
+        Thread A: sleeps for SQLite-curve delay (op_lock released)
+        Thread B: cur.execute("UPDATE t SET v=v+1 WHERE k=?") -> succeeds
+        Thread A: retries -> sees B's update; may succeed against
+                  a different row state than the original attempt.
+
+    This is the correct semantic for retry-on-contention (each
+    retry sees current state, the same as it would on a fresh
+    connection). Callers who need to retry against an atomic
+    snapshot must wrap in an explicit transaction:
+
+        with conn.transaction():
+            cur.execute("UPDATE t SET v=v+1 WHERE k=?", (k,))
+
+    The transaction holds the wire lock across the entire body, so
+    sibling threads cannot interleave statements between the retry
+    attempts inside that body.
     """
     busy_timeout_ms = int(busy_timeout * 1000)
     if busy_timeout_ms <= 0:
@@ -221,6 +253,21 @@ async def retry_async_on_busy[T](
 
     ``busy_timeout <= 0`` short-circuits to a single awaitable call
     with no retry (stdlib parity).
+
+    **Cross-task caveat**:
+
+    Mirrors the sync sibling's cross-thread caveat: the retry loop
+    releases any wire-level lock (the inner ``DqliteConnection``'s
+    op_lock or the AsyncConnection's op_lock) between attempts.
+    ``await asyncio.sleep`` runs OUTSIDE the lock so siblings can
+    make progress; by design.
+
+    On an AsyncConnection shared across asyncio tasks on the same
+    loop, a BUSY-retried statement may observe interleaved writes
+    from sibling tasks between retry attempts. Same shape as the
+    sync sibling: each retry sees current state. Callers who need
+    to retry against an atomic snapshot must wrap in an explicit
+    ``async with conn.transaction():`` block.
     """
     busy_timeout_ms = int(busy_timeout * 1000)
     if busy_timeout_ms <= 0:
