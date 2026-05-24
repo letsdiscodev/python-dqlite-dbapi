@@ -72,7 +72,6 @@ def test_enable_callback_tracebacks_raises_not_supported() -> None:
     "kwarg",
     [
         "detect_types",
-        "check_same_thread",
         "factory",
         "cached_statements",
         "uri",
@@ -85,12 +84,41 @@ def test_connect_rejects_stdlib_sqlite3_kwargs(kwarg: str) -> None:
     hierarchy) rather than bare ``TypeError`` (escapes the
     hierarchy).
 
+    ``check_same_thread`` is pulled out of this parametrize set
+    because it gets a specific, actionable rejection message — see
+    ``test_connect_rejects_check_same_thread_with_specific_message``.
+
     ``isolation_level`` and ``autocommit`` accept their no-op
     sentinel values (``None`` / ``True`` / ``-1``) symmetric with
     the setter — see
     ``test_connect_isolation_level_autocommit_kwargs_symmetric.py``."""
     with pytest.raises(NotSupportedError, match="stdlib sqlite3 kwargs"):
         dqlitedbapi.connect("127.0.0.1:9999", **{kwarg: 0})  # type: ignore[arg-type]
+
+
+def test_connect_rejects_check_same_thread_with_specific_message() -> None:
+    """``check_same_thread`` is rejected with a specific, actionable
+    message naming the kwarg, explaining the threading-model
+    constraint, and pointing at the workaround.
+
+    The generic "rejects stdlib sqlite3 kwargs not supported by this
+    driver" message lumped check_same_thread with the other rejected
+    stdlib kwargs (detect_types / factory / cached_statements / uri),
+    leaving SA + FastAPI app authors guessing why their canonical
+    ``connect_args={"check_same_thread": False}`` workaround caused
+    engine construction to fail."""
+    with pytest.raises(NotSupportedError) as exc_info:
+        dqlitedbapi.connect("127.0.0.1:9999", check_same_thread=False)
+    msg = str(exc_info.value)
+    # Names the kwarg explicitly so a grep on the operator-facing
+    # log surfaces the cause.
+    assert "check_same_thread" in msg
+    # Explains the threading-model constraint so the reader
+    # understands the why, not just the what.
+    assert "threadsafety=1" in msg
+    # Points at the workaround so the reader's next action is
+    # explicit.
+    assert "pool" in msg.lower() or "Connection per thread" in msg
 
 
 def test_module_exports_register_adapter_in_all() -> None:

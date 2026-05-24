@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import re
 import weakref
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence, Sized
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence, Sized
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, Self
 
@@ -1648,7 +1648,36 @@ class Cursor:
         # rejection) or silent data loss (multi-statement drop).
         _classify_caller_sql(operation, parameters)
 
-        self._connection._run_sync(self._execute_async(operation, parameters))
+        # Intercept ``PRAGMA busy_timeout`` at the cursor layer BEFORE
+        # the wire round-trip — dqlite's VFS authorizer rejects the
+        # PRAGMA server-side (see done/dbapi-pragma-deny-list-no-
+        # regression-pin.md), so the canonical SQLite escape hatch
+        # would otherwise raise ``DatabaseError("not authorized")``.
+        # The interception updates the connection's ``_busy_timeout``
+        # (setter form) and writes the cursor's result state so
+        # ``cur.fetchone()`` returns the new (or current) value as a
+        # single-row result, matching stdlib's PRAGMA shape.
+        from dqlitedbapi._pragma_intercept import try_intercept_busy_timeout
+
+        if try_intercept_busy_timeout(self, operation, parameters):
+            return self
+
+        # ``retry_sync_on_busy`` wraps the wire round-trip with the
+        # SQLite-curve BUSY retry (stdlib parity for the C-level
+        # ``sqlite3_busy_timeout`` callback). The coro-factory shape
+        # lets the helper build a fresh coroutine on each retry
+        # (coroutines are single-use). ``busy_timeout=0`` short-
+        # circuits to a single ``_run_sync`` call with no retry.
+        # ``_resolve_busy_timeout_seconds`` gives a MagicMock-safe
+        # fall-through (0.0) so test fixtures with a mock connection
+        # still drive the no-retry path identical to pre-feature.
+        from dqlitedbapi._busy_retry import _resolve_busy_timeout_seconds, retry_sync_on_busy
+
+        retry_sync_on_busy(
+            _resolve_busy_timeout_seconds(self._connection),
+            self._connection._run_sync,
+            lambda: self._execute_async(operation, parameters),
+        )
         return self
 
     async def _execute_async(self, operation: str, parameters: Sequence[Any] | None = None) -> None:
@@ -2024,7 +2053,40 @@ class Cursor:
                             f"current statement uses {placeholder_count}, "
                             f"and there are {param_count} supplied."
                         )
-                await self._execute_async(operation, params)
+                # Per-iteration BUSY retry (stdlib parity). Wrapping
+                # the OUTER ``_run_sync(_executemany_async(...))`` would
+                # be wrong because executemany loops N sequential
+                # ``_execute_async`` calls — in autocommit-default mode
+                # (the documented default) each iteration commits
+                # server-side independently, so retrying the entire
+                # batch after a mid-loop BUSY would re-insert the
+                # already-committed rows. The retry MUST be per-
+                # iteration to match what stdlib ``sqlite3`` does
+                # internally (the C-level ``sqlite3_busy_timeout``
+                # callback fires once per statement).
+                from dqlitedbapi._busy_retry import (
+                    _resolve_busy_timeout_seconds,
+                    retry_async_on_busy,
+                )
+
+                # Closure over per-iteration ``params`` only —
+                # ``operation`` is loop-invariant. Inner function
+                # (vs. bare lambda) so mypy can infer types
+                # cleanly. Default-argument capture freezes
+                # ``params`` so retries get the right iteration's
+                # values (bare closure capture would late-bind).
+                _iter_params = params
+
+                def _execute_iter(
+                    _op: str = operation,
+                    _p: Sequence[Any] = _iter_params,
+                ) -> Coroutine[Any, Any, None]:
+                    return self._execute_async(_op, _p)
+
+                await retry_async_on_busy(
+                    _resolve_busy_timeout_seconds(self._connection),
+                    _execute_iter,
+                )
                 acc.push(self)
                 self._completed_iterations += 1
             # stdlib ``sqlite3.Cursor.executemany`` does NOT update

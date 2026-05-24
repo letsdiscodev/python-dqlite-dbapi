@@ -224,6 +224,7 @@ def connect(
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
+    busy_timeout: float = 5.0,
     **unknown_kwargs: object,
 ) -> AsyncConnection:
     """Create a dqlite connection (connects lazily on first use).
@@ -272,6 +273,11 @@ def connect(
             (default) uses the standard
             ``asyncio.open_connection`` path. See
             :data:`dqliteclient.DialFunc`.
+        busy_timeout: Maximum cumulative seconds to spend retrying
+            BUSY responses before raising. Default ``5.0`` matches
+            stdlib ``sqlite3.connect(timeout=5.0)``. See sync
+            ``connect`` for the full retry-curve + PRAGMA
+            interception contract — async surface mirrors it.
 
     Returns:
         An AsyncConnection object
@@ -305,6 +311,21 @@ def connect(
             f"dqlite connect() accepts autocommit=True or autocommit=-1 "
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
         )
+    # Specific rejection for ``check_same_thread`` — sync sibling
+    # for full rationale.
+    if "check_same_thread" in unknown_kwargs:
+        raise NotSupportedError(
+            "dqlite connect() does not yet honor check_same_thread. "
+            "This driver enforces PEP 249 threadsafety=1 (one thread "
+            "per Connection) unconditionally; the kwarg cannot silently "
+            "accept a value that has no effect. Use one Connection per "
+            "thread, or use a connection pool "
+            "(sqlalchemy.QueuePool / dqliteclient.ConnectionPool). "
+            "Honoring check_same_thread=False is tracked as a separate "
+            "feature; the underlying transport is already thread-safe "
+            "via _op_lock — only the Python-side safety net needs to "
+            "relax."
+        )
     # Reject stdlib ``sqlite3.connect`` kwargs as ``NotSupportedError``
     # so cross-driver porting code's ``except dbapi.Error:`` catches
     # the rejection instead of bare ``TypeError``. Sync sibling does
@@ -329,6 +350,7 @@ def connect(
         dial_timeout=dial_timeout,
         attempt_timeout=attempt_timeout,
         dial_func=dial_func,
+        busy_timeout=busy_timeout,
     )
     # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
     # via the setters on the freshly-constructed connection — sync
@@ -353,6 +375,7 @@ async def aconnect(
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
+    busy_timeout: float = 5.0,
     **unknown_kwargs: object,
 ) -> AsyncConnection:
     """Connect to a dqlite database asynchronously.
@@ -399,6 +422,13 @@ async def aconnect(
             (default) uses the standard
             ``asyncio.open_connection`` path. See
             :data:`dqliteclient.DialFunc`.
+        busy_timeout: Maximum cumulative seconds to spend retrying
+            BUSY responses before raising. Default ``5.0`` matches
+            stdlib ``sqlite3.connect(timeout=5.0)``. Retries follow
+            SQLite's deterministic ``sqliteDefaultBusyCallback``
+            curve. ``0`` disables retry. See sync ``connect`` for the
+            full PRAGMA-interception contract — the async surface
+            mirrors it.
 
     Returns:
         A connected AsyncConnection object
@@ -431,6 +461,21 @@ async def aconnect(
             f"dqlite aconnect() accepts autocommit=True or autocommit=-1 "
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
         )
+    # Specific rejection for ``check_same_thread`` — sync sibling
+    # for full rationale.
+    if "check_same_thread" in unknown_kwargs:
+        raise NotSupportedError(
+            "dqlite aconnect() does not yet honor check_same_thread. "
+            "This driver enforces PEP 249 threadsafety=1 (one thread "
+            "per Connection) unconditionally; the kwarg cannot silently "
+            "accept a value that has no effect. Use one Connection per "
+            "thread, or use a connection pool "
+            "(sqlalchemy.QueuePool / dqliteclient.ConnectionPool). "
+            "Honoring check_same_thread=False is tracked as a separate "
+            "feature; the underlying transport is already thread-safe "
+            "via _op_lock — only the Python-side safety net needs to "
+            "relax."
+        )
     # Reject stdlib ``sqlite3.connect`` kwargs as ``NotSupportedError``;
     # see ``connect`` sibling.
     if unknown_kwargs:
@@ -453,6 +498,7 @@ async def aconnect(
         dial_timeout=dial_timeout,
         attempt_timeout=attempt_timeout,
         dial_func=dial_func,
+        busy_timeout=busy_timeout,
     )
     try:
         await conn.connect()

@@ -263,6 +263,7 @@ class AsyncConnection:
         dial_timeout: float | None = None,
         attempt_timeout: float | None = None,
         dial_func: DialFunc | None = None,
+        busy_timeout: float = 5.0,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -302,13 +303,31 @@ class AsyncConnection:
                 ``asyncio.open_connection`` path. Forwarded to the
                 underlying DqliteConnection. See
                 :data:`dqliteclient.DialFunc`.
+            busy_timeout: Maximum cumulative seconds to spend retrying
+                BUSY responses before raising. Default ``5.0`` matches
+                stdlib ``sqlite3.connect(timeout=5.0)``. Retries
+                follow SQLite's ``sqliteDefaultBusyCallback`` curve.
+                ``0`` disables retry. PRAGMA-intercept contract
+                mirrors the sync sibling — see
+                ``dqlitedbapi.Connection.__init__``.
         """
+        import math as _math
+
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
         if dial_timeout is not None:
             _validate_timeout(dial_timeout)
         if attempt_timeout is not None:
             _validate_timeout(attempt_timeout)
+        # ``busy_timeout`` validation: mirror sync sibling.
+        if isinstance(busy_timeout, bool) or not isinstance(busy_timeout, (int, float)):
+            raise TypeError(
+                f"busy_timeout must be a number (seconds); got {type(busy_timeout).__name__}"
+            )
+        if not _math.isfinite(busy_timeout) or busy_timeout < 0:
+            raise ValueError(
+                f"busy_timeout must be a non-negative finite number; got {busy_timeout}"
+            )
         # Eager address parse, matching the sync Connection and the
         # underlying DqliteConnection. A typoed DSN surfaces at
         # construction, not at first-use.
@@ -347,6 +366,9 @@ class AsyncConnection:
         self._dial_timeout = dial_timeout
         self._attempt_timeout = attempt_timeout
         self._dial_func = dial_func
+        # Stdlib parity (see sync sibling) — float seconds, default
+        # 5.0. Shared with PRAGMA setter; either tunes the other.
+        self._busy_timeout: float = float(busy_timeout)
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # Tracks the asyncio.Task that currently owns the
@@ -1746,7 +1768,29 @@ class AsyncConnection:
                         # ``_call_client`` maps raw client errors onto
                         # PEP 249 ``Error`` subclasses.
                         request_in_flight = True
-                        await _call_client(self._async_conn.execute("COMMIT"))
+                        # Stdlib parity: the C-level
+                        # ``sqlite3_busy_timeout`` callback fires on
+                        # every SQL statement including COMMIT (which
+                        # is just SQL to SQLite). Wrap with the
+                        # SQLite-curve retry so a contended COMMIT
+                        # survives the same way an INSERT does. The
+                        # retry stays inside ``op_lock`` (fine — the
+                        # wire is single-threaded per connection) and
+                        # within the surrounding ``asyncio.timeout``
+                        # (the commit budget bounds the entire retry
+                        # loop, so the configured budget caps the
+                        # cumulative work even if the SQLite curve
+                        # itself would budget more).
+                        from dqlitedbapi._busy_retry import (
+                            _resolve_busy_timeout_seconds,
+                            retry_async_on_busy,
+                        )
+
+                        _inner = self._async_conn
+                        await retry_async_on_busy(
+                            _resolve_busy_timeout_seconds(self),
+                            lambda: _call_client(_inner.execute("COMMIT")),
+                        )
                         request_in_flight = False
                     except OperationalError as e:
                         # The wire round-trip completed (even if with

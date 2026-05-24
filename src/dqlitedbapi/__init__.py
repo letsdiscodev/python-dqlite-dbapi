@@ -222,6 +222,7 @@ def connect(
     dial_timeout: float | None = None,
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
+    busy_timeout: float = 5.0,
     **unknown_kwargs: object,
 ) -> Connection:
     """Connect to a dqlite database.
@@ -269,6 +270,18 @@ def connect(
             ``asyncio.open_connection`` path. Forwarded to the
             underlying :class:`Connection`. See
             :data:`dqliteclient.DialFunc` for the protocol.
+        busy_timeout: Maximum cumulative seconds to spend retrying
+            BUSY responses before raising. Default ``5.0`` matches
+            stdlib ``sqlite3.connect(timeout=5.0)``. Retries follow
+            SQLite's deterministic ``sqliteDefaultBusyCallback``
+            curve (1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100 ms
+            then flat 100 ms). ``0`` disables retry (first BUSY
+            raises immediately — stdlib parity). dqlite's VFS
+            authorizer rejects the canonical ``PRAGMA busy_timeout``
+            on the server side; this driver intercepts the PRAGMA at
+            the Cursor layer so ``cur.execute("PRAGMA busy_timeout
+            = 30000")`` works transparently and updates the same
+            backing field as the kwarg.
 
     Returns:
         A Connection object
@@ -323,11 +336,33 @@ def connect(
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
         )
 
-    # Reject stdlib ``sqlite3.connect`` kwargs that this driver
-    # cannot honour (``detect_types``, ``check_same_thread``,
-    # ``factory``, ``cached_statements``, ``uri``) with
-    # ``NotSupportedError`` rather than letting Python's call-
-    # protocol leak ``TypeError`` (which escapes ``except
+    # Specific rejection for ``check_same_thread`` — the generic
+    # kwargs reject below would otherwise list it alongside
+    # ``detect_types`` / ``factory`` / ``cached_statements`` / ``uri``
+    # with no explanation of why it's not honored. The specific
+    # message points at the threading-model constraint AND at the
+    # alternative (one Connection per thread, or a connection pool).
+    # Honoring ``check_same_thread=False`` is tracked as a separate
+    # feature — the underlying transport (``_op_lock``) is already
+    # thread-safe; only the Python-side safety net needs to relax.
+    # See the package's issue tracker for the design proposal.
+    if "check_same_thread" in unknown_kwargs:
+        raise NotSupportedError(
+            "dqlite connect() does not yet honor check_same_thread. "
+            "This driver enforces PEP 249 threadsafety=1 (one thread "
+            "per Connection) unconditionally; the kwarg cannot silently "
+            "accept a value that has no effect. Use one Connection per "
+            "thread, or use a connection pool "
+            "(sqlalchemy.QueuePool / dqliteclient.ConnectionPool). "
+            "Honoring check_same_thread=False is tracked as a separate "
+            "feature; the underlying transport is already thread-safe "
+            "via _op_lock — only the Python-side safety net needs to "
+            "relax."
+        )
+    # Reject other stdlib ``sqlite3.connect`` kwargs that this driver
+    # cannot honour (``detect_types``, ``factory``, ``cached_statements``,
+    # ``uri``) with ``NotSupportedError`` rather than letting Python's
+    # call-protocol leak ``TypeError`` (which escapes ``except
     # dbapi.Error:``). Cross-driver code that passes stdlib kwargs
     # through should be able to catch the rejection inside the
     # dbapi error hierarchy.
@@ -352,6 +387,7 @@ def connect(
         dial_timeout=dial_timeout,
         attempt_timeout=attempt_timeout,
         dial_func=dial_func,
+        busy_timeout=busy_timeout,
     )
     # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
     # via the setters on the freshly-constructed connection. Stdlib

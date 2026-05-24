@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import logging
+import math
 import os
 import threading
 import warnings
@@ -1330,6 +1331,7 @@ class Connection:
         dial_timeout: float | None = None,
         attempt_timeout: float | None = None,
         dial_func: DialFunc | None = None,
+        busy_timeout: float = 5.0,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -1384,6 +1386,20 @@ class Connection:
                 ``asyncio.open_connection`` path. Forwarded to the
                 underlying :class:`DqliteConnection`. See
                 :data:`dqliteclient.DialFunc` for the protocol.
+            busy_timeout: Maximum cumulative seconds to spend retrying
+                BUSY responses before raising. Default ``5.0`` matches
+                stdlib ``sqlite3.connect(timeout=5.0)`` so application
+                code that worked against stdlib transparently survives
+                concurrent writers on dqlite too. Retries follow
+                SQLite's deterministic ``sqliteDefaultBusyCallback``
+                curve (1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100 ms
+                then flat 100 ms). ``0`` disables retry (first BUSY
+                raises immediately — stdlib parity for ``timeout=0``).
+                The PRAGMA escape hatch (``PRAGMA busy_timeout = N``)
+                is intercepted at the Cursor layer and writes to the
+                same backing field; never reaches the server (dqlite's
+                VFS authorizer denies the PRAGMA). Validated here
+                (non-negative finite number; rejects bool).
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
@@ -1391,6 +1407,19 @@ class Connection:
             _validate_timeout(dial_timeout)
         if attempt_timeout is not None:
             _validate_timeout(attempt_timeout)
+        # ``busy_timeout`` validation: non-negative finite number;
+        # explicitly reject bool (which is ``int`` to ``isinstance``
+        # but would silently coerce True→1.0 / False→0.0). Mirrors
+        # ``_validate_timeout``'s discipline but allows zero (stdlib
+        # parity for ``busy_timeout=0`` meaning "no retry").
+        if isinstance(busy_timeout, bool) or not isinstance(busy_timeout, (int, float)):
+            raise TypeError(
+                f"busy_timeout must be a number (seconds); got {type(busy_timeout).__name__}"
+            )
+        if not math.isfinite(busy_timeout) or busy_timeout < 0:
+            raise ValueError(
+                f"busy_timeout must be a non-negative finite number; got {busy_timeout}"
+            )
         # Eager address parse so a typoed DSN surfaces as
         # ``InterfaceError`` at the operator's config-load site rather
         # than at first-use — the sibling ``DqliteConnection``
@@ -1442,6 +1471,12 @@ class Connection:
         self._dial_timeout = dial_timeout
         self._attempt_timeout = attempt_timeout
         self._dial_func = dial_func
+        # ``busy_timeout`` is stored as float seconds (stdlib parity).
+        # The PRAGMA setter also writes to this field; the kwarg and
+        # PRAGMA share a single backing store so either tunes the
+        # other. Default ``5.0`` matches stdlib ``sqlite3.connect``'s
+        # ``timeout`` default.
+        self._busy_timeout: float = float(busy_timeout)
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # stdlib ``sqlite3.Connection.row_factory`` parity. None means
@@ -2986,7 +3021,17 @@ class Connection:
         # same way a fresh connection would.
         if not getattr(self._async_conn, "in_transaction", False):
             return
-        self._run_sync(self._commit_async())
+        # Stdlib parity: the C-level ``sqlite3_busy_timeout`` callback
+        # fires on every SQL statement including COMMIT (which is just
+        # SQL to SQLite). Wrap with the SQLite-curve retry so a
+        # contended COMMIT survives the same way an INSERT does.
+        from dqlitedbapi._busy_retry import _resolve_busy_timeout_seconds, retry_sync_on_busy
+
+        retry_sync_on_busy(
+            _resolve_busy_timeout_seconds(self),
+            self._run_sync,
+            self._commit_async,
+        )
 
     async def _commit_async(self) -> None:
         """Async implementation of commit."""

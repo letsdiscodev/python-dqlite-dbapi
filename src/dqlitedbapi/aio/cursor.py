@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import weakref
-from collections.abc import Iterable, Sequence
+from collections.abc import Coroutine, Iterable, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, Self
 
@@ -537,11 +537,35 @@ class AsyncCursor:
             # sibling at cursor.py. See ``_classify_caller_sql`` docstring.
             _classify_caller_sql(operation, parameters)
 
+            # Intercept ``PRAGMA busy_timeout`` at the cursor layer
+            # BEFORE the wire round-trip — dqlite's VFS authorizer
+            # rejects the PRAGMA server-side. Mirrors the sync sibling.
+            from dqlitedbapi._pragma_intercept import try_intercept_busy_timeout
+
+            if try_intercept_busy_timeout(self, operation, parameters):  # type: ignore[arg-type]
+                return self
+
             _, op_lock = self._connection._ensure_locks()
             async with op_lock:
                 del self.messages[:]
                 self._check_closed()
-                await self._execute_unlocked(operation, parameters)
+                # Stdlib-parity BUSY retry. Wraps ONLY the wire
+                # round-trip; per-execute state reset and validation
+                # ran ONCE above. The retry loop calls a fresh
+                # coroutine via the factory lambda each attempt.
+                # ``_resolve_busy_timeout_seconds`` falls back to
+                # 0.0 (no-retry) when the connection is a MagicMock
+                # in tests — preserves pre-feature semantics for
+                # those fixtures.
+                from dqlitedbapi._busy_retry import (
+                    _resolve_busy_timeout_seconds,
+                    retry_async_on_busy,
+                )
+
+                await retry_async_on_busy(
+                    _resolve_busy_timeout_seconds(self._connection),
+                    lambda: self._execute_unlocked(operation, parameters),
+                )
         finally:
             # Clear unconditionally to close the bytecode-tight signal
             # window between the read and write of a guarded clear: a
@@ -717,6 +741,12 @@ class AsyncCursor:
                 # restores this snapshot. Mirrors the sync sibling.
                 lastrowid_pre_batch = self._lastrowid
                 try:
+                    from dqlitedbapi._busy_retry import (
+                        _resolve_busy_timeout_seconds,
+                        retry_async_on_busy,
+                    )
+
+                    _busy_timeout_seconds = _resolve_busy_timeout_seconds(self._connection)
                     for params in seq_of_parameters:
                         # Re-check before each iteration so a concurrent
                         # ``cursor.close()`` landing between iterations
@@ -725,7 +755,27 @@ class AsyncCursor:
                         # entry (or not at all for a single-iteration
                         # remainder).
                         self._check_closed()
-                        await self._execute_unlocked(operation, params)
+                        # Per-iteration BUSY retry (stdlib parity for
+                        # the C-level ``sqlite3_busy_timeout``
+                        # callback firing per statement). Inner
+                        # function (vs. bare lambda) so mypy can
+                        # infer the awaitable's return type. Default-
+                        # argument capture freezes per-iteration
+                        # ``params`` into the function; bare closure
+                        # capture would late-bind and every retry
+                        # would see the LAST iteration's values.
+                        _iter_params = params
+
+                        def _execute_iter(
+                            _op: str = operation,
+                            _p: Sequence[Any] = _iter_params,
+                        ) -> Coroutine[Any, Any, None]:
+                            return self._execute_unlocked(_op, _p)
+
+                        await retry_async_on_busy(
+                            _busy_timeout_seconds,
+                            _execute_iter,
+                        )
                         self._check_closed()
                         acc.push(self)
                         self._completed_iterations += 1
