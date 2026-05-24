@@ -96,29 +96,20 @@ def test_connect_rejects_stdlib_sqlite3_kwargs(kwarg: str) -> None:
         dqlitedbapi.connect("127.0.0.1:9999", **{kwarg: 0})  # type: ignore[arg-type]
 
 
-def test_connect_rejects_check_same_thread_with_specific_message() -> None:
-    """``check_same_thread`` is rejected with a specific, actionable
-    message naming the kwarg, explaining the threading-model
-    constraint, and pointing at the workaround.
+def test_connect_accepts_check_same_thread_false() -> None:
+    """``check_same_thread`` is now a real kwarg on the sync
+    ``dqlitedbapi.connect`` surface; passing ``False`` is accepted
+    and stored on the Connection. (Previously rejected with a
+    NotSupportedError. The new behaviour relaxes the cross-thread
+    arm of ``_check_thread`` per stdlib sqlite3 parity.)"""
+    conn = dqlitedbapi.connect("127.0.0.1:9999", check_same_thread=False)
+    assert conn._check_same_thread is False
 
-    The generic "rejects stdlib sqlite3 kwargs not supported by this
-    driver" message lumped check_same_thread with the other rejected
-    stdlib kwargs (detect_types / factory / cached_statements / uri),
-    leaving SA + FastAPI app authors guessing why their canonical
-    ``connect_args={"check_same_thread": False}`` workaround caused
-    engine construction to fail."""
-    with pytest.raises(NotSupportedError) as exc_info:
-        dqlitedbapi.connect("127.0.0.1:9999", check_same_thread=False)
-    msg = str(exc_info.value)
-    # Names the kwarg explicitly so a grep on the operator-facing
-    # log surfaces the cause.
-    assert "check_same_thread" in msg
-    # Explains the threading-model constraint so the reader
-    # understands the why, not just the what.
-    assert "threadsafety=1" in msg
-    # Points at the workaround so the reader's next action is
-    # explicit.
-    assert "pool" in msg.lower() or "Connection per thread" in msg
+
+def test_connect_accepts_check_same_thread_true() -> None:
+    """Explicit ``True`` works the same as the default."""
+    conn = dqlitedbapi.connect("127.0.0.1:9999", check_same_thread=True)
+    assert conn._check_same_thread is True
 
 
 def test_module_exports_register_adapter_in_all() -> None:

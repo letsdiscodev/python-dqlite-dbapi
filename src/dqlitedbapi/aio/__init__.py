@@ -311,20 +311,22 @@ def connect(
             f"dqlite connect() accepts autocommit=True or autocommit=-1 "
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
         )
-    # Specific rejection for ``check_same_thread`` — sync sibling
-    # for full rationale.
+    # ``check_same_thread`` is a sync-only kwarg. The async surface
+    # (AsyncConnection) is bound to its event loop by asyncio's
+    # structured-concurrency contract — cross-loop use raises via
+    # ``_check_loop_binding`` regardless of any flag, so the kwarg
+    # has no equivalent semantic. Reject loudly with the sync-only
+    # message so SA users porting from sqlite know they need the
+    # sync surface (``dqlitedbapi.connect``) for the relaxation.
     if "check_same_thread" in unknown_kwargs:
         raise NotSupportedError(
-            "dqlite connect() does not yet honor check_same_thread. "
-            "This driver enforces PEP 249 threadsafety=1 (one thread "
-            "per Connection) unconditionally; the kwarg cannot silently "
-            "accept a value that has no effect. Use one Connection per "
-            "thread, or use a connection pool "
-            "(sqlalchemy.QueuePool / dqliteclient.ConnectionPool). "
-            "Honoring check_same_thread=False is tracked as a separate "
-            "feature; the underlying transport is already thread-safe "
-            "via _op_lock — only the Python-side safety net needs to "
-            "relax."
+            "check_same_thread is a sync-only kwarg. The async "
+            "surface (AsyncConnection) is bound to its event loop "
+            "by asyncio's structured-concurrency contract; cross-"
+            "loop use raises via _check_loop_binding regardless of "
+            "any flag. Use the sync dqlitedbapi.connect() with "
+            "check_same_thread=False, or ensure one AsyncConnection "
+            "per event loop."
         )
     # Reject stdlib ``sqlite3.connect`` kwargs as ``NotSupportedError``
     # so cross-driver porting code's ``except dbapi.Error:`` catches
@@ -461,20 +463,17 @@ async def aconnect(
             f"dqlite aconnect() accepts autocommit=True or autocommit=-1 "
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
         )
-    # Specific rejection for ``check_same_thread`` — sync sibling
-    # for full rationale.
+    # ``check_same_thread`` is a sync-only kwarg. See the lazy
+    # ``connect()`` sibling for full rationale.
     if "check_same_thread" in unknown_kwargs:
         raise NotSupportedError(
-            "dqlite aconnect() does not yet honor check_same_thread. "
-            "This driver enforces PEP 249 threadsafety=1 (one thread "
-            "per Connection) unconditionally; the kwarg cannot silently "
-            "accept a value that has no effect. Use one Connection per "
-            "thread, or use a connection pool "
-            "(sqlalchemy.QueuePool / dqliteclient.ConnectionPool). "
-            "Honoring check_same_thread=False is tracked as a separate "
-            "feature; the underlying transport is already thread-safe "
-            "via _op_lock — only the Python-side safety net needs to "
-            "relax."
+            "check_same_thread is a sync-only kwarg. The async "
+            "surface (AsyncConnection) is bound to its event loop "
+            "by asyncio's structured-concurrency contract; cross-"
+            "loop use raises via _check_loop_binding regardless of "
+            "any flag. Use the sync dqlitedbapi.connect() with "
+            "check_same_thread=False, or ensure one AsyncConnection "
+            "per event loop."
         )
     # Reject stdlib ``sqlite3.connect`` kwargs as ``NotSupportedError``;
     # see ``connect`` sibling.

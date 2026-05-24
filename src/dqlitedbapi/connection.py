@@ -1332,6 +1332,7 @@ class Connection:
         attempt_timeout: float | None = None,
         dial_func: DialFunc | None = None,
         busy_timeout: float = 5.0,
+        check_same_thread: bool = True,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -1400,6 +1401,30 @@ class Connection:
                 same backing field; never reaches the server (dqlite's
                 VFS authorizer denies the PRAGMA). Validated here
                 (non-negative finite number; rejects bool).
+            check_same_thread: When ``True`` (default), every method
+                call must come from the thread that created the
+                Connection; cross-thread calls raise
+                ``ProgrammingError``. When ``False``, the cross-thread
+                check is disabled and the Connection is safe to share
+                across threads — the wire is already serialised by
+                ``self._op_lock`` regardless of caller thread, and
+                ``force_close_transport`` already runs cross-thread
+                without ``_check_thread`` (see its docstring). Per-
+                cursor result state is NOT thread-safe; the
+                documented pattern under ``check_same_thread=False``
+                is "share connections, not cursors" — each thread
+                constructs its own cursor via ``conn.cursor()``.
+                Matches stdlib ``sqlite3.connect(check_same_thread=
+                False)``. ``Connection.close()`` retains the
+                cross-thread check unconditionally because it tears
+                down the daemon loop thread synchronously, a
+                creator-thread-only operation; foreign-thread
+                teardown uses ``force_close_transport()`` (the
+                documented foreign-thread path that SA's pool recycle
+                already uses). The fork check (``_creator_pid``
+                comparison) is NEVER relaxed: cross-process
+                Connection use raises ``InterfaceError`` regardless
+                of ``check_same_thread``.
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
@@ -1420,7 +1445,17 @@ class Connection:
             raise ValueError(
                 f"busy_timeout must be a non-negative finite number; got {busy_timeout}"
             )
-        # Eager address parse so a typoed DSN surfaces as
+        # ``check_same_thread`` strict-bool validation: stdlib parity
+        # for the kwarg ``sqlite3.connect(check_same_thread=True)``
+        # semantics. Reject ``int`` (including 0/1) explicitly because
+        # ``isinstance(True, int)`` is True, so the looser
+        # ``isinstance(v, int)`` would silently accept ``0`` / ``1``
+        # — but the kwarg contract is strict bool. Reject ``None``
+        # and any other type with the same diagnostic.
+        if not isinstance(check_same_thread, bool):
+            raise ProgrammingError(
+                f"check_same_thread must be bool; got {type(check_same_thread).__name__}"
+            )
         # ``InterfaceError`` at the operator's config-load site rather
         # than at first-use — the sibling ``DqliteConnection``
         # already parses here; mirror that contract at the dbapi
@@ -1477,6 +1512,14 @@ class Connection:
         # other. Default ``5.0`` matches stdlib ``sqlite3.connect``'s
         # ``timeout`` default.
         self._busy_timeout: float = float(busy_timeout)
+        # ``check_same_thread`` is the per-instance opt-out from the
+        # creator-thread enforcement. Default ``True`` matches stdlib
+        # sqlite3 (and preserves the pre-existing strict contract);
+        # ``False`` gates off the cross-thread arm of
+        # ``_check_thread()`` so the Connection can be shared across
+        # threads. See ``_check_thread`` for the gate site and the
+        # class docstring for the cursor contract under the relaxation.
+        self._check_same_thread: bool = check_same_thread
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # stdlib ``sqlite3.Connection.row_factory`` parity. None means
@@ -1543,7 +1586,16 @@ class Connection:
         """Raise on cross-process (fork) or cross-thread misuse.
 
         - InterfaceError if called from a forked child (pid mismatch).
-        - ProgrammingError if called from a different thread than the creator.
+        - ProgrammingError if called from a different thread than the
+          creator AND ``check_same_thread=True`` (the default).
+
+        The fork check ALWAYS runs regardless of
+        ``check_same_thread``: cross-process Connection use is never
+        safe (inherited socket, dead daemon loop thread, asyncio
+        primitives bound to the parent's loop). ``check_same_thread``
+        only relaxes the cross-thread arm. Matches stdlib
+        ``sqlite3``'s contract: the C-level fork-safety isn't a
+        parameter; only the thread check is.
         """
         if get_current_pid() != self._creator_pid:
             raise InterfaceError(
@@ -1551,12 +1603,21 @@ class Connection:
                 f"in the target process. (created in pid {self._creator_pid}, "
                 f"current pid {get_current_pid()})"
             )
+        # ``getattr`` with a default of ``True`` so test fixtures that
+        # build ``Connection`` via ``__new__`` (skipping ``__init__``)
+        # without seeding the slot fall through to the strict
+        # (cross-thread-raises) behaviour they were written against.
+        # Production paths always have the attribute from ``__init__``.
+        if not getattr(self, "_check_same_thread", True):
+            return
         current = threading.get_ident()
         if current != self._creator_thread:
             raise ProgrammingError(
                 f"Connection objects created in a thread can only be used in that "
                 f"same thread. The object was created in thread id "
-                f"{self._creator_thread} and this is thread id {current}."
+                f"{self._creator_thread} and this is thread id {current}. "
+                f"Pass check_same_thread=False at connect() time to allow "
+                f"cross-thread use."
             )
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
@@ -2258,7 +2319,28 @@ class Connection:
             self._connect_lock = None
             self._transaction_owner = None
             return
-        self._check_thread()
+        # Cross-thread check is STRICT here regardless of
+        # ``check_same_thread`` — close() tears down the daemon loop
+        # thread synchronously, which requires the creator-thread's
+        # identity. Foreign-thread teardown uses
+        # ``force_close_transport()`` (no _check_thread; see that
+        # method's docstring). The strict check here keeps the
+        # documented contract: "share connections under
+        # check_same_thread=False, but call force_close_transport
+        # for non-creator-thread cleanup." Calling _check_thread()
+        # WOULD relax under the flag — inline the bare check
+        # instead.
+        current = threading.get_ident()
+        if current != self._creator_thread:
+            raise ProgrammingError(
+                f"Connection.close() must be called from the creator "
+                f"thread (id={self._creator_thread}); got thread "
+                f"id={current}. This applies even under "
+                f"check_same_thread=False because close() tears down "
+                f"the daemon loop thread synchronously. Use "
+                f"force_close_transport() from non-creator threads "
+                f"(SA's pool recycle path uses this)."
+            )
         # PEP 249 §6.1.1: Connection.messages should be cleared on
         # any standard Connection method invocation. The sibling
         # commit/rollback/cursor paths already clear; align close()

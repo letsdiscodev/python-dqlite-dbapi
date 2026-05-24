@@ -223,6 +223,7 @@ def connect(
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
     busy_timeout: float = 5.0,
+    check_same_thread: bool = True,
     **unknown_kwargs: object,
 ) -> Connection:
     """Connect to a dqlite database.
@@ -282,6 +283,21 @@ def connect(
             the Cursor layer so ``cur.execute("PRAGMA busy_timeout
             = 30000")`` works transparently and updates the same
             backing field as the kwarg.
+        check_same_thread: When ``True`` (default), every method
+            call on the returned Connection must come from the
+            thread that called ``connect()``; cross-thread calls
+            raise ``ProgrammingError``. When ``False``, the cross-
+            thread check is gated off and the Connection can be
+            shared across threads — the wire is already serialised
+            by the per-Connection op-lock regardless of caller
+            thread. Per-cursor result state is NOT thread-safe; the
+            documented pattern is "share connections, not cursors."
+            Matches stdlib ``sqlite3.connect(check_same_thread=
+            False)``. The fork check is NEVER relaxed; cross-process
+            Connection use raises ``InterfaceError`` in both modes.
+            See ``dqlitedbapi.Connection`` docstring for the
+            cursor / messages / close() contracts under the
+            relaxation.
 
     Returns:
         A Connection object
@@ -336,29 +352,6 @@ def connect(
             f"(stdlib LEGACY_TRANSACTION_CONTROL) only; got {autoc!r}"
         )
 
-    # Specific rejection for ``check_same_thread`` — the generic
-    # kwargs reject below would otherwise list it alongside
-    # ``detect_types`` / ``factory`` / ``cached_statements`` / ``uri``
-    # with no explanation of why it's not honored. The specific
-    # message points at the threading-model constraint AND at the
-    # alternative (one Connection per thread, or a connection pool).
-    # Honoring ``check_same_thread=False`` is tracked as a separate
-    # feature — the underlying transport (``_op_lock``) is already
-    # thread-safe; only the Python-side safety net needs to relax.
-    # See the package's issue tracker for the design proposal.
-    if "check_same_thread" in unknown_kwargs:
-        raise NotSupportedError(
-            "dqlite connect() does not yet honor check_same_thread. "
-            "This driver enforces PEP 249 threadsafety=1 (one thread "
-            "per Connection) unconditionally; the kwarg cannot silently "
-            "accept a value that has no effect. Use one Connection per "
-            "thread, or use a connection pool "
-            "(sqlalchemy.QueuePool / dqliteclient.ConnectionPool). "
-            "Honoring check_same_thread=False is tracked as a separate "
-            "feature; the underlying transport is already thread-safe "
-            "via _op_lock — only the Python-side safety net needs to "
-            "relax."
-        )
     # Reject other stdlib ``sqlite3.connect`` kwargs that this driver
     # cannot honour (``detect_types``, ``factory``, ``cached_statements``,
     # ``uri``) with ``NotSupportedError`` rather than letting Python's
@@ -388,6 +381,7 @@ def connect(
         attempt_timeout=attempt_timeout,
         dial_func=dial_func,
         busy_timeout=busy_timeout,
+        check_same_thread=check_same_thread,
     )
     # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
     # via the setters on the freshly-constructed connection. Stdlib
