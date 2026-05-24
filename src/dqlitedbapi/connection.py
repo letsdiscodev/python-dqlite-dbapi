@@ -2761,6 +2761,19 @@ class Connection:
         ``ProgrammingError`` thread-affinity violation. A closed
         connection is observably immutable; thread affinity becomes
         moot once close() has run.
+
+        **Thread affinity under ``check_same_thread``**: under the
+        default ``check_same_thread=True``, a cross-thread read on a
+        live connection raises ``ProgrammingError`` (preserves
+        shipped-API compatibility for callers that catch the raise
+        as a wrong-thread signal). Under ``check_same_thread=False``,
+        the cross-thread read returns the bool from the inner
+        without raising — matches stdlib
+        ``sqlite3.Connection.in_transaction`` semantics (a plain
+        C-level attribute read with no thread check). The fork
+        check IS still unconditional: even under
+        ``check_same_thread=False``, reading from a forked child
+        raises ``InterfaceError``.
         """
         # Snapshot the reference once so a concurrent close() that nulls
         # ``_async_conn`` cannot land between the None-check and the
