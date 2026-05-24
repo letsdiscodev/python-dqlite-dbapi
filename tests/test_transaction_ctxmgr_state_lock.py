@@ -26,7 +26,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -166,18 +166,62 @@ def test_state_lock_attribute_exists_on_connection() -> None:
     assert isinstance(conn._state_lock, type(threading.Lock()))
 
 
-def test_state_lock_does_not_block_cursor_creation() -> None:
-    """``_state_lock`` is held only briefly across the read-check-
-    reserve in transaction()'s entry. Other operations
-    (``conn.cursor()``, ``conn.commit()`` outside the body) MUST
-    NOT acquire the lock and thus MUST NOT block on it."""
-    conn = _make_conn(check_same_thread=False)
+def test_state_lock_release_between_transaction_and_cursor() -> None:
+    """``_state_lock`` is RELEASED before ``cursor.execute("BEGIN")``
+    so the wire round-trip doesn't hold the lock. Sibling threads
+    can observe the reserved owner slot AND proceed to acquire the
+    lock themselves (to see the reservation and raise).
 
-    # Hold _state_lock manually on the main thread.
-    with conn._state_lock:
-        # cursor() must succeed without blocking. We patch out the
-        # actual cursor construction since this Connection is
-        # never-connected.
-        with patch.object(Connection, "_check_thread"):
-            cur = conn.cursor()
-        assert cur is not None
+    Verify by inspection: the ``with _state_lock:`` block in
+    ``Connection.transaction`` covers only the owner-check and
+    owner-reserve, not the subsequent ``cursor.execute("BEGIN")``
+    that runs through ``_op_lock``."""
+    import inspect
+    import textwrap
+
+    import dqlitedbapi.connection as conn_mod
+
+    src = textwrap.dedent(inspect.getsource(conn_mod.Connection.transaction))
+    # The function's body contains a ``with _state_lock:`` block;
+    # the actual BEGIN call should appear AFTER (outside) that
+    # block — they're at the same indent inside the outer try, so
+    # the ``with`` block exits before BEGIN runs. Parse the AST so
+    # the test isn't fooled by comment text that mentions
+    # cursor.execute("BEGIN").
+    import ast
+
+    tree = ast.parse(src)
+    func = tree.body[0]
+    assert isinstance(func, ast.FunctionDef)
+
+    # Find the With node whose context is _state_lock.
+    state_lock_with_line: int | None = None
+    begin_call_line: int | None = None
+    for node in ast.walk(func):
+        if isinstance(node, ast.With):
+            for item in node.items:
+                ctx = item.context_expr
+                if isinstance(ctx, ast.Name) and ctx.id == "_state_lock":
+                    state_lock_with_line = node.lineno
+        if isinstance(node, ast.Call):
+            # Match cursor.execute("BEGIN", ...) calls (the actual
+            # method call, not a string in a comment).
+            f = node.func
+            if (
+                isinstance(f, ast.Attribute)
+                and f.attr == "execute"
+                and isinstance(f.value, ast.Name)
+                and f.value.id == "cursor"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "BEGIN"
+            ):
+                begin_call_line = node.lineno
+
+    assert state_lock_with_line is not None, "expected `with _state_lock:` in transaction()"
+    assert begin_call_line is not None, 'expected `cursor.execute("BEGIN")` in transaction()'
+    assert begin_call_line > state_lock_with_line, (
+        f"BEGIN call (line {begin_call_line}) must come AFTER the "
+        f"_state_lock release (line {state_lock_with_line}) so the "
+        f"lock isn't held across the wire round-trip"
+    )

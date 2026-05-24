@@ -2330,8 +2330,18 @@ class Connection:
         proxy is already a proxy) is silently absorbed — same shape
         as ``Cursor.close``.
         """
+        # Snapshot under _state_lock then release the lock before the
+        # per-cursor scrub. ``cur._closed = True`` etc. don't re-enter
+        # the WeakSet, but iterating outside the lock keeps the lock
+        # window narrow. ``WeakSet`` add/discard are not documented
+        # thread-safe under PEP 703 free-threading; under GIL Python
+        # the writes are bytecode-atomic but defending here is cheap
+        # belt-and-suspenders.
+        _state_lock = getattr(self, "_state_lock", None) or threading.Lock()
+        with _state_lock:
+            snapshot = list(self._cursors)
         try:
-            for cur in list(self._cursors):
+            for cur in snapshot:
                 cur._closed = True
                 cur._rows = []
                 cur._description = None
@@ -2342,7 +2352,8 @@ class Connection:
                 with contextlib.suppress(TypeError):
                     cur._connection = weakref.proxy(cur._connection)
         finally:
-            self._cursors.clear()
+            with _state_lock:
+                self._cursors.clear()
 
     def close(self) -> None:
         """Close the connection."""
@@ -3457,7 +3468,13 @@ class Connection:
                 f"subclassing is not supported.)"
             )
         cur = Cursor(self)
-        self._cursors.add(cur)
+        # ``WeakSet.add`` is not documented thread-safe; lock for
+        # belt-and-suspenders under check_same_thread=False (and
+        # required under PEP 703 free-threading). ``_state_lock``
+        # is held only briefly across the single dict insert.
+        _state_lock = getattr(self, "_state_lock", None) or threading.Lock()
+        with _state_lock:
+            self._cursors.add(cur)
         # Re-check ``_closed`` after add: ``cursor()`` is creator-
         # thread-only but ``force_close_transport`` is documented as
         # callable from finalize threads / signal handlers / SA-pool
@@ -3498,7 +3515,8 @@ class Connection:
             # AND hashability (``weakref.proxy`` instances are not
             # hashable) on the race-leaked path, matching what the
             # non-race path already does for every other closed cursor.
-            self._cursors.discard(cur)
+            with _state_lock:
+                self._cursors.discard(cur)
         return cur
 
     def execute(
