@@ -39,7 +39,9 @@ asyncio.run(main())
 ## PEP 249 Compliance
 
 - `apilevel = "2.0"`
-- `threadsafety = 1`
+- `threadsafety = 2` (capability ceiling; default `check_same_thread=True`
+  enforces strict per-thread — matches stdlib sqlite3's "advertise
+  ceiling, default to floor" pattern)
 - `paramstyle = "qmark"`
 
 ## Transactions
@@ -206,10 +208,16 @@ borrowed from one.
   stdlib silently accepts empty / whitespace-only / comment-only SQL
   as a no-op; the driver pre-flight rejects per PEP 249 §7 to surface
   caller bugs at the call site.
-- **`threadsafety = 1`** (stdlib reports `3`). Each Connection is
-  thread-affine: methods called from a foreign thread raise
-  `ProgrammingError`. Use one Connection per thread or use the async
-  surface for a single-thread-per-loop model.
+- **`threadsafety = 2`** (stdlib reports `3` — we don't claim Tier 3
+  because cursors aren't shareable per the documented "share
+  connections, not cursors" contract). Tier 2 = "threads may share
+  the module AND connections"; matches the dbapi's
+  ``check_same_thread=False`` opt-in behaviour. Default
+  ``check_same_thread=True`` enforces strict per-thread; methods
+  called from a foreign thread on a default-mode Connection raise
+  ``ProgrammingError``. Tier 3 (cursor sharing) is tracked as
+  future work in
+  ``issues/dbapi-threadsafety-tier-3-cursor-sharing-stdlib-parity.md``.
 - **No `executescript` / `create_function` / `create_aggregate` /
   `create_window_function` / `iterdump` / `backup` / `set_authorizer`
   / `serialize` / `blobopen`.** stdlib-specific APIs that have no

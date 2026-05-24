@@ -120,12 +120,20 @@ DEFAULT_TIMEOUT_SECONDS: _Final[float] = _DEFAULT_TIMEOUT_SECONDS
 logger = logging.getLogger(__name__)
 
 apilevel: _Final[_Literal["2.0"]] = "2.0"
-# PEP 249 value 1: threads may share the module.
+# PEP 249 value 2: threads may share the module and connections.
 #
-# The async API is further restricted: each AsyncConnection is bound
-# to the event loop it was first used on (see dqlitedbapi.aio.connection).
-# Use one AsyncConnection per loop.
-threadsafety: _Final[_Literal[1]] = 1
+# Mirrors the sync surface declaration (see ``dqlitedbapi.__init__``
+# for the full rationale on the "advertise ceiling, default to
+# floor" convention). The sync ``Connection`` opts into cross-
+# thread sharing via ``check_same_thread=False``; the async
+# ``AsyncConnection`` is bound to its event loop by asyncio's
+# structured-concurrency contract (cross-loop use raises via
+# ``_check_loop_binding``), so for the async surface the tier-2
+# advertisement is informational — the actual capability is
+# "share connection across tasks within the same event loop."
+# Cursors are NOT shareable across threads/tasks (see
+# ``AsyncConnection`` docstring).
+threadsafety: _Final[_Literal[2]] = 2
 paramstyle: _Final[_Literal["qmark"]] = "qmark"  # Question mark style: WHERE name=?
 
 # SQLite compatibility attributes (for SQLAlchemy).

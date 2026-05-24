@@ -1,8 +1,16 @@
-"""Tests for thread safety enforcement and close() hardening.
+"""Tests for thread safety DEFAULT enforcement and close() hardening.
 
-The package declares threadsafety=1, meaning connections must not be
-shared between threads. Like sqlite3 stdlib, we enforce this with a
-thread identity check that raises ProgrammingError.
+The package declares ``threadsafety=2`` (capability ceiling: threads
+may share module + connections), but the DEFAULT ``check_same_thread
+=True`` enforces strict per-thread connection use via
+``_check_thread()``. These tests pin the strict default; the
+relaxation under ``check_same_thread=False`` is tested in
+``test_check_same_thread_kwarg.py``.
+
+Like stdlib sqlite3 (which advertises ``threadsafety=3`` while
+defaulting ``check_same_thread=True``), the capability ceiling
+describes what the driver SUPPORTS once the user opts in; default
+enforcement is the Python-layer safety net.
 """
 
 import threading
@@ -121,11 +129,14 @@ class TestThreadIdentityCheck:
 
     def test_row_factory_setter_from_wrong_thread_raises(self) -> None:
         """Setting Connection.row_factory from a different thread must raise
-        ProgrammingError. The class docstring claims every public method
-        enforces threadsafety=1; the row_factory setter mutates state and
+        ProgrammingError under default ``check_same_thread=True``. The
+        class docstring claims every public method enforces the per-
+        thread default; the row_factory setter mutates state and
         must follow the same discipline. Cross-thread mutation could
         otherwise let a foreign thread override the row_factory used by
-        cursors created on the creator thread."""
+        cursors created on the creator thread. (Under
+        ``check_same_thread=False`` this restriction relaxes — the
+        module's ``threadsafety=2`` ceiling allows the sharing.)"""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 

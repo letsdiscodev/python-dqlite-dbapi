@@ -8,8 +8,20 @@ class TestModuleAttributes:
         assert dqlitedbapi.apilevel == "2.0"
 
     def test_threadsafety(self) -> None:
-        # 1 = threads may share the module, but not connections
-        assert dqlitedbapi.threadsafety == 1
+        # 2 = threads may share the module AND connections (cursors
+        # remain per-thread per the documented contract). The
+        # declaration is the CAPABILITY ceiling: connections become
+        # safe to share once the user opts in via
+        # ``check_same_thread=False``. Default enforcement remains
+        # strict per-thread. Matches stdlib sqlite3's "advertise
+        # ceiling, default to floor" convention (stdlib reports 3
+        # since CPython 3.11 / bpo-45613 while still defaulting
+        # ``check_same_thread=True``). See ``__init__.py:108-149``
+        # for the full rationale and
+        # ``issues/dbapi-threadsafety-tier-3-cursor-sharing-stdlib-parity.md``
+        # for the future-work proposal that would lift the ceiling
+        # to 3.
+        assert dqlitedbapi.threadsafety == 2
 
     def test_paramstyle(self) -> None:
         assert dqlitedbapi.paramstyle == "qmark"

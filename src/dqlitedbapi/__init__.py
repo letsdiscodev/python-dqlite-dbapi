@@ -107,14 +107,38 @@ from dqlitewire import (
 
 # PEP 249 module-level attributes
 apilevel: _Final[_Literal["2.0"]] = "2.0"
-# PEP 249 value 1: threads may share the module.
+# PEP 249 value 2: threads may share the module and connections.
 #
-# This driver is stricter than the PEP minimum: each Connection is
-# bound to the thread that created it. Any method call from a
-# different thread raises ProgrammingError. Use one Connection per
-# thread, or use the async API (dqlitedbapi.aio.aconnect) for a
-# single-thread-per-loop model.
-threadsafety: _Final[_Literal[1]] = 1
+# This declares the driver's CAPABILITY ceiling: connections are
+# safe to share across threads once the user opts in via
+# ``check_same_thread=False`` at ``connect()`` (matches stdlib
+# sqlite3's convention — stdlib advertises ``threadsafety = 3``
+# while defaulting ``check_same_thread=True`` to enforce strict
+# per-thread at the Python layer). Cursors are explicitly NOT
+# shareable across threads — the documented contract is "share
+# connections, not cursors" (see ``Connection`` docstring); the
+# ceiling stays at PEP 249 tier 2 for that reason. Tier 3 (cursors
+# shareable too) is tracked as future work in
+# ``issues/dbapi-threadsafety-tier-3-cursor-sharing-stdlib-parity.md``.
+#
+# DEFAULT enforcement is still per-thread: ``check_same_thread``
+# defaults to ``True`` and ``Connection._check_thread()`` raises
+# ``ProgrammingError`` on cross-thread method calls. Pass
+# ``check_same_thread=False`` to use the connection sharing
+# advertised here. The wire is always serialised by ``_op_lock``;
+# the Phase 2 hardening (``_state_lock`` for transaction owner
+# read-check-reserve, ``_cursors`` WeakSet add/discard) closes
+# the cross-thread correctness gaps for the connection-shared
+# path.
+#
+# This declaration uses the "advertise ceiling, default to floor"
+# pattern stdlib sqlite3 established since CPython 3.11
+# (bpo-45613 / gh-31464 made ``sqlite3.threadsafety`` dynamic via
+# ``SQLITE_THREADSAFE`` mode; serialized = tier 3). The pattern
+# describes capability rather than default enforcement;
+# capability-detection libraries reading this value learn the
+# safe-with-opt-in ceiling.
+threadsafety: _Final[_Literal[2]] = 2
 paramstyle: _Final[_Literal["qmark"]] = "qmark"  # Question mark style: WHERE name=?
 
 # SQLite compatibility attributes (for SQLAlchemy).
