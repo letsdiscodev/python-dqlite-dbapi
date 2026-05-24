@@ -107,11 +107,19 @@ def _async_unclosed_warning(
     if closed_flag[0] or not connected_flag[0]:
         return
     with contextlib.suppress(RuntimeError):
+        # Defence-in-depth parity with the sync sibling
+        # ``_cleanup_loop_thread`` (connection.py:1140-1157):
+        # route ``address`` through ``sanitize_for_log`` before
+        # the repr-escape. Python's ``repr()`` already escapes
+        # control codepoints into ``\xNN`` sequences (CWE-117
+        # mitigated by repr alone), but the sanitiser is the
+        # package's documented belt-and-suspenders posture and
+        # the sync sibling applies it; this restores parity.
         warnings.warn(
-            f"AsyncConnection(address={address!r}) was garbage-collected "
-            f"without await close(). Call ``await aconn.close()`` "
-            f"explicitly to avoid this warning and to release the "
-            f"underlying socket promptly.",
+            f"AsyncConnection(address={sanitize_for_log(str(address))!r}) was "
+            f"garbage-collected without await close(). Call "
+            f"``await aconn.close()`` explicitly to avoid this warning "
+            f"and to release the underlying socket promptly.",
             ResourceWarning,
             stacklevel=2,
         )
