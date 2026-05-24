@@ -1357,6 +1357,39 @@ class Connection:
     regardless of ``check_same_thread``. Forking is unsafe at the
     OS level (inherited socket, dead daemon thread) and is a hard
     error in both modes.
+
+    **PEP 703 free-threaded CPython** (``python3.13t`` /
+    ``python3.14t``): the ``check_same_thread=False`` contract is
+    GIL-validated. Under free-threaded CPython, attribute stores
+    remain atomic (PEP 703 §"Borrowed References") and container
+    mutations are critical-sectioned (PEP 703 §"Container Thread-
+    Safety"), so the existing locking is sound for the cross-
+    thread cases documented above. However, NOT every attribute
+    has been audited for stale-read visibility under PEP 703's
+    relaxed memory ordering. Two practical caveats for no-GIL
+    operators:
+
+    1. A foreign-thread reader of ``conn._async_conn`` (e.g. via
+       ``conn.in_transaction``) racing a creator-thread
+       ``conn.close()`` may observe a stale-non-None pointer for
+       one instruction window after close — the read is atomic
+       but the visibility ordering relative to other state writes
+       is not guaranteed without an explicit barrier. The
+       observable effect is a single bonus ``InterfaceError``
+       ("Connection is closed") on the affected method instead
+       of the clean ``False`` short-circuit; no torn data, no
+       crash.
+
+    2. Cursor-per-thread is still required (same as the GIL
+       contract). Cross-thread cursor sharing is undefined under
+       both GIL and no-GIL CPython.
+
+    No additional locking is currently applied for PEP 703-only
+    residue (the GIL-era locks already cover the cross-thread
+    correctness hazards). If you hit a stale-read or torn-state
+    race on a no-GIL build, please file an issue with a
+    reproducer — the trigger to invest further in the audit is a
+    real-world failure on ``python3.14t``, not speculation.
     """
 
     # PEP 249 optional extension ("Attributes from Module Exceptions"):

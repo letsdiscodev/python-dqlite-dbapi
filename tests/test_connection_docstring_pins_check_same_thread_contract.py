@@ -74,3 +74,33 @@ def test_connection_docstring_documents_fork_check_unconditional() -> None:
         "is NEVER relaxed by check_same_thread (cross-process "
         "Connection use is always unsafe)"
     )
+
+
+def test_connection_docstring_documents_pep703_no_gil_caveat() -> None:
+    """Pin: the Connection docstring documents the PEP 703 / no-GIL
+    CPython known-limitation. Three anchors:
+
+    - PEP 703 is named (so an operator grepping for free-threading
+      finds the section).
+    - The caveat explicitly notes that not every attribute is
+      audited for PEP 703 visibility ordering.
+    - The trigger-to-invest is documented: file an issue with a
+      reproducer rather than speculate.
+
+    Tripwire for documentation drift — if a future maintainer
+    quietly drops the caveat, the test fires."""
+    doc = dqlitedbapi.Connection.__doc__ or ""
+    # Allow either "PEP 703" or "free-threaded" / "free-threading"
+    # as the section anchor.
+    assert "PEP 703" in doc or "free-threaded" in doc.lower() or "free-threading" in doc.lower(), (
+        "Connection docstring must mention PEP 703 / free-"
+        "threading so no-GIL operators find the contract"
+    )
+    # The "file an issue with a reproducer" trigger so users know
+    # the path back to engineering attention.
+    assert "reproducer" in doc.lower() or "file an issue" in doc.lower(), (
+        "Connection docstring must document the trigger event "
+        "(file an issue with a reproducer) so users on python3.14t "
+        "know how to surface a concrete race rather than expecting "
+        "speculative locking"
+    )
