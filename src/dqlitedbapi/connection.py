@@ -1274,23 +1274,89 @@ class Connection:
     ``Cursor.executemany`` / ``AsyncCursor.executemany`` for the
     cancellation-atomicity contract.
 
-    Thread-affinity: every public method enforces the
-    ``threadsafety=1`` contract — sync side via ``_check_thread()``,
-    async side via ``_check_loop_binding()`` / ``_check_loop_only()``
-    (the asymmetry exists because the sync class is thread-bound and
-    the async class is loop-bound). Calls from a foreign OS thread
+    Thread-affinity: by default (``check_same_thread=True``), every
+    public method enforces the ``threadsafety=1`` contract — sync
+    side via ``_check_thread()``, async side via
+    ``_check_loop_binding()`` / ``_check_loop_only()`` (the
+    asymmetry exists because the sync class is thread-bound and the
+    async class is loop-bound). Calls from a foreign OS thread
     (sync) or foreign event loop (async) raise ``ProgrammingError``.
-    Read-only property reads (``closed``, ``address``, ``autocommit``,
-    ``isolation_level``, ``row_factory``) bypass the affinity check
-    and are GIL-atomic at the CPython level — safe to read from any
-    thread / loop, but may still raise ``InterfaceError`` on a closed
-    connection (``autocommit`` / ``isolation_level`` also raise
+
+    Under ``check_same_thread=False``, the cross-thread arm of
+    ``_check_thread()`` is gated off and the Connection can be
+    shared across threads. The wire is already serialised by
+    ``self._op_lock`` regardless of caller thread (every sync public
+    method routes through ``_run_sync`` which acquires the lock
+    BEFORE ``asyncio.run_coroutine_threadsafe``), and
+    ``force_close_transport()`` already runs cross-thread without
+    ``_check_thread`` — the relaxation extends a pre-existing
+    pattern rather than inventing one. Matches stdlib
+    ``sqlite3.connect(check_same_thread=False)`` semantics.
+
+    Per-cursor state is NOT thread-safe even under
+    ``check_same_thread=False``. Each ``Cursor`` instance holds
+    result state (``_rows``, ``_description``, ``_rowcount``,
+    ``_lastrowid``, ``_row_index``, ``messages``) that is not
+    locked; two threads racing ``cur.execute()`` on the same cursor
+    produce torn reads. The contract under
+    ``check_same_thread=False`` matches stdlib sqlite3's:
+    **share connections across threads; create one cursor per
+    thread.** Recommended pattern:
+
+        conn = dqlitedbapi.connect(addr, check_same_thread=False)
+        def worker():
+            cur = conn.cursor()  # each thread gets its own cursor
+            cur.execute("SELECT 1")
+            return cur.fetchall()
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads: t.start()
+
+    Sharing a cursor across threads is unsupported even under
+    ``check_same_thread=False`` — torn-read results, not exceptions.
+
+    Read-only property reads (``closed``, ``address``,
+    ``autocommit``, ``isolation_level``, ``row_factory``) bypass
+    the affinity check unconditionally and are GIL-atomic at the
+    CPython level — safe to read from any thread / loop, but may
+    still raise ``InterfaceError`` on a closed connection
+    (``autocommit`` / ``isolation_level`` also raise
     ``InterfaceError`` if read from a forked child). The
-    ``in_transaction`` property is the exception: it retains the
-    affinity check (``_check_thread()`` on the sync class,
-    ``_check_loop_only()`` on the async class) for shipped-API
-    compatibility (callers depend on the cross-thread / cross-loop
-    raise; removing it would be a behavioural change).
+    ``in_transaction`` property retains the affinity check under
+    ``check_same_thread=True`` for shipped-API compatibility
+    (callers depend on the cross-thread / cross-loop raise), and
+    relaxes under ``check_same_thread=False`` to match stdlib.
+
+    ``Connection.close()`` retains the cross-thread check
+    unconditionally even under ``check_same_thread=False``: it
+    tears down the daemon loop thread synchronously, which
+    requires the creator thread's identity. Use
+    ``force_close_transport()`` from non-creator threads (the
+    documented foreign-thread teardown path — SA's pool recycle
+    uses this).
+
+    ``Connection.messages`` is best-effort under
+    ``check_same_thread=False``: the PEP 249 §6.4 "cleared by all
+    standard methods" contract implicitly assumes single-thread
+    access; cross-thread methods may interleave their clears,
+    causing one thread's diagnostics to be overwritten by
+    another's. Callers needing reliable diagnostics in a cross-
+    thread shared-Connection setup should use Python logging
+    instead.
+
+    BUSY retries (``busy_timeout > 0``) release the wire lock
+    between attempts so sibling threads can make progress. Under
+    ``check_same_thread=False``, this means a retried statement
+    may observe interleaved writes from siblings. Wrap in an
+    explicit transaction (``conn.transaction()`` or
+    ``cursor.execute("BEGIN")``) to make the retry atomic. See
+    ``dqlitedbapi._busy_retry.retry_sync_on_busy`` docstring for
+    details.
+
+    The fork check (``_creator_pid`` comparison) is NEVER relaxed:
+    cross-process Connection use raises ``InterfaceError``
+    regardless of ``check_same_thread``. Forking is unsafe at the
+    OS level (inherited socket, dead daemon thread) and is a hard
+    error in both modes.
     """
 
     # PEP 249 optional extension ("Attributes from Module Exceptions"):
