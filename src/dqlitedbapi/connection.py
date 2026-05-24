@@ -1621,6 +1621,21 @@ class Connection:
         # async sibling's ``_transaction_owner`` (which stores
         # ``asyncio.Task``); thread id is the sync equivalent identity.
         self._transaction_owner: int | None = None
+        # ``_state_lock`` guards the read-check-write composites on
+        # Connection state under ``check_same_thread=False``. Today
+        # the only protected composite is the ``transaction()``
+        # ctxmgr's owner-check + owner-reserve at entry. Without
+        # the lock, two foreign threads racing into ``with
+        # conn.transaction():`` would both pass the ``is not None``
+        # check, both attempt ``BEGIN``; the second BEGIN serializes
+        # through ``_op_lock`` and raises ``OperationalError("cannot
+        # start a transaction within a transaction")`` from the
+        # wire. That's loud but server-emitted; this lock turns it
+        # into a local Python-side ``InterfaceError`` at the
+        # offending caller's frame. Lock-order discipline:
+        # ``_state_lock`` is brief and outermost; never held while
+        # acquiring ``_op_lock`` from inside the lock body.
+        self._state_lock = threading.Lock()
         # 1-element list (mutable, captured by the finalizer) that
         # close() flips to True. Using a list avoids the finalizer
         # closing over ``self`` and preventing GC.
@@ -3325,24 +3340,45 @@ class Connection:
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         self._check_thread()
-        if self._transaction_owner is not None:
-            raise InterfaceError(
-                f"Nested conn.transaction() not supported (id={id(self)}); "
-                "exit the outer block before opening a new one."
-            )
-        cursor = self.cursor()
-        # Set the owner slot INSIDE the try frame so a BaseException
-        # (KeyboardInterrupt / SystemExit) at the bytecode boundary
-        # between the assignment and the try-setup cannot leak the
-        # slot pinned to a now-dying thread. Mirrors the async sibling.
         token = threading.get_ident()
+        # ``getattr`` with a fresh-Lock fallback so test fixtures
+        # that build ``Connection`` via ``__new__`` (skipping
+        # ``__init__``) without seeding the attribute don't crash.
+        # Production paths always have the attribute from
+        # ``__init__``. A fresh Lock per call is acceptable in the
+        # test-only path because no sibling thread holds it.
+        _state_lock = getattr(self, "_state_lock", None) or threading.Lock()
+        cursor = self.cursor()
+        # Owner slot is set INSIDE the outer try so a BaseException
+        # (KeyboardInterrupt / SystemExit) arriving at the
+        # assignment-site bytecode is caught by the outer finally,
+        # which clears the slot. Mirrors the async sibling, and
+        # preserved by source-pin test
+        # test_sync_transaction_owner_assignment_inside_try_frame.
         try:
+            # Atomic read-check-RESERVE of ``_transaction_owner``
+            # under ``_state_lock``: under ``check_same_thread=False``
+            # two foreign threads could otherwise both pass the
+            # ``is not None`` check and both attempt ``BEGIN``. We
+            # RESERVE the slot with the current thread's id INSIDE
+            # the lock so a sibling thread sees us as the owner
+            # even if our BEGIN hasn't reached the wire yet. If
+            # BEGIN fails downstream, the outer ``finally`` clears
+            # the slot (guarded by token-equality so we never
+            # clear a sibling thread's reservation).
+            # Lock-order: ``_state_lock`` is released BEFORE
+            # ``cursor.execute("BEGIN")`` so we don't hold it
+            # across the wire round-trip — the reservation pattern
+            # is sufficient.
+            with _state_lock:
+                if self._transaction_owner is not None:
+                    raise InterfaceError(
+                        f"Nested conn.transaction() not supported (id={id(self)}); "
+                        f"exit the outer block before opening a new one. "
+                        f"(owner thread id={self._transaction_owner})"
+                    )
+                self._transaction_owner = token
             cursor.execute("BEGIN")
-            # Set owner AFTER BEGIN — if BEGIN itself raises, the
-            # ctxmgr never enters its body and the owner slot stays
-            # clear so the caller's error-handling can still issue
-            # commit/rollback.
-            self._transaction_owner = token
             try:
                 yield
             except BaseException:

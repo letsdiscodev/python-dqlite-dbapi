@@ -49,27 +49,41 @@ def _bare_connection() -> Connection:
 
 def test_sync_transaction_owner_assignment_inside_try_frame_source_pin() -> None:
     """Source-level pin: ``self._transaction_owner = token`` lives
-    inside a ``try:`` frame. Mirrors the async sibling's AST pin —
-    a ``BaseException`` between the STORE_ATTR and the SETUP_FINALLY
-    is impossible to inject from Python, so the structural pin is
-    the right contract layer."""
+    inside a ``try:`` frame (possibly nested through a ``with``
+    block for the _state_lock reservation). Mirrors the async
+    sibling's AST pin — a ``BaseException`` between the STORE_ATTR
+    and the SETUP_FINALLY is impossible to inject from Python, so
+    the structural pin is the right contract layer."""
     src = textwrap.dedent(inspect.getsource(conn_mod.Connection.transaction))
     tree = ast.parse(src)
+
+    def _node_contains_owner_assign(node: ast.AST) -> bool:
+        """Walk all descendants looking for ``self._transaction_owner =
+        <expr>``. The _state_lock reservation wraps the assignment in
+        a ``with`` block inside the try; the recursive walk catches
+        it regardless of nesting depth."""
+        for child in ast.walk(node):
+            if isinstance(child, ast.Assign):
+                for tgt in child.targets:
+                    if isinstance(tgt, ast.Attribute) and tgt.attr == "_transaction_owner":
+                        return True
+        return False
 
     def find_owner_assign_in_try(node: ast.AST) -> bool:
         for child in ast.walk(node):
             if isinstance(child, ast.Try):
+                # Recursive walk over the try's body covers the
+                # ``with _state_lock:`` block introduced by Phase 2.1.
                 for stmt in child.body:
-                    if isinstance(stmt, ast.Assign):
-                        for tgt in stmt.targets:
-                            if isinstance(tgt, ast.Attribute) and tgt.attr == "_transaction_owner":
-                                return True
+                    if _node_contains_owner_assign(stmt):
+                        return True
         return False
 
     assert find_owner_assign_in_try(tree), (
         "Connection.transaction() must set self._transaction_owner "
-        "INSIDE a try: frame so the finally clears the slot under "
-        "any BaseException that arrives at the assignment site."
+        "INSIDE a try: frame (directly or nested through a with "
+        "block) so the finally clears the slot under any "
+        "BaseException that arrives at the assignment site."
     )
 
 
