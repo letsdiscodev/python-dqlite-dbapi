@@ -1628,6 +1628,20 @@ class Connection:
         self._thread: threading.Thread | None = None
         self._loop_lock = threading.Lock()
         self._op_lock = threading.Lock()
+        # Owner-thread of the current ``_op_lock`` holder. Updated
+        # under the lock (inside ``_run_sync``) so ``close()``'s
+        # same-thread re-entry bypass at ``:2540`` can distinguish
+        # "WE hold the lock" from "SOMEONE holds the lock". Under
+        # tier-2 (``check_same_thread=False``) the creator thread
+        # can call ``close()`` while a sibling thread legitimately
+        # holds the lock from inside its own ``_run_sync`` — the
+        # bare ``_op_lock.locked()`` probe cannot distinguish that
+        # case from the SIGINT-during-acquire self-heal the bypass
+        # was designed for, and would release the sibling's lock,
+        # corrupting protocol state. ``int`` writes are GIL-atomic
+        # so a stale read is bounded to "miss the bypass, take the
+        # bounded-acquire path" — safe-failure.
+        self._op_lock_owner: int | None = None
         self._connect_lock: asyncio.Lock | None = None
         self._creator_thread = threading.get_ident()
         # ``threading.get_ident()`` returns the OS pthread tid which on
@@ -1863,6 +1877,7 @@ class Connection:
             # safe in the more-common "KI landed before acquire
             # could complete" case too.
             with contextlib.suppress(RuntimeError):
+                self._op_lock_owner = None
                 self._op_lock.release()
             # The coroutine was never scheduled on the loop, so close
             # it explicitly to suppress "coroutine was never awaited"
@@ -1904,6 +1919,12 @@ class Connection:
         # handler in that gap would otherwise leak the lock
         # permanently (subsequent ``_run_sync`` calls deadlock until
         # ``acquire(timeout=...)`` fires).
+        # Stamp owner BEFORE entering the try/finally so the close()
+        # bypass probe at ``:2540`` can read the slot. Writing here
+        # (not earlier) means a not-acquired arm doesn't pollute the
+        # slot. GIL-atomic int assignment.
+        if acquired:
+            self._op_lock_owner = threading.get_ident()
         try:
             if not acquired:
                 coro.close()
@@ -2265,6 +2286,10 @@ class Connection:
             # KI, that path raised before reaching this try and the
             # finally does not run.
             if acquired:
+                # Clear the owner BEFORE release: a concurrent close
+                # bypass probe must not see "owner == me" after we've
+                # released. The integer write is GIL-atomic.
+                self._op_lock_owner = None
                 self._op_lock.release()
 
     async def _get_async_connection(self) -> DqliteConnection:
@@ -2537,7 +2562,7 @@ class Connection:
                 # un-awaited coroutine explicitly so it does not emit
                 # ``coroutine 'Connection._close_async' was never
                 # awaited`` at gc time.
-                if self._op_lock.locked() and threading.get_ident() == self._creator_thread:
+                if getattr(self, "_op_lock_owner", None) == threading.get_ident():
                     # Same-thread re-entry: a SIGINT delivered between
                     # ``_run_sync``'s ``acquire`` succeeding and the
                     # trailing ``finally`` release running can leave
@@ -2552,7 +2577,23 @@ class Connection:
                     # ``RuntimeError`` only if the lock is already
                     # released; suppress narrows the catch so a true
                     # logic error elsewhere still propagates.
+                    #
+                    # The probe now reads ``_op_lock_owner`` (an
+                    # owner-tracked field updated under the lock by
+                    # ``_run_sync``) instead of the bare
+                    # ``_op_lock.locked()`` probe. Under tier-2
+                    # (``check_same_thread=False``) the bare probe
+                    # could see a SIBLING thread's legitimate lock as
+                    # "held" and the creator's close would release
+                    # the sibling's lock, corrupting protocol state
+                    # by allowing two coroutines to drive the wire
+                    # concurrently. The owner-aware probe distinguishes
+                    # "WE hold the lock" (the KI-self-heal case) from
+                    # "someone else holds it" (let the bounded acquire
+                    # path run, surfacing the contention as a clean
+                    # ``OperationalError`` from ``_run_sync``).
                     with contextlib.suppress(RuntimeError):
+                        self._op_lock_owner = None
                         self._op_lock.release()
                     coro = self._close_async()
                     coro.close()

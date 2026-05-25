@@ -53,8 +53,12 @@ def test_close_bypass_releases_latched_op_lock() -> None:
     conn._inner_finalize_handle = []
     conn._address = ""
 
-    # Simulate the latched state: acquire without release.
+    # Simulate the latched state: acquire without release AND
+    # stamp the owner slot (now required by the close() bypass
+    # probe which is owner-aware to avoid releasing a sibling
+    # thread's lock under tier-2).
     conn._op_lock.acquire()
+    conn._op_lock_owner = threading.get_ident()
     assert conn._op_lock.locked()
 
     # Drive close(); the bypass arm should release the lock.

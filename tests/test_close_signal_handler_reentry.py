@@ -101,9 +101,14 @@ def test_close_does_not_block_when_op_lock_already_held_on_creator_thread() -> N
     schedule the close on the loop directly."""
     conn = _make_with_loop_thread()
     try:
-        # Hold _op_lock from the creator thread (no _run_sync is
-        # actually running, but lock state is what the guard checks).
+        # Hold _op_lock from the creator thread AND stamp the owner
+        # slot to simulate the "_run_sync is parked" state. The
+        # close() bypass probe is now owner-aware
+        # (``_op_lock_owner == current thread``) rather than the
+        # bare ``locked()`` probe — needed under tier-2 to avoid
+        # releasing a sibling thread's legitimate lock.
         assert conn._op_lock.acquire(blocking=False)
+        conn._op_lock_owner = threading.get_ident()
         try:
             t0 = time.monotonic()
             conn.close()
