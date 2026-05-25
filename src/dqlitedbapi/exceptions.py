@@ -8,6 +8,7 @@ from dqlitewire import DEFAULT_MAX_RAW_MESSAGE as _DEFAULT_MAX_RAW_MESSAGE
 from dqlitewire import cap_raw_message as _wire_cap_raw_message
 
 __all__ = [
+    "AdapterLookupError",
     "AmbiguousCommitError",
     "DataError",
     "DatabaseError",
@@ -429,6 +430,31 @@ class DataError(_DatabaseErrorWithCode):
     ``SQLITE_MISMATCH``, ``SQLITE_TOOBIG``). Mirror of
     :class:`OperationalError` so callers that branch on the extended
     code can do so without reaching into the client layer.
+    """
+
+    pass
+
+
+class AdapterLookupError(ProgrammingError, LookupError):
+    """Raised by :func:`~dqlitedbapi.unregister_adapter` when the
+    target type has no registered adapter.
+
+    Multiple-inherits from both :class:`ProgrammingError` (PEP 249 §7
+    hierarchy purity — ``except dqlitedbapi.Error:`` continues to
+    catch) and stdlib :class:`LookupError` (matches stdlib
+    ``sqlite3.unregister_adapter`` (Python 3.13+) which raises
+    ``KeyError``, a ``LookupError`` subclass). Cross-driver code
+    written for stdlib and using ``except LookupError:`` to handle
+    the "no adapter registered" condition catches uniformly against
+    dqlite without losing the PEP 249 hierarchy guarantee for
+    dqlite-only callers using ``except Error:``.
+
+    The MRO ordering puts ``ProgrammingError`` first so the existing
+    ``dbapi.Error``-rooted classification (which the broader driver
+    relies on for closed-state, retry, and pool semantics) wins on
+    ambiguous catches; the stdlib parity is provided by the
+    secondary base, which only matters when callers reach for the
+    ``LookupError`` lineage explicitly.
     """
 
     pass

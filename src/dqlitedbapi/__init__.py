@@ -71,6 +71,7 @@ from dqlitedbapi.connection import (
 )
 from dqlitedbapi.cursor import Cursor
 from dqlitedbapi.exceptions import (
+    AdapterLookupError,
     AmbiguousCommitError,
     DatabaseError,
     DataError,
@@ -216,6 +217,7 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "InternalError",
     "ProgrammingError",
     "NotSupportedError",
+    "AdapterLookupError",
     # Type constructors
     "Date",
     "Time",

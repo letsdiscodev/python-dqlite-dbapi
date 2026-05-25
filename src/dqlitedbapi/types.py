@@ -6,7 +6,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Final, final
 
-from dqlitedbapi.exceptions import DataError, ProgrammingError
+from dqlitedbapi.exceptions import AdapterLookupError, DataError, ProgrammingError
 from dqlitewire import ValueType
 
 # PEP 249 §3: type objects + constructors. ``DescriptionTuple`` is
@@ -957,12 +957,17 @@ def unregister_adapter(type_: type, /) -> None:
     ``sqlite3.unregister_adapter`` (Python 3.13+) which accepts any
     previously-registered type.
 
-    Raises ``ProgrammingError`` if ``type_`` has no entry in the
-    registry — this is the cross-driver-portable "no adapter to
-    remove" signal.
+    Raises :class:`~dqlitedbapi.exceptions.AdapterLookupError` if
+    ``type_`` has no entry in the registry. The exception multiple-
+    inherits from both :class:`~dqlitedbapi.exceptions.ProgrammingError`
+    (PEP 249 hierarchy purity, ``except dqlitedbapi.Error:`` catches)
+    and stdlib :class:`LookupError` (parity with stdlib
+    ``sqlite3.unregister_adapter`` which raises ``KeyError``), so
+    cross-driver code that catches either lineage handles the case
+    uniformly.
     """
     if type_ not in _ADAPTERS:
-        raise ProgrammingError(
+        raise AdapterLookupError(
             f"no adapter registered for {type_.__name__}",
             code=None,
         )
