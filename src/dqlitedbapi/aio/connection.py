@@ -2019,6 +2019,23 @@ class AsyncConnection:
         # Materialise the underlying client connection if we haven't
         # yet — ``transaction()`` is an entry point on its own.
         async_conn = await self._ensure_connection()
+        # Foreign-thread ``force_close_transport`` may have set
+        # ``self._closed = True`` between ``_ensure_connection``'s
+        # fast-path return and us. Without this re-check the
+        # ``_transaction_owner`` slot below gets reserved against a
+        # closed connection; the subsequent ``async_conn.transaction()``
+        # raises against a dead inner and the slot remains pinned to
+        # the now-dying task — sibling ``conn.transaction()`` calls
+        # then see a misleading ``Nested conn.transaction() not
+        # supported`` diagnostic rather than the truthful ``Connection
+        # is closed`` shape. Mirrors the in-lock recheck discipline
+        # already in place at ``commit()`` / ``rollback()``. Check
+        # only ``_closed`` (not ``_async_conn is None``): legitimate
+        # test fixtures patch ``_ensure_connection`` to return a
+        # stand-in inner without updating ``_async_conn``, and the
+        # load-bearing close-state observable is ``_closed``.
+        if self._closed:
+            raise InterfaceError(f"Connection closed during transaction setup (id={id(self)})")
         # Track the owning task while the body runs so explicit
         # ``await conn.commit()`` / ``await conn.rollback()`` calls
         # from the SAME task inside the body raise instead of
