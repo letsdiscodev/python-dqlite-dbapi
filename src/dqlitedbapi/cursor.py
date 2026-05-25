@@ -575,6 +575,21 @@ def _convert_params(params: Sequence[Any] | None) -> list[Any] | None:
             # (no double-wrap).
             raise
         except Exception as e:
+            # Stdlib parity: a user-defined ``__conform__`` raising
+            # an exception propagates UNWRAPPED. ``_convert_bind_param``
+            # tags such exceptions with ``_dqlite_conform_propagate``
+            # so this arm can re-raise the original without wrapping.
+            # Cross-driver code using ``except dbapi.Error:`` must
+            # NOT silently swallow programmer bugs in user-defined
+            # ``__conform__`` implementations — see CPython
+            # ``Modules/_sqlite/microprotocols.c
+            # ::_pysqlite_microprotocols_adapt`` for the reference
+            # behaviour cited in ``_convert_bind_param``'s docstring.
+            # ``register_adapter`` callback raises (without the
+            # marker) still wrap as ``DataError`` per the documented
+            # adapter-misuse contract.
+            if getattr(e, "_dqlite_conform_propagate", False):
+                raise
             raise DataError(
                 f"adapter for {type(p).__name__} failed: {e}",
                 code=None,

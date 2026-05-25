@@ -974,7 +974,22 @@ def _convert_bind_param(value: Any) -> Any:
         # ``__conform__`` implementations behind a wire-encode error.
         proto_method = getattr(value, "__conform__", None)
         if proto_method is not None:
-            adapted = proto_method(PrepareProtocol)
+            try:
+                adapted = proto_method(PrepareProtocol)
+            except BaseException as e:
+                # Stdlib parity (citation above): a raising
+                # ``__conform__`` propagates UNWRAPPED. Tag the
+                # exception with a marker attribute so the outer
+                # ``_convert_params`` wrap arm distinguishes
+                # user-method raises (propagate unchanged) from
+                # ``register_adapter`` raises (wrap as DataError
+                # per the existing pin). Using a marker attribute
+                # rather than a sentinel wrapper class preserves
+                # the exception identity / type for callers that
+                # invoke ``_convert_bind_param`` directly (e.g.
+                # tests pinning the unwrapped-propagation contract).
+                e._dqlite_conform_propagate = True  # type: ignore[attr-defined]
+                raise
             if adapted is not None:
                 value = adapted
     # ``datetime.datetime`` is a subclass of ``datetime.date`` but not
