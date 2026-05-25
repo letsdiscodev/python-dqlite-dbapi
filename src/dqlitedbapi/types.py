@@ -383,6 +383,24 @@ STRING: Final[_DBAPIType] = _DBAPIType(
 BINARY: Final[_DBAPIType] = _DBAPIType(
     "BLOB", "BINARY", "VARBINARY", ValueType.BLOB, _name="BINARY"
 )
+# NOTE: ``NUMBER.values`` deliberately includes
+# ``ValueType.BOOLEAN``. SQLite's loose typing stores BOOLEAN
+# values with INTEGER affinity (the storage layer has no
+# dedicated BOOL column type — ``CREATE TABLE t (b BOOL)`` yields
+# a column with NUMERIC affinity per the SQLite type-affinity
+# rules), so treating BOOLEAN as a NUMBER subkind matches the
+# storage layer. psycopg2 ships a separate ``BOOLEAN`` Type
+# Object disjoint from ``NUMBER`` (Postgres has a true BOOL
+# type); cross-driver code that dispatches on
+# ``description[i][1] == NUMBER`` will route BOOLEAN columns to
+# the numeric arm under dqlite but to the fallback /
+# BOOLEAN-explicit arm under psycopg2. PEP 249 §3 does not outlaw
+# overlap between Type Objects; the choice here matches SQLite
+# semantics rather than Postgres. Operators needing the BOOLEAN
+# distinction can branch on the wire-level
+# ``ValueType.BOOLEAN`` int directly, or consult
+# ``description[i][0]`` against a server-side decltype string.
+# Mirrors the ROWID/INTEGER overlap precedent below.
 NUMBER: Final[_DBAPIType] = _DBAPIType(
     "INTEGER",
     "INT",
