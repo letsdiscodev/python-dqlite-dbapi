@@ -863,12 +863,19 @@ class PrepareProtocol:
     pass
 
 
-def register_adapter(type_: type, adapter: Callable[[Any], Any]) -> None:
+def register_adapter(type_: type, adapter: Callable[[Any], Any], /) -> None:
     """Register a Python-side adapter callable for ``type_``.
 
-    Mirrors stdlib ``sqlite3.register_adapter``: when a parameter of
-    type ``type_`` reaches the bind layer, ``adapter(value)`` runs
-    in the driver before the wire encode. Common uses:
+    Mirrors stdlib ``sqlite3.register_adapter``'s positional-only
+    signature: stdlib is implemented in C with positional-only
+    parameters, so cross-driver code that calls
+    ``register_adapter(type_=..., adapter=...)`` against dqlite
+    succeeded but crashed with ``TypeError`` against stdlib. Take
+    the same positional-only shape so the surface is identical.
+
+    When a parameter of type ``type_`` reaches the bind layer,
+    ``adapter(value)`` runs in the driver before the wire encode.
+    Common uses:
 
     - ``register_adapter(decimal.Decimal, str)`` — bind ``Decimal``
       via TEXT.
@@ -913,13 +920,15 @@ def register_adapter(type_: type, adapter: Callable[[Any], Any]) -> None:
     _ADAPTERS[type_] = adapter
 
 
-def unregister_adapter(type_: type) -> None:
+def unregister_adapter(type_: type, /) -> None:
     """Remove a previously-registered adapter for ``type_``.
 
-    Counterpart to :func:`register_adapter`. Module-scoped, mirroring
-    the registration side. Removes a user-installed override; the
-    underlying built-in default (ISO 8601 stringification for
-    ``datetime.date`` / ``datetime.datetime`` / ``datetime.time``)
+    Counterpart to :func:`register_adapter`. Positional-only to
+    mirror :func:`register_adapter`'s stdlib-parity shape (stdlib
+    ``sqlite3`` is C-implemented and rejects keyword args). Module-
+    scoped, mirroring the registration side. Removes a user-installed
+    override; the underlying built-in default (ISO 8601 stringification
+    for ``datetime.date`` / ``datetime.datetime`` / ``datetime.time``)
     is hardcoded inside ``_convert_bind_param`` and is unaffected.
 
     Asymmetric semantics fix: ``register_adapter`` accepts overrides
