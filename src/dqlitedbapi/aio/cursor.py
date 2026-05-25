@@ -805,7 +805,15 @@ class AsyncCursor:
                         )
                         self._check_closed()
                         acc.push(self)
-                        self._completed_iterations += 1
+                        # ``push`` early-returns if a foreign-thread
+                        # cascade flipped ``_closed`` between
+                        # ``_check_closed`` and the snapshot inside
+                        # push. Mirror by only advancing the counter
+                        # when the cursor is still operable; the
+                        # next iteration's ``_check_closed`` will
+                        # raise cleanly.
+                        if not self._closed:
+                            self._completed_iterations += 1
                 except BaseException:
                     # Mid-batch failure leaves _rowcount at the last
                     # iteration's value (misleading), so reset to

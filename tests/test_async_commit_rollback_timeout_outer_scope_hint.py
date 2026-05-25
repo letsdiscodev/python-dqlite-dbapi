@@ -129,5 +129,3 @@ async def test_commit_timeout_no_hint_when_inner_deadline_actually_expired() -> 
     assert "outer scope or sibling cancel likely interrupted" not in msg, (
         f"inner-deadline expiry must NOT carry the outer-scope hint; got: {msg!r}"
     )
-
-

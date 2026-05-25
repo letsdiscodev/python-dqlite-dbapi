@@ -945,26 +945,43 @@ class _ExecuteManyAccumulator:
         CONFLICT ... RETURNING`` where rowcount may include skipped
         rows) would silently double-count without this split.
         """
+        # Snapshot the cursor fields BEFORE reading ``_closed``. Under
+        # tier-2 (``check_same_thread=False``), a sibling thread's
+        # ``_cascade_cursors`` may zero ``_rows`` / ``_description`` /
+        # ``_rowcount`` / ``_lastrowid`` between any two attribute
+        # reads on this cursor. Snapshot first, then check ``_closed``
+        # — if it's True, cascade ran during snapshot and the captured
+        # locals may be incoherent (some pre-cascade, some post-);
+        # skip the push so the accumulator does not capture mixed
+        # state. The next iteration's ``_check_closed`` in
+        # ``executemany`` will raise cleanly and the BaseException arm
+        # restores pre-batch state. Mirror of the defensive snapshot
+        # discipline in ``Cursor._next_row_unlocked``.
+        description = cursor._description
+        rows = cursor._rows
+        rowcount = cursor._rowcount
+        if getattr(cursor, "_closed", False):
+            return
         self._pushed += 1
-        if cursor._description is not None:
+        if description is not None:
             # Row-returning iteration: total_affected is the count of
             # rows emitted, which today matches ``len(cursor._rows)``.
             # Using ``len()`` makes the invariant explicit and survives
             # any future decoupling of rowcount semantics on the
             # RETURNING path.
             if self.description is None:
-                self.description = cursor._description
-            self.rows.extend(cursor._rows)
-            self.total_affected += len(cursor._rows)
+                self.description = description
+            self.rows.extend(rows)
+            self.total_affected += len(rows)
             if self._max_rows is not None and len(self.rows) > self._max_rows:
                 raise DataError(
                     f"executemany accumulated {len(self.rows)} RETURNING rows; "
                     f"exceeds max_total_rows={self._max_rows}"
                 )
-        elif cursor._rowcount >= 0:
+        elif rowcount >= 0:
             # Plain DML iteration: ``_rowcount`` is the server's
             # sqlite3_changes() for this parameter set.
-            self.total_affected += cursor._rowcount
+            self.total_affected += rowcount
 
     def apply(self, cursor: _ExecuteManyCursor) -> None:
         """Materialise the accumulator's state onto the cursor.
@@ -2088,7 +2105,14 @@ class Cursor:
                     _execute_iter,
                 )
                 acc.push(self)
-                self._completed_iterations += 1
+                # ``push`` early-returns under tier-2 if a cascade
+                # zeroed the cursor mid-iteration. Mirror by only
+                # advancing the counter when the cursor is still
+                # operable; otherwise the counter would overrun the
+                # accumulator and the (count, anchor) invariant on
+                # the BaseException arm would break.
+                if not self._closed:
+                    self._completed_iterations += 1
             # stdlib ``sqlite3.Cursor.executemany`` does NOT update
             # ``lastrowid`` — the value reflects no single row across
             # the batch and is "left unchanged" per the docs.
