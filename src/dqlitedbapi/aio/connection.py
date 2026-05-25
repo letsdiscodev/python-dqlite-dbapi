@@ -2684,6 +2684,26 @@ class AsyncConnection:
                     sanitize_for_log(str(self._address)),
                     exc_info=True,
                 )
+            # Defensive null-out of the lazy loop-bound primitives.
+            # ``close()`` may have short-circuited at its TOP-of-method
+            # ``if self._closed: return`` guard because a concurrent
+            # close (foreign-thread ``force_close_transport``, or a
+            # sibling task's ``close()`` raced inside a TaskGroup)
+            # flipped ``_closed=True`` between ``_ensure_locks`` and
+            # the cleanup-close. The short-circuit skips the
+            # never-connected branch (``:806-820``) that would
+            # otherwise null these slots. Without this defensive
+            # cleanup, a subsequent ``AsyncConnection`` reuse on a
+            # different loop (test fixtures, SA pool recycling an
+            # instance) sees ``_connect_lock is not None`` in
+            # ``_ensure_locks`` and raises a misleading "bound to a
+            # different event loop" diagnostic instead of the
+            # documented fresh-connect path. Idempotent with the
+            # nulling already performed inside ``close()`` on the
+            # non-short-circuit paths.
+            self._connect_lock = None
+            self._op_lock = None
+            self._loop_ref = None
             raise
         return self
 

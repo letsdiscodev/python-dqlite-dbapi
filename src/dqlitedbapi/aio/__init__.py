@@ -560,6 +560,21 @@ async def aconnect(
                 "aconnect: exception during cleanup-close after failed connect",
                 exc_info=True,
             )
+        # Defensive null-out: mirrors AsyncConnection.__aenter__'s
+        # cleanup arm. ``close()`` may have short-circuited at its
+        # TOP-of-method ``if self._closed: return`` guard because a
+        # concurrent close (foreign-thread ``force_close_transport``)
+        # flipped ``_closed=True`` first. The short-circuit then
+        # skips the never-connected branch that nulls these slots,
+        # leaving the lazy loop-bound primitives stale. A subsequent
+        # reuse on a different loop would hit a misleading
+        # cross-loop diagnostic in ``_ensure_locks`` instead of the
+        # documented fresh-connect path. Tolerate the attributes
+        # being absent on fixture-built objects.
+        with contextlib.suppress(AttributeError):
+            conn._connect_lock = None
+            conn._op_lock = None
+            conn._loop_ref = None
         raise
     # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
     # via the setters on the freshly-connected AsyncConnection. Stdlib
