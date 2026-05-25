@@ -1029,6 +1029,19 @@ def _convert_bind_param(value: Any) -> Any:
     the isinstance built-in arm fires when no exact-type adapter
     matches, then chains the result (the adapter-output chain above)
     if the produced value is itself a datetime/date/time.
+
+    **TEXT binds with embedded NUL bytes are rejected.** dqlite's
+    wire protocol encodes TEXT as NUL-terminated UTF-8, so an
+    embedded ``"\\x00"`` cannot round-trip. The dbapi layer raises
+    :class:`~dqlitedbapi.exceptions.DataError` (in the ``dbapi.Error``
+    hierarchy) BEFORE handing the value to the wire encoder, with a
+    diagnostic naming the BLOB workaround. Diverges from stdlib
+    ``sqlite3``, whose ``sqlite3_bind_text`` accepts embedded NULs
+    (TEXT readback via ``sqlite3_column_text`` truncates at the
+    first NUL, but the value round-trips faithfully via
+    ``sqlite3_column_blob``). Cross-driver code targeting both
+    stdlib and dqlite must bind NUL-containing payloads as
+    ``bytes`` / ``memoryview`` on a BLOB column.
     """
     # User-registered adapter takes precedence. ``type(value)`` not
     # isinstance: stdlib's contract is exact-class match (subclasses
@@ -1117,5 +1130,28 @@ def _convert_bind_param(value: Any) -> Any:
             f"non-primitive {type(value).__name__}; wire layer accepts "
             f"only int / float / str / bytes / bytearray / memoryview / "
             f"bool / None. Register an adapter that returns one of those."
+        )
+    # Pre-wire NUL guard: dqlite's wire TEXT is NUL-terminated UTF-8
+    # (see ``dqlitewire.encode_text``), so embedded NULs cannot
+    # round-trip. The wire encoder already rejects with
+    # ``EncodeError``, which ``cursor._call_client`` wraps as
+    # ``DataError`` — but the wire-layer diagnostic mentions the
+    # null-terminated-encoding internal mechanic, not the canonical
+    # workaround. Reject at the dbapi layer with a message naming
+    # the BLOB workaround so cross-driver operators porting from
+    # stdlib ``sqlite3`` (which stores embedded NULs in TEXT
+    # faithfully via ``sqlite3_bind_text``) see the actionable hint
+    # rather than the wire-internal message. Defence-in-depth: the
+    # wire-layer rejection stays in place. Runs AFTER the adapter /
+    # ``__conform__`` chain so an adapter that produces a NUL-bearing
+    # ``str`` is also caught.
+    if isinstance(value, str) and "\x00" in value:
+        raise DataError(
+            f"TEXT bind with embedded NUL at offset "
+            f"{value.index(chr(0))} rejected by dqlite wire "
+            f"(NUL-terminated UTF-8). Cross-driver divergence from "
+            f"stdlib sqlite3 which preserves NULs in TEXT. Use a "
+            f"BLOB column (bind bytes/memoryview) to round-trip "
+            f"NUL-containing data."
         )
     return value
