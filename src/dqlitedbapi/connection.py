@@ -3271,7 +3271,19 @@ class Connection:
                 "the context manager owns transaction boundaries — "
                 "exit the ``with`` block first."
             )
-        if self._async_conn is None:
+        # Snapshot ``_async_conn`` to a local so a foreign-thread
+        # ``force_close_transport`` racing between the None-check
+        # and the protocol/in_transaction reads below cannot
+        # produce a silent no-op commit against an invalidated
+        # connection. Under ``check_same_thread=False`` (tier-2),
+        # ``_check_thread`` short-circuits and
+        # ``force_close_transport`` is documented foreign-thread-
+        # callable; the prior single-thread rationale comment was
+        # structurally wrong for that case. The post-snapshot
+        # reads all use the local ``inner`` reference so later
+        # nulling of ``self._async_conn`` does not slip through.
+        inner = self._async_conn
+        if inner is None:
             return
         # Cancel-after-invalidate contract — see async sibling
         # ``aio/connection.py``'s ``commit()`` for full rationale.
@@ -3281,10 +3293,8 @@ class Connection:
         # flag and silently return — hiding partial-commit
         # ambiguity (the cancelled commit may or may not have
         # reached the leader). Raise BEFORE the ``in_transaction``
-        # short-circuit. The sync version doesn't need the in-lock
-        # recheck (no async race window — ``_check_thread`` makes
-        # the sync caller single-threaded relative to itself).
-        if getattr(self._async_conn, "_protocol", "_sentinel") is None:
+        # short-circuit.
+        if getattr(inner, "_protocol", "_sentinel") is None:
             raise InterfaceError(
                 f"Connection invalidated (id={id(self)}); reconnect before "
                 "retrying commit / rollback. The prior call may have "
@@ -3301,7 +3311,7 @@ class Connection:
         # ``getattr`` keeps mock tolerance: stripped-down test stubs
         # without the property short-circuit (no wire round-trip) the
         # same way a fresh connection would.
-        if not getattr(self._async_conn, "in_transaction", False):
+        if not getattr(inner, "in_transaction", False):
             return
         # Stdlib parity: the C-level ``sqlite3_busy_timeout`` callback
         # fires on every SQL statement including COMMIT (which is just
@@ -3381,13 +3391,16 @@ class Connection:
                 "raise from inside the ``with`` block to trigger "
                 "rollback-at-exit, or exit the block first."
             )
-        if self._async_conn is None:
+        # Snapshot ``_async_conn`` to a local — see ``commit()`` for
+        # the foreign-thread ``force_close_transport`` race rationale.
+        inner = self._async_conn
+        if inner is None:
             return
         # Cancel-after-invalidate guard — see ``commit`` for the full
         # rationale. Raise BEFORE the ``in_transaction`` short-circuit
         # so a post-``_invalidate`` rollback surfaces as
         # ``InterfaceError`` instead of silently no-opping.
-        if getattr(self._async_conn, "_protocol", "_sentinel") is None:
+        if getattr(inner, "_protocol", "_sentinel") is None:
             raise InterfaceError(
                 f"Connection invalidated (id={id(self)}); reconnect before "
                 "retrying commit / rollback. The prior call may have "
@@ -3396,7 +3409,7 @@ class Connection:
             )
         # See commit() — same local short-circuit applies. Saves a
         # wire round-trip on the autocommit-by-default common case.
-        if not getattr(self._async_conn, "in_transaction", False):
+        if not getattr(inner, "in_transaction", False):
             return
         self._run_sync(self._rollback_async())
 
