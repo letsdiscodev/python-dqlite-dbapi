@@ -1528,8 +1528,18 @@ class Cursor:
         # the parent ``Connection`` class. Sibling ``Connection.row_factory.setter``
         # already does this; mirror here so a foreign-thread
         # ``cur.arraysize = 1`` mid-batch is caught at the boundary
-        # rather than silently changing the creator-thread's next
-        # ``fetchmany`` size.
+        # — UNLESS the connection was opened with
+        # ``check_same_thread=False``, which short-circuits the
+        # thread check at the Connection layer to opt INTO sharing.
+        # Connection sharing is the explicit relaxation that flag
+        # enables; cursor sharing has no separate opt-in flag, so
+        # under ``check_same_thread=False`` the cursor-per-thread
+        # sub-contract becomes the caller's responsibility. Adding a
+        # separate cursor-layer ``_creator_thread`` check would
+        # re-impose what the user explicitly opted out of, so the
+        # delegation to ``_check_thread`` here is intentional. Pin
+        # `tests/test_cursor_arraysize_row_factory_setter_thread.py`
+        # for the documented behaviour.
         self._connection._check_thread()
         if not isinstance(value, int) or isinstance(value, bool):
             raise ProgrammingError(f"arraysize must be a positive int, got {type(value).__name__}")
@@ -1587,6 +1597,10 @@ class Cursor:
         # Threadsafety=1 affinity contract — see ``arraysize.setter``
         # for the rationale (cross-thread mutation can silently swap
         # the creator-thread's per-row materialisation hook).
+        # Same caveat applies: ``_check_thread`` short-circuits under
+        # ``check_same_thread=False`` (the Connection-sharing opt-in),
+        # so under that flag the cursor-per-thread sub-contract is
+        # the caller's responsibility.
         self._connection._check_thread()
         if value is not None and not callable(value):
             raise ProgrammingError(
