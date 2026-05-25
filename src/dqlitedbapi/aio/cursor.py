@@ -847,12 +847,19 @@ class AsyncCursor:
                     # count. Mid-batch raises (counter > 0) preserve
                     # the in-batch progress for idempotent
                     # compensation.
+                    #
+                    # ``_lastrowid`` restoration is ALIGNED with
+                    # ``_completed_iterations``: zero in-batch
+                    # progress restores the pre-batch snapshot;
+                    # non-zero progress PRESERVES the in-batch
+                    # lastrowid so the (count, anchor) pair is
+                    # internally consistent. Mirrors the sync sibling.
                     self._rowcount = -1
                     self._rows = []
                     self._description = None
                     self._row_index = 0
-                    self._lastrowid = lastrowid_pre_batch
                     if self._completed_iterations == 0:
+                        self._lastrowid = lastrowid_pre_batch
                         self._completed_iterations = completed_iterations_pre_batch
                     del self.messages[:]
                     raise

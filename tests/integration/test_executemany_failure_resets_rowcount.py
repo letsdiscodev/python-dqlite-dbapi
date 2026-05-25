@@ -36,13 +36,14 @@ def test_sync_executemany_failure_clears_rowcount(cluster_address: str) -> None:
         # behaviour so callers don't observe a misleading
         # last-iteration rowcount.
         assert cur.rowcount == -1
-        # ``lastrowid`` is restored to the pre-batch snapshot —
-        # stdlib ``sqlite3.Cursor.lastrowid`` is documented as not
-        # being cleared by failed/cancelled operations, and the
-        # snapshot/restore arm overwrites the intra-batch write
-        # (which would otherwise leak whichever row the loop touched
-        # last) with the value the caller observed before the batch.
-        assert cur.lastrowid == pre_batch_lastrowid
+        # ``lastrowid`` is PRESERVED at the last successful in-batch
+        # iteration's rowid (2 from row [(2,)]), so the
+        # (``_completed_iterations``, ``lastrowid``) pair is internally
+        # consistent for idempotent compensation. The pre-batch
+        # snapshot (42) is restored only when no in-batch iteration
+        # committed; mid-batch failures keep the in-batch anchor.
+        assert cur.lastrowid == 2
+        assert cur._completed_iterations == 2
         assert cur._rows == []
         assert cur._description is None
     finally:
@@ -68,8 +69,9 @@ async def test_async_executemany_failure_clears_rowcount(
                 [(1,), (2,), (1,)],
             )
         assert cur.rowcount == -1
-        # lastrowid restored to pre-batch snapshot (stdlib parity).
-        assert cur.lastrowid == pre_batch_lastrowid
+        # lastrowid preserved at the last successful in-batch row (2).
+        assert cur.lastrowid == 2
+        assert cur._completed_iterations == 2
         assert cur._rows == []
         assert cur._description is None
     finally:

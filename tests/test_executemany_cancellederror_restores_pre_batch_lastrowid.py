@@ -1,15 +1,15 @@
-"""Pin: ``executemany``'s BaseException arm restores the pre-batch
-``_lastrowid`` for cancel-class raises (``CancelledError`` /
-``KeyboardInterrupt`` / ``SystemExit``), not just `Exception`-class
-mid-batch failures.
+"""Pin: ``executemany``'s BaseException arm catches cancel-class
+raises (``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit``),
+not just `Exception`-class mid-batch failures, and preserves the
+in-batch ``_lastrowid`` consistently with ``_completed_iterations``.
 
 The existing pin `test_executemany_cancel_restores_pre_batch_lastrowid.py`
 drives the BaseException arm with a `RuntimeError`. A regression that
 narrowed the `except BaseException:` arm to `except Exception:` would
-silently lose the cancel-class restoration because `CancelledError`
+silently lose the cancel-class handling because `CancelledError`
 inherits from `BaseException` (not `Exception`). This pin closes the
 gap by driving a `CancelledError` raise on iteration N and asserting
-the snapshot/restore still fires.
+the (count, anchor) pair stays consistent.
 """
 
 from __future__ import annotations
@@ -43,9 +43,9 @@ async def test_sync_executemany_cancellederror_mid_batch_restores_pre_batch_last
 
     async def fake_execute_async(self_inner: Cursor, operation: str, params: object) -> None:
         iteration_state["calls"] += 1
-        self_inner._lastrowid = 100 + iteration_state["calls"]
         if iteration_state["calls"] >= 2:
             raise asyncio.CancelledError()
+        self_inner._lastrowid = 100 + iteration_state["calls"]
 
     with (
         patch.object(Cursor, "_execute_async", fake_execute_async),
@@ -53,9 +53,10 @@ async def test_sync_executemany_cancellederror_mid_batch_restores_pre_batch_last
     ):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-    # BaseException arm fires for CancelledError; pre-batch lastrowid
-    # restored regardless of the cancel-vs-Exception class.
-    assert cur._lastrowid == 5
+    # BaseException arm fires for CancelledError; in-batch lastrowid
+    # preserved (count=1 + anchor=101) regardless of the cancel-vs-
+    # Exception class.
+    assert cur._lastrowid == 101
     assert cur._rowcount == -1
     assert cur._rows == []
     assert cur._description is None
@@ -87,9 +88,9 @@ async def test_async_executemany_cancellederror_mid_batch_restores_pre_batch_las
         self_inner: AsyncCursor, operation: str, params: object
     ) -> None:
         iteration_state["calls"] += 1
-        self_inner._lastrowid = 100 + iteration_state["calls"]
         if iteration_state["calls"] >= 2:
             raise asyncio.CancelledError()
+        self_inner._lastrowid = 100 + iteration_state["calls"]
 
     with (
         patch.object(AsyncCursor, "_execute_unlocked", fake_execute_unlocked),
@@ -98,7 +99,7 @@ async def test_async_executemany_cancellederror_mid_batch_restores_pre_batch_las
     ):
         await cur.executemany("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-    assert cur._lastrowid == 5
+    assert cur._lastrowid == 101
     assert cur._rowcount == -1
     assert cur._rows == []
     assert cur._description is None
