@@ -1449,6 +1449,7 @@ class Connection:
         dial_func: DialFunc | None = None,
         busy_timeout: float = 5.0,
         check_same_thread: bool = True,
+        begin_immediate: bool | None = None,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -1636,6 +1637,27 @@ class Connection:
         # threads. See ``_check_thread`` for the gate site and the
         # class docstring for the cursor contract under the relaxation.
         self._check_same_thread: bool = check_same_thread
+        # ``begin_immediate``: when True (default), the cursor layer
+        # rewrites bare ``BEGIN`` / ``BEGIN DEFERRED`` / ``BEGIN
+        # TRANSACTION`` to ``BEGIN IMMEDIATE`` before the wire round-
+        # trip. This eliminates the ``SQLITE_BUSY_SNAPSHOT (517)``
+        # race for the SELECT-then-INSERT pattern that SA's session
+        # flush produces under concurrent writers — dqlite-server's
+        # VFS recommends ``BEGIN IMMEDIATE`` as the idiomatic form.
+        # Concurrent ``BEGIN IMMEDIATE`` calls contend at the writer
+        # lock and surface as ordinary ``SQLITE_BUSY (5)``, which the
+        # busy_timeout retry curve absorbs transparently.
+        #
+        # ``None`` (default) consults the env var
+        # ``DQLITE_BEGIN_IMMEDIATE`` (treats ``"0"`` / ``"false"`` /
+        # ``"off"`` / ``"no"`` as disabled, all other values incl.
+        # missing as enabled). Explicit ``True`` / ``False`` from the
+        # kwarg overrides the env var.
+        from dqlitedbapi._pragma_intercept import begin_immediate_default_from_env
+
+        self._begin_immediate: bool = (
+            begin_immediate_default_from_env() if begin_immediate is None else bool(begin_immediate)
+        )
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # stdlib ``sqlite3.Connection.row_factory`` parity. None means

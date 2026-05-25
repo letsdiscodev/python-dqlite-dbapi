@@ -265,6 +265,7 @@ class AsyncConnection:
         attempt_timeout: float | None = None,
         dial_func: DialFunc | None = None,
         busy_timeout: float = 5.0,
+        begin_immediate: bool | None = None,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -370,6 +371,14 @@ class AsyncConnection:
         # Stdlib parity (see sync sibling) — float seconds, default
         # 5.0. Shared with PRAGMA setter; either tunes the other.
         self._busy_timeout: float = float(busy_timeout)
+        # ``begin_immediate``: see sync sibling Connection.__init__
+        # for the full rationale. ``None`` consults the env var
+        # ``DQLITE_BEGIN_IMMEDIATE`` at construction time.
+        from dqlitedbapi._pragma_intercept import begin_immediate_default_from_env
+
+        self._begin_immediate: bool = (
+            begin_immediate_default_from_env() if begin_immediate is None else bool(begin_immediate)
+        )
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # Tracks the asyncio.Task that currently owns the

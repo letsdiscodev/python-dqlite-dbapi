@@ -573,10 +573,24 @@ class AsyncCursor:
             # Intercept ``PRAGMA busy_timeout`` at the cursor layer
             # BEFORE the wire round-trip — dqlite's VFS authorizer
             # rejects the PRAGMA server-side. Mirrors the sync sibling.
-            from dqlitedbapi._pragma_intercept import try_intercept_busy_timeout
+            from dqlitedbapi._pragma_intercept import (
+                try_intercept_busy_timeout,
+                try_rewrite_begin_to_immediate,
+            )
 
             if try_intercept_busy_timeout(self, operation, parameters):  # type: ignore[arg-type]
                 return self
+
+            # Rewrite plain BEGIN to BEGIN IMMEDIATE to eliminate the
+            # SQLITE_BUSY_SNAPSHOT race; mirrors the sync sibling.
+            # Off-switch: ``begin_immediate=False`` or
+            # ``DQLITE_BEGIN_IMMEDIATE=0``.
+            rewritten = try_rewrite_begin_to_immediate(
+                operation,
+                enabled=getattr(self._connection, "_begin_immediate", True),
+            )
+            if rewritten is not None:
+                operation = rewritten
 
             _, op_lock = self._connection._ensure_locks()
             async with op_lock:

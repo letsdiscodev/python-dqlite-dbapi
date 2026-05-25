@@ -1707,10 +1707,34 @@ class Cursor:
         # (setter form) and writes the cursor's result state so
         # ``cur.fetchone()`` returns the new (or current) value as a
         # single-row result, matching stdlib's PRAGMA shape.
-        from dqlitedbapi._pragma_intercept import try_intercept_busy_timeout
+        from dqlitedbapi._pragma_intercept import (
+            try_intercept_busy_timeout,
+            try_rewrite_begin_to_immediate,
+        )
 
         if try_intercept_busy_timeout(self, operation, parameters):
             return self
+
+        # Rewrite bare ``BEGIN`` / ``BEGIN DEFERRED`` / ``BEGIN
+        # TRANSACTION`` to ``BEGIN IMMEDIATE`` when the connection's
+        # ``begin_immediate`` toggle is on (the default). This
+        # eliminates the ``SQLITE_BUSY_SNAPSHOT (517)`` race for
+        # SELECT-then-INSERT transactions: the writer-lock is
+        # acquired at BEGIN time so the read snapshot cannot be
+        # overtaken by a concurrent committer. Concurrent
+        # ``BEGIN IMMEDIATE`` calls contend at the writer-lock and
+        # surface as ordinary ``SQLITE_BUSY (5)`` — absorbed
+        # transparently by the busy_timeout retry curve below.
+        # Explicit ``BEGIN IMMEDIATE`` / ``BEGIN EXCLUSIVE`` pass
+        # through unchanged. Off-switch:
+        # ``connect(..., begin_immediate=False)`` or
+        # ``DQLITE_BEGIN_IMMEDIATE=0``.
+        rewritten = try_rewrite_begin_to_immediate(
+            operation,
+            enabled=getattr(self._connection, "_begin_immediate", True),
+        )
+        if rewritten is not None:
+            operation = rewritten
 
         # ``retry_sync_on_busy`` wraps the wire round-trip with the
         # SQLite-curve BUSY retry (stdlib parity for the C-level

@@ -1,12 +1,25 @@
-"""``PRAGMA busy_timeout`` interception at the dbapi cursor layer.
+"""Pre-wire SQL interception at the dbapi cursor layer.
 
-dqlite's C VFS authorizer rejects ``PRAGMA busy_timeout`` (see prior
-issue ``done/dbapi-pragma-deny-list-no-regression-pin.md``), so the
-canonical SQLite escape hatch — ``PRAGMA busy_timeout = N`` — would
-otherwise raise ``DatabaseError("not authorized")`` on the dqlite
-server. To preserve stdlib parity (and to give callers a single
-canonical knob), this module intercepts the PRAGMA at the dbapi
-cursor layer BEFORE the wire round-trip:
+This module hosts two interceptions that rewrite or short-circuit
+caller SQL before it reaches the dqlite wire:
+
+1. ``PRAGMA busy_timeout`` — see ``try_intercept_busy_timeout`` below
+   for the rationale (authorizer rejection of the canonical SQLite
+   knob).
+
+2. Bare ``BEGIN`` (and ``BEGIN DEFERRED`` / ``BEGIN TRANSACTION``) —
+   rewritten to ``BEGIN IMMEDIATE`` so a SELECT-then-INSERT
+   transaction acquires the writer-lock at BEGIN time and cannot be
+   overtaken by a concurrent committer (the ``SQLITE_BUSY_SNAPSHOT``
+   race). dqlite-server's own VFS recommends ``BEGIN IMMEDIATE``
+   for write-bearing transactions (see ``dqlite-upstream/src/vfs.c``
+   around the WAL-open path). Pass-through for ``BEGIN IMMEDIATE``
+   and ``BEGIN EXCLUSIVE`` (caller intent already correct).
+
+   Off-switch: ``connect(..., begin_immediate=False)`` per-connection,
+   or ``DQLITE_BEGIN_IMMEDIATE=0`` env var at import time.
+
+The PRAGMA interception writes cursor result state directly:
 
   - Setter (``PRAGMA busy_timeout = N`` or ``PRAGMA busy_timeout(N)``)
     updates ``connection._busy_timeout`` in seconds (N is ms per
@@ -31,10 +44,17 @@ The interception writes the cursor's result state directly:
 
 Then returns True so the caller short-circuits before the wire
 round-trip.
+
+The BEGIN rewrite, by contrast, returns the rewritten SQL string
+(or ``None`` to leave the caller's SQL unchanged) — there is no
+cursor state to populate; the caller substitutes the SQL and lets
+the rewritten ``BEGIN IMMEDIATE`` flow through the regular wire
+round-trip.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from typing import TYPE_CHECKING
 
@@ -104,3 +124,75 @@ def try_intercept_busy_timeout(
     cursor._row_index = 0
     # Match stdlib: PRAGMA does not set lastrowid.
     return True
+
+
+# Match the BEGIN forms that should be upgraded to BEGIN IMMEDIATE:
+#
+#   BEGIN
+#   BEGIN;
+#   BEGIN TRANSACTION
+#   BEGIN TRANSACTION;
+#
+# Explicit ``BEGIN DEFERRED`` / ``BEGIN IMMEDIATE`` / ``BEGIN
+# EXCLUSIVE`` MUST NOT match — the caller (or the SA dialect's
+# per-session ``dqlite_begin_mode`` opt-out) has stated explicit
+# intent. The bare ``BEGIN`` form is what SA emits by default
+# and what most callers reach for; it is the only ambiguous
+# shape that benefits from the writer-safe upgrade.
+_BEGIN_REWRITE_RE = re.compile(
+    r"^\s*BEGIN(?:\s+TRANSACTION)?\s*;?\s*$",
+    re.IGNORECASE,
+)
+
+# Env-var default for the rewrite. Read at module-import time;
+# explicit ``connect(..., begin_immediate=...)`` always wins. Treats
+# any of ``"0"`` / ``"false"`` / ``"off"`` / ``"no"``
+# (case-insensitive) as "disabled". Anything else (including missing)
+# leaves the rewrite ENABLED — the fix is on by default.
+_BEGIN_IMMEDIATE_ENV_DISABLED: bool = os.environ.get(
+    "DQLITE_BEGIN_IMMEDIATE", ""
+).strip().lower() in ("0", "false", "off", "no")
+
+
+def begin_immediate_default_from_env() -> bool:
+    """Return the env-var-derived default for the BEGIN rewrite.
+
+    Used by ``Connection.__init__`` when the caller does not pass an
+    explicit ``begin_immediate`` kwarg. Re-read at each call so test
+    fixtures that ``monkeypatch.setenv`` see the live value (the
+    module-level cache is only used as the fallback when the env var
+    was set at import time).
+    """
+    raw = os.environ.get("DQLITE_BEGIN_IMMEDIATE")
+    if raw is None:
+        # Honour whatever the import-time read decided.
+        return not _BEGIN_IMMEDIATE_ENV_DISABLED
+    return raw.strip().lower() not in ("0", "false", "off", "no")
+
+
+def try_rewrite_begin_to_immediate(
+    statement: str,
+    *,
+    enabled: bool,
+) -> str | None:
+    """Return ``"BEGIN IMMEDIATE"`` if ``statement`` is a plain BEGIN
+    form (and the rewrite is ``enabled``), else ``None`` (caller
+    leaves the SQL unchanged).
+
+    A ``None`` return means: either the rewrite is disabled, or the
+    SQL is not a recognised plain-BEGIN form (e.g. explicit
+    ``BEGIN IMMEDIATE`` / ``BEGIN EXCLUSIVE`` / non-BEGIN statement).
+    The caller passes the original SQL through unchanged in that
+    case.
+
+    The trailing ``;`` is consumed in the match but the rewrite emits
+    the bare ``BEGIN IMMEDIATE`` keyword (no trailing ``;``). dqlite
+    accepts either; the bare form is canonical.
+    """
+    if not enabled:
+        return None
+    if not isinstance(statement, str):
+        return None
+    if _BEGIN_REWRITE_RE.match(statement) is None:
+        return None
+    return "BEGIN IMMEDIATE"

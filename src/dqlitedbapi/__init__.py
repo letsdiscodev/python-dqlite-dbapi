@@ -255,6 +255,7 @@ def connect(
     dial_func: DialFunc | None = None,
     busy_timeout: float = 5.0,
     check_same_thread: bool = True,
+    begin_immediate: bool | None = None,
     **unknown_kwargs: object,
 ) -> Connection:
     """Connect to a dqlite database.
@@ -413,6 +414,7 @@ def connect(
         dial_func=dial_func,
         busy_timeout=busy_timeout,
         check_same_thread=check_same_thread,
+        begin_immediate=begin_immediate,
     )
     # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
     # via the setters on the freshly-constructed connection. Stdlib
