@@ -581,13 +581,15 @@ class AsyncCursor:
             if try_intercept_busy_timeout(self, operation, parameters):  # type: ignore[arg-type]
                 return self
 
-            # Rewrite plain BEGIN to BEGIN IMMEDIATE to eliminate the
+            # Rewrite plain BEGIN to BEGIN IMMEDIATE when session_mode
+            # is "immediate" (the default) to eliminate the
             # SQLITE_BUSY_SNAPSHOT race; mirrors the sync sibling.
-            # Off-switch: ``begin_immediate=False`` or
-            # ``DQLITE_BEGIN_IMMEDIATE=0``.
+            # Other modes leave bare BEGIN untouched. Configure via
+            # ``connect(..., session_mode="...")`` or
+            # ``DQLITE_SESSION_MODE`` env var.
             rewritten = try_rewrite_begin_to_immediate(
                 operation,
-                enabled=getattr(self._connection, "_begin_immediate", True),
+                session_mode=getattr(self._connection, "_dqlite_session_mode", "immediate"),
             )
             if rewritten is not None:
                 operation = rewritten

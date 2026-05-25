@@ -7,17 +7,27 @@ caller SQL before it reaches the dqlite wire:
    for the rationale (authorizer rejection of the canonical SQLite
    knob).
 
-2. Bare ``BEGIN`` (and ``BEGIN DEFERRED`` / ``BEGIN TRANSACTION``) —
-   rewritten to ``BEGIN IMMEDIATE`` so a SELECT-then-INSERT
-   transaction acquires the writer-lock at BEGIN time and cannot be
-   overtaken by a concurrent committer (the ``SQLITE_BUSY_SNAPSHOT``
-   race). dqlite-server's own VFS recommends ``BEGIN IMMEDIATE``
-   for write-bearing transactions (see ``dqlite-upstream/src/vfs.c``
-   around the WAL-open path). Pass-through for ``BEGIN IMMEDIATE``
-   and ``BEGIN EXCLUSIVE`` (caller intent already correct).
+2. Bare ``BEGIN`` (and ``BEGIN TRANSACTION``) — rewritten to
+   ``BEGIN IMMEDIATE`` when the connection's ``session_mode`` is
+   ``"immediate"`` (the default). The writer-lock is acquired at
+   BEGIN time so the SELECT-then-INSERT pattern cannot be overtaken
+   by a concurrent committer (the ``SQLITE_BUSY_SNAPSHOT`` race).
+   dqlite-server's own VFS recommends ``BEGIN IMMEDIATE`` for
+   write-bearing transactions. Pass-through for ``BEGIN DEFERRED``
+   / ``BEGIN IMMEDIATE`` / ``BEGIN EXCLUSIVE`` (caller intent
+   already correct).
 
-   Off-switch: ``connect(..., begin_immediate=False)`` per-connection,
-   or ``DQLITE_BEGIN_IMMEDIATE=0`` env var at import time.
+   Other session modes (``"deferred"`` / ``"exclusive"`` /
+   ``"read_only"``) leave bare ``BEGIN`` untouched — the SQLite
+   engine treats it as DEFERRED, which is the right semantic for
+   read-only sessions and for callers who explicitly want the
+   legacy DEFERRED behaviour. The ``"exclusive"`` mode is reached
+   via the SA dialect's ``do_begin`` emitting the explicit
+   ``BEGIN EXCLUSIVE`` literal, which doesn't match the rewrite
+   regex anyway.
+
+   Configuration: ``Connection(session_mode="…")`` kwarg, URL
+   ``?session_mode=…``, or ``DQLITE_SESSION_MODE`` env var.
 
 The PRAGMA interception writes cursor result state directly:
 
@@ -56,7 +66,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from dqlitedbapi.cursor import Cursor
@@ -135,7 +145,7 @@ def try_intercept_busy_timeout(
 #
 # Explicit ``BEGIN DEFERRED`` / ``BEGIN IMMEDIATE`` / ``BEGIN
 # EXCLUSIVE`` MUST NOT match — the caller (or the SA dialect's
-# per-session ``dqlite_begin_mode`` opt-out) has stated explicit
+# per-session ``dqlite_session_mode`` opt-out) has stated explicit
 # intent. The bare ``BEGIN`` form is what SA emits by default
 # and what most callers reach for; it is the only ambiguous
 # shape that benefits from the writer-safe upgrade.
@@ -144,52 +154,108 @@ _BEGIN_REWRITE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Env-var default for the rewrite. Read at module-import time;
-# explicit ``connect(..., begin_immediate=...)`` always wins. Treats
-# any of ``"0"`` / ``"false"`` / ``"off"`` / ``"no"``
-# (case-insensitive) as "disabled". Anything else (including missing)
-# leaves the rewrite ENABLED — the fix is on by default.
-_BEGIN_IMMEDIATE_ENV_DISABLED: bool = os.environ.get(
-    "DQLITE_BEGIN_IMMEDIATE", ""
-).strip().lower() in ("0", "false", "off", "no")
+# Recognised session-mode values. The dbapi layer accepts these as
+# the ``session_mode`` kwarg / URL form / env-var value, the SA
+# dialect accepts the same set as ``dqlite_session_mode``
+# execution-option values, and the cursor's BEGIN-rewrite intercept
+# reads ``conn._dqlite_session_mode`` against this set.
+#
+# - ``"immediate"`` (default): bare ``BEGIN`` is rewritten to
+#   ``BEGIN IMMEDIATE`` — writer-safe, no SQLITE_BUSY_SNAPSHOT race.
+# - ``"deferred"``: legacy SQLite DEFERRED — bare ``BEGIN`` passes
+#   through unchanged. Read-only sessions that want to avoid the
+#   writer-lock serialisation tax can opt in.
+# - ``"exclusive"``: dialect emits the explicit ``BEGIN EXCLUSIVE``
+#   literal for stronger lock semantics.
+# - ``"read_only"``: bare ``BEGIN`` passes through (DEFERRED form)
+#   AND ``PRAGMA query_only = 1`` is set on the connection so the
+#   engine rejects every write at PREPARE with SQLITE_READONLY.
+_SESSION_MODE_VALUES: Final[frozenset[str]] = frozenset(
+    {"immediate", "deferred", "exclusive", "read_only"}
+)
+
+# Env-var default for the session mode. Read at module-import time;
+# explicit ``connect(..., session_mode=...)`` always wins. Missing or
+# empty → ``"immediate"`` (the writer-safe default). Any value
+# outside ``_SESSION_MODE_VALUES`` raises at validation; here we just
+# normalise and return the raw string.
+_DQLITE_SESSION_MODE_ENV: Final[str] = os.environ.get("DQLITE_SESSION_MODE", "").strip().lower()
 
 
-def begin_immediate_default_from_env() -> bool:
-    """Return the env-var-derived default for the BEGIN rewrite.
+def session_mode_default_from_env() -> str:
+    """Return the env-var-derived default for the connection's
+    session mode.
 
     Used by ``Connection.__init__`` when the caller does not pass an
-    explicit ``begin_immediate`` kwarg. Re-read at each call so test
+    explicit ``session_mode`` kwarg. Re-read at each call so test
     fixtures that ``monkeypatch.setenv`` see the live value (the
     module-level cache is only used as the fallback when the env var
     was set at import time).
+
+    Missing / empty env var → ``"immediate"`` (writer-safe default).
+    Invalid value raises ``ValueError`` so misconfiguration surfaces
+    at construct time, not at first ``do_begin``.
     """
-    raw = os.environ.get("DQLITE_BEGIN_IMMEDIATE")
-    if raw is None:
-        # Honour whatever the import-time read decided.
-        return not _BEGIN_IMMEDIATE_ENV_DISABLED
-    return raw.strip().lower() not in ("0", "false", "off", "no")
+    raw = os.environ.get("DQLITE_SESSION_MODE")
+    value = (raw if raw is not None else _DQLITE_SESSION_MODE_ENV).strip().lower()
+    if not value:
+        return "immediate"
+    if value not in _SESSION_MODE_VALUES:
+        raise ValueError(
+            f"DQLITE_SESSION_MODE={raw!r} is not one of {sorted(_SESSION_MODE_VALUES)}"
+        )
+    return value
+
+
+def validate_session_mode(value: object) -> str:
+    """Coerce + validate a ``session_mode`` value.
+
+    Returns the canonical lowercase form. Raises ``ValueError`` for
+    anything outside ``_SESSION_MODE_VALUES`` so misconfiguration
+    surfaces at the boundary (constructor or
+    ``execution_options(...)`` call), not at the first ``do_begin``.
+
+    Accepts ``None`` as "use the env-var default" (caller is
+    responsible for substituting via ``session_mode_default_from_env``
+    when they want that semantics).
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"session_mode must be a str, got {type(value).__name__}")
+    normalised = value.lower()
+    if normalised not in _SESSION_MODE_VALUES:
+        raise ValueError(
+            f"Invalid session_mode {value!r}; valid values are {sorted(_SESSION_MODE_VALUES)}"
+        )
+    return normalised
 
 
 def try_rewrite_begin_to_immediate(
     statement: str,
     *,
-    enabled: bool,
+    session_mode: str,
 ) -> str | None:
     """Return ``"BEGIN IMMEDIATE"`` if ``statement`` is a plain BEGIN
-    form (and the rewrite is ``enabled``), else ``None`` (caller
-    leaves the SQL unchanged).
+    form AND the connection's session mode is ``"immediate"``, else
+    ``None`` (caller leaves the SQL unchanged).
 
-    A ``None`` return means: either the rewrite is disabled, or the
-    SQL is not a recognised plain-BEGIN form (e.g. explicit
-    ``BEGIN IMMEDIATE`` / ``BEGIN EXCLUSIVE`` / non-BEGIN statement).
-    The caller passes the original SQL through unchanged in that
-    case.
+    The rewrite fires only when ``session_mode == "immediate"`` — the
+    writer-safe default. Other modes (``"deferred"``, ``"exclusive"``,
+    ``"read_only"``) leave bare ``BEGIN`` untouched:
 
-    The trailing ``;`` is consumed in the match but the rewrite emits
-    the bare ``BEGIN IMMEDIATE`` keyword (no trailing ``;``). dqlite
-    accepts either; the bare form is canonical.
+    - ``"deferred"`` / ``"read_only"``: the SQLite engine interprets
+      bare ``BEGIN`` as DEFERRED, which is what these modes want.
+      Rewriting to IMMEDIATE would take a useless writer-lock.
+    - ``"exclusive"``: the SA dialect's ``do_begin`` emits the
+      explicit ``BEGIN EXCLUSIVE`` literal, which doesn't match the
+      bare-BEGIN regex anyway. The exclusive case never reaches this
+      function with a bare BEGIN under normal SA usage.
+
+    A ``None`` return also covers the case where ``statement`` is not
+    a recognised plain-BEGIN form (e.g. explicit ``BEGIN IMMEDIATE``
+    / ``BEGIN DEFERRED`` / ``BEGIN EXCLUSIVE`` / non-BEGIN statement).
+    Caller passes the original SQL through unchanged.
     """
-    if not enabled:
+    if session_mode != "immediate":
         return None
     if not isinstance(statement, str):
         return None

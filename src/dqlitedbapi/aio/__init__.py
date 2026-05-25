@@ -240,7 +240,7 @@ def connect(
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
     busy_timeout: float = 5.0,
-    begin_immediate: bool | None = None,
+    session_mode: str | None = None,
     **unknown_kwargs: object,
 ) -> AsyncConnection:
     """Create a dqlite connection (connects lazily on first use).
@@ -369,7 +369,7 @@ def connect(
         attempt_timeout=attempt_timeout,
         dial_func=dial_func,
         busy_timeout=busy_timeout,
-        begin_immediate=begin_immediate,
+        session_mode=session_mode,
     )
     # Apply the validated ``isolation_level`` / ``autocommit`` kwargs
     # via the setters on the freshly-constructed connection — sync
@@ -395,7 +395,7 @@ async def aconnect(
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
     busy_timeout: float = 5.0,
-    begin_immediate: bool | None = None,
+    session_mode: str | None = None,
     **unknown_kwargs: object,
 ) -> AsyncConnection:
     """Connect to a dqlite database asynchronously.
@@ -516,7 +516,7 @@ async def aconnect(
         attempt_timeout=attempt_timeout,
         dial_func=dial_func,
         busy_timeout=busy_timeout,
-        begin_immediate=begin_immediate,
+        session_mode=session_mode,
     )
     try:
         await conn.connect()

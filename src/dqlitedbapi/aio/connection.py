@@ -265,7 +265,7 @@ class AsyncConnection:
         attempt_timeout: float | None = None,
         dial_func: DialFunc | None = None,
         busy_timeout: float = 5.0,
-        begin_immediate: bool | None = None,
+        session_mode: str | None = None,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -371,14 +371,25 @@ class AsyncConnection:
         # Stdlib parity (see sync sibling) — float seconds, default
         # 5.0. Shared with PRAGMA setter; either tunes the other.
         self._busy_timeout: float = float(busy_timeout)
-        # ``begin_immediate``: see sync sibling Connection.__init__
-        # for the full rationale. ``None`` consults the env var
-        # ``DQLITE_BEGIN_IMMEDIATE`` at construction time.
-        from dqlitedbapi._pragma_intercept import begin_immediate_default_from_env
-
-        self._begin_immediate: bool = (
-            begin_immediate_default_from_env() if begin_immediate is None else bool(begin_immediate)
+        # ``session_mode``: see sync sibling Connection.__init__ for
+        # the full rationale. ``None`` consults the env var
+        # ``DQLITE_SESSION_MODE`` at construction time. Two attributes
+        # are stored: ``_dqlite_session_mode`` is the live value that
+        # the cursor BEGIN-rewrite and SA characteristic mutate;
+        # ``_dqlite_session_mode_default`` is the construct-time
+        # default that the SA characteristic's
+        # ``reset_characteristic`` restores on pool checkin.
+        from dqlitedbapi._pragma_intercept import (
+            session_mode_default_from_env,
+            validate_session_mode,
         )
+
+        if session_mode is None:
+            _resolved_session_mode = session_mode_default_from_env()
+        else:
+            _resolved_session_mode = validate_session_mode(session_mode)
+        self._dqlite_session_mode: str = _resolved_session_mode
+        self._dqlite_session_mode_default: str = _resolved_session_mode
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # Tracks the asyncio.Task that currently owns the
@@ -639,6 +650,7 @@ class AsyncConnection:
                 dial_timeout=getattr(self, "_dial_timeout", None),
                 attempt_timeout=getattr(self, "_attempt_timeout", None),
                 dial_func=getattr(self, "_dial_func", None),
+                session_mode=getattr(self, "_dqlite_session_mode", "immediate"),
             )
             # A concurrent close() may have flipped _closed while we were
             # suspended in _build_and_connect. close() observes

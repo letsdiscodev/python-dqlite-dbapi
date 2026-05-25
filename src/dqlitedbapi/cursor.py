@@ -1715,23 +1715,25 @@ class Cursor:
         if try_intercept_busy_timeout(self, operation, parameters):
             return self
 
-        # Rewrite bare ``BEGIN`` / ``BEGIN DEFERRED`` / ``BEGIN
-        # TRANSACTION`` to ``BEGIN IMMEDIATE`` when the connection's
-        # ``begin_immediate`` toggle is on (the default). This
-        # eliminates the ``SQLITE_BUSY_SNAPSHOT (517)`` race for
-        # SELECT-then-INSERT transactions: the writer-lock is
-        # acquired at BEGIN time so the read snapshot cannot be
-        # overtaken by a concurrent committer. Concurrent
-        # ``BEGIN IMMEDIATE`` calls contend at the writer-lock and
-        # surface as ordinary ``SQLITE_BUSY (5)`` — absorbed
-        # transparently by the busy_timeout retry curve below.
-        # Explicit ``BEGIN IMMEDIATE`` / ``BEGIN EXCLUSIVE`` pass
-        # through unchanged. Off-switch:
-        # ``connect(..., begin_immediate=False)`` or
-        # ``DQLITE_BEGIN_IMMEDIATE=0``.
+        # Rewrite bare ``BEGIN`` / ``BEGIN TRANSACTION`` to
+        # ``BEGIN IMMEDIATE`` when the connection's session_mode is
+        # ``"immediate"`` (the default). This eliminates the
+        # ``SQLITE_BUSY_SNAPSHOT (517)`` race for SELECT-then-INSERT
+        # transactions: the writer-lock is acquired at BEGIN time so
+        # the read snapshot cannot be overtaken by a concurrent
+        # committer. Concurrent ``BEGIN IMMEDIATE`` calls contend at
+        # the writer-lock and surface as ordinary
+        # ``SQLITE_BUSY (5)`` — absorbed transparently by the
+        # busy_timeout retry curve below. Other session_mode values
+        # (``"deferred"``, ``"exclusive"``, ``"read_only"``) leave
+        # bare ``BEGIN`` untouched. Explicit ``BEGIN IMMEDIATE`` /
+        # ``BEGIN DEFERRED`` / ``BEGIN EXCLUSIVE`` always pass
+        # through. Configure via
+        # ``connect(..., session_mode="...")`` or
+        # ``DQLITE_SESSION_MODE`` env var.
         rewritten = try_rewrite_begin_to_immediate(
             operation,
-            enabled=getattr(self._connection, "_begin_immediate", True),
+            session_mode=getattr(self._connection, "_dqlite_session_mode", "immediate"),
         )
         if rewritten is not None:
             operation = rewritten

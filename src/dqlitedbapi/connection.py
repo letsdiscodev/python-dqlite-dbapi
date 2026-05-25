@@ -599,6 +599,7 @@ async def _build_and_connect(
     attempt_timeout: float | None = None,
     dial_func: DialFunc | None = None,
     max_message_size: int | None = None,
+    session_mode: str = "immediate",
 ) -> DqliteConnection:
     """Build a DqliteConnection with the given governors and connect it.
 
@@ -894,6 +895,33 @@ async def _build_and_connect(
             code=None,
             raw_message=str(remainder),
         ) from remainder
+    # Read-only session: emit ``PRAGMA query_only = 1`` on the live
+    # connection before publishing it to the caller. Run on the inner
+    # ``DqliteConnection`` directly so the wire round-trip bypasses
+    # the dbapi ``Cursor`` layer (and its ``op_lock``); no nested
+    # lock concern. Reconnect / invalidation paths re-enter
+    # ``_build_and_connect`` for a fresh inner conn, so the PRAGMA is
+    # naturally re-emitted on every rebuild — no separate "re-apply
+    # on reconnect" hook is needed.
+    #
+    # Defence-in-depth: if a cancel lands between ``conn.connect()``
+    # success and the PRAGMA ack, close the orphan socket so it
+    # doesn't leak. The PRAGMA itself can't raise an authorizer
+    # rejection — ``query_only`` is NOT in dqlite-server's
+    # PRAGMA deny-list (verified at
+    # ``dqlite-upstream/src/vfs.c:2479-2499``).
+    if session_mode == "read_only":
+        try:
+            await conn.execute("PRAGMA query_only = 1")
+        except BaseException:
+            # Shield the close so a second cancel arriving mid-close
+            # does not abandon the inner socket half-closed. The
+            # surrounding cancel-handling discipline elsewhere in
+            # this module (see e.g. ``aio/connection.py`` ensure-
+            # connection close-path) uses the same idiom.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(conn.close())
+            raise
     return conn
 
 
@@ -1449,7 +1477,7 @@ class Connection:
         dial_func: DialFunc | None = None,
         busy_timeout: float = 5.0,
         check_same_thread: bool = True,
-        begin_immediate: bool | None = None,
+        session_mode: str | None = None,
     ) -> None:
         """Initialize connection (does not connect yet).
 
@@ -1637,27 +1665,51 @@ class Connection:
         # threads. See ``_check_thread`` for the gate site and the
         # class docstring for the cursor contract under the relaxation.
         self._check_same_thread: bool = check_same_thread
-        # ``begin_immediate``: when True (default), the cursor layer
-        # rewrites bare ``BEGIN`` / ``BEGIN DEFERRED`` / ``BEGIN
-        # TRANSACTION`` to ``BEGIN IMMEDIATE`` before the wire round-
-        # trip. This eliminates the ``SQLITE_BUSY_SNAPSHOT (517)``
-        # race for the SELECT-then-INSERT pattern that SA's session
-        # flush produces under concurrent writers — dqlite-server's
-        # VFS recommends ``BEGIN IMMEDIATE`` as the idiomatic form.
-        # Concurrent ``BEGIN IMMEDIATE`` calls contend at the writer
-        # lock and surface as ordinary ``SQLITE_BUSY (5)``, which the
-        # busy_timeout retry curve absorbs transparently.
+        # ``session_mode``: one of ``"immediate"`` (default) /
+        # ``"deferred"`` / ``"exclusive"`` / ``"read_only"``.
         #
-        # ``None`` (default) consults the env var
-        # ``DQLITE_BEGIN_IMMEDIATE`` (treats ``"0"`` / ``"false"`` /
-        # ``"off"`` / ``"no"`` as disabled, all other values incl.
-        # missing as enabled). Explicit ``True`` / ``False`` from the
-        # kwarg overrides the env var.
-        from dqlitedbapi._pragma_intercept import begin_immediate_default_from_env
-
-        self._begin_immediate: bool = (
-            begin_immediate_default_from_env() if begin_immediate is None else bool(begin_immediate)
+        # - ``"immediate"``: bare ``BEGIN`` is rewritten to
+        #   ``BEGIN IMMEDIATE`` at the cursor layer, eliminating the
+        #   ``SQLITE_BUSY_SNAPSHOT (517)`` race for the
+        #   SELECT-then-INSERT pattern under concurrent writers.
+        #   dqlite-server's VFS recommends this as the idiomatic
+        #   form. Concurrent ``BEGIN IMMEDIATE``s contend at the
+        #   writer-lock and surface as ordinary ``SQLITE_BUSY (5)``,
+        #   which the busy_timeout retry curve absorbs transparently.
+        # - ``"deferred"``: legacy SQLite DEFERRED — bare ``BEGIN``
+        #   passes through unchanged. Suited to read-only sessions
+        #   that want to avoid the writer-lock serialisation tax.
+        # - ``"exclusive"``: the SA dialect's ``do_begin`` emits
+        #   ``BEGIN EXCLUSIVE`` literally for stronger lock semantics.
+        # - ``"read_only"``: bare ``BEGIN`` passes through (DEFERRED
+        #   form) AND ``PRAGMA query_only = 1`` is set on the
+        #   connection at first-connect time so the engine refuses
+        #   every write at PREPARE with ``SQLITE_READONLY``.
+        #
+        # ``None`` (default) consults ``DQLITE_SESSION_MODE`` env var;
+        # missing / empty → ``"immediate"``. Invalid values raise
+        # ``ValueError`` at construct time, not at first ``do_begin``.
+        #
+        # Two attributes live on the connection:
+        #   - ``_dqlite_session_mode``: the LIVE mode used by
+        #     ``do_begin`` and the cursor rewrite. May be mutated by
+        #     the SA ``DqliteSessionModeCharacteristic`` for
+        #     per-checkout overrides.
+        #   - ``_dqlite_session_mode_default``: the construct-time
+        #     intrinsic default. NEVER reassigned after ``__init__``;
+        #     used by the SA characteristic's ``reset_characteristic``
+        #     to restore the slot on pool checkin.
+        from dqlitedbapi._pragma_intercept import (
+            session_mode_default_from_env,
+            validate_session_mode,
         )
+
+        if session_mode is None:
+            resolved_session_mode = session_mode_default_from_env()
+        else:
+            resolved_session_mode = validate_session_mode(session_mode)
+        self._dqlite_session_mode: str = resolved_session_mode
+        self._dqlite_session_mode_default: str = resolved_session_mode
         self._async_conn: DqliteConnection | None = None
         self._closed = False
         # stdlib ``sqlite3.Connection.row_factory`` parity. None means
@@ -2370,6 +2422,7 @@ class Connection:
                 dial_timeout=getattr(self, "_dial_timeout", None),
                 attempt_timeout=getattr(self, "_attempt_timeout", None),
                 dial_func=getattr(self, "_dial_func", None),
+                session_mode=getattr(self, "_dqlite_session_mode", "immediate"),
             )
             # Late-publish the inner handle into the
             # ``_cleanup_loop_thread`` finalize's captured args. The
