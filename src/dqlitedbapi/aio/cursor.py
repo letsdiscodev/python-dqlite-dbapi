@@ -376,7 +376,23 @@ class AsyncCursor:
             # CancelledError). Mirrors the same discipline already
             # applied in ``_ExecuteManyAccumulator.apply``'s post-
             # await re-check arm.
+            #
+            # Also scrub the introspection-surface fields to the "no
+            # result set" baseline. ``description`` / ``rowcount`` /
+            # ``row_index`` are NOT gated by ``_check_closed`` (they
+            # follow stdlib's "readable on closed cursor" precedent),
+            # so a bare ``return`` here would leave the PRIOR query's
+            # values visible — falsely advertising stale state as the
+            # outcome of THIS execute. ``close()``'s cascade scrub
+            # already cleared these fields, but a tier-2 close path
+            # (e.g. inside a foreign thread / signal handler) may have
+            # set ``_closed = True`` without running the cascade scrub
+            # all the way through, so re-scrub defensively.
             if self._closed:
+                self._description = None
+                self._rows = []
+                self._row_index = 0
+                self._rowcount = -1
                 return
             if not columns:
                 # PRAGMA write-form dispatches through the row-
@@ -445,7 +461,18 @@ class AsyncCursor:
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))
             # Same post-await close-race guard as the query branch.
+            # Scrub the introspection-surface fields so post-await
+            # ``description`` / ``rowcount`` / ``row_index`` reads do
+            # not falsely advertise the PRIOR query's values as the
+            # outcome of THIS DML. ``_lastrowid`` is intentionally
+            # PRESERVED: stdlib ``sqlite3.Cursor.lastrowid`` persists
+            # across a close-during-DML boundary and the project
+            # honours that for the keep-on-close semantic.
             if self._closed:
+                self._description = None
+                self._rows = []
+                self._row_index = 0
+                self._rowcount = -1
                 return
             # stdlib-parity: lastrowid only updates on INSERT / REPLACE.
             # See ``_is_insert_or_replace`` in the sync cursor for
