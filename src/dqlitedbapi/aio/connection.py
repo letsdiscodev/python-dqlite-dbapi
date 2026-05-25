@@ -1191,6 +1191,24 @@ class AsyncConnection:
                 running = asyncio.get_running_loop()
             cursors_snapshot = list(cursors)
             cursors.clear()
+            # Pre-set ``_closed = True`` synchronously on every cursor
+            # so a sibling task on the bound loop that races a
+            # ``fetchone()`` between our sync ``self._closed = True``
+            # flip above and the deferred ``call_soon_threadsafe``
+            # cascade observes the closed cursor immediately. The
+            # single attribute write is GIL-atomic; ``_check_closed``
+            # reads only ``_closed`` so there's no SEQUENCE concern
+            # here (unlike the introspection-surface fields scrubbed
+            # below which are sequence-sensitive and stay deferred).
+            # Without this pre-set, ``conn._closed`` was visible on
+            # the sibling thread while ``cur._closed`` was still
+            # False, and a sibling's ``await cur.fetchone()`` returned
+            # rows from a dead transport. ``_cascade_cursors_closed``
+            # re-writes ``_closed = True`` (idempotent) so the
+            # eventual deferred run is unaffected.
+            for cur in cursors_snapshot:
+                with contextlib.suppress(AttributeError):
+                    cur._closed = True
             if bound_loop is None or bound_loop.is_closed() or running is bound_loop:
                 _cascade_cursors_closed(cursors_snapshot)
             else:
