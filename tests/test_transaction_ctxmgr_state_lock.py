@@ -194,14 +194,22 @@ def test_state_lock_release_between_transaction_and_cursor() -> None:
     func = tree.body[0]
     assert isinstance(func, ast.FunctionDef)
 
-    # Find the With node whose context is _state_lock.
+    # Find the FIRST With node whose context is _state_lock — the
+    # owner-check/owner-reserve block at the head of the ctxmgr.
+    # Subsequent ``with _state_lock:`` blocks around COMMIT/ROLLBACK
+    # park the _OWNER_INTERNAL_BUSY sentinel and are intentionally
+    # outside the BEGIN flow, so they should NOT be picked here.
     state_lock_with_line: int | None = None
     begin_call_line: int | None = None
     for node in ast.walk(func):
         if isinstance(node, ast.With):
             for item in node.items:
                 ctx = item.context_expr
-                if isinstance(ctx, ast.Name) and ctx.id == "_state_lock":
+                if (
+                    isinstance(ctx, ast.Name)
+                    and ctx.id == "_state_lock"
+                    and (state_lock_with_line is None or node.lineno < state_lock_with_line)
+                ):
                     state_lock_with_line = node.lineno
         if isinstance(node, ast.Call):
             # Match cursor.execute("BEGIN", ...) calls (the actual

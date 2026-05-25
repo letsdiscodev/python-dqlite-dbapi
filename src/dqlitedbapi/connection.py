@@ -1260,6 +1260,23 @@ def _cleanup_loop_thread(
                 )
 
 
+_OWNER_INTERNAL_BUSY: object = object()
+"""Sentinel placed in ``Connection._transaction_owner`` during the
+COMMIT/ROLLBACK wire RTT inside the ``transaction()`` ctxmgr. The
+slot must stay non-None across the round-trip so a sibling thread
+under ``check_same_thread=False`` cannot reserve via the
+``_transaction_owner is not None`` gate in the wire-RTT window
+and silently overlap with the outer transaction.
+
+The slot's int contract (thread-id) is preserved for reads in
+``commit()`` / ``rollback()`` (the ``_tx_owner == current_ident``
+check naturally returns False against the sentinel object so the
+"stray commit reject" arm is bypassed — which is what we want
+when the inner COMMIT/ROLLBACK is being driven by the ctxmgr
+itself).
+"""
+
+
 class Connection:
     """PEP 249 compliant database connection.
 
@@ -3502,22 +3519,27 @@ class Connection:
                 yield
             except BaseException:
                 # Best-effort rollback: emit ROLLBACK while temporarily
-                # clearing the owner slot so the cursor's commit/
-                # rollback affordance through this same connection
-                # would not trip the owner-token guard. Reset it in
-                # the outer finally regardless. The ROLLBACK itself
-                # may fail (leader flip, transport, etc.) — suppress
-                # that exception so the caller's original exception is
-                # what propagates (chaining via ``__context__`` is
-                # automatic). If ROLLBACK failed, force-close the
-                # transport so the slot does not return to the SA
-                # pool with an open server-side transaction; SA's
-                # ``is_disconnect`` walks ``__cause__`` only and would
-                # not classify the suppressed ROLLBACK failure, so
-                # the next checkout would otherwise run statements
-                # inside the orphaned transaction. Mirror of the
-                # aio ``__aexit__`` rollback-Exception arm.
-                self._transaction_owner = None
+                # parking the owner slot at a SENTINEL (not None) so
+                # the cursor's commit/rollback affordance through
+                # this same connection does not trip the owner-token
+                # guard AND a sibling thread under tier-2 cannot
+                # observe a free slot in the wire-RTT window and
+                # silently reserve it. Reset it in the outer finally
+                # regardless. The ROLLBACK itself may fail (leader
+                # flip, transport, etc.) — suppress that exception
+                # so the caller's original exception propagates
+                # (chaining via ``__context__`` is automatic). If
+                # ROLLBACK failed, force-close the transport so the
+                # slot does not return to the SA pool with an open
+                # server-side transaction; SA's ``is_disconnect``
+                # walks ``__cause__`` only and would not classify
+                # the suppressed ROLLBACK failure. Mirror of the
+                # aio ``__aexit__`` rollback-Exception arm. The
+                # sentinel keeps the nested-transaction reject arm
+                # firing for sibling threads under tier-2 while the
+                # COMMIT/ROLLBACK is in flight.
+                with _state_lock:
+                    self._transaction_owner = _OWNER_INTERNAL_BUSY  # type: ignore[assignment]
                 try:
                     try:
                         cursor.execute("ROLLBACK")
@@ -3525,18 +3547,26 @@ class Connection:
                         with contextlib.suppress(Exception):
                             self.force_close_transport()
                 finally:
-                    self._transaction_owner = token
+                    with _state_lock:
+                        self._transaction_owner = token
                 raise
             else:
-                # Clear the owner slot before COMMIT so the
-                # cursor.execute("COMMIT") path doesn't trip the
-                # owner-token guard at any layer that might check it
-                # in the future. Reset in the outer finally.
-                self._transaction_owner = None
+                # Park the owner slot at a SENTINEL (not None) before
+                # COMMIT so a sibling thread under tier-2 cannot
+                # observe a free slot in the wire-RTT window and
+                # silently reserve it. The
+                # ``cursor.execute("COMMIT")`` path itself does not
+                # trip the owner-token guard because the inner
+                # ``commit()`` checks ``_tx_owner == current_ident``
+                # which is naturally False against the sentinel.
+                # Restore in the outer finally.
+                with _state_lock:
+                    self._transaction_owner = _OWNER_INTERNAL_BUSY  # type: ignore[assignment]
                 try:
                     cursor.execute("COMMIT")
                 finally:
-                    self._transaction_owner = token
+                    with _state_lock:
+                        self._transaction_owner = token
         finally:
             # Only clear if we still own the slot — defensive against
             # a hypothetical re-entry that shouldn't be reachable

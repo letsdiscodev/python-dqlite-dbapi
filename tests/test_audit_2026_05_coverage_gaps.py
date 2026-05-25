@@ -249,6 +249,7 @@ def test_call_client_arms_cover_all_known_dqlite_error_subclasses() -> None:
     so a future addition is a deliberate, reviewed decision rather
     than a silent route-through-DatabaseError."""
     from dqliteclient.exceptions import (
+        AmbiguousCommitError,
         ClusterError,
         ClusterPolicyError,
         DqliteConnectionError,
@@ -272,6 +273,9 @@ def test_call_client_arms_cover_all_known_dqlite_error_subclasses() -> None:
     # Every concrete subclass of dqliteclient.DqliteError that is
     # NOT itself the base. _call_client has explicit arms for the
     # ones we expect to map to specific dbapi.Error subclasses.
+    # AmbiguousCommitError subclasses OperationalError, so it routes
+    # through the OperationalError arm — it is included in the
+    # ``known`` set so the forward-compat sweep doesn't flag it.
     known = {
         ClientDataError,
         ClientInterfaceError,
@@ -280,6 +284,7 @@ def test_call_client_arms_cover_all_known_dqlite_error_subclasses() -> None:
         DqliteConnectionError,
         ClusterError,
         ClusterPolicyError,
+        AmbiguousCommitError,
     }
     actual = _all_subclasses(ClientDqliteError)
     missing = actual - known - {ClientDqliteError}

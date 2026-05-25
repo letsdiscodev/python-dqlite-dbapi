@@ -88,13 +88,17 @@ def test_sync_transaction_owner_assignment_inside_try_frame_source_pin() -> None
 
 
 def test_sync_transaction_baseexception_clears_owner_before_rollback() -> None:
-    """When the body raises, the owner slot is cleared BEFORE
-    ``ROLLBACK`` runs so the cursor-layer commit/rollback guard
-    cannot trip on a pinned slot."""
+    """When the body raises, the owner slot is parked at the
+    ``_OWNER_INTERNAL_BUSY`` sentinel BEFORE ``ROLLBACK`` runs so the
+    cursor-layer commit/rollback guard cannot trip on the pinned
+    creator-thread token AND a sibling thread under tier-2 cannot
+    observe a free slot in the wire-RTT window."""
+    from dqlitedbapi.connection import _OWNER_INTERNAL_BUSY
+
     conn = _bare_connection()
     cursor = MagicMock()
 
-    observed: list[int | None] = []
+    observed: list[object] = []
 
     def execute_side_effect(sql: str) -> None:
         if sql == "ROLLBACK":
@@ -110,8 +114,9 @@ def test_sync_transaction_baseexception_clears_owner_before_rollback() -> None:
     with pytest.raises(_BodyError), conn.transaction():
         raise _BodyError("synthetic")
 
-    assert observed == [None], (
-        f"Expected owner slot to be None at ROLLBACK dispatch; observed transitions: {observed!r}"
+    assert observed == [_OWNER_INTERNAL_BUSY], (
+        "Expected owner slot to be parked at _OWNER_INTERNAL_BUSY at "
+        f"ROLLBACK dispatch; observed transitions: {observed!r}"
     )
 
 
