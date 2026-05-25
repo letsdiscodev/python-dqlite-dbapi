@@ -1,18 +1,20 @@
-"""``_DBAPIType`` objects are deliberately unhashable.
+"""``_DBAPIType`` objects are hashable by their identifier name.
 
 PEP 249 type objects (``STRING``, ``BINARY``, ``NUMBER``, ``DATETIME``,
-``ROWID``) wrap a set of accepted values that can include multiple
-wire-level ``ValueType`` codes. Any hash function that hashed to a
-single canonical int would silently violate the Python hash-eq
-invariant: ``NUMBER == FLOAT_CODE`` would be True while
-``hash(NUMBER) != hash(FLOAT_CODE)``, so ``{NUMBER: x}[FLOAT_CODE]``
-would raise ``KeyError`` despite equality holding.
+``ROWID``, ``UNKNOWN``) hash on their canonical class-level ``_name``
+so they can be used as dict keys / set members. SQLAlchemy's
+dialect-level type-memo dict keys ``cursor.description``'s
+``type_code``, which can be ``UNKNOWN`` (a ``_DBAPIType`` instance)
+when the wire layer cannot resolve a column's type, so the type
+objects MUST be hashable.
 
-The objects raise ``TypeError: unhashable type`` on any attempt to
-hash them, which is noisier and therefore safer than a silent
-dispatch miss. Callers should use linear equality (``desc[i][1] ==
-NUMBER``) against the module-level type objects, not use them as dict
-keys or ``set`` members.
+The hash-eq invariant with multi-value ``__eq__`` against ``int`` /
+``ValueType`` / ``str`` is intentionally relaxed: those comparands
+hash to different values than the type object, so cross-type
+``{NUMBER: x}[FLOAT_CODE]`` returns ``KeyError`` despite the
+equality holding. Callers should use linear equality
+(``desc[i][1] == NUMBER``) against the module-level type objects,
+not use them as conflated hash-eq keys against bare wire ints.
 """
 
 from __future__ import annotations
@@ -22,36 +24,44 @@ import pytest
 from dqlitedbapi.types import BINARY, DATETIME, NUMBER, ROWID, STRING
 
 
-class TestDbapiTypesUnhashable:
-    """PEP 249 type objects must refuse hashing."""
+class TestDbapiTypesHashable:
+    """PEP 249 type objects must hash so SA can memo by type_code."""
 
     @pytest.mark.parametrize("obj", [STRING, BINARY, NUMBER, DATETIME, ROWID])
-    def test_not_hashable(self, obj: object) -> None:
-        with pytest.raises(TypeError, match="unhashable"):
-            hash(obj)
+    def test_hashable(self, obj: object) -> None:
+        # Must not raise; the actual value is unspecified beyond
+        # being a stable int.
+        h1 = hash(obj)
+        h2 = hash(obj)
+        assert h1 == h2
 
-    def test_cannot_be_set_members(self) -> None:
-        with pytest.raises(TypeError, match="unhashable"):
-            set([NUMBER, STRING])  # noqa: C405 -- literal triggers B018
+    def test_can_be_set_members(self) -> None:
+        s = {NUMBER, STRING}
+        assert NUMBER in s
+        assert STRING in s
 
-    def test_cannot_be_dict_keys(self) -> None:
-        with pytest.raises(TypeError, match="unhashable"):
-            dict([(NUMBER, "x")])  # noqa: C406 -- literal triggers B018
+    def test_can_be_dict_keys(self) -> None:
+        d = {NUMBER: "n", STRING: "s"}
+        assert d[NUMBER] == "n"
+        assert d[STRING] == "s"
+
+    def test_distinct_singletons_hash_to_different_values(self) -> None:
+        # _name-based hashing keeps STRING / NUMBER / ROWID / etc.
+        # distinct, so they live in separate hash buckets and SA's
+        # memo dict can store entries for each without collision.
+        assert hash(STRING) != hash(NUMBER)
+        assert hash(NUMBER) != hash(ROWID)
+        assert hash(BINARY) != hash(DATETIME)
 
 
-class TestDocumentedIdiom:
-    """Pin the chained-equality idiom documented in the class
-    docstring and README. Without this pin a future refactor that
-    implements ``__hash__ = lambda self: id(self)`` (which would
-    re-enable ``in {...}`` syntactically) would silently break
-    multi-value sentinel dispatch — set membership would fall back
-    to identity, missing every legitimate ``ValueType`` int.
+class TestHashEqInvariantRelaxation:
+    """The hash-eq invariant against multi-value ``__eq__`` with
+    bare wire ints is intentionally relaxed.
+
+    PEP 249 callers should use linear equality
+    (``desc[i][1] == STRING``) against the module-level type
+    objects, NOT cross-type set membership against bare wire ints.
     """
-
-    def test_type_in_set_raises_typeerror(self) -> None:
-        # The shape that PEP 249 callers might naively try first.
-        with pytest.raises(TypeError, match="unhashable"):
-            _ = STRING in {STRING, NUMBER}
 
     def test_chained_equality_is_the_documented_idiom(self) -> None:
         from dqlitewire.constants import ValueType

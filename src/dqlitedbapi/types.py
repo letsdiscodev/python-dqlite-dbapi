@@ -359,7 +359,24 @@ class _DBAPIType:
             return other in self.values
         return NotImplemented
 
-    __hash__ = None  # type: ignore[assignment]
+    # Hash by the singleton's class-level identifier name. Each
+    # _DBAPIType instance exposed at module level (STRING, BINARY,
+    # NUMBER, DATETIME, ROWID, UNKNOWN) carries a unique ``_name``;
+    # hashing on that name makes the instances usable as dict keys
+    # and set members. SQLAlchemy's dialect-level type-memo dict
+    # keys ``cursor.description``'s ``type_code`` (which can now be
+    # ``UNKNOWN`` — itself a _DBAPIType — when the wire layer cannot
+    # resolve a column's type from row 0), so the type objects MUST
+    # be hashable. The hash-eq invariant with multi-value ``__eq__``
+    # against ``int`` / ``ValueType`` / ``str`` is intentionally
+    # relaxed: those comparands hash to different values than the
+    # type object, so cross-type set / dict membership against a
+    # bare wire-type int silently misses the type-object match. The
+    # cross-driver idiom for "is this column a string-y type" is
+    # ``type_code == STRING`` (linear comparison, never a hash
+    # lookup), and that path remains correct.
+    def __hash__(self) -> int:
+        return hash(("_DBAPIType", self._name))
 
     def __repr__(self) -> str:
         return self._name or f"_DBAPIType({sorted(self.values, key=str)!r})"

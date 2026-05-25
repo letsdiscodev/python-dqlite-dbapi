@@ -65,16 +65,17 @@ class TestRowidType:
 
 
 class TestHashability:
-    def test_types_are_unhashable(self) -> None:
-        # The PEP 249 type objects are deliberately unhashable; see
-        # ``_DBAPIType.__hash__ = None``. A canonical-representative
-        # hash would silently violate the Python hash-eq invariant for
-        # multi-ValueType aggregates like NUMBER.
-        import pytest
-
+    def test_types_are_hashable_by_name(self) -> None:
+        # The PEP 249 type objects hash by their class-level ``_name``
+        # so they can be used as dict keys / set members. SQLAlchemy
+        # memoises ``cursor.description`` type_codes — which can be
+        # the ``UNKNOWN`` _DBAPIType sentinel — in a dialect-level
+        # dict, so the type objects MUST be hashable. The hash-eq
+        # invariant against multi-value equality with bare wire ints
+        # is intentionally relaxed (see TestHashEqInvariantRelaxation
+        # in test_dbapi_type_hash_consistency).
         for obj in (STRING, BINARY, NUMBER, DATETIME, ROWID):
-            with pytest.raises(TypeError, match="unhashable"):
-                hash(obj)
+            assert isinstance(hash(obj), int)
 
 
 # Maintenance note: if a future ValueType is intentionally exempt
@@ -178,18 +179,18 @@ class TestDBAPITypeEqFallthrough:
         assert type_obj != value
         assert value != type_obj
 
-    def test_types_are_unhashable(self) -> None:
-        # ``_DBAPIType`` intentionally refuses to hash; NUMBER / DATETIME
-        # wrap multiple wire codes, so any canonical-representative hash
-        # would make ``NUMBER == FLOAT_CODE`` True while
-        # ``{NUMBER: x}[FLOAT_CODE]`` raises KeyError. The unhashable
-        # contract converts that silent miss into a ``TypeError``.
-        import pytest
-
-        with pytest.raises(TypeError, match="unhashable"):
-            hash(STRING)
-        with pytest.raises(TypeError, match="unhashable"):
-            hash(NUMBER)
+    def test_types_are_hashable_by_singleton_name(self) -> None:
+        # ``_DBAPIType`` hashes on the singleton's class-level
+        # ``_name`` so it can be used as a dict key / set member.
+        # The hash-eq invariant against multi-value equality with
+        # bare wire ints is intentionally relaxed: ``NUMBER ==
+        # FLOAT_CODE`` is True, but ``{NUMBER: x}[FLOAT_CODE]``
+        # returns ``KeyError`` because the hash codes differ. The
+        # cross-driver idiom for testing ``description[i][1]`` is
+        # linear ``== STRING`` etc., not hash lookup.
+        assert isinstance(hash(STRING), int)
+        assert isinstance(hash(NUMBER), int)
+        assert hash(STRING) != hash(NUMBER)
 
 
 class TestDBAPITypeAcceptRejectMatrix:
