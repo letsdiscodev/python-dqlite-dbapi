@@ -962,8 +962,6 @@ def unregister_adapter(type_: type, /) -> None:
     remove" signal.
     """
     if type_ not in _ADAPTERS:
-        from dqlitedbapi.exceptions import ProgrammingError
-
         raise ProgrammingError(
             f"no adapter registered for {type_.__name__}",
             code=None,
