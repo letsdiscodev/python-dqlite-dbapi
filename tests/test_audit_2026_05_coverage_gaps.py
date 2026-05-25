@@ -104,12 +104,16 @@ async def test_async_cursor_rownumber_no_result_set() -> None:
 # ---------------- empty-result description type-codes-empty fallback
 
 
-def test_sync_description_empty_result_type_codes_none(
+def test_sync_description_empty_result_type_codes_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When the wire response has columns but zero rows AND zero
-    column_types, synthesise None for every type code so PEP 249's
-    description tuple shape stays well-formed."""
+    column_types, synthesise the UNKNOWN sentinel for every type
+    code so PEP 249 §6.1.2's "must compare equal to a Type Object"
+    contract holds (UNKNOWN is a real Type Object; ``None`` was not).
+    """
+    from dqlitedbapi import UNKNOWN
+
     conn = Connection("localhost:9001", timeout=2.0)
 
     async def fake_query_raw_typed(*_args: object, **_kwargs: object):
@@ -133,9 +137,9 @@ def test_sync_description_empty_result_type_codes_none(
     desc = cur.description
     assert desc is not None
     assert len(desc) == 2
-    # Each type_code is None per the synthesised fallback.
-    assert desc[0][1] is None
-    assert desc[1][1] is None
+    # Each type_code is UNKNOWN per the synthesised fallback.
+    assert desc[0][1] is UNKNOWN
+    assert desc[1][1] is UNKNOWN
 
 
 # ---------------- row_factory applied in fetch* paths

@@ -89,6 +89,7 @@ from dqlitedbapi.types import (
     NUMBER,
     ROWID,
     STRING,
+    UNKNOWN,
     Binary,
     Date,
     DateFromTicks,
@@ -228,6 +229,7 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "NUMBER",
     "DATETIME",
     "ROWID",
+    "UNKNOWN",
     # Type aliases
     "DescriptionTuple",
 ]

@@ -29,7 +29,8 @@ from dqlitedbapi.exceptions import (
     NotSupportedError,
     ProgrammingError,
 )
-from dqlitedbapi.types import RowFactory, _Description
+from dqlitedbapi.types import UNKNOWN as _UNKNOWN_TYPE
+from dqlitedbapi.types import RowFactory, _DBAPIType, _Description
 from dqlitewire import ValueType, sanitize_for_log
 
 if TYPE_CHECKING:
@@ -408,20 +409,21 @@ class AsyncCursor:
                 return
             else:
                 # PEP 249 §6.1.2 ``type_code`` must compare equal to a
-                # Type Object. See the sync ``_execute_async`` for
-                # the full rationale. Empty result set → column_types
+                # Type Object. See the sync ``_execute_async`` for the
+                # full rationale. Empty result set → ``column_types``
                 # is legitimately empty and the wire does not carry
                 # declared column affinity separately from the
                 # per-row type tags, so the type information is
-                # unrecoverable. We emit ``None`` as a documented
-                # deviation; any synthesised value would mislead in a
-                # different direction. Callers that need column-type
-                # introspection on empty result sets should issue
-                # ``PRAGMA table_info(...)`` separately. Non-empty
-                # but short → ``DataError`` so the anomaly surfaces
-                # loudly.
+                # unrecoverable. Emit the ``UNKNOWN`` sentinel (a
+                # real Type Object) rather than ``None`` so the
+                # PEP 249 §6.1.2 contract holds (``None`` compared
+                # equal to no Type Object via NotImplemented →
+                # False). Callers that want to detect the wire-
+                # can't-resolve case write ``type_code == UNKNOWN``.
+                # Non-empty but short → ``DataError`` so the
+                # anomaly surfaces loudly.
                 if len(column_types) == 0 and len(rows) == 0:
-                    type_codes: list[int | None] = [None] * len(columns)
+                    type_codes: list[int | _DBAPIType] = [_UNKNOWN_TYPE] * len(columns)
                 elif len(column_types) != len(columns):
                     raise DataError(
                         f"Wire response has {len(columns)} columns but "
@@ -430,15 +432,15 @@ class AsyncCursor:
                 else:
                     # Per-row rescue scan for NULL-first-row columns;
                     # see sync sibling at ``cursor.py`` for the full
-                    # rationale. Fall back to ``None`` only when EVERY
-                    # row at that column index is NULL (genuinely
-                    # unrecoverable).
+                    # rationale. Fall back to ``UNKNOWN`` only when
+                    # EVERY row at that column index is NULL
+                    # (genuinely unrecoverable).
                     type_codes = []
                     for col_idx, c in enumerate(column_types):
                         if c != ValueType.NULL:
                             type_codes.append(int(c))
                             continue
-                        resolved: int | None = None
+                        resolved: int | _DBAPIType = _UNKNOWN_TYPE
                         for j in range(1, len(row_types)):
                             if col_idx < len(row_types[j]):
                                 candidate = row_types[j][col_idx]

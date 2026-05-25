@@ -22,10 +22,14 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
 )
 from dqlitedbapi.types import (
+    UNKNOWN as _UNKNOWN_TYPE,
+)
+from dqlitedbapi.types import (
     RowFactory,
     _convert_bind_param,
     _datetime_from_iso8601,
     _datetime_from_unixtime,
+    _DBAPIType,
     _Description,
 )
 from dqlitewire import (
@@ -1773,21 +1777,25 @@ class Cursor:
                 # wire — dqlite's protocol does not carry declared
                 # column affinity separately from the per-row type
                 # tags. PEP 249 says ``type_code`` "must compare
-                # equal to one of Type Objects"; ``None`` does not.
-                # We emit ``None`` here as a documented deviation:
-                # any synthesised value (e.g. always TEXT) would be
-                # misleading in a different direction (a SELECT
-                # against an INTEGER column with no rows would
-                # advertise the wrong type), and a wire extension
-                # is a feature outside the scope of dbapi
-                # correctness. Callers that need column-type
-                # introspection on empty result sets should issue a
-                # PRAGMA table_info(...) query separately. For the
-                # real anomaly (rows present but short
-                # ``column_types``), raise ``DataError`` so the
-                # wire bug surfaces loudly.
+                # equal to one of Type Objects"; ``None`` does not
+                # (NotImplemented → False under every Type Object's
+                # ``__eq__``), so emitting ``None`` silently broke
+                # the canonical ``type_code == STRING`` introspection
+                # idiom. Emit the ``UNKNOWN`` sentinel (a real Type
+                # Object with empty ``values``) instead so the
+                # contract is satisfied: equality against
+                # STRING/BINARY/NUMBER/DATETIME/ROWID cleanly
+                # returns False (no TypeError, no spurious True),
+                # and callers that want to detect the wire-can't-
+                # resolve case explicitly can write
+                # ``type_code == UNKNOWN``. Callers that need true
+                # column-type introspection on empty result sets
+                # should still issue a PRAGMA table_info(...) query
+                # separately. For the real anomaly (rows present
+                # but short ``column_types``), raise ``DataError``
+                # so the wire bug surfaces loudly.
                 if len(column_types) == 0 and len(rows) == 0:
-                    type_codes: list[int | None] = [None] * len(columns)
+                    type_codes: list[int | _DBAPIType] = [_UNKNOWN_TYPE] * len(columns)
                 elif len(column_types) != len(columns):
                     raise DataError(
                         f"Wire response has {len(columns)} columns but "
@@ -1817,7 +1825,7 @@ class Cursor:
                             continue
                         # Scan subsequent rows for the first non-NULL
                         # type tag at this column.
-                        resolved: int | None = None
+                        resolved: int | _DBAPIType = _UNKNOWN_TYPE
                         for j in range(1, len(row_types)):
                             if col_idx < len(row_types[j]):
                                 candidate = row_types[j][col_idx]

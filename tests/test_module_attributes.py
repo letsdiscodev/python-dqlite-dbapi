@@ -205,6 +205,7 @@ class TestTypesModuleAll:
                 "NUMBER",
                 "DATETIME",
                 "ROWID",
+                "UNKNOWN",
                 "DescriptionTuple",
                 "PrepareProtocol",
                 "RowFactory",

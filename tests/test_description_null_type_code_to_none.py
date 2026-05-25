@@ -1,15 +1,18 @@
 """Pin: ``Cursor.description`` / ``AsyncCursor.description`` map
-``ValueType.NULL`` to ``None`` in the type_code slot.
+NULL-only columns to the ``UNKNOWN`` Type Object sentinel in
+the type_code slot.
 
 Wire-layer returns ``column_types`` derived from row 0; if a
 column was tagged ``ValueType.NULL`` (e.g. a ``LEFT JOIN``
 unmatched row, or a literal ``SELECT NULL``), the description
-mapping replaces ``ValueType.NULL`` (5) with ``None`` in the
-description's ``type_code`` slot. PEP 249 §6.1.2 says the
-type_code "must compare equal to one of the Type Objects" —
-NULL is not one of the five Type Objects, and surfacing
-``None`` matches the documented empty-result-set deviation
-already in this module.
+mapping resolves it to ``UNKNOWN`` (the rescue scan picks up a
+non-NULL value from a later row when possible). PEP 249 §6.1.2
+requires the type_code "must compare equal to one of the Type
+Objects"; ``UNKNOWN`` is a real Type Object with empty
+``values`` so equality against STRING/NUMBER/BINARY/DATETIME/
+ROWID cleanly returns False (the prior ``None`` behaviour
+silently violated the spec — ``None`` compared equal to no
+Type Object).
 
 The mixed-row case is the load-bearing surface for the test
 gap: a column tagged NULL alongside columns with real type
@@ -65,9 +68,11 @@ async def test_sync_description_maps_null_to_none_in_mixed_row() -> None:
     cur = Cursor(conn)
     await cur._execute_async("SELECT name, NULL AS n, age FROM users")
 
+    from dqlitedbapi import UNKNOWN
+
     assert cur.description is not None
     assert cur.description[0][1] == ValueType.TEXT
-    assert cur.description[1][1] is None
+    assert cur.description[1][1] is UNKNOWN
     assert cur.description[2][1] == ValueType.INTEGER
 
 
@@ -81,9 +86,11 @@ async def test_async_description_maps_null_to_none_in_mixed_row() -> None:
     cur = AsyncCursor(conn)
     await cur._execute_unlocked("SELECT name, NULL AS n, age FROM users", ())
 
+    from dqlitedbapi import UNKNOWN
+
     assert cur.description is not None
     assert cur.description[0][1] == ValueType.TEXT
-    assert cur.description[1][1] is None
+    assert cur.description[1][1] is UNKNOWN
     assert cur.description[2][1] == ValueType.INTEGER
 
 
@@ -97,5 +104,7 @@ async def test_sync_description_all_null_columns_all_none() -> None:
     cur = Cursor(conn)
     await cur._execute_async("SELECT NULL AS a, NULL AS b")
 
+    from dqlitedbapi import UNKNOWN
+
     assert cur.description is not None
-    assert all(d[1] is None for d in cur.description)
+    assert all(d[1] is UNKNOWN for d in cur.description)

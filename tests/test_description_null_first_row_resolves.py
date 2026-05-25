@@ -103,9 +103,15 @@ def test_sync_description_null_first_row_resolves_through_subsequent_rows() -> N
     )
 
 
-def test_sync_description_all_null_falls_back_to_none() -> None:
+def test_sync_description_all_null_falls_back_to_unknown() -> None:
     """When EVERY row's value at the column index is NULL, the type
-    code falls back to ``None`` — genuinely unrecoverable."""
+    code falls back to the ``UNKNOWN`` sentinel — genuinely
+    unrecoverable. UNKNOWN is a PEP 249 Type Object (with empty
+    ``values``) so the chained-``==`` introspection idiom returns
+    False cleanly for every real Type Object.
+    """
+    from dqlitedbapi import UNKNOWN
+
     cur, conn = _seed_cursor()
     column_types = [int(ValueType.NULL)]
     row_types = [[int(ValueType.NULL)], [int(ValueType.NULL)]]
@@ -122,4 +128,4 @@ def test_sync_description_all_null_falls_back_to_none() -> None:
     asyncio.run(cur._execute_async("SELECT col FROM t", []))
 
     assert cur._description is not None
-    assert cur._description[0][1] is None
+    assert cur._description[0][1] is UNKNOWN

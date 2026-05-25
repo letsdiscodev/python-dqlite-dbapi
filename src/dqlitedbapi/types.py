@@ -19,6 +19,7 @@ __all__ = [
     "NUMBER",
     "ROWID",
     "STRING",
+    "UNKNOWN",
     "Binary",
     "Date",
     "DateFromTicks",
@@ -42,7 +43,15 @@ __all__ = [
 # PEP 695 ``type X = ...`` syntax matches the rest of the workspace's
 # public type-alias declarations (wire/types.py, client/_dial.py,
 # client/cluster.py, sqlalchemydqlite/aio.py).
-type DescriptionTuple = tuple[str, int | None, None, None, None, None, None]
+# ``type_code`` is normally a wire-level ``ValueType`` int; the
+# ``UNKNOWN`` sentinel (a ``_DBAPIType`` instance) is emitted when
+# the wire layer cannot resolve a column's type (empty result sets
+# / NULL-only columns). PEP 249 §6.1.2 requires equality against a
+# Type Object; ``UNKNOWN`` satisfies that contract while still being
+# distinguishable from the real Type Objects (its ``values`` set is
+# empty, so equality against STRING / NUMBER / etc. cleanly returns
+# False). The ``int`` arm covers ``int(ValueType.X)``.
+type DescriptionTuple = tuple[str, int | _DBAPIType | None, None, None, None, None, None]
 type _Description = tuple[DescriptionTuple, ...] | None
 
 # stdlib ``sqlite3``-style row factory callable. Invoked as
@@ -415,6 +424,21 @@ DATETIME: Final[_DBAPIType] = _DBAPIType(
 ROWID: Final[_DBAPIType] = _DBAPIType(
     "ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER, _name="ROWID"
 )
+# ``UNKNOWN`` is the sentinel emitted in ``description[i][1]`` when
+# the wire layer cannot resolve a column's type — empty result sets
+# (no rows to scan + no per-column declared type) and NULL-only
+# columns (rescue scan exhausted, every row at that column index is
+# NULL). PEP 249 §6.1.2 requires the type_code to compare equal to
+# a Type Object; emitting ``None`` (the prior behaviour) violated
+# that contract — ``None`` compares equal to no Type Object and
+# silently took the False arm under the canonical
+# ``type_code == STRING`` introspection idiom. ``UNKNOWN``'s
+# ``values`` is empty so equality against ``STRING`` / ``BINARY`` /
+# ``NUMBER`` / ``DATETIME`` / ``ROWID`` cleanly returns False (no
+# TypeError, no spurious True). Callers that want to detect the
+# wire-can't-resolve case explicitly can write
+# ``type_code == UNKNOWN``.
+UNKNOWN: Final[_DBAPIType] = _DBAPIType(_name="UNKNOWN")
 
 
 # Internal conversion helpers.

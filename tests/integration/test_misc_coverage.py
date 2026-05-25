@@ -315,11 +315,16 @@ class TestCursorDescriptionEdgeCases:
     """
 
     def test_description_populated_for_empty_resultset(self, cluster_address: str) -> None:
-        """A SELECT that returns zero rows still populates description with
-        column names. ``type_code`` is None for each column because the
-        wire layer sources it from the first row's type header and there
-        are no rows — this is the current contract; pin it.
+        """A SELECT that returns zero rows still populates description
+        with column names. ``type_code`` is the ``UNKNOWN`` sentinel
+        for each column because the wire layer sources it from the
+        first row's type header and there are no rows; ``UNKNOWN``
+        is a real Type Object so PEP 249 §6.1.2's
+        ``type_code == STRING`` introspection idiom returns False
+        cleanly without TypeError.
         """
+        from dqlitedbapi import UNKNOWN
+
         with connect(cluster_address, database="test_desc_empty") as conn:
             c = conn.cursor()
             c.execute("CREATE TABLE IF NOT EXISTS desc_empty (a INTEGER, b TEXT)")
@@ -329,20 +334,23 @@ class TestCursorDescriptionEdgeCases:
             assert c.description is not None
             assert len(c.description) == 2
             assert [col[0] for col in c.description] == ["a", "b"]
-            # No rows → no per-row type header → type_code is None on every column.
-            assert [col[1] for col in c.description] == [None, None]
+            # No rows → no per-row type header → UNKNOWN sentinel.
+            assert [col[1] for col in c.description] == [UNKNOWN, UNKNOWN]
             assert c.fetchall() == []
 
     def test_description_typecode_when_only_row_is_all_null(self, cluster_address: str) -> None:
         """A row of all-NULLs sets every column's type nibble to NULL
-        in the wire frame. The dbapi maps ``ValueType.NULL`` to
-        ``None`` on ``description[i][1]`` to satisfy PEP 249 §6.1.2:
-        ``type_code`` "must compare equal to one of Type Objects
-        defined below" — NULL is not one of the five Type Objects
-        (STRING / BINARY / NUMBER / DATETIME / ROWID). Locked in so
-        a future refactor that surfaces the raw wire byte is a
-        deliberate decision, not a silent drift.
+        in the wire frame. The dbapi maps NULL-only columns to the
+        ``UNKNOWN`` Type Object sentinel on ``description[i][1]`` to
+        satisfy PEP 249 §6.1.2: ``type_code`` "must compare equal to
+        one of Type Objects defined below". NULL itself is not one
+        of the five Type Objects; the prior ``None`` value violated
+        the spec via NotImplemented → False. Locked in so a future
+        refactor that surfaces the raw wire byte (or reverts to
+        None) is a deliberate decision, not a silent drift.
         """
+        from dqlitedbapi import UNKNOWN
+
         with connect(cluster_address, database="test_desc_nulls") as conn:
             c = conn.cursor()
             c.execute("CREATE TABLE IF NOT EXISTS desc_nulls (a INTEGER, b TEXT)")
@@ -354,8 +362,8 @@ class TestCursorDescriptionEdgeCases:
             assert c.description is not None
             assert len(c.description) == 2
             assert [col[0] for col in c.description] == ["a", "b"]
-            # PEP 249 §6.1.2 — NULL → None on the description.
-            assert [col[1] for col in c.description] == [None, None]
+            # PEP 249 §6.1.2 — NULL-only column → UNKNOWN sentinel.
+            assert [col[1] for col in c.description] == [UNKNOWN, UNKNOWN]
             assert c.fetchall() == [(None, None)]
 
 
