@@ -188,9 +188,21 @@ def _validate_ticks(ticks: float) -> float:
     # change.
     if not isinstance(ticks, (int, float, Decimal)):
         raise DataError(f"Invalid timestamp ticks: {ticks!r} ({type(ticks).__name__})")
+    # ``OverflowError`` covers two known shapes today's CPython
+    # currently shields (saturation-to-inf at line below) but that
+    # an isfinite guard alone cannot catch: (1) a future CPython
+    # release that flips ``float(Decimal('1e1000000'))`` from
+    # saturation to a raise, and (2) custom numeric subclasses
+    # whose ``__float__`` raises ``OverflowError`` directly (e.g. a
+    # caller's ``BigDecimal`` shim that propagates the precision
+    # context). Symmetric with the downstream ``*FromTicks``
+    # constructors, which already include ``OverflowError`` in
+    # their ``fromtimestamp`` catch tuples; the upstream coercion
+    # had a narrower catch and would leak a bare ``OverflowError``
+    # past ``except dbapi.Error:``.
     try:
         coerced = float(ticks)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise DataError(f"Invalid timestamp ticks: {ticks!r} ({exc})") from exc
     if not math.isfinite(coerced):
         raise DataError(f"Invalid timestamp ticks: {coerced}")

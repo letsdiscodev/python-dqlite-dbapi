@@ -54,6 +54,34 @@ def test_validate_ticks_accepts_int_and_float() -> None:
     assert _validate_ticks(-1.5) == -1.5
 
 
+def test_validate_ticks_wraps_overflow_from_float_coercion() -> None:
+    """A numeric subclass whose ``__float__`` raises ``OverflowError``
+    must surface as ``DataError`` — not a bare ``OverflowError`` that
+    escapes the ``dbapi.Error`` hierarchy.
+
+    Today's CPython ``float(Decimal('1e1000000'))`` saturates to
+    ``inf`` (caught by the ``math.isfinite`` arm), so the path is not
+    currently exposed in the wild. The catch is defensive against a
+    future CPython release that flips the saturation to a raise, and
+    against custom numeric subclasses whose ``__float__`` propagates
+    an ``OverflowError`` from a precision-context trap.
+    """
+    from decimal import Decimal
+
+    class RaisingDecimal(Decimal):
+        """Mimic a Decimal whose ``__float__`` propagates an overflow
+        rather than saturating to ``inf``. The ``Decimal`` lineage
+        passes the isinstance guard at the top of ``_validate_ticks``;
+        the ``__float__`` override exercises the catch on the inner
+        coercion."""
+
+        def __float__(self) -> float:
+            raise OverflowError("custom overflow from __float__")
+
+    with pytest.raises(DataError, match="overflow"):
+        _validate_ticks(RaisingDecimal("1"))  # type: ignore[arg-type]
+
+
 def test_datetime_from_unixtime_rejects_bool() -> None:
     """Bool slipped past the range-check predicate and silently
     produced epoch-based datetimes. The guard-first ordering rejects
