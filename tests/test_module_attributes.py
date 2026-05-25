@@ -159,6 +159,7 @@ class TestExceptionsModuleAll:
 
         assert sorted(exc_mod.__all__) == sorted(
             [
+                "AmbiguousCommitError",
                 "Warning",
                 "Error",
                 "InterfaceError",

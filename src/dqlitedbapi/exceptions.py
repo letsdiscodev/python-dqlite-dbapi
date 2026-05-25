@@ -8,6 +8,7 @@ from dqlitewire import DEFAULT_MAX_RAW_MESSAGE as _DEFAULT_MAX_RAW_MESSAGE
 from dqlitewire import cap_raw_message as _wire_cap_raw_message
 
 __all__ = [
+    "AmbiguousCommitError",
     "DataError",
     "DatabaseError",
     "Error",
