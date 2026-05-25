@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 import warnings
 import weakref
 from collections.abc import AsyncIterator, Iterable, Sequence
@@ -1740,6 +1741,16 @@ class AsyncConnection:
         # force-close-on-cancel discipline. Sync sibling lives at
         # ``Connection._commit_async``.
         request_in_flight = False
+        # Capture entry time so the TimeoutError arm can annotate the
+        # OperationalError diagnostic when both the operator's outer
+        # ``asyncio.timeout`` AND our inner ``commit_budget`` deadlines
+        # fire near-simultaneously: the inner converts CancelledError
+        # to TimeoutError and the message would otherwise name
+        # ``commit_budget`` even though the actual elapsed time was
+        # set by the operator's shorter outer scope. Annotating with
+        # the measured elapsed lets the operator correlate against
+        # their wrapper's budget.
+        _start_monotonic = time.monotonic()
         try:
             async with asyncio.timeout(commit_budget):
                 async with op_lock:
@@ -1852,9 +1863,25 @@ class AsyncConnection:
             if request_in_flight:
                 self.force_close_transport()
             phase = "COMMIT round-trip" if entered_lock else "op_lock acquire"
+            # Annotate the diagnostic with elapsed-vs-budget so the
+            # operator can correlate against an outer scope's
+            # ``asyncio.timeout`` budget. When ``elapsed`` is well
+            # below ``commit_budget``, the inner deadline likely did
+            # not actually expire — an outer cancel/timeout cut us
+            # short and CPython's nested-Timeout ``__aexit__``
+            # converted the CancelledError into our local
+            # TimeoutError. The force-close above still fires for
+            # the same partial-state hazard either way.
+            _elapsed = time.monotonic() - _start_monotonic
+            cause_hint = ""
+            if _elapsed < commit_budget * 0.95:
+                cause_hint = (
+                    f" (elapsed {_elapsed:.2f}s < budget {commit_budget}s; "
+                    "outer scope or sibling cancel likely interrupted)"
+                )
             raise OperationalError(
                 f"commit {phase} timed out after {commit_budget}s "
-                f"(id={id(self)}); connection state ambiguous; reconnect.",
+                f"(id={id(self)}){cause_hint}; connection state ambiguous; reconnect.",
                 code=None,
             ) from e
         except BaseException:
@@ -1923,6 +1950,10 @@ class AsyncConnection:
         # trip is in flight; see commit() for the partial-state +
         # force-close rationale.
         request_in_flight = False
+        # Capture entry time so the TimeoutError arm can annotate
+        # the diagnostic when both outer and inner deadlines fire
+        # near-simultaneously; mirrors commit() above.
+        _start_monotonic = time.monotonic()
         try:
             async with asyncio.timeout(rollback_budget):
                 async with op_lock:
@@ -1962,9 +1993,17 @@ class AsyncConnection:
             if request_in_flight:
                 self.force_close_transport()
             phase = "ROLLBACK round-trip" if entered_lock else "op_lock acquire"
+            # See commit() for the elapsed-vs-budget rationale.
+            _elapsed = time.monotonic() - _start_monotonic
+            cause_hint = ""
+            if _elapsed < rollback_budget * 0.95:
+                cause_hint = (
+                    f" (elapsed {_elapsed:.2f}s < budget {rollback_budget}s; "
+                    "outer scope or sibling cancel likely interrupted)"
+                )
             raise OperationalError(
                 f"rollback {phase} timed out after {rollback_budget}s "
-                f"(id={id(self)}); connection state ambiguous; reconnect.",
+                f"(id={id(self)}){cause_hint}; connection state ambiguous; reconnect.",
                 code=None,
             ) from e
         except BaseException:
