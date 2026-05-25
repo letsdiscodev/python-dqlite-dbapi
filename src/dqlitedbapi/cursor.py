@@ -1846,6 +1846,21 @@ class Cursor:
                 for i, row in enumerate(rows)
             ]
             self._row_index = 0
+            # Divergence from stdlib ``sqlite3.Cursor.rowcount`` /
+            # psycopg2 / aiosqlite (which all return -1 for SELECT
+            # because the cursor cannot know the count without
+            # consuming). This driver returns ``len(rows)`` because
+            # the wire layer buffers the entire result set up front,
+            # so the count is known at execute time. The RETURNING
+            # path (INSERT/UPDATE/DELETE ... RETURNING — classified
+            # as row-returning by ``_is_row_returning``) relies on
+            # this real count for SQLAlchemy's insertmanyvalues
+            # contract. PEP 249 §6.1.2 explicitly permits "the
+            # number of rows that the last execute*() produced (for
+            # DQL statements)". Cross-driver code using
+            # ``cur.rowcount > 0`` as a "did SELECT find anything"
+            # gate behaves differently against this driver; the
+            # portable idiom is ``cur.fetchone() is not None``.
             self._rowcount = len(rows)
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))

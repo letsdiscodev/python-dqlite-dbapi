@@ -459,6 +459,10 @@ class AsyncCursor:
                 for i, row in enumerate(rows)
             ]
             self._row_index = 0
+            # See sync sibling for the rationale: dqlite returns the
+            # buffered row count rather than stdlib's -1 because the
+            # wire layer buffers up front, and the RETURNING path
+            # relies on this for SQLAlchemy's insertmanyvalues.
             self._rowcount = len(rows)
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))
