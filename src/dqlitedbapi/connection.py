@@ -3430,14 +3430,25 @@ class Connection:
                 # clearing the owner slot so the cursor's commit/
                 # rollback affordance through this same connection
                 # would not trip the owner-token guard. Reset it in
-                # the outer finally regardless. Suppress any
-                # exception from ROLLBACK so the caller's original
-                # exception is what propagates — chaining via
-                # ``__context__`` is automatic.
+                # the outer finally regardless. The ROLLBACK itself
+                # may fail (leader flip, transport, etc.) — suppress
+                # that exception so the caller's original exception is
+                # what propagates (chaining via ``__context__`` is
+                # automatic). If ROLLBACK failed, force-close the
+                # transport so the slot does not return to the SA
+                # pool with an open server-side transaction; SA's
+                # ``is_disconnect`` walks ``__cause__`` only and would
+                # not classify the suppressed ROLLBACK failure, so
+                # the next checkout would otherwise run statements
+                # inside the orphaned transaction. Mirror of the
+                # aio ``__aexit__`` rollback-Exception arm.
                 self._transaction_owner = None
                 try:
-                    with contextlib.suppress(Exception):
+                    try:
                         cursor.execute("ROLLBACK")
+                    except Exception:
+                        with contextlib.suppress(Exception):
+                            self.force_close_transport()
                 finally:
                     self._transaction_owner = token
                 raise

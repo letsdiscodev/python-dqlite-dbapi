@@ -2794,6 +2794,19 @@ class AsyncConnection:
                     id(self),
                     exc_info=True,
                 )
+                # SA's ``is_disconnect`` classifier does NOT match
+                # ``CancelledError`` / ``KeyboardInterrupt`` /
+                # ``SystemExit`` — the slot would otherwise be returned
+                # to the pool with ambiguous server-side commit state
+                # AND an inner ``commit()`` arm that only force-closes
+                # when ``request_in_flight=True`` (the wire round-trip
+                # began). Cancels landing before / after that window
+                # leave the slot alive. ``force_close_transport()`` is
+                # synchronous, idempotent, never raises — call it after
+                # the DEBUG log and before the re-raise so the next
+                # checkout's first op sees a closed transport and the
+                # pool reaps the slot.
+                self.force_close_transport()
                 raise
         else:
             try:
@@ -2852,6 +2865,18 @@ class AsyncConnection:
                     exc_type.__name__,
                     exc_info=True,
                 )
+                # Rollback failed; the server-side transaction may
+                # still be open. SA's ``is_disconnect`` walks
+                # ``__cause__`` and we are NOT raising — PEP 343
+                # returning None lets the body exception propagate
+                # but SA classifies against the body, not the
+                # rollback failure. Force-close the transport so the
+                # next checkout's first op sees a closed transport
+                # and the pool reaps the slot, preventing statements
+                # from running inside the orphaned transaction.
+                # ``force_close_transport`` is synchronous,
+                # idempotent, and never raises.
+                self.force_close_transport()
         # Do NOT close — matches stdlib ``sqlite3.Connection.__exit__``.
         # NOTE: aiosqlite's ``Connection.__aexit__`` DOES call
         # ``self.close()`` and psycopg async ``Connection.__aexit__``

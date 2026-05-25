@@ -20,6 +20,8 @@ from dqlitedbapi.exceptions import OperationalError
 
 
 def _connection_with_failing_rollback(rollback_exc: BaseException) -> AsyncConnection:
+    import os
+
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._address = "localhost:19001"
     conn._database = "default"
@@ -29,9 +31,15 @@ def _connection_with_failing_rollback(rollback_exc: BaseException) -> AsyncConne
     conn._trust_server_heartbeat = False
     conn._async_conn = MagicMock()  # truthy so we take the try/except branch
     conn._closed = False
+    conn._closed_flag = [False]
     conn._connect_lock = None
     conn._op_lock = None
     conn._loop_ref = None
+    conn._cursors = MagicMock()
+    conn._cursors.__iter__ = lambda self: iter([])
+    conn._cursors.clear = MagicMock()
+    conn._finalizer = None
+    conn._creator_pid = os.getpid()
     conn.messages = []
     conn.commit = AsyncMock()
     conn.rollback = AsyncMock(side_effect=rollback_exc)
