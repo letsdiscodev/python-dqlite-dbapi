@@ -83,6 +83,7 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
     Warning,
 )
+from dqlitedbapi.row import Row
 from dqlitedbapi.types import (
     BINARY,
     DATETIME,
@@ -230,6 +231,8 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "DATETIME",
     "ROWID",
     "UNKNOWN",
+    # Row factory (sqlite3.Row equivalent)
+    "Row",
     # Type aliases
     "DescriptionTuple",
 ]

@@ -43,6 +43,8 @@ from dqlitedbapi import (  # module-level re-export
     CLUSTER_POLICY_REJECTION_PREFIX,
     FAILED_TO_CONNECT_PREFIX,
     MAX_CONTINUATION_FRAMES_UPPER_BOUND,
+    UNKNOWN,
+    Row,
     complete_statement,
     enable_callback_tracebacks,
     register_converter,
@@ -192,6 +194,9 @@ __all__ = [  # grouped by PEP 249 section, not alphabetical
     "NUMBER",
     "DATETIME",
     "ROWID",
+    "UNKNOWN",
+    # Row factory (sqlite3.Row equivalent)
+    "Row",
     # Type aliases
     "DescriptionTuple",
     # Type-adapter registry (shared module-global with the sync
