@@ -507,7 +507,22 @@ def _format_utc_offset(offset: datetime.timedelta) -> str:
       toward zero, so a negative fractional offset flips sign and
       zeros magnitude. Round to whole-second and require the result
       match the input.
+
+    Also rejects non-``timedelta`` offsets up front. CPython's
+    ``tzinfo.utcoffset()`` is documented to return ``timedelta`` or
+    ``None``, but custom ``tzinfo`` subclasses (common porting
+    mistake from Java/JodaTime returning an int seconds count) and
+    ``MagicMock``-based test fixtures may violate that contract.
+    Without this guard ``offset.total_seconds()`` raises bare
+    ``AttributeError`` outside the caller's try/except and escapes
+    the ``dbapi.Error`` tree.
     """
+    if not isinstance(offset, datetime.timedelta):
+        raise DataError(
+            f"tzinfo.utcoffset() returned non-timedelta "
+            f"{type(offset).__name__}; CPython contract requires "
+            "timedelta or None"
+        )
     total_us = round(offset.total_seconds() * 1_000_000)
     if abs(total_us) >= 24 * 3600 * 1_000_000:
         raise DataError(f"tzinfo offset out of range: {offset!r} (|offset| must be < 24h)")
