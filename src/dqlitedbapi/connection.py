@@ -2278,7 +2278,19 @@ class Connection:
         if self._connect_lock is None:
             self._connect_lock = asyncio.Lock()
 
-        async with self._connect_lock:
+        # Snapshot to a local before the ``async with`` entry. A
+        # foreign-thread ``force_close_transport`` nulling
+        # ``self._connect_lock`` between the check above and the
+        # ``async with`` entry would otherwise produce
+        # ``AttributeError: 'NoneType' object has no attribute
+        # '__aenter__'`` outside the dbapi.Error tree. Treat the
+        # nulled-lock case as the documented closed-state to keep
+        # the diagnostic inside ``dqlitedbapi.Error``.
+        connect_lock = self._connect_lock
+        if connect_lock is None:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
+
+        async with connect_lock:
             if self._async_conn is not None:  # pragma: no cover - race: peer built conn mid-lock
                 return self._async_conn
 
@@ -2308,8 +2320,17 @@ class Connection:
             # the outer from being GC'd.
             with contextlib.suppress(Exception):
                 self._inner_finalize_handle[:] = [weakref.ref(self._async_conn)]
+            # Snapshot under the lock so a foreign-thread
+            # ``force_close_transport`` nulling ``self._async_conn``
+            # between the lock release and the return read cannot
+            # deliver ``None`` to the caller (whose subsequent
+            # attribute access would raise bare ``AttributeError``
+            # outside the dbapi.Error tree).
+            inner = self._async_conn
 
-        return self._async_conn
+        if inner is None:
+            raise InterfaceError(f"Connection is closed (id={id(self)})")
+        return inner
 
     def connect(self) -> None:
         """Eagerly establish the TCP session.
