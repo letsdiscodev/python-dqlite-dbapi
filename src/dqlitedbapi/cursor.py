@@ -1880,18 +1880,25 @@ class Cursor:
         the ``Connection`` class docstring for the autocommit-by-
         default rationale.
 
-        ``lastrowid`` semantics: **divergence from stdlib
-        ``sqlite3.Cursor``.** stdlib's documented contract is
-        "``lastrowid`` is left unchanged after executemany" — the
-        prior INSERT's id stays sticky across the batch. This driver
-        clears ``lastrowid`` to ``None`` after a successful batch
-        (including empty batches): the batch's ambiguity (which of N
-        inserts is "the" rowid?) makes any sticky value misleading,
-        so we surface ``None`` to force callers to read the rowid from
-        a single-row INSERT before the batch. Cross-driver code that
-        relies on the stdlib "left unchanged" contract should not call
-        executemany on this driver to obtain a rowid; use a single-row
-        execute instead, or read the id from RETURNING rows.
+        ``lastrowid`` semantics: modern stdlib
+        ``sqlite3.Cursor.executemany`` (Python 3.10+) updates
+        ``lastrowid`` per iteration so the final value is the
+        LAST iteration's row id (the older "left unchanged"
+        contract from earlier docs was a behaviour shift, not the
+        current discipline — see CPython
+        ``Modules/_sqlite/cursor.c::execute_one_iter``). This
+        driver clears ``lastrowid`` to ``None`` on the non-empty
+        batch path rather than picking an arbitrary
+        last-iteration row to surface: the batch's ambiguity
+        (which of N inserts is "the" rowid?) makes ANY single
+        value misleading. On the empty-batch path (zero
+        iterations) the pre-batch snapshot is preserved — a
+        deliberate divergence from modern stdlib (which clears
+        even on empty) so a caller's prior single-row INSERT's
+        ``lastrowid`` survives a follow-on no-op
+        ``executemany``. Cross-driver code that needs a rowid
+        should use a single-row ``execute`` or read the id from
+        ``RETURNING`` rows.
 
         Rejected calls (transaction-control verbs, non-DML row-returning
         shapes) preserve the prior ``lastrowid`` — no batch ran, so the
@@ -2150,20 +2157,31 @@ class Cursor:
                 # the BaseException arm would break.
                 if not self._closed:
                     self._completed_iterations += 1
-            # stdlib ``sqlite3.Cursor.executemany`` does NOT update
-            # ``lastrowid`` — the value reflects no single row across
-            # the batch and is "left unchanged" per the docs.
+            # Modern stdlib ``sqlite3.Cursor.executemany`` (Python
+            # 3.10+) updates ``lastrowid`` per iteration so the
+            # final value is the LAST iteration's row id (older
+            # docs claimed "left unchanged" but that was a behaviour
+            # shift, not the current discipline — see CPython
+            # ``Modules/_sqlite/cursor.c::execute_one_iter``).
             #
-            # We clear after a SUCCESSFUL NON-EMPTY loop so per-
-            # iteration writes inside ``_execute_async`` don't leak
-            # the last batch row's id to the caller. For the
-            # empty-batch case (``seq_of_parameters`` had zero
-            # iterations), no per-iteration write happened — restoring
-            # the pre-batch snapshot matches stdlib's "left unchanged"
-            # contract precisely. The sibling
+            # We clear after a SUCCESSFUL NON-EMPTY loop rather than
+            # picking an arbitrary last-iteration row to surface:
+            # the per-iteration writes inside ``_execute_async`` would
+            # otherwise leak whichever row happened to land last to
+            # the caller as if it were "the" canonical
+            # last-inserted-row, and that's ambiguous. ``None``
+            # forces callers to read the rowid from a single-row
+            # ``execute`` before the batch (the only unambiguous
+            # path). For the empty-batch case (zero iterations), no
+            # per-iteration write happened — restore the pre-batch
+            # snapshot so a caller's prior single-row INSERT's
+            # ``lastrowid`` survives a follow-on no-op
+            # ``executemany``. The sibling
             # ``_ExecuteManyAccumulator.apply()`` already special-
             # cases ``_pushed == 0`` for the rowcount=0 result; the
             # symmetric treatment here closes the lastrowid parity.
+            # Empty-batch preserves; stdlib clears even on empty —
+            # documented divergence in the public docstring above.
             if self._completed_iterations > 0:
                 self._lastrowid = None
             else:
