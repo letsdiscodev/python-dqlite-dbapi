@@ -125,6 +125,54 @@ _NO_TX_SUBSTRINGS: Final[tuple[str, ...]] = NO_TRANSACTION_MESSAGE_SUBSTRINGS
 # ``close_timeout >> 0.1`` and get the full configured window.
 _LOOP_THREAD_JOIN_MIN_SECONDS: Final[float] = 0.1
 
+# Shortened join budget when the finalizer / force-close path fires on
+# a thread that ALSO hosts a running asyncio event loop. The sync
+# ``Connection`` is documented for sync-only callers, but mixed
+# deployments (test fixtures inside ``asyncio.run(...)``; SA sync
+# engines driven via greenlet from an async context) can drop the
+# last reference on the user's loop thread. ``threading.Thread.join``
+# parks the calling thread, so a full-budget join freezes every
+# coroutine on the user loop for up to ``close_timeout`` seconds.
+#
+# Detect that case via ``asyncio.get_running_loop()`` and shorten the
+# join to a perceptually-imperceptible window (~20 ms, one frame at
+# 50 fps). The daemon-thread loop processes its queued ``loop.stop``
+# independently; the daemon thread is registered ``daemon=True`` so
+# any residual lifetime past the shortened join still ends at
+# interpreter exit. The shortened budget trades a tighter foreign-
+# loop-thread join for a marginally longer daemon-thread lifetime
+# on pathological shutdowns — the right call when the alternative
+# is parking the user's event loop.
+_LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS: Final[float] = 0.02
+
+
+def _join_budget_for_current_thread(close_timeout: float) -> float:
+    """Pick the daemon-thread join budget for the finalizer / force-
+    close path based on whether the calling thread hosts an asyncio
+    event loop.
+
+    On a thread WITHOUT a running loop (sync-only deployment, normal
+    case), return ``max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)``
+    — the full configured budget plus the historical floor that
+    gives a non-stuck loop time to observe its queued ``loop.stop``.
+
+    On a thread WITH a running loop (mixed-deployment finalize or
+    SA sync-do_close called from a greenlet on the user loop),
+    return ``_LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS`` so the user
+    loop is parked for a perceptually-imperceptible window. The
+    daemon-thread loop drains independently; ``daemon=True`` ensures
+    no inherited thread leaks past interpreter exit.
+    """
+    try:
+        asyncio.get_running_loop()
+        on_loop_thread = True
+    except RuntimeError:
+        on_loop_thread = False
+    if on_loop_thread:
+        return _LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS
+    return max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)
+
+
 # Maximum number of per-RPC phases a single high-level sync call can
 # stack end-to-end. ``self._timeout`` is documented as a PER-PHASE
 # budget — the async surface honours this by wrapping each individual
@@ -1297,8 +1345,12 @@ def _cleanup_loop_thread(
                     exc_info=True,
                 )
         if _contextlib is not None:
+            # ``_join_budget_for_current_thread`` shortens the budget
+            # when the finalizer fires on a thread that hosts a
+            # running asyncio loop — otherwise the user's loop is
+            # parked for the full close_timeout.
             with _contextlib.suppress(RuntimeError):
-                thread.join(timeout=max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS))
+                thread.join(timeout=_join_budget_for_current_thread(close_timeout))
         try:
             if not loop.is_closed():
                 loop.close()
@@ -3007,13 +3059,17 @@ class Connection:
                             loop.call_soon_threadsafe(_safe_writer_close, writer)
                 with contextlib.suppress(RuntimeError):
                     loop.call_soon_threadsafe(loop.stop)
-                join_budget = max(self._close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)
+                # ``_join_budget_for_current_thread`` shortens the
+                # budget when force_close_transport runs on a thread
+                # that hosts a running asyncio loop (SA sync
+                # do_close / do_terminate dispatched via greenlet
+                # from an async context lands here on the user's
+                # loop thread). The full ``max(close_timeout,
+                # _LOOP_THREAD_JOIN_MIN_SECONDS)`` budget applies on
+                # off-loop threads so a non-stuck loop still has
+                # enough slack for the queued ``loop.stop`` to land.
+                join_budget = _join_budget_for_current_thread(self._close_timeout)
                 if self._thread is not None:
-                    # Same floor as ``Connection.close()`` — the
-                    # ``_CLOSE_TIMEOUT_FLOOR=0.01`` lower bound on
-                    # ``close_timeout`` is too tight in practice for
-                    # the queued ``loop.stop`` to land and the daemon
-                    # thread to observe and exit cleanly.
                     self._thread.join(timeout=join_budget)
                 try:
                     loop.close()
