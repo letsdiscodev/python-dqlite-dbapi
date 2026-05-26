@@ -444,6 +444,43 @@ def _convert_row(row: Sequence[Any], row_types: Sequence[int]) -> tuple[Any, ...
     return tuple(result)
 
 
+def _convert_rows(
+    rows: Sequence[Sequence[Any]],
+    row_types: Sequence[Sequence[int]],
+    column_types: Sequence[int],
+) -> list[tuple[Any, ...]]:
+    """Build the cursor's ``_rows`` list from a fetched result set.
+
+    Detects up-front whether any column actually carries a registered
+    converter type (``_RESULT_CONVERTERS`` only holds two entries:
+    ``ISO8601`` and ``UNIXTIME``). For the common case — INTEGER /
+    REAL / TEXT / BLOB / NULL columns only — the per-cell converter
+    walk in :func:`_convert_row` would rebuild each row tuple without
+    producing any value change, so we skip it and materialise rows
+    directly as tuples. This shaves O(n_cells) of pure-Python work
+    from every converter-free fetch, which on the async surface runs
+    on the event-loop thread after ``await client.query_sql(...)``
+    returns.
+
+    The probe inspects both ``column_types`` and every per-row type
+    list: SQLite's dynamic typing allows a column to carry different
+    wire ``ValueType`` tags across rows, so a row whose type diverges
+    from row 0 may still need conversion even when ``column_types``
+    looks converter-free.
+    """
+    if not rows:
+        return []
+    needs_conversion = any(t in _RESULT_CONVERTERS for t in column_types) or any(
+        t in _RESULT_CONVERTERS for rt in row_types for t in rt
+    )
+    if not needs_conversion:
+        return [tuple(row) for row in rows]
+    return [
+        _convert_row(row, row_types[i] if i < len(row_types) else column_types)
+        for i, row in enumerate(rows)
+    ]
+
+
 def _reject_non_sequence_params(params: Any) -> None:
     """Reject mappings, unordered containers, and str/bytes per PEP 249 qmark rules.
 
@@ -1867,10 +1904,10 @@ class Cursor:
             # the same column can carry different wire types. Use
             # ``row_types[i]`` rather than ``column_types`` so a row
             # whose wire type diverges from row 0 is decoded correctly.
-            self._rows = [
-                _convert_row(row, row_types[i] if i < len(row_types) else column_types)
-                for i, row in enumerate(rows)
-            ]
+            # ``_convert_rows`` collapses to a tuple-materialisation
+            # fast path when no column carries a registered converter
+            # (the typical case), skipping the per-cell walk.
+            self._rows = _convert_rows(rows, row_types, column_types)
             self._row_index = 0
             # Divergence from stdlib ``sqlite3.Cursor.rowcount`` /
             # psycopg2 / aiosqlite (which all return -1 for SELECT
