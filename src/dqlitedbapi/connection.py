@@ -439,91 +439,116 @@ def _get_resolve_leader_cluster(
             "running event loop (via _run_sync)."
         ) from e
 
+    # ``dial_func`` is keyed by callable identity — operators
+    # constructing a single module-level dialer get a single cache
+    # entry (the common case); operators constructing a fresh
+    # lambda per request degrade to one cache entry per identity
+    # (wasteful but correct, bounded by ``_RESOLVE_LEADER_CACHE_MAX``).
+    # Distinct dialers MUST NOT share a ``ClusterClient`` because
+    # they carry different transport contracts (TLS vs plaintext,
+    # AF_UNIX vs TCP, custom KEEPALIVE, etc.) — sharing would let
+    # the first dialer's connection serve a request that should
+    # have used the second's.
+    #
+    # The callable itself goes in the key (NOT ``id(dial_func)``):
+    # CPython's ``id()`` is the memory address of the object and is
+    # recycled as soon as the object is GC'd. Function / lambda /
+    # ``functools.partial`` / bound-method objects all hash by
+    # identity and compare equal only to themselves, so using the
+    # callable directly yields the same effective key while pinning
+    # the dial_func for the lifetime of the cache entry — eliminating
+    # the post-eviction id-recycle window where a freshly-allocated
+    # lambda with a different transport contract could land at the
+    # same memory address. Cost: the cache pins the dial_func until
+    # the entry evicts (bounded by ``_RESOLVE_LEADER_CACHE_MAX=32``).
+    # The ``id(loop)`` pairing above is the analogous bounded-
+    # acceptable hazard documented at lines 398-403.
+    key: tuple[object, ...] = (
+        loop_id,
+        address,
+        timeout,
+        max_total_rows,
+        max_continuation_frames,
+        max_message_size,
+        trust_server_heartbeat,
+        dial_func,
+    )
+
+    # Double-checked init: look up under the lock, drop the lock to
+    # construct, retake the lock to register. The previous shape held
+    # the lock across ``ClusterClient.__init__`` — sound today because
+    # the constructor does no ``await`` and no I/O, but a future
+    # refactor that adds either would turn the held-across-init shape
+    # into a deadlock trap (the loop thread yields at the await,
+    # any sibling coroutine that also calls this helper synchronously
+    # parks on ``threading.Lock.acquire()`` with no way to resume).
+    # Constructing outside the lock costs one wasted ``ClusterClient``
+    # per lost concurrent race — bounded by the cache hit rate; in
+    # steady state the racy path almost never fires.
     with _RESOLVE_LEADER_CACHE_LOCK:
         pid = get_current_pid()
         if pid != _RESOLVE_LEADER_CACHE_PID:
             _RESOLVE_LEADER_CACHE.clear()
             _RESOLVE_LEADER_CACHE_PID = pid
-
-        # ``dial_func`` is keyed by callable identity — operators
-        # constructing a single module-level dialer get a single cache
-        # entry (the common case); operators constructing a fresh
-        # lambda per request degrade to one cache entry per identity
-        # (wasteful but correct, bounded by ``_RESOLVE_LEADER_CACHE_MAX``).
-        # Distinct dialers MUST NOT share a ``ClusterClient`` because
-        # they carry different transport contracts (TLS vs plaintext,
-        # AF_UNIX vs TCP, custom KEEPALIVE, etc.) — sharing would let
-        # the first dialer's connection serve a request that should
-        # have used the second's.
-        #
-        # The callable itself goes in the key (NOT ``id(dial_func)``):
-        # CPython's ``id()`` is the memory address of the object and is
-        # recycled as soon as the object is GC'd. Function / lambda /
-        # ``functools.partial`` / bound-method objects all hash by
-        # identity and compare equal only to themselves, so using the
-        # callable directly yields the same effective key while pinning
-        # the dial_func for the lifetime of the cache entry — eliminating
-        # the post-eviction id-recycle window where a freshly-allocated
-        # lambda with a different transport contract could land at the
-        # same memory address. Cost: the cache pins the dial_func until
-        # the entry evicts (bounded by ``_RESOLVE_LEADER_CACHE_MAX=32``).
-        # The ``id(loop)`` pairing above is the analogous bounded-
-        # acceptable hazard documented at lines 398-403.
-        key: tuple[object, ...] = (
-            loop_id,
-            address,
-            timeout,
-            max_total_rows,
-            max_continuation_frames,
-            max_message_size,
-            trust_server_heartbeat,
-            dial_func,
-        )
         cluster = _RESOLVE_LEADER_CACHE.get(key)
-        if cluster is None:
-            if len(_RESOLVE_LEADER_CACHE) >= _RESOLVE_LEADER_CACHE_MAX:
-                # FIFO eviction: drop the oldest entry. Two effects,
-                # both acceptable for this cache's intended use:
-                # 1. Fast-path lookup for that key is lost — the next
-                #    ``find_leader`` against the evicted key
-                #    rediscovers in one sweep.
-                # 2. Single-flight collapse is temporarily violated:
-                #    if a concurrent caller arrives on the evicted
-                #    key while the prior awaiter still holds a
-                #    reference to the in-flight task, the new caller
-                #    constructs a brand-new ClusterClient (fresh
-                #    ``_find_leader_tasks`` slot map) and runs ITS
-                #    own parallel sweep against the same cluster.
-                # Both effects self-heal — the cache backfills on the
-                # next successful resolve, and the original in-flight
-                # sweep completes independently. Cost: one wasted
-                # sweep per evicted key with concurrent demand. The
-                # cache size cap (_RESOLVE_LEADER_CACHE_MAX) bounds
-                # the per-loop memory pressure.
-                _RESOLVE_LEADER_CACHE.pop(next(iter(_RESOLVE_LEADER_CACHE)))
-            # ``max_message_size`` is intentionally NOT forwarded to
-            # ``ClusterClient.__init__``: ClusterClient lacks the
-            # constructor kwarg today (only its per-call ``connect()``
-            # method accepts it). The leader-probe RPC returns
-            # ``LeaderResponse`` which is bounded well below the
-            # wire-default 64 MiB; the operator's larger cap matters
-            # only for the eventual ``DqliteConnection`` data session,
-            # which IS built with ``max_message_size`` at the call
-            # site below in ``_build_and_connect``. Cache-key membership
-            # is still kept on ``max_message_size`` so the dbapi
-            # connect() variant produces independent cache entries —
-            # avoids cross-contamination if ``ClusterClient`` ever
-            # grows the kwarg.
-            cluster = ClusterClient(
-                MemoryNodeStore([address]),
-                timeout=timeout,
-                max_total_rows=max_total_rows,
-                max_continuation_frames=max_continuation_frames,
-                trust_server_heartbeat=trust_server_heartbeat,
-                dial_func=dial_func,
-            )
-            _RESOLVE_LEADER_CACHE[key] = cluster
-        return cluster
+        if cluster is not None:
+            return cluster
+
+    # Construct OUTSIDE the lock. ``max_message_size`` is intentionally
+    # NOT forwarded to ``ClusterClient.__init__``: ClusterClient lacks
+    # the constructor kwarg today (only its per-call ``connect()``
+    # method accepts it). The leader-probe RPC returns
+    # ``LeaderResponse`` which is bounded well below the wire-default
+    # 64 MiB; the operator's larger cap matters only for the eventual
+    # ``DqliteConnection`` data session, which IS built with
+    # ``max_message_size`` at the call site below in
+    # ``_build_and_connect``. Cache-key membership is still kept on
+    # ``max_message_size`` so the dbapi connect() variant produces
+    # independent cache entries — avoids cross-contamination if
+    # ``ClusterClient`` ever grows the kwarg.
+    new_cluster = ClusterClient(
+        MemoryNodeStore([address]),
+        timeout=timeout,
+        max_total_rows=max_total_rows,
+        max_continuation_frames=max_continuation_frames,
+        trust_server_heartbeat=trust_server_heartbeat,
+        dial_func=dial_func,
+    )
+
+    with _RESOLVE_LEADER_CACHE_LOCK:
+        # Recheck — a concurrent caller may have inserted while we
+        # were constructing. The first writer wins; ``new_cluster``
+        # is discarded on the lost race. Re-validate the PID too in
+        # case a fork happened during the unlocked construction.
+        pid = get_current_pid()
+        if pid != _RESOLVE_LEADER_CACHE_PID:
+            _RESOLVE_LEADER_CACHE.clear()
+            _RESOLVE_LEADER_CACHE_PID = pid
+        existing = _RESOLVE_LEADER_CACHE.get(key)
+        if existing is not None:
+            return existing
+        if len(_RESOLVE_LEADER_CACHE) >= _RESOLVE_LEADER_CACHE_MAX:
+            # FIFO eviction: drop the oldest entry. Two effects,
+            # both acceptable for this cache's intended use:
+            # 1. Fast-path lookup for that key is lost — the next
+            #    ``find_leader`` against the evicted key
+            #    rediscovers in one sweep.
+            # 2. Single-flight collapse is temporarily violated:
+            #    if a concurrent caller arrives on the evicted
+            #    key while the prior awaiter still holds a
+            #    reference to the in-flight task, the new caller
+            #    constructs a brand-new ClusterClient (fresh
+            #    ``_find_leader_tasks`` slot map) and runs ITS
+            #    own parallel sweep against the same cluster.
+            # Both effects self-heal — the cache backfills on the
+            # next successful resolve, and the original in-flight
+            # sweep completes independently. Cost: one wasted
+            # sweep per evicted key with concurrent demand. The
+            # cache size cap (_RESOLVE_LEADER_CACHE_MAX) bounds
+            # the per-loop memory pressure.
+            _RESOLVE_LEADER_CACHE.pop(next(iter(_RESOLVE_LEADER_CACHE)))
+        _RESOLVE_LEADER_CACHE[key] = new_cluster
+        return new_cluster
 
 
 async def _resolve_leader(
