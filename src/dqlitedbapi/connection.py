@@ -2501,7 +2501,24 @@ class Connection:
                 # bypass probe must not see "owner == me" after we've
                 # released. The integer write is GIL-atomic.
                 self._op_lock_owner = None
-                self._op_lock.release()
+                # Suppress RuntimeError: the same-thread close()
+                # bypass below (around line 2780) may have already
+                # released ``_op_lock`` from a signal-handler
+                # invocation that interleaved with this _run_sync's
+                # parked ``Future.result``. ``threading.Lock.release``
+                # raises ``RuntimeError("release unlocked lock")`` on
+                # a second release. Without this suppress, Python's
+                # try/finally exception-replacement contract would
+                # replace the in-flight ``KeyboardInterrupt`` /
+                # ``SystemExit`` with the wrong-layer RuntimeError —
+                # a PEP 249 §7 surface violation that defeats the
+                # very signal the operator delivered. Symmetric with
+                # the acquire-time KI-cleanup site above and with the
+                # close()-bypass site below, both of which already
+                # apply the same suppress for the analogous
+                # already-released cases.
+                with contextlib.suppress(RuntimeError):
+                    self._op_lock.release()
 
     async def _get_async_connection(self) -> DqliteConnection:
         """Get or create the underlying async connection."""
