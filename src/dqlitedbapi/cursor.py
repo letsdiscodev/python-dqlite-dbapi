@@ -525,20 +525,42 @@ async def _convert_rows_async(
         return []
     if len(rows) < _LARGE_RESULT_ROW_THRESHOLD:
         return _convert_rows(rows, row_types, column_types)
-    needs_conversion = any(t in _RESULT_CONVERTERS for t in column_types) or any(
-        t in _RESULT_CONVERTERS for rt in row_types for t in rt
-    )
+    # Probe column_types ONCE up-front (cheap — bounded by n_cols,
+    # short-circuits on the first hit). The per-row probe is folded
+    # into the per-chunk loop below so the cooperative yield fires
+    # on its documented cadence regardless of fetch width. The
+    # prior shape ran an ``O(rows × cols)`` walk over ``row_types``
+    # BEFORE the first ``await asyncio.sleep(0)`` — ~100 ms of
+    # loop-monopolisation on a 100k-row × 32-col fetch that a
+    # heartbeat coroutine on a 50 ms budget could not survive.
+    column_types_hit = any(t in _RESULT_CONVERTERS for t in column_types)
     result: list[tuple[Any, ...]] = []
-    if not needs_conversion:
-        for i, row in enumerate(rows):
-            result.append(tuple(row))
-            if (i + 1) % _CONVERT_ROWS_YIELD_EVERY == 0:
-                await asyncio.sleep(0)
-        return result
-    for i, row in enumerate(rows):
-        result.append(_convert_row(row, row_types[i] if i < len(row_types) else column_types))
-        if (i + 1) % _CONVERT_ROWS_YIELD_EVERY == 0:
-            await asyncio.sleep(0)
+    rt_len = len(row_types)
+    n_rows = len(rows)
+    chunk = _CONVERT_ROWS_YIELD_EVERY
+    for chunk_start in range(0, n_rows, chunk):
+        chunk_end = min(chunk_start + chunk, n_rows)
+        # Per-chunk probe: bounded by ``chunk × n_cols``
+        # (~4096 × 32 ≈ 130k dict-membership tests, ~4 ms on
+        # commodity x86). Preserves the converter-free fast-path
+        # ``tuple(row)`` materialisation at chunk granularity —
+        # if NO cell in this chunk needs conversion, the
+        # materialise loop skips the per-row ``_convert_row``
+        # call (which builds an intermediate list and pays a
+        # per-cell ``.get()``).
+        chunk_hit = column_types_hit or any(
+            t in _RESULT_CONVERTERS
+            for j in range(chunk_start, min(chunk_end, rt_len))
+            for t in row_types[j]
+        )
+        if chunk_hit:
+            for i in range(chunk_start, chunk_end):
+                types = row_types[i] if i < rt_len else column_types
+                result.append(_convert_row(rows[i], types))
+        else:
+            for i in range(chunk_start, chunk_end):
+                result.append(tuple(rows[i]))
+        await asyncio.sleep(0)
     return result
 
 
