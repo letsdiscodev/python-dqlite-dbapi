@@ -5,7 +5,7 @@ import contextlib
 import weakref
 from collections.abc import Coroutine, Iterable, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, NoReturn, Self
+from typing import TYPE_CHECKING, Any, Final, NoReturn, Self
 
 from dqlitedbapi.cursor import (
     _EXECUTEMANY_REJECT_VERBS,
@@ -40,6 +40,17 @@ if TYPE_CHECKING:
 __all__ = ["AsyncCursor"]
 
 
+# Frequency at which ``AsyncCursor.__anext__`` yields to the event-
+# loop scheduler. ``fetchone`` returns synchronously for pre-buffered
+# rows, so without an explicit yield ``async for row in cursor:``
+# over a large result monopolises the loop. Threshold chosen so the
+# common case (tight inner loops over small fetches, e.g. <512 rows)
+# pays zero scheduler overhead, while a multi-10k iteration cedes
+# the loop to siblings often enough to keep heartbeats / pool
+# acquirers / SA do_ping responsive.
+_ANEXT_YIELD_EVERY: Final[int] = 512
+
+
 class AsyncCursor:
     """Async database cursor."""
 
@@ -49,6 +60,7 @@ class AsyncCursor:
     # hold a reference for the close-cascade.
     __slots__ = (
         "__weakref__",
+        "_aiter_yield_counter",
         "_arraysize",
         "_closed",
         "_completed_iterations",
@@ -72,6 +84,14 @@ class AsyncCursor:
         self._row_index = 0
         self._closed = False
         self._lastrowid: int | None = None
+        # Cooperative-yield counter for ``__anext__``. Pre-fetched
+        # rows make ``await fetchone()`` synchronous; without a
+        # periodic yield, ``async for row in cursor:`` over a large
+        # result monopolises the loop. The counter is reset to zero
+        # on each execute inside ``_reset_execute_state`` so a
+        # fresh cursor starts iteration from the small-batch
+        # fast path.
+        self._aiter_yield_counter: int = 0
         # Per-cursor task token used to reject concurrent execute()
         # calls from different tasks. ``op_lock`` serialises the wire
         # but not the cursor's per-execute state mutations.
@@ -335,6 +355,11 @@ class AsyncCursor:
         # ``_reset_execute_state``, so the explicit reset there is
         # redundant once the helper takes responsibility.
         self._completed_iterations = 0
+        # Reset the per-iteration yield counter so a fresh execute
+        # starts the next ``async for`` from the small-batch
+        # fast path rather than inheriting state from a prior
+        # large iteration on the same cursor.
+        self._aiter_yield_counter = 0
 
     async def _execute_unlocked(
         self, operation: str, parameters: Sequence[Any] | None = None
@@ -1597,6 +1622,16 @@ class AsyncCursor:
         row = await self.fetchone()
         if row is None:
             raise StopAsyncIteration
+        # Cooperative loop yield. ``fetchone`` returns synchronously
+        # for pre-buffered rows (which is every row on a buffered
+        # result set), so without an explicit yield ``async for row
+        # in cursor:`` over a large result monopolises the loop.
+        # Yield every _ANEXT_YIELD_EVERY rows so the common case
+        # (small iterations) pays no scheduler overhead.
+        self._aiter_yield_counter += 1
+        if self._aiter_yield_counter >= _ANEXT_YIELD_EVERY:
+            self._aiter_yield_counter = 0
+            await asyncio.sleep(0)
         return row
 
     async def __aenter__(self) -> Self:

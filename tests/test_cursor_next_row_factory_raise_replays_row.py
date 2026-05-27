@@ -57,6 +57,7 @@ def _prime_async_cursor(rows: list[tuple[Any, ...]]) -> AsyncCursor:
     cur._arraysize = 1
     cur._executing_task = None
     cur._completed_iterations = 0
+    cur._aiter_yield_counter = 0
     cur.messages = []
     conn = MagicMock()
     conn._check_loop_binding = MagicMock()
