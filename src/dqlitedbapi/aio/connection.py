@@ -63,6 +63,31 @@ def _async_unclosed_warning(
     connected_flag: list[bool],
     address: str,
     creator_pid: int,
+    *,
+    # Kwarg-default capture of the stdlib module globals the body
+    # dereferences. ``Py_FinalizeEx`` phase 3 walks ``sys.modules``
+    # and sets module-level globals to ``None`` via
+    # ``PyImport_Cleanup``; without the capture, a finalize callback
+    # that fires after this module's globals were nulled would raise
+    # ``TypeError: 'NoneType' object is not callable`` out of
+    # ``warnings`` / ``contextlib`` / ``sanitize_for_log`` and the
+    # unraisable-hook traceback would drown out the shutdown signal.
+    # Mirrors the discipline applied to the sync sibling
+    # ``_cleanup_loop_thread`` (connection.py:1141-1144) and to
+    # ``_join_budget_for_current_thread``.
+    #
+    # ``get_current_pid`` is INTENTIONALLY NOT captured: existing
+    # fork-pid tests patch the module-level name via
+    # ``unittest.mock.patch`` to simulate a forked child, and a
+    # kwarg-default capture would freeze the production value past
+    # the patch. The runtime dereference below is wrapped in a
+    # ``try`` block that catches the shutdown-time ``TypeError`` so
+    # the shutdown-safety goal is still met for ``get_current_pid``
+    # — same precedent as ``_cleanup_loop_thread`` in the sync sibling
+    # at connection.py:1133-1140.
+    _warnings: Any = warnings,
+    _contextlib: Any = contextlib,
+    _sanitize_for_log: Any = sanitize_for_log,
 ) -> None:
     """Emit a ResourceWarning when an ``AsyncConnection`` is GC'd
     without ``await close()``.
@@ -102,12 +127,26 @@ def _async_unclosed_warning(
     Suppression-narrow ``RuntimeError`` mirrors the sync sibling's
     interpreter-shutdown race protection.
     """
-    if get_current_pid() != creator_pid:
-        # Forked child. Skip — the parent owns the lifecycle.
+    # Shutdown-phase teardown can leave any of the captured module
+    # references nulled. Bail early so the unraisable-hook traceback
+    # doesn't fire from inside ``weakref._exitfunc``.
+    if _warnings is None or _contextlib is None or _sanitize_for_log is None:
+        return
+    # Read ``get_current_pid`` from module globals at call time so
+    # the test fixture's ``patch("dqlitedbapi.aio.connection."
+    # "get_current_pid", ...)`` is observed. Wrap in a broad except
+    # so the ``Py_FinalizeEx`` phase-3 ``get_current_pid = None``
+    # teardown surfaces as a silent no-op (not an unraisable-hook
+    # ``TypeError: 'NoneType' object is not callable`` traceback).
+    try:
+        if get_current_pid() != creator_pid:
+            # Forked child. Skip — the parent owns the lifecycle.
+            return
+    except Exception:
         return
     if closed_flag[0] or not connected_flag[0]:
         return
-    with contextlib.suppress(RuntimeError):
+    with _contextlib.suppress(RuntimeError):
         # Defence-in-depth parity with the sync sibling
         # ``_cleanup_loop_thread`` (connection.py:1140-1157):
         # route ``address`` through ``sanitize_for_log`` before
@@ -116,8 +155,8 @@ def _async_unclosed_warning(
         # mitigated by repr alone), but the sanitiser is the
         # package's documented belt-and-suspenders posture and
         # the sync sibling applies it; this restores parity.
-        warnings.warn(
-            f"AsyncConnection(address={sanitize_for_log(str(address))!r}) was "
+        _warnings.warn(
+            f"AsyncConnection(address={_sanitize_for_log(str(address))!r}) was "
             f"garbage-collected without await close(). Call "
             f"``await aconn.close()`` explicitly to avoid this warning "
             f"and to release the underlying socket promptly.",
