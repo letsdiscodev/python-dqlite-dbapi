@@ -623,26 +623,44 @@ class AsyncCursor:
                 operation = rewritten
 
             _, op_lock = self._connection._ensure_locks()
-            async with op_lock:
-                del self.messages[:]
-                self._check_closed()
-                # Stdlib-parity BUSY retry. Wraps ONLY the wire
-                # round-trip; per-execute state reset and validation
-                # ran ONCE above. The retry loop calls a fresh
-                # coroutine via the factory lambda each attempt.
-                # ``_resolve_busy_timeout_seconds`` falls back to
-                # 0.0 (no-retry) when the connection is a MagicMock
-                # in tests — preserves pre-feature semantics for
-                # those fixtures.
-                from dqlitedbapi._busy_retry import (
-                    _resolve_busy_timeout_seconds,
-                    retry_async_on_busy,
-                )
+            # Per-attempt op_lock acquire (was: outer ``async with
+            # op_lock:`` around the whole retry loop). Each retry
+            # attempt acquires the lock, runs the under-lock
+            # ``del self.messages[:]`` + ``_check_closed()`` +
+            # wire round-trip, and releases the lock before
+            # returning. The retry helper's ``await asyncio.sleep``
+            # between attempts therefore runs OUTSIDE the lock —
+            # sibling tasks on the same ``AsyncConnection``
+            # (``await conn.commit()`` / ``rollback()`` /
+            # ``close()``) can acquire ``op_lock`` in the gap
+            # between two BUSY retries instead of parking for the
+            # full SQLite-curve backoff (up to ``busy_timeout``,
+            # default 5 s). Mirrors the sync sibling's
+            # ``retry_sync_on_busy`` discipline, which acquires +
+            # releases ``_op_lock`` per attempt via ``run_sync``.
+            from dqlitedbapi._busy_retry import (
+                _resolve_busy_timeout_seconds,
+                retry_async_on_busy,
+            )
 
-                await retry_async_on_busy(
-                    _resolve_busy_timeout_seconds(self._connection),
-                    lambda: self._execute_unlocked(operation, parameters),
-                )
+            async def _attempt() -> None:
+                async with op_lock:
+                    # Re-clear messages and re-check closed per
+                    # attempt: the under-lock ``del self.messages[:]``
+                    # / ``_check_closed()`` discipline pinned by the
+                    # async-cursor close-recheck issues must hold for
+                    # every attempt, not just the first. Per PEP 249
+                    # §6.1.1 ``messages`` is per-execute, not
+                    # per-attempt — the final retry's diagnostic
+                    # alone surfaces to the caller.
+                    del self.messages[:]
+                    self._check_closed()
+                    await self._execute_unlocked(operation, parameters)
+
+            await retry_async_on_busy(
+                _resolve_busy_timeout_seconds(self._connection),
+                _attempt,
+            )
         finally:
             # Clear unconditionally to close the bytecode-tight signal
             # window between the read and write of a guarded clear: a

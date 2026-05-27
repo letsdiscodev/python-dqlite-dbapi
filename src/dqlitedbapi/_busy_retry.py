@@ -256,11 +256,27 @@ async def retry_async_on_busy[T](
 
     **Cross-task caveat**:
 
-    Mirrors the sync sibling's cross-thread caveat: the retry loop
-    releases any wire-level lock (the inner ``DqliteConnection``'s
-    op_lock or the AsyncConnection's op_lock) between attempts.
-    ``await asyncio.sleep`` runs OUTSIDE the lock so siblings can
-    make progress; by design.
+    The helper itself does NOT acquire or release any wire-level
+    lock — it simply awaits ``coro_factory()``, classifies BUSY,
+    sleeps, and retries. Whether the ``await asyncio.sleep`` runs
+    inside or outside any caller-held lock is determined by the
+    factory's shape.
+
+    The async ``execute`` call site supplies a factory that
+    acquires ``op_lock`` per attempt (``async with op_lock: ...
+    await self._execute_unlocked(...)``), so the sleep between
+    attempts runs OUTSIDE the lock and sibling tasks on the same
+    ``AsyncConnection`` (``await conn.commit()`` / ``rollback()``
+    / ``close()``) can acquire ``op_lock`` in the gap. Mirrors the
+    sync sibling's ``run_sync``-per-attempt discipline.
+
+    The ``executemany`` call site is the documented exception: it
+    holds an outer ``async with op_lock:`` across the WHOLE
+    iteration loop (preserving the cancel-atomicity invariant —
+    a concurrent task cannot slip arbitrary statements between
+    iterations). The per-iteration BUSY backoff therefore DOES
+    keep the lock held; sibling-task starvation across executemany
+    BUSY retries is the accepted trade-off for batch atomicity.
 
     On an AsyncConnection shared across asyncio tasks on the same
     loop, a BUSY-retried statement may observe interleaved writes
