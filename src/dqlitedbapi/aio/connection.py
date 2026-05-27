@@ -1192,6 +1192,18 @@ class AsyncConnection:
         runs directly; on a foreign thread with a live loop the cancel
         is scheduled via ``call_soon_threadsafe`` so the ready-queue
         is not mutated cross-thread.
+
+        Owning-loop note: when invoked from a coroutine on the
+        owning loop (e.g. an in-loop test fixture explicitly
+        terminating a connection with many open cursors), the
+        cursor-cascade walk runs inline without yielding — synchronous
+        attribute writes on each cursor plus a ``weakref.proxy`` swap.
+        For a connection with N open cursors that is O(N) loop CPU
+        before this method returns. Documented intent is the
+        loop-already-dead / GC / atexit / SA-do_terminate paths where
+        the cascade-on-owning-loop case does not arise; an in-loop
+        caller with hundreds of open cursors who wants cooperative
+        teardown should await ``close()`` instead.
         """
         # PEP 249 §6.4 + project discipline: every public Connection
         # method clears ``messages`` as the first statement.
