@@ -1023,8 +1023,20 @@ async def _build_and_connect(
             # surrounding cancel-handling discipline elsewhere in
             # this module (see e.g. ``aio/connection.py`` ensure-
             # connection close-path) uses the same idiom.
+            #
+            # Hoist the coro into an explicit Task with a done-
+            # callback observer BEFORE shielding so an outer cancel
+            # landing mid-await does not orphan the implicit Task
+            # ``asyncio.shield`` would otherwise create — that
+            # orphan would surface as "Task exception was never
+            # retrieved" at GC. Same pattern as
+            # ``cluster.py::_observe_drain_exception``.
+            from dqliteclient.cluster import _observe_drain_exception
+
+            close_task = asyncio.ensure_future(conn.close())
+            close_task.add_done_callback(_observe_drain_exception)
             with contextlib.suppress(Exception):
-                await asyncio.shield(conn.close())
+                await asyncio.shield(close_task)
             raise
     return conn
 
