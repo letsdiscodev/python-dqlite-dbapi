@@ -12,7 +12,7 @@ from dqlitedbapi.cursor import (
     _call_client,
     _classify_caller_sql,
     _convert_params,
-    _convert_rows,
+    _convert_rows_async,
     _ExecuteManyAccumulator,
     _is_dml_rowcount_meaningful,
     _is_dml_with_returning,
@@ -453,13 +453,14 @@ class AsyncCursor:
                     for i, name in enumerate(columns)
                 )
             # Per-row dispatch; see the sync ``_execute_async``
-            # companion for the rationale. ``_convert_rows`` collapses
-            # to a tuple-materialisation fast path when no column
-            # carries a registered converter — the typical case where
-            # the comprehension would otherwise burn O(n_cells) of
-            # loop-thread CPU rebuilding row tuples without changing
-            # any value.
-            self._rows = _convert_rows(rows, row_types, column_types)
+            # companion for the rationale. ``_convert_rows_async``
+            # collapses to the sync ``_convert_rows`` for small
+            # result sets (no per-row scheduler overhead on the
+            # common case) and yields with ``await asyncio.sleep(0)``
+            # between row batches for large ones — keeps the
+            # cooperative-yield chain intact downstream of the
+            # wire-layer drain.
+            self._rows = await _convert_rows_async(rows, row_types, column_types)
             self._row_index = 0
             # See sync sibling for the rationale: dqlite returns the
             # buffered row count rather than stdlib's -1 because the

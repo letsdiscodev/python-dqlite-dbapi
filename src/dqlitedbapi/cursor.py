@@ -481,6 +481,67 @@ def _convert_rows(
     ]
 
 
+# Threshold (row count) above which ``_convert_rows_async`` chunks
+# the materialisation with periodic ``await asyncio.sleep(0)``.
+# Small fetches fall through to the synchronous fast path so the
+# common case pays zero scheduler overhead.
+#
+# The chunk size controls how many rows are processed between yields.
+# Picked to keep the per-chunk cost well under one frame at 60 fps
+# (~16 ms) even on slow Python interpreters: at ~0.5 µs/row in the
+# fast path or ~3 µs/row in the converter path, 4096 rows takes
+# 2-12 ms — visible but not perceptual.
+_LARGE_RESULT_ROW_THRESHOLD: Final[int] = 4096
+_CONVERT_ROWS_YIELD_EVERY: Final[int] = 4096
+
+
+async def _convert_rows_async(
+    rows: Sequence[Sequence[Any]],
+    row_types: Sequence[Sequence[int]],
+    column_types: Sequence[int],
+) -> list[tuple[Any, ...]]:
+    """Async-aware sibling of :func:`_convert_rows` that yields to
+    the event loop scheduler between row batches on large fetches.
+
+    Small fetches (``len(rows) < _LARGE_RESULT_ROW_THRESHOLD``) fall
+    through to the synchronous helper unchanged so the common case
+    pays no per-row scheduler overhead.
+
+    Large fetches process ``_CONVERT_ROWS_YIELD_EVERY`` rows per
+    batch and ``await asyncio.sleep(0)`` between batches. The user's
+    other coroutines (heartbeat probes, pool acquirers, sibling RPCs)
+    therefore get loop time even when the cursor is materialising a
+    multi-100k-row result set after the wire-layer drain has already
+    yielded. Without this hop the cooperative-yield chain established
+    by ``_drain_continuations`` is broken at the dbapi layer.
+
+    Only invoked from the async cursor surface
+    (``dqlitedbapi.aio.cursor``). The sync cursor surface continues
+    to call :func:`_convert_rows` directly because it runs on the
+    daemon background loop, which is the dbapi layer's own loop and
+    not the user's — loop monopolisation there is by design.
+    """
+    if not rows:
+        return []
+    if len(rows) < _LARGE_RESULT_ROW_THRESHOLD:
+        return _convert_rows(rows, row_types, column_types)
+    needs_conversion = any(t in _RESULT_CONVERTERS for t in column_types) or any(
+        t in _RESULT_CONVERTERS for rt in row_types for t in rt
+    )
+    result: list[tuple[Any, ...]] = []
+    if not needs_conversion:
+        for i, row in enumerate(rows):
+            result.append(tuple(row))
+            if (i + 1) % _CONVERT_ROWS_YIELD_EVERY == 0:
+                await asyncio.sleep(0)
+        return result
+    for i, row in enumerate(rows):
+        result.append(_convert_row(row, row_types[i] if i < len(row_types) else column_types))
+        if (i + 1) % _CONVERT_ROWS_YIELD_EVERY == 0:
+            await asyncio.sleep(0)
+    return result
+
+
 def _reject_non_sequence_params(params: Any) -> None:
     """Reject mappings, unordered containers, and str/bytes per PEP 249 qmark rules.
 
