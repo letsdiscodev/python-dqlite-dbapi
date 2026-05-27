@@ -146,7 +146,13 @@ _LOOP_THREAD_JOIN_MIN_SECONDS: Final[float] = 0.1
 _LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS: Final[float] = 0.02
 
 
-def _join_budget_for_current_thread(close_timeout: float) -> float:
+def _join_budget_for_current_thread(
+    close_timeout: float,
+    *,
+    _asyncio: Any = asyncio,
+    _join_min: float = _LOOP_THREAD_JOIN_MIN_SECONDS,
+    _foreign_floor: float = _LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS,
+) -> float:
     """Pick the daemon-thread join budget for the finalizer / force-
     close path based on whether the calling thread hosts an asyncio
     event loop.
@@ -162,15 +168,40 @@ def _join_budget_for_current_thread(close_timeout: float) -> float:
     loop is parked for a perceptually-imperceptible window. The
     daemon-thread loop drains independently; ``daemon=True`` ensures
     no inherited thread leaks past interpreter exit.
+
+    Shutdown-safety capture: ``asyncio`` and the two floor constants
+    are captured as kwarg defaults at function-definition time so
+    that ``Py_FinalizeEx`` phase 3 — which sets module-level globals
+    to ``None`` via ``PyImport_Cleanup`` — cannot turn the loop
+    probe into an unraisable-hook traceback. Without this discipline
+    a finalize callback that calls into this helper after the
+    ``asyncio`` global has been cleared raises ``AttributeError``
+    out of ``get_running_loop``; the existing
+    ``contextlib.suppress(RuntimeError)`` at the
+    ``_cleanup_loop_thread`` call site does NOT catch
+    ``AttributeError``, and the ``force_close_transport`` call site
+    has no suppression at all. Mirrors the same discipline
+    ``_cleanup_loop_thread`` already applies to ``warnings`` /
+    ``logger`` / ``contextlib`` / ``sanitize_for_log``.
     """
     try:
-        asyncio.get_running_loop()
-        on_loop_thread = True
+        if _asyncio is None:
+            on_loop_thread = False
+        else:
+            _asyncio.get_running_loop()
+            on_loop_thread = True
     except RuntimeError:
         on_loop_thread = False
+    except Exception:
+        # Phase-3 teardown can leave ``_asyncio`` referencing a
+        # partially-cleared module object whose attribute access
+        # raises non-RuntimeError exceptions. Fall back to the
+        # off-loop budget so the surrounding ``thread.join`` still
+        # runs with the configured close_timeout.
+        on_loop_thread = False
     if on_loop_thread:
-        return _LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS
-    return max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)
+        return _foreign_floor
+    return max(close_timeout, _join_min)
 
 
 # Maximum number of per-RPC phases a single high-level sync call can
