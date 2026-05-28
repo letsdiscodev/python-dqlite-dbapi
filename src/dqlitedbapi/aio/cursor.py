@@ -8,7 +8,9 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Self
 
 from dqlitedbapi.cursor import (
+    _CONVERT_ROWS_YIELD_EVERY,
     _EXECUTEMANY_REJECT_VERBS,
+    _LARGE_RESULT_ROW_THRESHOLD,
     _call_client,
     _classify_caller_sql,
     _convert_params,
@@ -49,6 +51,54 @@ __all__ = ["AsyncCursor"]
 # the loop to siblings often enough to keep heartbeats / pool
 # acquirers / SA do_ping responsive.
 _ANEXT_YIELD_EVERY: Final[int] = 512
+
+
+async def _resolve_null_rescue_type_codes(
+    column_types: Sequence[int],
+    row_types: Sequence[Sequence[int]],
+) -> list[int | _DBAPIType]:
+    """Resolve ``cursor.description`` type codes with a NULL-rescue
+    scan, yielding to the loop on large result sets.
+
+    For each column whose row-0 tag is ``ValueType.NULL`` the scan
+    walks subsequent rows for the first non-NULL tag, falling back
+    to the ``UNKNOWN`` sentinel only when EVERY row at that column
+    index is NULL (PEP 249 §6.1.2: emit a real Type Object, not
+    ``None``; ``UNKNOWN`` marks the genuinely-unrecoverable case).
+    A column NULL across the whole page walks the full row count —
+    O(n_null_cols × n_rows) of pure-Python iteration that runs
+    before the first ``await`` in the result path.
+
+    Gating mirrors ``_convert_rows_async``: below
+    ``_LARGE_RESULT_ROW_THRESHOLD`` the scan runs straight through
+    (small fetches pay zero scheduler overhead); at or above it,
+    ``await asyncio.sleep(0)`` fires every ``_CONVERT_ROWS_YIELD_EVERY``
+    inner-row steps so a single all-NULL column over N rows still
+    cedes the loop to siblings. The resolved list is byte-identical
+    to the prior synchronous inline shape; the sync cursor surface
+    keeps its synchronous twin (it runs on the dbapi daemon loop,
+    where blocking is by design).
+    """
+    yield_enabled = len(row_types) >= _LARGE_RESULT_ROW_THRESHOLD
+    type_codes: list[int | _DBAPIType] = []
+    scanned = 0
+    for col_idx, c in enumerate(column_types):
+        if c != ValueType.NULL:
+            type_codes.append(int(c))
+            continue
+        resolved: int | _DBAPIType = _UNKNOWN_TYPE
+        for j in range(1, len(row_types)):
+            if col_idx < len(row_types[j]):
+                candidate = row_types[j][col_idx]
+                if candidate != ValueType.NULL:
+                    resolved = int(candidate)
+                    break
+            if yield_enabled:
+                scanned += 1
+                if scanned % _CONVERT_ROWS_YIELD_EVERY == 0:
+                    await asyncio.sleep(0)
+        type_codes.append(resolved)
+    return type_codes
 
 
 class AsyncCursor:
@@ -459,20 +509,15 @@ class AsyncCursor:
                     # see sync sibling at ``cursor.py`` for the full
                     # rationale. Fall back to ``UNKNOWN`` only when
                     # EVERY row at that column index is NULL
-                    # (genuinely unrecoverable).
-                    type_codes = []
-                    for col_idx, c in enumerate(column_types):
-                        if c != ValueType.NULL:
-                            type_codes.append(int(c))
-                            continue
-                        resolved: int | _DBAPIType = _UNKNOWN_TYPE
-                        for j in range(1, len(row_types)):
-                            if col_idx < len(row_types[j]):
-                                candidate = row_types[j][col_idx]
-                                if candidate != ValueType.NULL:
-                                    resolved = int(candidate)
-                                    break
-                        type_codes.append(resolved)
+                    # (genuinely unrecoverable). Routed through the
+                    # async helper so a wide all-NULL result set
+                    # (each such column walks the full row count)
+                    # cedes the loop to siblings every
+                    # ``_CONVERT_ROWS_YIELD_EVERY`` steps instead of
+                    # monopolising it before the first downstream
+                    # ``await``. Small results take the helper's
+                    # synchronous fast path (no scheduler overhead).
+                    type_codes = await _resolve_null_rescue_type_codes(column_types, row_types)
                 self._description = tuple(
                     (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)
