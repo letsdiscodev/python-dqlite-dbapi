@@ -49,6 +49,31 @@ def test_sqlite_errorname_returns_none_for_unknown_code() -> None:
     assert err.sqlite_errorname is None
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        1002,  # DQLITE_NOTFOUND — collides with stdlib SQLITE_DBCONFIG_ENABLE_FKEY
+        1005,  # DQLITE_PARSE — collides with stdlib SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION
+    ],
+)
+def test_sqlite_errorname_none_for_namespace_codes_colliding_with_dbconfig(code: int) -> None:
+    """dqlite-namespace error codes must return None even when their
+    integer value coincides with a stdlib ``SQLITE_DBCONFIG_*`` config
+    opcode (1002-1017). The accessor must not report a config-opcode
+    name for a dqlite error code."""
+    assert DatabaseError("namespace", code=code).sqlite_errorname is None
+
+
+@pytest.mark.parametrize("code", [10250, 10506, 8202, 8458])
+def test_sqlite_errorname_none_for_leader_change_codes(code: int) -> None:
+    """All leader-change codes — modern (10250/10506) and legacy
+    (8202/8458) — return None uniformly. The legacy values collide
+    with stdlib extended IOERR codes (SQLITE_IOERR_DATA /
+    SQLITE_IOERR_CORRUPTFS); the accessor must not surface those
+    misleading names for a leader-change error."""
+    assert DatabaseError("leader", code=code).sqlite_errorname is None
+
+
 def test_module_exports_errorname_alongside_errorcode() -> None:
     """The two stdlib accessors ship together on the code-bearing
     subclasses. Pin both presences."""

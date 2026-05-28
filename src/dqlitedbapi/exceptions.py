@@ -5,7 +5,9 @@ from functools import lru_cache
 from typing import Final
 
 from dqlitewire import DEFAULT_MAX_RAW_MESSAGE as _DEFAULT_MAX_RAW_MESSAGE
+from dqlitewire import LEADER_ERROR_CODES as _LEADER_ERROR_CODES
 from dqlitewire import cap_raw_message as _wire_cap_raw_message
+from dqlitewire import is_dqlite_namespace_code as _is_dqlite_namespace_code
 
 __all__ = [
     "AdapterLookupError",
@@ -103,14 +105,31 @@ def _stdlib_extended_code_to_name() -> dict[int, str]:
 
 def _sqlite_errorname(code: int | None) -> str | None:
     """Look up the symbolic SQLite error name for ``code``. Returns
-    ``None`` for ``None`` codes and for codes not present in either
-    the primary-code table or stdlib's extended-code constant set
-    (e.g. dqlite-namespace codes ≥1000)."""
+    ``None`` for ``None`` codes, for dqlite-namespace codes
+    ([1000, 1024)) and leader-change codes (which have no upstream
+    symbolic name and whose values can collide with unrelated stdlib
+    constants), and for any code not present in the primary-code table
+    or stdlib's extended-code constant set."""
     if code is None:
         return None
     name = _PRIMARY_RESULT_CODE_NAMES.get(code)
     if name is not None:
         return name
+    # dqlite-namespace codes ([1000, 1024)) have no upstream symbolic
+    # name. Several of them collide by value with stdlib
+    # ``SQLITE_DBCONFIG_*`` config opcodes (1002-1017) — e.g.
+    # DQLITE_NOTFOUND=1002, DQLITE_PARSE=1005 — which the
+    # ``_stdlib_extended_code_to_name`` sweep would otherwise surface as
+    # bogus "config opcode" names. Short-circuit to None.
+    if _is_dqlite_namespace_code(code):
+        return None
+    # Leader-change codes have no meaningful stdlib symbolic name. The
+    # legacy values (8202/8458) collide with real stdlib extended IOERR
+    # codes (SQLITE_IOERR_DATA / SQLITE_IOERR_CORRUPTFS), so suppress
+    # them here so all four leader codes behave uniformly with the
+    # modern ones (10250/10506), which miss the table and return None.
+    if code in _LEADER_ERROR_CODES:
+        return None
     return _stdlib_extended_code_to_name().get(code)
 
 
