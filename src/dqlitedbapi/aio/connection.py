@@ -2075,7 +2075,28 @@ class AsyncConnection:
                         # Parity with ``Connection._rollback_async``;
                         # see ``commit``.
                         request_in_flight = True
-                        await _call_client(self._async_conn.execute("ROLLBACK"))
+                        # Stdlib parity: the C-level
+                        # ``sqlite3_busy_timeout`` callback fires on every
+                        # SQL statement including ROLLBACK. Wrap with the
+                        # SQLite-curve retry so a contended ROLLBACK
+                        # survives the same way COMMIT does. The retry
+                        # stays inside ``op_lock`` and the surrounding
+                        # ``asyncio.timeout`` budget. Safe wrt the
+                        # cancel-after-invalidate contract:
+                        # ``retry_async_on_busy`` retries ONLY on
+                        # ``SQLITE_BUSY`` and propagates ``CancelledError``
+                        # and every other exception unchanged, so a cancel
+                        # or invalidate can never re-issue the ROLLBACK.
+                        from dqlitedbapi._busy_retry import (
+                            _resolve_busy_timeout_seconds,
+                            retry_async_on_busy,
+                        )
+
+                        _inner = self._async_conn
+                        await retry_async_on_busy(
+                            _resolve_busy_timeout_seconds(self),
+                            lambda: _call_client(_inner.execute("ROLLBACK")),
+                        )
                         request_in_flight = False
                     except OperationalError as e:
                         request_in_flight = False

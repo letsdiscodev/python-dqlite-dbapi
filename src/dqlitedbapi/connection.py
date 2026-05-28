@@ -3644,7 +3644,22 @@ class Connection:
         # wire round-trip on the autocommit-by-default common case.
         if not getattr(inner, "in_transaction", False):
             return
-        self._run_sync(self._rollback_async())
+        # Stdlib parity: the C-level ``sqlite3_busy_timeout`` callback
+        # fires on every SQL statement including ROLLBACK (which is just
+        # SQL to SQLite). Wrap with the SQLite-curve retry so a contended
+        # ROLLBACK survives the same way COMMIT does. Safe wrt the
+        # cancel-after-invalidate contract: ``retry_sync_on_busy`` retries
+        # ONLY on ``SQLITE_BUSY`` and propagates every other exception
+        # (including ``CancelledError``) unchanged, and cancel/invalidate
+        # never produces ``SQLITE_BUSY`` — so a wrapped ROLLBACK cannot be
+        # re-issued after invalidation.
+        from dqlitedbapi._busy_retry import _resolve_busy_timeout_seconds, retry_sync_on_busy
+
+        retry_sync_on_busy(
+            _resolve_busy_timeout_seconds(self),
+            self._run_sync,
+            self._rollback_async,
+        )
 
     async def _rollback_async(self) -> None:
         """Async implementation of rollback."""
