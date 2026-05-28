@@ -13,7 +13,7 @@ from dqlitedbapi.cursor import (
     _LARGE_RESULT_ROW_THRESHOLD,
     _call_client,
     _classify_caller_sql,
-    _convert_params,
+    _convert_params_async,
     _convert_rows_async,
     _ExecuteManyAccumulator,
     _is_dml_rowcount_meaningful,
@@ -429,7 +429,7 @@ class AsyncCursor:
         - resetting execute state when this is the first iteration.
         """
         is_query = _is_row_returning(operation)
-        params = _convert_params(parameters)
+        params = await _convert_params_async(parameters)
         self._check_closed()
         conn = await self._connection._ensure_connection()
         # ``_ensure_connection`` awaits, so close() can still race

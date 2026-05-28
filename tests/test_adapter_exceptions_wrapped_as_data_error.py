@@ -159,17 +159,32 @@ def test_adapter_baseexception_passes_through_unwrapped() -> None:
 
 
 async def test_async_cursor_path_uses_same_wrap_via_shared_helper() -> None:
-    """The async cursor reuses the sync ``_convert_params`` helper
-    via a shared import; a single fix covers both surfaces. Smoke-
-    test that the contract holds via the async route by importing
-    from the async cursor's import path.
+    """The sync ``_convert_params`` and the async
+    ``_convert_params_async`` funnel every value through the shared
+    ``_convert_one_bind_param`` helper, so the adapter-exception wrap is
+    implemented once and covers both surfaces. The async cursor binds via
+    ``_convert_params_async`` (which additionally yields cooperatively on
+    large binds); verify the wrap still holds on that route.
     """
-    # The async cursor imports `_convert_params` from `cursor.py`;
-    # exercising the helper directly is sufficient — verify the
-    # import path remains shared so the fix applies symmetrically.
     from dqlitedbapi.aio import cursor as aio_cursor
+    from dqlitedbapi.cursor import _convert_one_bind_param, _convert_params_async
 
-    assert aio_cursor._convert_params is _convert_params, (  # type: ignore[attr-defined]
-        "async cursor must reuse the sync _convert_params so the "
-        "adapter-exception wrap covers both surfaces"
+    # Structural pin: the async cursor binds via the shared cooperative-
+    # yield converter, not a private copy of the conversion logic.
+    assert aio_cursor._convert_params_async is _convert_params_async, (  # type: ignore[attr-defined]
+        "async cursor must bind via the shared _convert_params_async"
     )
+
+    # Behavioural pin via the async route: an adapter raising a non-Error
+    # exception surfaces as DataError with the original on __cause__,
+    # exactly as the sync path does — because both call
+    # ``_convert_one_bind_param``.
+    assert callable(_convert_one_bind_param)
+    dqlitedbapi.register_adapter(int, lambda i: i.no_such_attr)
+    try:
+        with pytest.raises(DataError) as exc_info:
+            await _convert_params_async([1])
+        assert isinstance(exc_info.value.__cause__, AttributeError)
+        assert isinstance(exc_info.value, Error)
+    finally:
+        dqlitedbapi.unregister_adapter(int)

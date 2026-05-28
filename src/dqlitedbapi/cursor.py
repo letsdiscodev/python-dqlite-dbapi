@@ -481,16 +481,17 @@ def _convert_rows(
     ]
 
 
-# Threshold (row count) above which ``_convert_rows_async`` chunks
-# the materialisation with periodic ``await asyncio.sleep(0)``.
-# Small fetches fall through to the synchronous fast path so the
-# common case pays zero scheduler overhead.
+# Threshold (element count) above which the async converters chunk
+# their work with periodic ``await asyncio.sleep(0)``:
+# ``_convert_rows_async`` (result rows) and ``_convert_params_async``
+# (bind parameters). Small inputs fall through to the synchronous fast
+# path so the common case pays zero scheduler overhead.
 #
-# The chunk size controls how many rows are processed between yields.
-# Picked to keep the per-chunk cost well under one frame at 60 fps
-# (~16 ms) even on slow Python interpreters: at ~0.5 µs/row in the
-# fast path or ~3 µs/row in the converter path, 4096 rows takes
-# 2-12 ms — visible but not perceptual.
+# The chunk size controls how many elements are processed between
+# yields. Picked to keep the per-chunk cost well under one frame at
+# 60 fps (~16 ms) even on slow Python interpreters: at ~0.5 µs/element
+# in the fast path or ~3 µs/element in the converter path, 4096
+# elements takes 2-12 ms — visible but not perceptual.
 _LARGE_RESULT_ROW_THRESHOLD: Final[int] = 4096
 _CONVERT_ROWS_YIELD_EVERY: Final[int] = 4096
 
@@ -692,32 +693,83 @@ def _convert_params(params: Sequence[Any] | None) -> list[Any] | None:
         return None
     converted: list[Any] = []
     for p in params:
-        try:
-            converted.append(_convert_bind_param(p))
-        except Error:
-            # Already a PEP 249 Error subclass — propagate unchanged
-            # (no double-wrap).
+        converted.append(_convert_one_bind_param(p))
+    return converted
+
+
+def _convert_one_bind_param(p: Any) -> Any:
+    """Convert a single bind parameter to a wire primitive, applying the
+    PEP 249 §7 exception discipline.
+
+    Factored out of :func:`_convert_params` so the synchronous converter
+    and the cooperative-yield :func:`_convert_params_async` cannot drift
+    in how they classify a per-value adapter failure.
+
+    - Adapters that already raise an ``Error`` subclass propagate
+      unchanged (no double-wrap).
+    - A user-defined ``__conform__`` raising any exception propagates
+      UNWRAPPED. ``_convert_bind_param`` tags such exceptions with
+      ``_dqlite_conform_propagate`` so this arm re-raises the original
+      without wrapping. Cross-driver code using ``except dbapi.Error:``
+      must NOT silently swallow programmer bugs in user-defined
+      ``__conform__`` implementations — see CPython
+      ``Modules/_sqlite/microprotocols.c::_pysqlite_microprotocols_adapt``
+      for the reference behaviour cited in ``_convert_bind_param``'s
+      docstring.
+    - A ``register_adapter`` callback raising (without the marker) wraps
+      as ``DataError`` per the documented adapter-misuse contract.
+    """
+    try:
+        return _convert_bind_param(p)
+    except Error:
+        raise
+    except Exception as e:
+        if getattr(e, "_dqlite_conform_propagate", False):
             raise
-        except Exception as e:
-            # Stdlib parity: a user-defined ``__conform__`` raising
-            # an exception propagates UNWRAPPED. ``_convert_bind_param``
-            # tags such exceptions with ``_dqlite_conform_propagate``
-            # so this arm can re-raise the original without wrapping.
-            # Cross-driver code using ``except dbapi.Error:`` must
-            # NOT silently swallow programmer bugs in user-defined
-            # ``__conform__`` implementations — see CPython
-            # ``Modules/_sqlite/microprotocols.c
-            # ::_pysqlite_microprotocols_adapt`` for the reference
-            # behaviour cited in ``_convert_bind_param``'s docstring.
-            # ``register_adapter`` callback raises (without the
-            # marker) still wrap as ``DataError`` per the documented
-            # adapter-misuse contract.
-            if getattr(e, "_dqlite_conform_propagate", False):
-                raise
-            raise DataError(
-                f"adapter for {type(p).__name__} failed: {e}",
-                code=None,
-            ) from e
+        raise DataError(
+            f"adapter for {type(p).__name__} failed: {e}",
+            code=None,
+        ) from e
+
+
+async def _convert_params_async(params: Sequence[Any] | None) -> list[Any] | None:
+    """Async-aware sibling of :func:`_convert_params` that yields to the
+    event-loop scheduler between batches when binding a large parameter
+    list.
+
+    Small / ``None`` bind lists (``len(params) <
+    _LARGE_RESULT_ROW_THRESHOLD``) fall through to the synchronous
+    conversion unchanged so the common case pays no per-value scheduler
+    overhead.
+
+    Large bind lists convert ``_CONVERT_ROWS_YIELD_EVERY`` values per
+    batch and ``await asyncio.sleep(0)`` between batches. A single
+    ``execute`` may carry up to the wire ``_MAX_PARAM_COUNT`` (~32k)
+    positional binds — the shape SQLAlchemy ``insertmanyvalues`` flattens
+    a bulk INSERT batch into — and the per-value adaptation (datetime /
+    Decimal / user adapter) runs on the loop thread before the wire
+    round-trip. Without this hop the cooperative-yield chain the read
+    path already honours in :func:`_convert_rows_async` is broken on the
+    bind side: a heartbeat / pool-acquirer / sibling RPC coroutine could
+    not run for the duration of the conversion.
+
+    Only invoked from the async cursor surface
+    (``dqlitedbapi.aio.cursor``). The sync cursor surface continues to
+    call :func:`_convert_params` directly because it runs on the daemon
+    background loop, which is the dbapi layer's own loop and not the
+    user's — loop monopolisation there is by design (mirrors the
+    sync/async split documented on :func:`_convert_rows_async`).
+    """
+    _reject_non_sequence_params(params)
+    if params is None:
+        return None
+    if len(params) < _LARGE_RESULT_ROW_THRESHOLD:
+        return [_convert_one_bind_param(p) for p in params]
+    converted: list[Any] = []
+    for i, p in enumerate(params):
+        converted.append(_convert_one_bind_param(p))
+        if (i + 1) % _CONVERT_ROWS_YIELD_EVERY == 0:
+            await asyncio.sleep(0)
     return converted
 
 
