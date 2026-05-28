@@ -14,6 +14,7 @@ fire (the genuinely unrecoverable case).
 from __future__ import annotations
 
 import asyncio
+import datetime
 from collections.abc import Sequence
 from typing import Any
 
@@ -101,6 +102,46 @@ def test_sync_description_null_first_row_resolves_through_subsequent_rows() -> N
     assert type_code == int(ValueType.TEXT), (
         f"expected description type_code to resolve to TEXT (3), got {type_code}"
     )
+
+
+def test_sync_value_conversion_resolves_for_null_first_converter_column() -> None:
+    """Companion to the description-resolution pin above: a column
+    whose first row is NULL but whose later row carries a *converter*
+    type (ISO8601) must both (a) resolve the description ``type_code``
+    from the later row AND (b) run the per-row value converter so the
+    NULL row stays ``None`` while the typed row becomes a ``datetime``.
+
+    The existing description pin uses ``ValueType.TEXT`` — a non-
+    converter type — so it exercises only the description-build half.
+    This pins the data-path half: ``_convert_rows``/``_convert_row``
+    must dispatch on the per-row type for a NULL-first column. A
+    regression that narrowed the conversion probe to row 0 (finding
+    NULL → "no conversion needed") would leave the typed row as a raw
+    string and this test would catch it.
+    """
+    cur, conn = _seed_cursor()
+    column_types = [int(ValueType.NULL)]
+    row_types = [[int(ValueType.NULL)], [int(ValueType.ISO8601)]]
+    rows = [(None,), ("2024-01-15 10:30:45",)]
+    conn._async_conn = _StubInnerConn(  # type: ignore[assignment]
+        [b"col"], column_types, row_types, rows
+    )
+
+    async def _get_inner() -> Any:
+        return conn._async_conn
+
+    conn._get_async_connection = _get_inner
+
+    asyncio.run(cur._execute_async("SELECT col FROM t", []))
+
+    # Description resolved from the later typed row.
+    assert cur._description is not None
+    assert cur._description[0][1] == int(ValueType.ISO8601)
+    # Data path: the NULL row stays None; the typed row converts to a
+    # datetime via the per-row converter dispatch.
+    assert cur._rows[0][0] is None
+    assert isinstance(cur._rows[1][0], datetime.datetime)
+    assert cur._rows[1][0] == datetime.datetime(2024, 1, 15, 10, 30, 45)
 
 
 def test_sync_description_all_null_falls_back_to_unknown() -> None:
