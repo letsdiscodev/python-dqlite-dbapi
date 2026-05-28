@@ -1152,6 +1152,39 @@ class AsyncCursor:
 
         return result
 
+    async def _apply_row_factory_yielding(
+        self, rows: list[tuple[Any, ...]], factory: RowFactory
+    ) -> list[tuple[Any, ...]]:
+        """Apply ``factory`` to every row, yielding to the event loop on
+        large batches so the per-row user-Python pass does not
+        monopolise the user's loop.
+
+        Below ``_LARGE_RESULT_ROW_THRESHOLD`` the straight comprehension
+        runs with no scheduler overhead (the common case). Above it,
+        ``await asyncio.sleep(0)`` fires every ``_CONVERT_ROWS_YIELD_EVERY``
+        rows. The factory ``TypeError`` wrap is identical on both paths so
+        a ``sqlite3.Row``-style factory rejection stays inside the PEP 249
+        hierarchy.
+        """
+        try:
+            if len(rows) < _LARGE_RESULT_ROW_THRESHOLD:
+                return [factory(self, row) for row in rows]
+            transformed: list[tuple[Any, ...]] = []
+            for i, row in enumerate(rows):
+                transformed.append(factory(self, row))
+                if (i + 1) % _CONVERT_ROWS_YIELD_EVERY == 0:
+                    await asyncio.sleep(0)
+            return transformed
+        except TypeError as exc:
+            # Mirrors the sync sibling: wrap ``TypeError`` as
+            # ``DataError`` so a ``sqlite3.Row``-style factory rejection
+            # surfaces inside the PEP 249 hierarchy.
+            raise DataError(
+                f"row_factory call failed: {exc}",
+                code=None,
+                raw_message=str(exc),
+            ) from exc
+
     async def fetchall(self) -> list[tuple[Any, ...]]:
         """Fetch all remaining rows of a query result.
 
@@ -1173,20 +1206,11 @@ class AsyncCursor:
             # with the sync sibling and with ``fetchone`` / ``fetchmany``
             # discipline — a raise inside a custom factory leaves the
             # cursor index unchanged so the next fetchone returns the
-            # same row.
-            try:
-                transformed = [self._row_factory(self, row) for row in result]
-            except TypeError as exc:
-                # Mirrors the sync sibling: wrap ``TypeError`` as
-                # ``DataError`` so a ``sqlite3.Row``-style factory
-                # rejection surfaces inside the PEP 249 hierarchy.
-                # Index is NOT advanced — the snapshot-restore
-                # discipline.
-                raise DataError(
-                    f"row_factory call failed: {exc}",
-                    code=None,
-                    raw_message=str(exc),
-                ) from exc
+            # same row. The transform yields cooperatively on large
+            # buffers (see ``_apply_row_factory_yielding``); the index is
+            # advanced only AFTER it succeeds, so a mid-transform cancel
+            # leaves the whole result re-fetchable.
+            transformed = await self._apply_row_factory_yielding(result, self._row_factory)
             self._row_index = len(self._rows)
             return transformed
         self._row_index = len(self._rows)
