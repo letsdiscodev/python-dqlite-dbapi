@@ -1139,12 +1139,22 @@ class AsyncCursor:
         # prelude.
         snapshot = self._row_index
         result: list[tuple[Any, ...]] = []
+        # Yield cooperatively only for large explicit ``size`` requests so
+        # a small ``fetchmany`` pays zero scheduler overhead. The yield
+        # sits AFTER ``result.append`` so ``len(result)`` always equals the
+        # count of fully-delivered rows (each advanced ``_row_index`` once
+        # in ``_next_row_unlocked``): a cancel landing on the yield leaves
+        # ``_row_index == snapshot + len(result)``, so the restore below is
+        # exact — no row skipped or replayed.
+        yield_enabled = size >= _LARGE_RESULT_ROW_THRESHOLD
         try:
             for _ in range(size):
                 row = self._next_row_unlocked()
                 if row is None:
                     break
                 result.append(row)
+                if yield_enabled and len(result) % _CONVERT_ROWS_YIELD_EVERY == 0:
+                    await asyncio.sleep(0)
         except BaseException:
             # Restore _row_index so a retry sees the un-delivered rows.
             self._row_index = snapshot + len(result)
