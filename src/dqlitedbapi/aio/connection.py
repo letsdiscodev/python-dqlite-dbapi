@@ -1153,6 +1153,22 @@ class AsyncConnection:
         """
         await self.close()
 
+    def _null_loop_bound_slots(self) -> None:
+        """Release the lazy loop-bound primitives.
+
+        ``close()`` nulls ``_connect_lock`` / ``_op_lock`` / ``_loop_ref``
+        / ``_transaction_owner`` on every exit path so a closed
+        connection does not keep the (typically dead) event loop and its
+        ``asyncio.Lock`` objects reachable. ``force_close_transport``
+        calls this at each of its exit paths for the same discipline.
+        Tolerate ``__new__``-built fixtures that bypass ``__init__``.
+        """
+        with contextlib.suppress(AttributeError):
+            self._connect_lock = None
+            self._op_lock = None
+            self._loop_ref = None
+            self._transaction_owner = None
+
     def force_close_transport(self) -> None:
         """Synchronously tear down the underlying socket transport.
 
@@ -1298,6 +1314,7 @@ class AsyncConnection:
         inner = self._async_conn
         if inner is None:
             self._async_conn = None
+            self._null_loop_bound_slots()
             return
         # Fork-after-init: ``writer.close()`` on the inherited socket
         # FD would send FIN on a connection the parent still holds
@@ -1308,6 +1325,7 @@ class AsyncConnection:
         # the symmetric pid-guard discipline.
         if get_current_pid() != self._creator_pid:
             self._async_conn = None
+            self._null_loop_bound_slots()
             return
         # Disarm the inner client's ResourceWarning finalizer
         # (``DqliteConnection._connection_unclosed_warning``) BEFORE
@@ -1490,6 +1508,11 @@ class AsyncConnection:
         # arm) already nulls; this brings the regular non-fork path
         # to the same discipline.
         self._async_conn = None
+        # Match close(): release the lazy loop-bound primitives so a
+        # force-closed connection does not keep the (typically dead)
+        # event loop and its asyncio.Lock objects reachable until the
+        # AsyncConnection itself is GC'd.
+        self._null_loop_bound_slots()
 
     @property
     def in_transaction(self) -> bool:
