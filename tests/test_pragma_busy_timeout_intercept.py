@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import pytest
 
+from dqlitedbapi import NUMBER
 from dqlitedbapi._pragma_intercept import try_intercept_busy_timeout
+from dqlitewire import ValueType
 
 
 class _FakeCursor:
@@ -64,9 +66,28 @@ def test_setter_eq_form_updates_busy_timeout_and_returns_value() -> None:
     assert intercepted is True
     assert cur._connection._busy_timeout == 30.0
     assert cur._rows == [(30000,)]
-    assert cur._description == (("busy_timeout", None, None, None, None, None, None),)
+    assert cur._description == (
+        ("busy_timeout", int(ValueType.INTEGER), None, None, None, None, None),
+    )
     assert cur._rowcount == -1
     assert cur._row_index == 0
+
+
+def test_busy_timeout_description_type_code_is_integer() -> None:
+    """The intercept emits an integer value, so its description
+    ``type_code`` must be the wire-level INTEGER code (which compares
+    equal to the ``NUMBER`` Type Object), matching the contract the
+    normal wire path honours for every column. Emitting ``None`` would
+    break ``cur.description[0][1] == NUMBER`` introspection that works
+    everywhere else in the driver.
+    """
+    cur = _FakeCursor(busy_timeout_seconds=7.5)
+    intercepted = try_intercept_busy_timeout(cur, "PRAGMA busy_timeout", None)
+    assert intercepted is True
+    assert cur._description is not None
+    type_code = cur._description[0][1]
+    assert type_code == int(ValueType.INTEGER)
+    assert type_code == NUMBER
 
 
 def test_setter_paren_form_updates_busy_timeout() -> None:

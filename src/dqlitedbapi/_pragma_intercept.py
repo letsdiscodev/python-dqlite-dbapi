@@ -47,7 +47,9 @@ unchanged).
 
 The interception writes the cursor's result state directly:
 
-  - ``_description = (("busy_timeout", None, None, None, None, None, None),)``
+  - ``_description = (("busy_timeout", <INTEGER code>, None, None, None, None, None),)``
+    (the value is always an integer, so the ``type_code`` is the
+    wire-level INTEGER code, which compares equal to ``NUMBER``)
   - ``_rows = [(N_ms_clamped,)]``
   - ``_rowcount = -1`` (PRAGMA does not have a meaningful row count)
   - ``_row_index = 0``
@@ -67,6 +69,8 @@ from __future__ import annotations
 import os
 import re
 from typing import TYPE_CHECKING, Final
+
+from dqlitewire import ValueType
 
 if TYPE_CHECKING:
     from dqlitedbapi.cursor import Cursor
@@ -128,7 +132,13 @@ def try_intercept_busy_timeout(
     # ``PRAGMA busy_timeout = 5000`` returns ``(5000,)``,
     # ``PRAGMA busy_timeout`` (getter) also returns ``(5000,)``.
     current_ms = int(connection._busy_timeout * 1000)
-    cursor._description = (("busy_timeout", None, None, None, None, None, None),)
+    # The value is always an ``int``, so report the wire-level INTEGER
+    # type code (which compares equal to the ``NUMBER`` Type Object) as
+    # the column ``type_code`` — matching the contract the normal wire
+    # path honours for every column. Emitting ``None`` here would be the
+    # one synthetic result that breaks ``description[i][1] == NUMBER``
+    # introspection.
+    cursor._description = (("busy_timeout", int(ValueType.INTEGER), None, None, None, None, None),)
     cursor._rows = [(current_ms,)]
     cursor._rowcount = -1
     cursor._row_index = 0
