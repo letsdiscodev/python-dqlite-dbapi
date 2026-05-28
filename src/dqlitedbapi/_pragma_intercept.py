@@ -131,7 +131,13 @@ def try_intercept_busy_timeout(
     # as a single-row result. Matches SQLite's PRAGMA convention:
     # ``PRAGMA busy_timeout = 5000`` returns ``(5000,)``,
     # ``PRAGMA busy_timeout`` (getter) also returns ``(5000,)``.
-    current_ms = int(connection._busy_timeout * 1000)
+    # Round rather than truncate: the timeout is stored in seconds
+    # (``new_ms / 1000.0``), and a plain ``int()`` of ``seconds * 1000``
+    # lands at ``N - 1`` for many values because ``N / 1000.0`` is not
+    # exactly representable. ``round()`` round-trips the value the caller
+    # set, matching stdlib ``sqlite3``'s exact ``PRAGMA busy_timeout``
+    # echo.
+    current_ms = round(connection._busy_timeout * 1000)
     # The value is always an ``int``, so report the wire-level INTEGER
     # type code (which compares equal to the ``NUMBER`` Type Object) as
     # the column ``type_code`` — matching the contract the normal wire

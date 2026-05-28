@@ -117,6 +117,19 @@ def test_getter_form_returns_current_value() -> None:
     assert cur._rows == [(7500,)]
 
 
+@pytest.mark.parametrize("ms", [2120321820, 535301320, 65551900])
+def test_setter_getter_roundtrip_exact_for_lossy_values(ms: int) -> None:
+    """``PRAGMA busy_timeout = N`` must echo ``N`` exactly. The intercept
+    stores the timeout in seconds (``N / 1000.0``) and re-derives ms;
+    a plain ``int()`` truncation of ``(N/1000.0)*1000`` lands at ``N-1``
+    for many values, so the round-trip must round, not truncate.
+    """
+    cur = _FakeCursor()
+    intercepted = try_intercept_busy_timeout(cur, f"PRAGMA busy_timeout = {ms}", None)
+    assert intercepted is True
+    assert cur._rows == [(ms,)]
+
+
 def test_case_insensitive() -> None:
     """SQLite's lexer is case-insensitive; intercept must match."""
     for variant in [
