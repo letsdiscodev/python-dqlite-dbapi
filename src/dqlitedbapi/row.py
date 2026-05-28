@@ -38,7 +38,10 @@ class Row(Mapping[str, Any]):
     object that exposes a ``description`` attribute (the canonical
     PEP 249 surface) — it does NOT type-check the cursor argument.
     Cross-driver porting from stdlib ``sqlite3`` should swap
-    ``sqlite3.Row`` for ``dqlitedbapi.Row`` 1:1.
+    ``sqlite3.Row`` for ``dqlitedbapi.Row`` 1:1. The one deliberate
+    divergence: a ``bool`` index (``row[True]``) is rejected with
+    ``TypeError`` rather than silently coerced to ``row[1]`` the way
+    stdlib does — a ``bool`` index is almost always a caller bug.
     """
 
     __slots__ = ("_columns", "_values")
@@ -55,7 +58,14 @@ class Row(Mapping[str, Any]):
         self._values: tuple[Any, ...] = tuple(row)
 
     def __getitem__(self, key: object) -> Any:
-        if isinstance(key, int):
+        # ``bool`` is an ``int`` subclass: without the explicit
+        # exclusion ``row[True]`` would silently return column 1 and
+        # ``row[False]`` column 0. A ``bool`` index is almost always a
+        # caller bug, so reject it rather than coerce — matching the
+        # ``bool``-where-int-expected traps used elsewhere in this
+        # driver (``arraysize`` setter, ``fetchmany`` size, ``scroll``,
+        # ``_validate_ticks``).
+        if isinstance(key, int) and not isinstance(key, bool):
             return self._values[key]
         if isinstance(key, str):
             try:

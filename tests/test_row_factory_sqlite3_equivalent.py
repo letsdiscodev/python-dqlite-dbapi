@@ -90,6 +90,33 @@ def test_row_rejects_non_int_non_str_key() -> None:
         _ = row[1.5]
 
 
+def test_row_rejects_bool_key() -> None:
+    # ``bool`` is an ``int`` subclass, so ``row[True]`` would otherwise
+    # silently return column 1 and ``row[False]`` column 0. This driver
+    # rejects ``bool``-where-an-int-is-expected everywhere else
+    # (``arraysize`` setter, ``fetchmany`` size, ``scroll``,
+    # ``_validate_ticks``) as a caller-bug trap; ``Row`` follows the
+    # same discipline rather than silently coercing.
+    cur = _cursor_with_description("x", "y")
+    row = Row(cur, (10, 20))
+    with pytest.raises(TypeError, match="must be int or str, not bool"):
+        _ = row[True]
+    with pytest.raises(TypeError, match="must be int or str, not bool"):
+        _ = row[False]
+
+
+def test_row_int_and_str_access_unaffected_by_bool_exclusion() -> None:
+    # Regression guard for the ``bool`` exclusion: genuine ``int``
+    # indexing (including negative) and column-name access keep working.
+    cur = _cursor_with_description("x", "y")
+    row = Row(cur, (10, 20))
+    assert row[0] == 10
+    assert row[1] == 20
+    assert row[-1] == 20
+    assert row["x"] == 10
+    assert row["y"] == 20
+
+
 def test_row_exported_at_top_level() -> None:
     assert hasattr(dqlitedbapi, "Row")
     assert "Row" in dqlitedbapi.__all__
