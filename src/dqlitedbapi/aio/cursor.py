@@ -21,6 +21,7 @@ from dqlitedbapi.cursor import (
     _is_insert_or_replace,
     _is_row_returning,
     _strip_leading_comments,
+    _strip_sql_noise,
     _to_signed_int64,
     _validate_caller_param_shape,
     _validate_executemany_seq_shape,
@@ -880,6 +881,12 @@ class AsyncCursor:
                 # the pre-batch ``5``. The BaseException arm below
                 # restores this snapshot. Mirrors the sync sibling.
                 lastrowid_pre_batch = self._lastrowid
+                # Hoist the placeholder count once for the per-iteration
+                # arity check below. ``_strip_sql_noise`` neutralises
+                # ``?`` inside string literals / comments so only real
+                # placeholders are counted. Mirrors the sync
+                # ``_executemany_async`` sibling.
+                placeholder_count = _strip_sql_noise(operation).count("?")
                 try:
                     from dqlitedbapi._busy_retry import (
                         _resolve_busy_timeout_seconds,
@@ -895,6 +902,35 @@ class AsyncCursor:
                         # entry (or not at all for a single-iteration
                         # remainder).
                         self._check_closed()
+                        # Per-iteration structural reject FIRST (a sharp
+                        # diagnostic for a single str/bytes/Mapping/set
+                        # row), THEN the ``?``-count vs ``len(params)``
+                        # arity check — the same ordering and
+                        # ``ProgrammingError`` wording as the sync
+                        # ``_executemany_async`` sibling. Without this the
+                        # async path sent a wrong-arity row to the server
+                        # and surfaced an ``InterfaceError`` (SQLITE_RANGE)
+                        # after a wire round-trip instead of raising a
+                        # local ``ProgrammingError``. The structural reject
+                        # must precede the count check so a single ``str``
+                        # row gets the "sequence of values" diagnostic
+                        # rather than a misleading per-character count.
+                        # Unsized iterables (generators) make ``len`` raise
+                        # ``TypeError`` and deliberately skip the count
+                        # check, falling through to the bind layer —
+                        # matching sync.
+                        _validate_caller_param_shape(params)
+                        if params is not None:
+                            try:
+                                param_count = len(params)
+                            except TypeError:
+                                param_count = -1
+                            if param_count >= 0 and param_count != placeholder_count:
+                                raise ProgrammingError(
+                                    f"Incorrect number of bindings supplied. The "
+                                    f"current statement uses {placeholder_count}, "
+                                    f"and there are {param_count} supplied."
+                                )
                         # Per-iteration BUSY retry (stdlib parity for
                         # the C-level ``sqlite3_busy_timeout``
                         # callback firing per statement). Inner

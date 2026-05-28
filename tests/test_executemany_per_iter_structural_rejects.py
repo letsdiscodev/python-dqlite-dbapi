@@ -1,14 +1,14 @@
 """Pin: ``Cursor._executemany_async`` per-iteration structural-type
 rejects.
 
-The per-iter arms at ``cursor.py:1705-1731`` reject a single ``params``
-row that is ``str`` / ``bytes`` / ``bytearray`` / ``memoryview`` /
-``Mapping`` / ``set`` / ``frozenset``, and surface a count-mismatch
-``ProgrammingError`` when the per-iter ``len(params)`` disagrees with
-the hoisted placeholder count. These are distinct from the OUTER-shape
-rejects covered by ``test_cursor_executemany_outer_shape_check.py``
-(those reject the seq_of_parameters container itself before iteration
-begins).
+The per-iter arms in ``Cursor._executemany_async`` reject a single
+``params`` row that is ``str`` / ``bytes`` / ``bytearray`` /
+``memoryview`` / ``Mapping`` / ``set`` / ``frozenset``, and surface a
+count-mismatch ``ProgrammingError`` when the per-iter ``len(params)``
+disagrees with the hoisted placeholder count. These are distinct from
+the OUTER-shape rejects covered by
+``test_cursor_executemany_outer_shape_check.py`` (those reject the
+seq_of_parameters container itself before iteration begins).
 
 Without per-iter unit coverage:
 
@@ -16,21 +16,19 @@ Without per-iter unit coverage:
    single-execute path could silently drop the executemany arms without
    test failure.
 2. The "sharp structural diagnostic BEFORE the misleading per-character
-   count" invariant the comment at L1694-1704 commits to is not pinned
+   count" invariant ``_executemany_async`` commits to is not pinned
    for the per-iter loop.
 
 The tests drive ``_executemany_async`` directly so the per-iter reject
 arms are reached without the wire / dial / op_lock plumbing.
 
-The async cursor (``AsyncCursor.executemany``) delegates the structural
-reject to ``_execute_unlocked → _convert_params →
-_reject_non_sequence_params`` — the same canonical helper covered by
-``_convert_params`` / single-execute tests. The per-iter loop on the
-async side has no separate inline structural reject arms (the sync
-``_executemany_async`` carries the explicit arms because it hoists the
-placeholder count for the loop; the async path uses the per-row
-``_convert_params`` helper instead). This file therefore pins the
-sync-side per-iter arms only.
+The async cursor (``AsyncCursor.executemany``) carries the same explicit
+per-iteration arms — structural reject (via ``_validate_caller_param_shape``)
+followed by the hoisted-placeholder-count arity check — so it raises the
+same ``ProgrammingError`` locally rather than letting a wrong-arity row
+reach the server. That parity is exercised against a live cluster by
+``tests/integration/test_async_executemany_param_count.py``. This file
+pins the sync-side per-iter arms only.
 """
 
 from __future__ import annotations
