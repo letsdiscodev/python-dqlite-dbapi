@@ -221,6 +221,40 @@ class TestAsyncCursorDateTime:
         assert value == dt
         assert value.tzinfo is None
 
+    def test_async_datetime_column_null_first_row_then_datetime(self, cluster_address: str) -> None:
+        """Async mirror of the NULL-first-column case: the AsyncCursor
+        goes through the same rescue-scan + per-row conversion path, so
+        a NULL row 0 followed by a real datetime row 1 must resolve the
+        description type from row 1 and keep row 0 ``None``.
+        """
+
+        async def scenario() -> tuple[object, list[tuple[object, ...]]]:
+            async with AsyncConnection(cluster_address, database="test_async_dt_nf") as conn:
+                cursor = conn.cursor()
+                await cursor.execute(
+                    "CREATE TABLE IF NOT EXISTS async_dt_null_first "
+                    "(id INTEGER PRIMARY KEY, v DATETIME)"
+                )
+                await cursor.execute("DELETE FROM async_dt_null_first")
+                await cursor.execute("INSERT INTO async_dt_null_first (id, v) VALUES (1, NULL)")
+                await cursor.execute(
+                    "INSERT INTO async_dt_null_first (id, v) VALUES (2, ?)",
+                    ["2024-06-15 08:00:00"],
+                )
+                await cursor.execute("SELECT v FROM async_dt_null_first ORDER BY id")
+                rows = await cursor.fetchall()
+                type_code = cursor.description[0][1] if cursor.description else None
+                await cursor.execute("DROP TABLE async_dt_null_first")
+                return type_code, rows
+
+        type_code, rows = asyncio.run(scenario())
+        assert type_code == int(ValueType.ISO8601)
+        assert len(rows) == 2
+        assert rows[0][0] is None
+        assert isinstance(rows[1][0], datetime.datetime)
+        assert rows[1][0] == datetime.datetime(2024, 6, 15, 8, 0, 0)  # noqa: DTZ001
+        assert rows[1][0].tzinfo is None
+
 
 @pytest.mark.integration
 class TestHeterogeneousPerRowTypes:
@@ -293,6 +327,45 @@ class TestHeterogeneousPerRowTypes:
             assert isinstance(rows[0][0], datetime.datetime)
             assert rows[0][0] == datetime.datetime(1970, 1, 1, 0, 1, 40, tzinfo=datetime.UTC)
             # Row 1: ISO8601 text → naive datetime.
+            assert isinstance(rows[1][0], datetime.datetime), (
+                f"row 1 should decode as datetime, got {type(rows[1][0]).__name__}: {rows[1][0]!r}"
+            )
+            assert rows[1][0] == datetime.datetime(2024, 6, 15, 8, 0, 0)  # noqa: DTZ001
+            assert rows[1][0].tzinfo is None
+
+    def test_datetime_column_null_first_row_then_datetime(self, cluster_address: str) -> None:
+        """Row 0 is NULL, row 1 is a real datetime. The server tags
+        row 0 as NULL and row 1 as ISO8601, so the cursor must (a)
+        resolve the column ``description`` type code from the later
+        non-NULL row rather than collapsing to row 0's NULL, and (b)
+        keep row 0 ``None`` while converting row 1 to a ``datetime``.
+
+        This is the canonical NULL-first-column case (a NULL value in
+        the first row of a typed column): if the description type were
+        taken from row 0 only, ``description[0][1]`` would be NULL/
+        UNKNOWN, and a converter dispatch keyed off row 0 would leave
+        row 1 as a raw string.
+        """
+        with connect(cluster_address, database="test_dt_null_first") as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS dt_null_first (id INTEGER PRIMARY KEY, v DATETIME)"
+            )
+            cursor.execute("DELETE FROM dt_null_first")
+            cursor.execute("INSERT INTO dt_null_first (id, v) VALUES (1, NULL)")
+            cursor.execute(
+                "INSERT INTO dt_null_first (id, v) VALUES (2, ?)", ["2024-06-15 08:00:00"]
+            )
+            cursor.execute("SELECT v FROM dt_null_first ORDER BY id")
+            rows = cursor.fetchall()
+            assert cursor.description is not None
+            # Description type resolved from row 1's ISO8601 tag, not
+            # row 0's NULL.
+            assert cursor.description[0][1] == int(ValueType.ISO8601)
+            cursor.execute("DROP TABLE dt_null_first")
+
+            assert len(rows) == 2
+            assert rows[0][0] is None
             assert isinstance(rows[1][0], datetime.datetime), (
                 f"row 1 should decode as datetime, got {type(rows[1][0]).__name__}: {rows[1][0]!r}"
             )
