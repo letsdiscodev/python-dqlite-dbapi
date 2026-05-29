@@ -392,7 +392,8 @@ class AsyncCursor:
         because the lock exists to serialise access to the underlying
         wire connection, not to the cursor's in-memory fields.
         ``_lastrowid`` is cursor-scoped but survives across execute —
-        only ``close()`` scrubs it (see the ``lastrowid`` property).
+        and ``close()`` preserves it too (see the ``lastrowid``
+        property), mirroring stdlib ``sqlite3.Cursor``.
         """
         self._description = None
         self._rows = []

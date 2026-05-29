@@ -1820,8 +1820,9 @@ class Cursor:
         but survives across execute / ROLLBACK / UPDATE / DELETE / DDL
         so callers doing ``INSERT; SELECT last_insert_rowid()`` on the
         same cursor still see the correct value (see the ``lastrowid``
-        property docstring). ``close()`` is the single lifecycle event
-        that scrubs it, matching the cursor-scoped contract.
+        property docstring). ``close()`` preserves it — mirroring stdlib
+        ``sqlite3.Cursor``, which leaves it readable after close — so a
+        subsequent successful INSERT is what overwrites it.
         """
         self._description = None
         self._rows = []
@@ -2136,8 +2137,8 @@ class Cursor:
 
         Rejected calls (transaction-control verbs, non-DML row-returning
         shapes) preserve the prior ``lastrowid`` — no batch ran, so the
-        cursor docstring's lifecycle contract holds (only ``close()``
-        scrubs ``lastrowid``). This matches the async sibling's rejection
+        cursor docstring's lifecycle contract holds (``close()`` preserves
+        ``lastrowid`` too). This matches the async sibling's rejection
         path.
         """
         del self.messages[:]
@@ -2186,9 +2187,9 @@ class Cursor:
         # transaction-control verb, a row-returning shape) means no
         # batch ran — clearing here would clobber the prior INSERT's
         # rowid, violating both the cursor docstring contract
-        # ("ROLLBACK / UPDATE / DELETE / DDL do NOT clear it... close()
-        # is the single lifecycle event that scrubs it") and parity with
-        # the async sibling's rejection path.
+        # ("ROLLBACK / UPDATE / DELETE / DDL do NOT clear it, and
+        # close() preserves it") and parity with the async sibling's
+        # rejection path.
         # Reject transaction-control verbs and pure queries up front so
         # the caller's frame sees the ProgrammingError rather than
         # having it surface deep inside the async helper. stdlib
