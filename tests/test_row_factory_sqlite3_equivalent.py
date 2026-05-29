@@ -1,8 +1,9 @@
 """Pin: ``dqlitedbapi.Row`` is the cross-driver-portable equivalent
-of stdlib ``sqlite3.Row`` — positional + column-name access,
-``Mapping`` protocol, ``dict(row)`` / ``**row`` spread, without
-the cursor-type constraint that makes stdlib's class unusable
-on this driver.
+of stdlib ``sqlite3.Row`` — a SEQUENCE (value iteration, positional +
+slice indexing) plus column-name access via ``row["name"]`` /
+``.keys()`` and ``dict(row)`` / ``**row`` spread, without the
+cursor-type constraint that makes stdlib's class unusable on this
+driver.
 
 Cross-driver porting: swap ``sqlite3.Row`` for ``dqlitedbapi.Row``
 1:1; every documented stdlib idiom holds.
@@ -71,8 +72,8 @@ def test_row_equality() -> None:
 
 
 def test_row_double_spread_into_kwargs() -> None:
-    """The ``**row`` spread requires the Mapping protocol to work
-    on string keys.
+    """The ``**row`` spread works on string keys via ``keys()`` +
+    ``__getitem__`` (CPython consumes those, not ``__iter__``).
     """
     cur = _cursor_with_description("a", "b")
     row = Row(cur, (10, 20))
@@ -135,3 +136,42 @@ def test_row_repr() -> None:
     row = Row(cur, (1, 2))
     assert "x=1" in repr(row)
     assert "y=2" in repr(row)
+
+
+def test_row_sqlite3_sequence_parity() -> None:
+    """``dqlitedbapi.Row`` matches stdlib ``sqlite3.Row``'s SEQUENCE
+    semantics exactly: iteration / tuple / list / unpacking yield
+    VALUES (not column names), positional + slice indexing work, and
+    ``in`` checks values — while name access, ``dict(row)``, ``**row``
+    and ``keys()`` still behave identically. Pins the regression where
+    Row subclassed ``Mapping`` and silently iterated column names.
+    """
+    import sqlite3
+
+    cur = _cursor_with_description("x", "y")
+    row = Row(cur, (1, 2))
+
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    std = con.execute("SELECT 1 AS x, 2 AS y").fetchone()
+    con.close()
+
+    # Sequence iteration yields values (the corrupted idioms).
+    assert tuple(row) == tuple(std) == (1, 2)
+    assert list(row) == list(std) == [1, 2]
+    assert [v for v in row] == [1, 2]
+    a, b = row
+    assert (a, b) == (1, 2)
+    # Positional + slice indexing.
+    assert row[0] == std[0] == 1
+    assert row[1] == std[1] == 2
+    assert row[0:2] == std[0:2] == (1, 2)
+    # Membership checks values, matching stdlib (not column names).
+    assert (2 in row) is (2 in std) is True
+    assert ("x" in row) is ("x" in std) is False
+    # Name-keyed access and mapping conversions remain identical.
+    assert row["x"] == std["x"] == 1
+    assert tuple(row.keys()) == tuple(std.keys()) == ("x", "y")
+    assert dict(row) == dict(std) == {"x": 1, "y": 2}
+    assert {**row} == {"x": 1, "y": 2}
+    assert len(row) == len(std) == 2

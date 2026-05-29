@@ -1,6 +1,6 @@
-"""Pin: ``dqlitedbapi.Row`` Mapping-protocol surface that prior tests
-did not cover — hashability, ``__eq__`` vs a non-``Row``, and
-construction from a cursor with ``description=None``.
+"""Pin: ``dqlitedbapi.Row`` surface that prior tests did not cover —
+hashability, ``__eq__`` vs a non-``Row``, and construction from a
+cursor with ``description=None``.
 
 ``Row`` is a ``@final`` documented stdlib-``sqlite3.Row`` replacement.
 Existing tests cover positional/name indexing, ``dict(row)``,

@@ -6,8 +6,7 @@ so wiring ``conn.row_factory = sqlite3.Row`` on this driver crashes
 at the first fetch with ``DataError("row_factory call failed:
 argument 1 must be sqlite3.Cursor, not Cursor")``. ``dqlitedbapi.Row``
 is the same surface (positional + column-name indexing, ``.keys()``,
-``dict(row)`` conversion, full ``Mapping`` protocol) without the
-cursor-type constraint.
+``dict(row)`` conversion) without the cursor-type constraint.
 
 Use the same idiom on dqlite as on stdlib::
 
@@ -16,23 +15,27 @@ Use the same idiom on dqlite as on stdlib::
     row = cur.fetchone()
     assert row["x"] == 1
     assert row[0] == 1
+    assert tuple(row) == (1, 2)
     assert list(row.keys()) == ["x", "y"]
     assert dict(row) == {"x": 1, "y": 2}
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from typing import Any, final
 
 
 @final
-class Row(Mapping[str, Any]):
+class Row:
     """Stdlib ``sqlite3.Row``-equivalent row factory.
 
-    Wraps a result tuple with column-name and positional access.
-    Implements the full ``collections.abc.Mapping`` protocol so
-    ``dict(row)``, ``**row``-spread, and ``row.items()`` all work.
+    Wraps a result tuple with column-name and positional access. Like
+    stdlib ``sqlite3.Row`` it is a SEQUENCE, not a mapping: iteration
+    (``tuple(row)`` / ``list(row)`` / ``for v in row`` / ``a, b = row``)
+    yields VALUES, and ``row[i]`` / ``row[i:j]`` index positionally.
+    ``row["name"]`` and ``.keys()`` provide column-name access, and
+    ``dict(row)`` / ``**row`` work via ``keys()`` + ``__getitem__``.
 
     Unlike stdlib ``sqlite3.Row``, this class accepts any cursor
     object that exposes a ``description`` attribute (the canonical
@@ -58,6 +61,10 @@ class Row(Mapping[str, Any]):
         self._values: tuple[Any, ...] = tuple(row)
 
     def __getitem__(self, key: object) -> Any:
+        # Slice indexing returns a tuple of values, matching stdlib
+        # ``sqlite3.Row`` (``row[0:2]`` -> ``(v0, v1)``).
+        if isinstance(key, slice):
+            return self._values[key]
         # ``bool`` is an ``int`` subclass: without the explicit
         # exclusion ``row[True]`` would silently return column 1 and
         # ``row[False]`` column 0. A ``bool`` index is almost always a
@@ -75,11 +82,12 @@ class Row(Mapping[str, Any]):
             return self._values[idx]
         raise TypeError(f"Row indices must be int or str, not {type(key).__name__}")
 
-    def __iter__(self) -> Iterator[str]:
-        # ``Mapping.__iter__`` yields keys; ``dict(row)`` consumes
-        # this. Matches stdlib ``sqlite3.Row.keys()`` behaviour but
-        # via the canonical Mapping protocol.
-        return iter(self._columns)
+    def __iter__(self) -> Iterator[Any]:
+        # Sequence iteration yields VALUES, matching stdlib
+        # ``sqlite3.Row`` (``tuple(row)`` / ``list(row)`` / ``a, b =
+        # row``). ``dict(row)`` and ``**row`` do NOT use this — CPython
+        # consumes ``keys()`` + ``__getitem__`` when ``keys()`` exists.
+        return iter(self._values)
 
     def __len__(self) -> int:
         return len(self._values)
@@ -92,9 +100,10 @@ class Row(Mapping[str, Any]):
     def __hash__(self) -> int:
         return hash((self._columns, self._values))
 
-    def keys(self) -> tuple[str, ...]:  # type: ignore[override]
+    def keys(self) -> tuple[str, ...]:
         """Return the column names tuple — matches stdlib
-        ``sqlite3.Row.keys()`` shape (list-like).
+        ``sqlite3.Row.keys()`` shape (list-like). Used by ``dict(row)``
+        and ``**row`` for name-keyed access.
         """
         return self._columns
 
