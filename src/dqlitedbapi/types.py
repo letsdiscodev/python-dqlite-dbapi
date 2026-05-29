@@ -327,14 +327,18 @@ class _DBAPIType:
     uppercase SQL type names (str) and wire-level ``ValueType`` codes
     (int).
 
-    Deliberately **unhashable**: use these objects only with ``==``
-    against ``description[i][1]`` — do not use them as dict keys or
-    ``set`` members. ``NUMBER`` / ``DATETIME`` wrap multiple wire codes
-    (e.g. INTEGER + FLOAT + BOOLEAN), so a hash satisfying the Python
-    hash-eq invariant does not exist: any canonical-representative hash
-    would make ``{NUMBER: x}[FLOAT_CODE]`` raise ``KeyError`` despite
-    ``NUMBER == FLOAT_CODE`` being True. Refusing to hash turns that
-    silent miss into a noisy ``TypeError``.
+    These objects ARE hashable (hashed by their singleton name), so
+    they can be used as dict keys / set members — SQLAlchemy's
+    dialect-level type-memo keys ``cursor.description``'s ``type_code``,
+    which can be ``UNKNOWN`` (itself a ``_DBAPIType``), so they must be
+    hashable. But the hash-eq invariant is intentionally relaxed for the
+    multi-wire-code ``__eq__``: ``NUMBER`` / ``DATETIME`` wrap several
+    codes (e.g. INTEGER + FLOAT + BOOLEAN) yet hash by name, so a bare
+    wire-level ``int`` ``type_code`` hashes differently than the type
+    object. Set/dict membership of such an ``int`` therefore **silently
+    returns ``False`` — it does NOT raise**: e.g. ``1 in {NUMBER}`` is
+    ``False`` even though ``NUMBER == 1`` (the INTEGER code) is ``True``,
+    because the hash lookup never reaches the ``__eq__`` comparison.
 
     **Caller idiom** — introspecting ``description[i][1]`` against
     type sentinels: use chained equality, NOT set membership::
@@ -343,8 +347,9 @@ class _DBAPIType:
         if type_code == STRING or type_code == NUMBER:
             ...
 
-    Set/dict membership (``type_code in {STRING, NUMBER}``) raises
-    ``TypeError: unhashable type`` for the reason above. The
+    Set/dict membership (``type_code in {STRING, NUMBER}``) silently
+    misses for a bare wire-int ``type_code`` (returns ``False``, does
+    not raise), so it is NOT a safe introspection idiom. The
     chained-``==`` form is the PEP 249 idiom and works against this
     driver and stdlib ``sqlite3`` (which does not export these
     sentinels at all).

@@ -73,6 +73,24 @@ class TestHashEqInvariantRelaxation:
         type_code = int(ValueType.INTEGER)
         assert type_code == STRING or type_code == NUMBER  # noqa: PLR1714
 
+    def test_bare_int_set_membership_silently_misses_does_not_raise(self) -> None:
+        # The relaxed hash-eq invariant means set/dict membership of a
+        # bare wire-int type_code silently returns False (it does NOT
+        # raise) even when ``==`` against a set member holds. This pins
+        # the behaviour the class docstring describes, so a reader is
+        # not told the wrong idiom fails loudly when it fails silently.
+        from dqlitewire.constants import ValueType
+
+        integer_code = int(ValueType.INTEGER)
+        # Equality holds: NUMBER wraps the INTEGER wire code.
+        assert integer_code == NUMBER
+        # ...but set membership of the bare int silently misses (hash
+        # lookup never reaches __eq__) — returns False, no TypeError.
+        assert (integer_code in {NUMBER}) is False
+        assert (integer_code in {STRING, NUMBER}) is False
+        # A type object IS a member of a set of type objects (hashable).
+        assert NUMBER in {STRING, NUMBER}
+
 
 class TestDbapiTypesDistinct:
     """Distinct _DBAPIType instances must not collide under eq."""
