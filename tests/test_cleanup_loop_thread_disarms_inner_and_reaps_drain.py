@@ -302,3 +302,57 @@ def test_full_connection_path_publishes_inner_handle() -> None:
     ref = conn._inner_finalize_handle[0]
     assert callable(ref)
     assert ref() is inner
+
+
+def test_cleanup_schedules_writer_close_before_loop_stop() -> None:
+    """The GC finalize path must schedule the inner writer's close via
+    ``call_soon_threadsafe`` BEFORE the queued ``loop.stop``, mirroring
+    ``close()`` / ``force_close_transport``. Without it the transport is
+    still open when ``loop.close()`` runs and the StreamWriter's
+    ``__del__`` fires against a dead loop — surfacing as
+    'unclosed transport' / 'unclosed socket' / 'Event loop is closed'
+    on every GC-leaked sync ``Connection``."""
+    from dqlitedbapi.connection import _safe_writer_close
+
+    fake_loop = MagicMock(spec=asyncio.AbstractEventLoop)
+    fake_loop.is_closed.return_value = False
+    fake_thread = MagicMock(spec=threading.Thread)
+    closed_flag = [True]
+    inner = _stub_inner(closed=False)
+    writer = MagicMock()
+    inner._protocol = MagicMock()
+    inner._protocol._writer = writer
+
+    inner_handle: list[object] = [weakref.ref(inner)]
+
+    _cleanup_loop_thread(
+        fake_loop,
+        fake_thread,
+        closed_flag,
+        "host:9001",
+        os.getpid(),
+        5.0,
+        inner_handle,
+    )
+
+    calls = fake_loop.call_soon_threadsafe.call_args_list
+    writer_close_idx = next(
+        (
+            i
+            for i, c in enumerate(calls)
+            if c.args and c.args[0] is _safe_writer_close and c.args[1:] == (writer,)
+        ),
+        None,
+    )
+    stop_idx = next(
+        (i for i, c in enumerate(calls) if c.args and c.args[0] == fake_loop.stop),
+        None,
+    )
+    assert writer_close_idx is not None, (
+        "_cleanup_loop_thread did not schedule _safe_writer_close(writer); the "
+        "inner transport stays open across loop.close() and leaks warnings at GC"
+    )
+    assert stop_idx is not None
+    assert writer_close_idx < stop_idx, (
+        "writer close scheduled after loop.stop — FIFO would close the loop before the FIN flushes"
+    )

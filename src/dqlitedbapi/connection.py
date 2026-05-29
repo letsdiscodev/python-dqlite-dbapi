@@ -1368,6 +1368,22 @@ def _cleanup_loop_thread(
                             "to avoid 'Task was destroyed but it is pending' at GC.",
                             resnapshot_cap,
                         )
+            # Close the inner writer transport BEFORE ``loop.stop`` so the
+            # FIN flushes via the orderly path, mirroring ``close()`` and
+            # ``force_close_transport``. FIFO of the ``call_soon_threadsafe``
+            # ready queue ensures this lands before the queued ``loop.stop``
+            # below. Without it, the transport is still open when
+            # ``loop.close()`` runs and the StreamWriter's later ``__del__``
+            # fires against a dead loop, surfacing as "unclosed transport" /
+            # "unclosed socket" / "Event loop is closed" warnings on every
+            # GC-leaked sync ``Connection``. ``_safe_writer_close`` is
+            # idempotent, so this does not double-close with any later path.
+            if not loop.is_closed():
+                proto = getattr(inner, "_protocol", None)
+                writer = getattr(proto, "_writer", None)
+                if writer is not None:
+                    with _contextlib.suppress(RuntimeError):
+                        loop.call_soon_threadsafe(_safe_writer_close, writer)
         # Narrow suppression to the specific exceptions loop/thread
         # teardown can legitimately raise during finalization. Wider
         # ``except Exception: pass`` would hide programmer bugs like a
