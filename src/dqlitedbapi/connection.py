@@ -3408,7 +3408,7 @@ class Connection:
         # so the getter round-trips — without storage, the canonical
         # cross-driver idiom assigns the value silently and the next
         # read returns the default. Mirrors the ``autocommit.setter``
-        # storage discipline established in the same widening round.
+        # storage discipline.
         #
         # **Inner-AsyncConnection slot is INDEPENDENT.** The setter
         # stores on the sync wrapper only; ``self._async_conn
