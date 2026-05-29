@@ -227,22 +227,26 @@ borrowed from one.
 - **SERIALIZABLE isolation only.** Every statement is ordered by Raft;
   weaker isolation levels aren't exposed.
 - **PEP 249 type sentinels (`STRING`, `BINARY`, `NUMBER`, `DATETIME`,
-  `ROWID`) are unhashable.** Use chained equality against
-  `description[i][1]`, NOT set/dict membership:
+  `ROWID`) match a `type_code` by `==`, not by set/dict membership.**
+  Use chained equality against `description[i][1]`:
 
   ```python
   type_code = cur.description[i][1]
   if type_code == STRING or type_code == NUMBER:  # OK
       ...
-  if type_code in {STRING, NUMBER}:               # raises TypeError
+  if type_code in {STRING, NUMBER}:               # WRONG: silently False
       ...
   ```
 
   The sentinels wrap multiple wire type codes (`NUMBER` covers
-  INTEGER+FLOAT+BOOLEAN, `DATETIME` covers DATE+TIMESTAMP+ISO8601),
-  so no canonical hash can satisfy the Python hash-eq invariant.
-  Stdlib `sqlite3` doesn't export these sentinels at all, so the
-  chained-equality form is the cross-driver-portable idiom.
+  INTEGER+FLOAT+BOOLEAN, `DATETIME` covers DATE+TIMESTAMP+ISO8601) and
+  match a `type_code` through ``__eq__``. They ARE hashable (so they can
+  serve as dict keys internally), but a bare wire-int `type_code` does
+  not hash equal to a sentinel, so `type_code in {STRING, NUMBER}`
+  silently returns `False` rather than raising — which is why the
+  chained-equality form is required. Stdlib `sqlite3` doesn't export
+  these sentinels at all, so the chained-equality form is also the
+  cross-driver-portable idiom.
 
 - **`Binary(value)` leaks bare `TypeError` on bad input.** `Binary` is
   the stdlib `sqlite3.Binary = memoryview` alias, kept as a direct
