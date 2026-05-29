@@ -1550,11 +1550,15 @@ class Cursor:
         column uniformity; for mixed-type columns the
         per-row ``row_types[i]`` (exposed via ``_convert_row``) is the
         correct source. The all-NULL column case (every row's value
-        at that column is NULL) genuinely returns ``type_code=None``
-        — the only PEP 249 §6.1.2 unrecoverable case. Stdlib
-        ``sqlite3`` always returns ``None`` for ``type_code``; this
-        driver is more informative but loses fidelity on mixed-type
-        columns.
+        at that column is NULL) — and the empty-result-set case — are
+        the genuinely unresolvable cases: ``type_code`` resolves to the
+        ``UNKNOWN`` Type Object (not ``None``), which still compares
+        cleanly (``type_code == UNKNOWN``) and satisfies PEP 249
+        §6.1.2's requirement that ``type_code`` compare equal to one of
+        the Type Objects. Stdlib ``sqlite3`` returns ``None`` for every
+        ``type_code``; this driver instead emits a concrete wire code,
+        or the ``UNKNOWN`` sentinel when the type cannot be resolved,
+        so introspection never has to special-case ``None``.
         """
         return self._description
 
