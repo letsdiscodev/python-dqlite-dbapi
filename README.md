@@ -82,13 +82,15 @@ Raft FSM serializes the transaction across the cluster regardless of
 the `DEFERRED` / `IMMEDIATE` / `EXCLUSIVE` qualifier, so the qualifier
 does not change isolation semantics — only the lock-acquisition timing
 on the leader. The `Connection.isolation_level` attribute exists for
-pre-3.12 stdlib parity: the getter returns `None`, the setter accepts
-only `None` (no-op) and rejects every other value (`""`, `"DEFERRED"`,
-`"IMMEDIATE"`, `"EXCLUSIVE"`, `"SERIALIZABLE"`, `"AUTOCOMMIT"`, etc.)
-with `NotSupportedError`. dqlite is autocommit-by-default at the dbapi
-layer; explicit transactions are managed via `conn.commit()` /
-`conn.rollback()` per PEP 249. The SQLAlchemy dialect rejects
-`AUTOCOMMIT` on the same grounds.
+pre-3.12 stdlib parity: the setter accepts `None` and the legacy
+qualifier values (`""`, `"DEFERRED"`, `"IMMEDIATE"`, `"EXCLUSIVE"`,
+case-insensitive) as no-ops, and the getter returns the last value set
+(default `None`). Any other value — including `"SERIALIZABLE"` and
+`"AUTOCOMMIT"` — raises `ProgrammingError`, since the qualifier cannot
+change dqlite's single serialized isolation level. dqlite is
+autocommit-by-default at the dbapi layer; explicit transactions are
+managed via `conn.commit()` / `conn.rollback()` per PEP 249. The
+SQLAlchemy dialect rejects `AUTOCOMMIT` on the same grounds.
 
 Connection-level `commit()` / `rollback()` semantics:
 
