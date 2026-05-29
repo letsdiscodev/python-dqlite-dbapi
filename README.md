@@ -226,6 +226,12 @@ borrowed from one.
   server-side counterpart in dqlite. Stubs raise `NotSupportedError`.
 - **SERIALIZABLE isolation only.** Every statement is ordered by Raft;
   weaker isolation levels aren't exposed.
+- **Foreign keys are enforced by default.** The dqlite server defaults
+  every fresh connection to `PRAGMA foreign_keys = ON`, so FK
+  constraints are enforced out of the box — diverging from stdlib
+  `sqlite3` / pysqlite, which default `OFF`. Issue
+  `PRAGMA foreign_keys = OFF` per connection for SQLite's legacy
+  unenforced behavior.
 - **PEP 249 type sentinels (`STRING`, `BINARY`, `NUMBER`, `DATETIME`,
   `ROWID`) match a `type_code` by `==`, not by set/dict membership.**
   Use chained equality against `description[i][1]`:
