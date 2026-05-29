@@ -1,15 +1,19 @@
-"""Pin: ``Cursor.lastrowid`` / ``Cursor.description`` / ``Cursor.arraysize``
-post-close reads behave as documented (bypass-permitted contract).
+"""Pin: ``Cursor.lastrowid`` / ``Cursor.description`` / ``Cursor.rowcount``
+/ ``Cursor.arraysize`` post-close reads behave as documented
+(bypass-permitted contract).
 
-The property docstrings document closed-state reads as
-bypass-permitted with the rationale that ``close()`` scrubs each
-slot to its no-result-set sentinel. Without a regression guard, a
-future tightening to raise ``InterfaceError("cursor is closed")``
-would land silently.
+Closed-state reads do NOT raise (bypass-permitted). ``close()`` clears
+``description`` (a closed cursor cannot serve a result set) but
+PRESERVES ``lastrowid`` and ``rowcount``, matching stdlib
+``sqlite3.Cursor`` — both stay readable after the cursor is closed, so a
+consumer that reads ``cursor.lastrowid`` after closing the cursor (as
+SQLAlchemy does at result-access time) still gets the real rowid.
+Without a regression guard, a future tightening to raise
+``InterfaceError("cursor is closed")`` — or a re-introduction of the
+scrub — would land silently.
 
-``arraysize`` is deliberately NOT scrubbed by ``close()`` (it's
-caller-set configuration, not result-set state) — pin that
-divergence too.
+``arraysize`` is also preserved by ``close()`` (caller-set
+configuration, not result-set state).
 
 ``connection`` post-close behaviour is its own contract (the
 weakref.proxy swap + ReferenceError → InterfaceError envelope) and
@@ -69,10 +73,11 @@ def test_sync_post_close_description_scrubbed_to_none() -> None:
     assert cur.description is None
 
 
-def test_sync_post_close_lastrowid_scrubbed_to_none() -> None:
+def test_sync_post_close_lastrowid_preserved() -> None:
     cur = _populated_sync_cursor()
     cur.close()
-    assert cur.lastrowid is None
+    # Preserved across close, matching stdlib sqlite3.Cursor.lastrowid.
+    assert cur.lastrowid == 42
 
 
 def test_sync_post_close_arraysize_preserved() -> None:
@@ -85,12 +90,11 @@ def test_sync_post_close_arraysize_preserved() -> None:
     assert cur.arraysize == 5
 
 
-def test_sync_post_close_rowcount_scrubbed() -> None:
+def test_sync_post_close_rowcount_preserved() -> None:
     cur = _populated_sync_cursor()
     cur.close()
-    # Per the existing closed-cursor contract, rowcount reads through
-    # the bypass-permitted accessor and returns the scrubbed value.
-    assert cur.rowcount == -1
+    # Preserved across close, matching stdlib sqlite3.Cursor.rowcount.
+    assert cur.rowcount == 2
 
 
 @pytest.mark.asyncio
@@ -101,10 +105,10 @@ async def test_async_post_close_description_scrubbed_to_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_post_close_lastrowid_scrubbed_to_none() -> None:
+async def test_async_post_close_lastrowid_preserved() -> None:
     cur = _populated_async_cursor()
     cur.close()
-    assert cur.lastrowid is None
+    assert cur.lastrowid == 42
 
 
 @pytest.mark.asyncio
@@ -115,7 +119,7 @@ async def test_async_post_close_arraysize_preserved() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_post_close_rowcount_scrubbed() -> None:
+async def test_async_post_close_rowcount_preserved() -> None:
     cur = _populated_async_cursor()
     cur.close()
-    assert cur.rowcount == -1
+    assert cur.rowcount == 2

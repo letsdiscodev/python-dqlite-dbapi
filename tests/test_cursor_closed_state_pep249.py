@@ -1,8 +1,9 @@
 """PEP 249 §6.1.2 — closed-cursor operations raise InterfaceError.
 
-Also pin that ``close()`` scrubs ``rowcount`` and ``lastrowid`` so
-the closed-state surface is consistent (not a mix of "reset" and
-"last-operation value").
+Also pin that ``close()`` PRESERVES ``rowcount`` and ``lastrowid``
+(matching stdlib ``sqlite3.Cursor``, which leaves both readable after
+close) while clearing ``description`` and the buffered rows, which a
+closed cursor cannot serve.
 """
 
 from __future__ import annotations
@@ -66,14 +67,16 @@ class TestNotSupportedMethodsRaiseClosedFirst:
             cur.nextset()
 
 
-class TestCloseScrubsAllState:
-    def test_close_resets_rowcount_and_lastrowid(self) -> None:
+class TestClosePreservesRowcountAndLastrowid:
+    def test_close_preserves_rowcount_and_lastrowid_clears_result_set(self) -> None:
         cur = _make_cursor()
         cur._rowcount = 5
         cur._lastrowid = 42
         cur._description = [("c", 3, None, None, None, None, None)]  # type: ignore[assignment]
         cur._rows = [(1,), (2,)]
         cur.close()
+        # Result-set surface is cleared (a closed cursor cannot fetch)...
         assert cur.description is None
-        assert cur.rowcount == -1
-        assert cur.lastrowid is None
+        # ...but rowcount / lastrowid survive close, matching stdlib.
+        assert cur.rowcount == 5
+        assert cur.lastrowid == 42

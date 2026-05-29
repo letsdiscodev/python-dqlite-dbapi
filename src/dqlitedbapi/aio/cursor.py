@@ -250,17 +250,16 @@ class AsyncCursor:
     def lastrowid(self) -> int | None:
         """ROWID of this cursor's most-recent successful INSERT.
 
-        Returns ``None`` before the first INSERT runs on this cursor
-        and after ``close()`` scrubs the cursor's state.
+        Returns ``None`` before the first INSERT runs on this cursor.
 
         Cursor-scoped, matching stdlib ``sqlite3.Cursor.lastrowid``: a
         sibling cursor on the same AsyncConnection does NOT observe
         this cursor's last INSERT (each cursor stores its own snapshot
         captured at INSERT time from the underlying connection's
         ``sqlite3_last_insert_rowid``). ROLLBACK / UPDATE / DELETE /
-        DDL do NOT clear it (mirroring stdlib), but ``close()``
-        scrubs it as part of the closed-cursor "no operation
-        performed" surface contract.
+        DDL do NOT clear it, and ``close()`` preserves it — all
+        mirroring stdlib ``sqlite3.Cursor.lastrowid``, which stays
+        readable after the cursor is closed.
 
         **Not updated for ``INSERT ... RETURNING``** (or any row-returning
         statement). dqlite's wire protocol does not return
@@ -1369,12 +1368,12 @@ class AsyncCursor:
         self._closed = True
         self._rows = []
         self._description = None
-        # Scrub the remaining state fields so every post-close reader
-        # sees a consistent "no operation performed" surface. Symmetric
-        # with ``Cursor.close()``.
-        self._rowcount = -1
-        self._lastrowid = None
-        # Mirror the sync cursor's scrub contract.
+        # Preserve ``_rowcount`` and ``_lastrowid`` across close, matching
+        # stdlib ``sqlite3.Cursor`` and the sync ``Cursor.close()``: both
+        # stay readable after close so a post-close ``cursor.lastrowid``
+        # read (as SQLAlchemy does at result-access time) returns the real
+        # rowid. ``_rows`` / ``_description`` are still cleared because a
+        # closed cursor cannot fetch.
         self._row_index = 0
         # The execute / executemany entry points re-check
         # ``_check_closed`` first, so a stale ``_executing_task``

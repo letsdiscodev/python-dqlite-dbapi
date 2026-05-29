@@ -112,11 +112,10 @@ async def test_execute_post_await_closed_check_drops_insert_result() -> None:
 
     async def race_call(_coro: Any) -> Any:
         # While the executor is "parked" inside the wire await, an
-        # external close fires (simulated by flipping _closed +
-        # scrubbing state here, exactly as ``close()`` would).
+        # external close fires (simulated by flipping _closed here,
+        # exactly as ``close()`` would — close preserves _lastrowid /
+        # _rowcount, matching stdlib, so we do NOT touch them).
         cur._closed = True
-        cur._lastrowid = None
-        cur._rowcount = -1
         # Non-query wire shape: (last_insert_id, rows_affected).
         return (42, 1)
 
@@ -129,9 +128,11 @@ async def test_execute_post_await_closed_check_drops_insert_result() -> None:
     ):
         await cur._execute_unlocked("INSERT INTO t VALUES (1)", (1,))
 
-    # After fix: cursor stays in the close-scrubbed state — the wire
-    # response (42, 1) was DROPPED, not written into _lastrowid /
-    # _rowcount.
+    # After fix: the post-await closed-check DROPS the wire response
+    # (42, 1) instead of writing it. ``_lastrowid`` stays at its sticky
+    # pre-call value 7 (NOT the dropped 42; close no longer scrubs it),
+    # and the closed-check arm sets ``_rowcount`` to -1 (NOT the dropped
+    # 1). If the guard regressed, these would be 42 and 1.
     assert cur._closed is True
-    assert cur._lastrowid is None
+    assert cur._lastrowid == 7
     assert cur._rowcount == -1

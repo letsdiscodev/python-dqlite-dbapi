@@ -1596,17 +1596,16 @@ class Cursor:
     def lastrowid(self) -> int | None:
         """ROWID of this cursor's most-recent successful INSERT.
 
-        Returns ``None`` before the first INSERT runs on this cursor
-        and after ``close()`` scrubs the cursor's state.
+        Returns ``None`` before the first INSERT runs on this cursor.
 
         Cursor-scoped, matching stdlib ``sqlite3.Cursor.lastrowid``: a
         sibling cursor on the same Connection does NOT observe this
         cursor's last INSERT (each cursor stores its own snapshot
         captured at INSERT time from the underlying connection's
         ``sqlite3_last_insert_rowid``). ROLLBACK / UPDATE / DELETE /
-        DDL do NOT clear it (mirroring stdlib), but ``close()``
-        scrubs it as part of the closed-cursor "no operation
-        performed" surface contract.
+        DDL do NOT clear it, and ``close()`` preserves it — all
+        mirroring stdlib ``sqlite3.Cursor.lastrowid``, which stays
+        readable after the cursor is closed.
 
         **Not updated for ``INSERT ... RETURNING``** (or any row-returning
         statement). dqlite's wire protocol does not return
@@ -2743,17 +2742,13 @@ class Cursor:
         self._closed = True
         self._rows = []
         self._description = None
-        # Scrub the remaining state fields so every post-close reader
-        # sees a consistent "no operation performed" surface. Prior
-        # behaviour left ``_rowcount`` and ``_lastrowid`` at their
-        # last-operation values — inconsistent with ``description``
-        # which close() clears.
-        self._rowcount = -1
-        self._lastrowid = None
-        # Reset ``_row_index`` too. The closed-state gate prevents any
-        # accessor from reading it in practice, but leaving it at the
-        # last-fetched offset contradicts the "consistent no-op
-        # surface" the other scrubbed fields commit to.
+        # Preserve ``_rowcount`` and ``_lastrowid`` across close, matching
+        # stdlib ``sqlite3.Cursor`` (which leaves both readable after the
+        # cursor is closed). SQLAlchemy closes the cursor and then reads
+        # ``cursor.lastrowid`` lazily at result-access time, so scrubbing
+        # it here made ``CursorResult.lastrowid`` come back ``None`` after
+        # every INSERT. ``_rows`` / ``_description`` are still cleared
+        # because a closed cursor genuinely cannot fetch a result set.
         self._row_index = 0
         # Drop the strong back-reference to the parent Connection so a
         # closed cursor the user retains (debugger frame, class-level
