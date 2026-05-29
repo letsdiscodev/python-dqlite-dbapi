@@ -257,27 +257,31 @@ borrowed from one.
   re-raise as `dqlitedbapi.DataError`.
 
 - **`WITH ... INSERT/UPDATE/DELETE` (CTE-prefixed pure DML) reports
-  zero `rowcount` and no `lastrowid`.** The driver dispatches between
-  the row-returning and execute paths via a prefix-based heuristic;
-  CTE-prefixed pure DML is misclassified as row-returning and the
-  server's actual count / id is dropped. Stdlib `sqlite3` handles
-  this correctly because it dispatches at the SQLite engine level.
+  `rowcount == -1` and a stale `lastrowid`.** The driver dispatches
+  between the row-returning and execute paths via a prefix-based
+  heuristic; CTE-prefixed pure DML is misclassified as row-returning,
+  so the server's actual count / id is dropped: `rowcount` comes back
+  as `-1` ("undetermined") and `lastrowid` is left untouched, retaining
+  whatever value a prior INSERT set rather than reflecting this
+  statement. Stdlib `sqlite3` handles this correctly because it
+  dispatches at the SQLite engine level.
   Workaround: rewrite as plain DML, or use `INSERT ... RETURNING id`
   to get the id back through the row-returning path. (PEP 249
   doesn't mandate `lastrowid` correctness for INSERT-via-CTE.)
 
-- **`description[i][1]` is `None` on empty result sets.** PEP 249 §6.1.2
-  requires `type_code` to compare equal to one of the Type Objects
-  (`STRING` / `NUMBER` / `BINARY` / `DATETIME` / `ROWID`). On an empty
-  result (zero rows AND zero per-column type tags — the wire layer
-  derives types from the first row's header), the per-column affinity
-  is genuinely unrecoverable from the wire; the driver emits `None`
-  rather than synthesise a misleading default. Cross-driver
-  `type_code == STRING` tests silently fail to match. Callers needing
-  column types on empty result sets should issue
-  `PRAGMA table_info(<table>)` separately. The sibling NULL-first-row
-  case is handled by a row-scan rescue (see `Cursor.description`
-  docstring).
+- **`description[i][1]` is the `UNKNOWN` Type Object on empty result
+  sets.** PEP 249 §6.1.2 requires `type_code` to compare equal to one
+  of the Type Objects (`STRING` / `NUMBER` / `BINARY` / `DATETIME` /
+  `ROWID`). On an empty result (zero rows AND zero per-column type
+  tags — the wire layer derives types from the first row's header),
+  the per-column affinity is genuinely unrecoverable from the wire; the
+  driver emits the `UNKNOWN` Type Object (importable from
+  `dqlitedbapi`) rather than synthesise a misleading default or `None`.
+  Test for it with `type_code == UNKNOWN`; an `is None` check never
+  matches. Callers needing column types on empty result sets should
+  issue `PRAGMA table_info(<table>)` separately. The sibling
+  NULL-first-row case is handled by a row-scan rescue (see
+  `Cursor.description` docstring).
 
 - **Result sets are fully materialised at `execute()` time.** Stdlib
   `sqlite3` streams rows from the C engine via `Cursor.fetchone`,
