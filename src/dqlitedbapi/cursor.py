@@ -1202,11 +1202,11 @@ class _ExecuteManyAccumulator:
         otherwise.
 
         No-op if the cursor has been closed concurrently — the async
-        ``close()`` contract scrubs ``_rows``/``_description``/
-        ``_rowcount``, and re-populating those fields here would
-        visibly un-close the result set for any attribute-level
-        caller. Sync flavour is immune via the outer threading lock;
-        this guard pins the async flavour. The per-iteration guard in
+        ``close()`` contract clears ``_rows``/``_description``, and
+        re-populating those fields here would visibly un-close the
+        result set for any attribute-level caller. Sync flavour is
+        immune via the outer threading lock; this guard pins the async
+        flavour. The per-iteration guard in
         async ``executemany`` catches the racy close between iterations;
         this guard catches a close that lands after the loop exits
         but before ``apply()`` writes state back.
@@ -2715,20 +2715,19 @@ class Cursor:
         thread-check ``ProgrammingError``. Matches stdlib
         ``sqlite3.Cursor.close`` — close is always safe to call.
 
-        **Divergence from stdlib sqlite3 on post-close attribute
-        state**: this implementation scrubs ``description`` /
-        ``rowcount`` / ``lastrowid`` / ``_rows`` / ``_row_index``
-        for a consistent "no operation performed" surface (per
-        the project rationale: avoid stale-state reads on a closed
-        cursor). Stdlib ``sqlite3.Cursor.close()`` leaves
-        ``description`` populated (the last query's tuple-of-7-tuples)
-        and leaves ``lastrowid`` at its prior value; only ``rowcount``
-        is reset to ``-1`` there. Cross-driver code that introspects
-        ``cur.description`` AFTER ``close()`` (e.g. relying on
-        context-manager exit to close before reading metadata) sees
-        ``None`` here vs the populated tuple on stdlib. PEP 249 is
-        silent on post-close attribute state; the scrub-for-consistency
-        choice is deliberate and documented.
+        **Post-close attribute state**: ``close()`` clears the
+        result-set surface — ``description`` / ``_rows`` /
+        ``_row_index`` — because a closed cursor cannot serve a result
+        set, but PRESERVES ``rowcount`` and ``lastrowid``, matching
+        stdlib ``sqlite3.Cursor``, which leaves both readable after
+        ``close()``. Reading ``cur.lastrowid`` / ``cur.rowcount`` after
+        ``close()`` returns the last operation's values — load-bearing
+        for consumers such as SQLAlchemy's Result layer, which closes
+        the cursor and then reads ``cursor.lastrowid`` lazily.
+        ``description`` is the one divergence: stdlib leaves the last
+        query's tuple-of-7-tuples populated, whereas this driver returns
+        ``None`` post-close (a closed cursor has no fetchable result set
+        to describe). PEP 249 is silent on post-close attribute state.
 
         **``arraysize`` is deliberately NOT scrubbed**: it is a
         caller-set configuration *hint* (PEP 249 §6.1.2 default ``1``;

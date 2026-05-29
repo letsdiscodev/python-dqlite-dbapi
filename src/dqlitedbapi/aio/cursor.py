@@ -1318,10 +1318,11 @@ class AsyncCursor:
         immediate ``NotSupportedError`` rather than a discarded
         coroutine).
 
-        Scrubs ``description`` / ``rowcount`` / ``lastrowid`` /
-        ``_rows`` / ``_row_index`` symmetrically with the sync sibling
-        ``Cursor.close`` (see that docstring for the full
-        "post-close state" rationale).
+        Clears the result-set surface ``description`` / ``_rows`` /
+        ``_row_index`` but PRESERVES ``rowcount`` / ``lastrowid``
+        (readable after close, matching stdlib ``sqlite3.Cursor``),
+        symmetrically with the sync sibling ``Cursor.close`` (see that
+        docstring for the full "post-close state" rationale).
 
         **``arraysize`` is deliberately NOT scrubbed**: it is a
         caller-set configuration *hint* (PEP 249 §6.1.2 default ``1``;

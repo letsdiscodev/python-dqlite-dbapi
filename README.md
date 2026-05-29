@@ -188,10 +188,11 @@ borrowed from one.
   the prior INSERT's rowid sticky across executemany. The driver
   diverges deliberately (which row's rowid is "the" rowid for a batch
   of N inserts is ambiguous).
-- **`Cursor.close()` scrubs `description` / `lastrowid` / `_rows`.**
-  stdlib preserves `description` and `lastrowid` post-close; dqlite
-  scrubs to `None` to enforce the closed-cursor "no operation
-  performed" surface.
+- **`Cursor.close()` clears `description` / `_rows` but preserves
+  `rowcount` / `lastrowid`.** Matches stdlib for `rowcount`/`lastrowid`
+  (both readable post-close); diverges only on `description`, which
+  stdlib leaves populated whereas dqlite returns `None` (a closed
+  cursor has no fetchable result set to describe).
 - **`Cursor.lastrowid` returns `None` after a fresh CREATE TABLE.**
   stdlib `sqlite3` returns `0` for a never-INSERTed cursor; dqlite
   returns `None`. After the first INSERT/REPLACE both drivers agree
@@ -217,9 +218,8 @@ borrowed from one.
   ``check_same_thread=False`` opt-in behaviour. Default
   ``check_same_thread=True`` enforces strict per-thread; methods
   called from a foreign thread on a default-mode Connection raise
-  ``ProgrammingError``. Tier 3 (cursor sharing) is tracked as
-  future work in
-  ``issues/dbapi-threadsafety-tier-3-cursor-sharing-stdlib-parity.md``.
+  ``ProgrammingError``. Tier 3 (sharing a single cursor across threads)
+  is not supported.
 - **No `executescript` / `create_function` / `create_aggregate` /
   `create_window_function` / `iterdump` / `backup` / `set_authorizer`
   / `serialize` / `blobopen`.** stdlib-specific APIs that have no
