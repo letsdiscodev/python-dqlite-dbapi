@@ -1618,7 +1618,19 @@ class AsyncCursor:
         # attacker-influenced control / bidi / ZW chars render as ``?``
         # rather than ``\uXXXX``, matching the client + dbapi
         # ``Connection`` reprs.
-        address = sanitize_for_log(str(getattr(self._connection, "_address", "?")))
+        #
+        # ``close()`` swaps ``self._connection`` to a ``weakref.proxy``;
+        # once the parent ``AsyncConnection`` is GC'd, attribute access
+        # on the proxy raises ``ReferenceError`` BEFORE ``getattr``'s
+        # default (``"?"``) is consulted (the default only fires for a
+        # missing attribute). ``ReferenceError`` is outside the
+        # ``dbapi.Error`` hierarchy and ``repr()`` is called by
+        # debuggers / loggers / pytest, so fall back to ``"?"`` to keep
+        # ``repr()`` safe. Mirrors the sync ``Cursor.__repr__``.
+        try:
+            address = sanitize_for_log(str(getattr(self._connection, "_address", "?")))
+        except ReferenceError:
+            address = "?"
         return (
             f"<AsyncCursor address={address!r} rowcount={self._rowcount} {state} at 0x{id(self):x}>"
         )
