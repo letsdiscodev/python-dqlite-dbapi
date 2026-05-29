@@ -1,12 +1,6 @@
-"""``_is_row_returning`` must not match ``RETURNING`` tokens that live
-inside string literals, double-quoted identifiers, or comments.
-
-Previously the heuristic did a plain uppercase substring scan for
-`` RETURNING ``, so ``INSERT INTO t VALUES('some RETURNING thing')`` or
-an ``UPDATE t SET "returning" = 1`` statement was misclassified as
-row-returning, the statement was dispatched through QUERY_SQL, and
-the cursor reported ``rowcount=0`` / ``lastrowid=None``.
-"""
+"""``_is_row_returning`` must not match RETURNING tokens inside string
+literals, double-quoted identifiers, or comments (the old substring scan
+misclassified these, mis-dispatching the statement through QUERY_SQL)."""
 
 from __future__ import annotations
 
@@ -23,7 +17,7 @@ class TestStripSqlNoise:
         assert "SELECT a FROM t WHERE b =" in out
 
     def test_strips_doubled_single_quote_escape(self) -> None:
-        # ``''`` inside the literal is an escape, not a terminator.
+        # `` '' `` inside the literal is an escape, not a terminator.
         out = _strip_sql_noise("SELECT 'it''s fine'")
         assert "RETURNING" not in out
         assert "SELECT" in out

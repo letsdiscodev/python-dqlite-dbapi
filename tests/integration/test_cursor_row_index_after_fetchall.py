@@ -1,16 +1,5 @@
-"""Regression fence: ``fetchone`` after a ``fetchall``-then-re-execute
-must return the first row of the new result set.
-
-``Cursor.execute`` resets ``_row_index`` to 0 for every new result set.
-The terminal state left by ``fetchall`` (``_row_index == len(_rows)``) is
-numerically distinct from the mid-consumption state already pinned by
-``test_cursor_iterator_reset.py`` and the DML re-execute path covered
-by ``test_cursor_row_index_reset.py``: this module specifically fences
-"buffer exhausted by fetchall, then a new query, then the first row of
-that new query". A lazy-reset optimisation that only rewinds when the
-new result is shorter than the old one would silently re-expose the
-old rows past the new boundary and go undetected without this fence.
-"""
+"""``fetchone`` after fetchall-then-re-execute must return the first row of the
+new result set: execute resets ``_row_index`` even from the terminal position."""
 
 from __future__ import annotations
 
@@ -33,16 +22,11 @@ class TestAsyncFetchoneAfterFetchallReexecute:
             )
             await conn.commit()
 
-            # First query: fetch every row so _row_index lands at the
-            # terminal position (== len(_rows)).
+            # Fetch every row so _row_index lands at the terminal position.
             await c.execute("SELECT id FROM ridx ORDER BY id")
             first_all = await c.fetchall()
             assert [row[0] for row in first_all] == [1, 2, 3]
 
-            # Re-execute a completely different query. fetchone must
-            # return the first row of the new set, not None (which
-            # would mean the cursor is still at the terminal position
-            # of the previous result).
             await c.execute("SELECT id FROM ridx WHERE id > 1 ORDER BY id")
             row = await c.fetchone()
             assert row is not None
@@ -54,10 +38,7 @@ class TestAsyncFetchoneAfterFetchallReexecute:
             await c.execute("DROP TABLE ridx")
 
     async def test_asymmetric_sizes_no_stale_buffer_bleed(self, cluster_address: str) -> None:
-        """Q1 returns 5 rows, Q2 returns 2. After fetchall → execute →
-        fetchall, the second list is exactly Q2's two rows — not three
-        stale rows from Q1 concatenated or overwritten in place.
-        """
+        """Q1=5 rows, Q2=2: the second fetchall is exactly Q2's rows, no stale bleed."""
         async with await aconnect(cluster_address, database="test_ridx_asym_aio") as conn:
             c = conn.cursor()
             await c.execute("DROP TABLE IF EXISTS ridx")

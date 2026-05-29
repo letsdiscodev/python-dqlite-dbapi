@@ -1,23 +1,7 @@
-"""Pin: ``Connection.in_transaction`` reads on a *closed* connection
-return ``False`` regardless of which thread the read is issued from.
-
-The docstring at ``Connection.in_transaction`` documents two safety
-contracts:
-
-1. ``in_transaction`` is safe to use in shutdown paths that decide
-   whether to commit or rollback before close, even when the
-   connection is already closed.
-2. The thread-affinity check (``_check_thread``) protects against a
-   mid-fetch / mid-mutation cross-thread read.
-
-These contracts compose only if the closed short-circuit runs
-*before* the thread check. A foreign-thread shutdown hook reading
-``closed_conn.in_transaction`` must observe ``False``, not
-``ProgrammingError``.
-
-The closed short-circuit precedes ``_check_thread`` so closed-state
-behaviour is thread-independent. This test pins the ordering.
-"""
+"""Pin: in_transaction on a closed connection returns False from any thread.
+The closed short-circuit must precede _check_thread so closed-state behaviour
+is thread-independent (foreign-thread shutdown hooks must not see
+ProgrammingError)."""
 
 import os
 import threading
@@ -67,22 +51,16 @@ def test_in_transaction_returns_false_on_closed_conn_from_foreign_thread() -> No
 def test_in_transaction_check_thread_still_runs_on_open_conn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Open-connection reads still run the thread-affinity check. The
-    closed-state precedence applies only to closed connections — open
-    ones retain the affinity guard.
-    """
+    """Open-connection reads still run the thread-affinity check."""
     from dqlitedbapi.exceptions import ProgrammingError
 
     conn = Connection.__new__(Connection)
     conn._closed = False
-    # truthy so the closed branch is skipped; cast to bypass the slot
-    # type pin — the test never invokes any AsyncConnection method on
-    # this stub, the in_transaction read short-circuits at the thread
-    # check before consulting ``conn.in_transaction``.
+    # Truthy so the closed branch is skipped; the read short-circuits at the
+    # thread check before consulting conn.in_transaction.
     conn._async_conn = object()  # type: ignore[assignment]
     conn._creator_pid = os.getpid()
-    # Pin the creator thread to a synthetic value that no real thread holds.
-    conn._creator_thread = -1
+    conn._creator_thread = -1  # synthetic value no real thread holds
 
     def reader_value() -> object:
         return conn.in_transaction

@@ -1,11 +1,5 @@
-"""Cross-entry-point timeout validation.
-
-All three DB-API entry points — ``dqlitedbapi.connect``,
-``dqlitedbapi.aio.connect``, and ``dqlitedbapi.aio.aconnect`` — share
-a single ``_validate_timeout`` helper. These tests pin that each
-entry point rejects the same set of bad values with the same error
-phrasing and exception type.
-"""
+"""Cross-entry-point timeout validation: connect / aio.connect / aio.aconnect share one
+``_validate_timeout`` helper and reject the same bad values with the same error and type."""
 
 from __future__ import annotations
 
@@ -43,10 +37,7 @@ async def test_aio_aconnect_rejects_bad_timeout(timeout: float) -> None:
 
 
 def test_error_phrasing_includes_value() -> None:
-    """The error repeats the offending value so operators can spot
-    typos ("`0.1` vs `0` vs `0,1`") without cross-referencing the
-    callsite. Regression guard against accidental phrasing drift.
-    """
+    """The error repeats the offending value so operators can spot typos without the callsite."""
     with pytest.raises(ProgrammingError) as excinfo:
         dqlitedbapi.connect("localhost:9001", timeout=-3.5)
     assert "-3.5" in str(excinfo.value)
@@ -54,10 +45,7 @@ def test_error_phrasing_includes_value() -> None:
 
 @pytest.mark.parametrize("bad", [True, False])
 def test_sync_connect_rejects_bool_timeout(bad: bool) -> None:
-    """bool subclasses int, so ``math.isfinite(True)`` is True and
-    ``True > 0`` is True — without an explicit isinstance guard,
-    ``timeout=True`` silently gives a 1-second budget.
-    """
+    """bool subclasses int, so without an isinstance guard ``timeout=True`` silently gives 1s."""
     with pytest.raises(ProgrammingError, match="bool"):
         dqlitedbapi.connect("localhost:9001", timeout=bad)
 

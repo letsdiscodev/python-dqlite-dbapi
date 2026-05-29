@@ -1,19 +1,4 @@
-"""Concurrent close() during first-use _build_and_connect must not leak.
-
-``AsyncConnection.close()`` early-returns on ``_async_conn is None``
-without acquiring any lock. ``_ensure_connection`` is the only place
-that assigns ``self._async_conn``; it performs the assignment after
-an ``await _build_and_connect(...)`` suspend. If ``close()`` lands in
-that window, it flips ``_closed=True`` and returns — and when the
-first-use task resumes, it installs a live connection into an object
-whose caller has already released it. The underlying
-``DqliteConnection`` (and its socket + reader task + server-side
-session) leaks until GC.
-
-The fix is to re-check ``self._closed`` under ``connect_lock`` after
-the build completes; on close-in-flight, close the freshly built
-connection and raise ``InterfaceError``.
-"""
+"""Concurrent close() during first-use _build_and_connect must not leak."""
 
 from __future__ import annotations
 
@@ -30,10 +15,7 @@ class TestCloseDuringEnsureConnection:
     async def test_close_during_build_closes_fresh_connection(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If close() runs while _build_and_connect is suspended, the
-        freshly built underlying connection must be closed, not leaked
-        into a closed wrapper.
-        """
+        """Close during a suspended build must close the fresh connection, not leak it."""
         built_connection = AsyncMock()
         built_connection.close = AsyncMock()
         build_has_started = asyncio.Event()
@@ -62,11 +44,8 @@ class TestCloseDuringEnsureConnection:
         await conn.close()
         assert conn._closed is True
 
-        # Now let the build finish.
         may_build_finish.set()
         await open_task
 
-        # The freshly built connection must have been closed.
         built_connection.close.assert_awaited()
-        # It must NOT have been installed into _async_conn.
         assert conn._async_conn is None

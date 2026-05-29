@@ -1,7 +1,4 @@
-"""Pin: a batch of coverage gaps from the audit. Each test pins
-one previously-uncovered branch so a regression is caught at PR
-time. See ``issues/done/dbapi-*-coverage.md`` for per-gap
-rationale."""
+"""Pins for previously-uncovered branches from the audit."""
 
 import asyncio
 from typing import Any
@@ -20,8 +17,6 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
 )
 
-# ---------------- async fetchmany arraysize fallback (coverage)
-
 
 async def test_async_fetchmany_default_uses_arraysize() -> None:
     conn = AsyncConnection("localhost:9001")
@@ -30,7 +25,7 @@ async def test_async_fetchmany_default_uses_arraysize() -> None:
     cur._description = (("a", None, None, None, None, None, None),)
     cur._rows = [(i,) for i in range(5)]
     cur._row_index = 0
-    rows = await cur.fetchmany()  # no arg → arraysize
+    rows = await cur.fetchmany()
     assert len(rows) == 3
 
 
@@ -44,13 +39,8 @@ async def test_async_fetchmany_size_exceeds_remaining() -> None:
     assert len(rows) == 2
 
 
-# The async scroll mode/value validation tests moved to
-# test_cursor_scroll_mode_validation.py — see that file's pins for the
-# async sibling. Removing the duplicates here keeps the file's
-# top-level docstring honest.
-
-
-# ---------------- Error.sqlite_errorcode + __repr__ (coverage)
+# Async scroll mode/value validation tests live in
+# test_cursor_scroll_mode_validation.py.
 
 
 def test_interface_error_sqlite_errorcode() -> None:
@@ -69,19 +59,13 @@ def test_operational_error_sqlite_errorcode_none_default() -> None:
     assert e.sqlite_errorcode is None
 
 
-# ---------------- async cursor parent-GC ReferenceError → InterfaceError
-
-
 async def test_async_cursor_parent_gc_reraises_as_interface_error() -> None:
-    """When the parent AsyncConnection is GC'd, the cursor's
-    ``connection`` property must surface InterfaceError, not
-    ReferenceError (which is outside dbapi.Error)."""
+    """Cursor.connection surfaces InterfaceError (not ReferenceError) when parent GC'd."""
     import gc
     import weakref
 
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
-    # Replace _connection with a proxy whose referent is dead.
     fake_referent = AsyncConnection("localhost:9001")
     proxy = weakref.proxy(fake_referent)
     cur._connection = proxy
@@ -92,26 +76,17 @@ async def test_async_cursor_parent_gc_reraises_as_interface_error() -> None:
         _ = cur.connection
 
 
-# ---------------- async cursor rownumber=None on no result set
-
-
 async def test_async_cursor_rownumber_no_result_set() -> None:
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
     assert cur.rownumber is None
 
 
-# ---------------- empty-result description type-codes-empty fallback
-
-
 def test_sync_description_empty_result_type_codes_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the wire response has columns but zero rows AND zero
-    column_types, synthesise the UNKNOWN sentinel for every type
-    code so PEP 249 §6.1.2's "must compare equal to a Type Object"
-    contract holds (UNKNOWN is a real Type Object; ``None`` was not).
-    """
+    """Columns but zero rows and zero column_types: synthesise UNKNOWN type codes
+    so PEP 249 §6.1.2's Type-Object contract holds (None is not a Type Object)."""
     from dqlitedbapi import UNKNOWN
 
     conn = Connection("localhost:9001", timeout=2.0)
@@ -137,16 +112,11 @@ def test_sync_description_empty_result_type_codes_unknown(
     desc = cur.description
     assert desc is not None
     assert len(desc) == 2
-    # Each type_code is UNKNOWN per the synthesised fallback.
     assert desc[0][1] is UNKNOWN
     assert desc[1][1] is UNKNOWN
 
 
-# ---------------- row_factory applied in fetch* paths
-
-
 def test_sync_row_factory_applied_in_fetchone() -> None:
-    """row_factory transform must fire in fetchone."""
     conn = Connection("localhost:9001", timeout=2.0)
     cur = Cursor(conn)
     cur._description = (("a", None, None, None, None, None, None),)
@@ -177,9 +147,6 @@ def test_sync_row_factory_applied_in_fetchall() -> None:
     cur.row_factory = lambda c, r: ("y", r[0])
     rows = cur.fetchall()
     assert rows == [("y", 1), ("y", 2)]
-
-
-# ---------------- setoutputsize / setinputsizes validation
 
 
 def test_setoutputsize_rejects_non_int_sync() -> None:
@@ -218,10 +185,7 @@ async def test_setinputsizes_rejects_non_sequence_async() -> None:
 
 
 def test_setoutputsize_rejects_non_int_column_sync() -> None:
-    """The ``column`` keyword has its own validation arm (an int or
-    None per PEP 249). The ``size`` validators above never reach it.
-    Pin both the str and bool cases so a future refactor can't silently
-    relax the type guard."""
+    """The ``column`` keyword has its own validation arm; pin str and bool cases."""
     conn = Connection("localhost:9001", timeout=2.0)
     cur = Cursor(conn)
     with pytest.raises(ProgrammingError, match="column"):
@@ -240,14 +204,8 @@ async def test_setoutputsize_rejects_non_int_column_async() -> None:
         cur.setoutputsize(10, True)
 
 
-# ---------------- _call_client catch-all forward-compat (test pin)
-
-
 def test_call_client_arms_cover_all_known_dqlite_error_subclasses() -> None:
-    """Forward-compat regression test: every DqliteError subclass
-    that exists today must have an explicit arm in ``_call_client``
-    so a future addition is a deliberate, reviewed decision rather
-    than a silent route-through-DatabaseError."""
+    """Forward-compat: every DqliteError subclass needs an explicit ``_call_client`` arm."""
     from dqliteclient.exceptions import (
         AmbiguousCommitError,
         ClusterError,
@@ -270,12 +228,8 @@ def test_call_client_arms_cover_all_known_dqlite_error_subclasses() -> None:
         ProtocolError as ClientProtocolError,
     )
 
-    # Every concrete subclass of dqliteclient.DqliteError that is
-    # NOT itself the base. _call_client has explicit arms for the
-    # ones we expect to map to specific dbapi.Error subclasses.
-    # AmbiguousCommitError subclasses OperationalError, so it routes
-    # through the OperationalError arm — it is included in the
-    # ``known`` set so the forward-compat sweep doesn't flag it.
+    # AmbiguousCommitError routes through the OperationalError arm, so it's
+    # in ``known`` to avoid flagging it.
     known = {
         ClientDataError,
         ClientInterfaceError,

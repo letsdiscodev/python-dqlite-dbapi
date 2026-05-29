@@ -1,11 +1,5 @@
-"""PEP 249 type-object comparison tests.
-
-Per PEP 249 the module's type objects (STRING, BINARY, NUMBER, DATETIME,
-ROWID) must compare equal to whatever `cursor.description[i][1]` carries.
-We carry the wire `ValueType` integer there, so the type objects have to
-compare equal to the integer code too — not just to uppercase SQL type
-name strings.
-"""
+"""PEP 249 type objects must compare equal to whatever ``description[i][1]``
+carries; we carry the wire ``ValueType`` int, so equality covers ints too."""
 
 import pytest
 
@@ -66,42 +60,22 @@ class TestRowidType:
 
 class TestHashability:
     def test_types_are_hashable_by_name(self) -> None:
-        # The PEP 249 type objects hash by their class-level ``_name``
-        # so they can be used as dict keys / set members. SQLAlchemy
-        # memoises ``cursor.description`` type_codes — which can be
-        # the ``UNKNOWN`` _DBAPIType sentinel — in a dialect-level
-        # dict, so the type objects MUST be hashable. The hash-eq
-        # invariant against multi-value equality with bare wire ints
-        # is intentionally relaxed (see TestHashEqInvariantRelaxation
-        # in test_dbapi_type_hash_consistency).
+        # Hashable (by ``_name``) because SQLAlchemy memoises type_codes as
+        # dict keys; the hash-eq invariant vs bare wire ints is relaxed.
         for obj in (STRING, BINARY, NUMBER, DATETIME, ROWID):
             assert isinstance(hash(obj), int)
 
 
-# Maintenance note: if a future ValueType is intentionally exempt
-# (e.g. ``ValueType.RESERVED`` for protocol negotiation), add it to
-# ``EXEMPT_VALUE_TYPES`` here — do NOT broaden a DBAPI type-object
-# just to silence this test, or you will silently mis-classify a
-# column for user code.
+# A future intentionally-exempt ValueType goes here; do NOT broaden a DBAPI
+# type-object to silence the test or columns get mis-classified for user code.
 EXEMPT_VALUE_TYPES: frozenset[ValueType] = frozenset({ValueType.NULL})
 
 DBAPI_TYPE_OBJECTS = (STRING, BINARY, NUMBER, DATETIME, ROWID)
 
 
 class TestValueTypeMappingExhaustiveness:
-    """Pin the cross-package contract: every wire ``ValueType`` (except
-    ``NULL``, which PEP 249 represents as ``None``) is covered by at
-    least one module-level DBAPI type object so
-    ``cursor.description[i][1] == STRING / BINARY / NUMBER / DATETIME /
-    ROWID`` comparisons in user code do not silently fall through to
-    "none of the above" for any column the wire can produce.
-
-    A regression would surface if either:
-    - a new ValueType is added in wire/constants.py without
-      corresponding updates to the dbapi type objects, or
-    - an existing ValueType is removed from a type object by an
-      over-zealous "cleanup".
-    """
+    """Every wire ``ValueType`` except ``NULL`` is covered by at least one
+    DBAPI type object, so no column the wire produces compares to nothing."""
 
     @pytest.mark.parametrize(
         "value_type",
@@ -111,11 +85,6 @@ class TestValueTypeMappingExhaustiveness:
     def test_every_non_exempt_value_type_has_dbapi_type_coverage(
         self, value_type: ValueType
     ) -> None:
-        """The PEP 249 comparison surface must cover every wire
-        ValueType. ``cursor.description[i][1]`` is a ValueType int;
-        user code compares it against STRING / BINARY / NUMBER /
-        DATETIME / ROWID. At least one of those must compare equal.
-        """
         matched = [t for t in DBAPI_TYPE_OBJECTS if t == value_type]
         assert matched, (
             f"ValueType.{value_type.name} ({int(value_type)}) is not covered "
@@ -125,12 +94,7 @@ class TestValueTypeMappingExhaustiveness:
         )
 
     def test_null_value_type_is_intentionally_exempt(self) -> None:
-        """PEP 249 specifies SQL NULL is the Python ``None`` singleton;
-        the DBAPI type-object surface intentionally has no entry for
-        NULL. A regression that adds NULL to one of the type objects
-        would imply the contract changed; this test makes that change
-        explicit so it cannot land silently.
-        """
+        """NULL is Python ``None`` per PEP 249; no type object covers it."""
         for t in DBAPI_TYPE_OBJECTS:
             assert t != ValueType.NULL, (
                 f"DBAPI type object {t!r} unexpectedly compares equal to "
@@ -139,70 +103,33 @@ class TestValueTypeMappingExhaustiveness:
 
 
 class TestDBAPITypeEqFallthrough:
-    """Pin the ``NotImplemented`` fallthrough and ``bool`` guard on
-    ``_DBAPIType.__eq__``.
-
-    ``__eq__`` returns ``NotImplemented`` (not ``False``) for any
-    ``other`` that is not a ``str``, ``ValueType``, or non-bool ``int``.
-    Per the Python data model, this lets the reflected comparison be
-    consulted before Python falls back to identity (``False`` for
-    distinct objects). A refactor to ``return False`` would silently
-    break reflected ``__eq__`` against any future sibling class and
-    drop the intended fallthrough semantics.
-
-    The ``not isinstance(other, bool)`` guard is the stronger half:
-    ``bool`` is a subclass of ``int``, so without the guard
-    ``NUMBER == True`` would return True (``True in {1, 2, …}`` is
-    True), silently violating the PEP 249 type-object-identity
-    contract.
-    """
+    """``__eq__`` returns ``NotImplemented`` (not ``False``) for unrelated types
+    so reflected comparison runs; the bool guard stops ``NUMBER == True``."""
 
     @pytest.mark.parametrize("other", [None, [], {}, (), object(), 1.5, {1, 2}])
     @pytest.mark.parametrize("type_obj", DBAPI_TYPE_OBJECTS)
     def test_not_equal_to_unrelated_types(self, type_obj: object, other: object) -> None:
-        # ``__eq__`` must return ``NotImplemented`` for unrelated types
-        # so Python consults the reflected comparison, then falls back
-        # to identity. For every ``other`` in the parametrize list,
-        # ``type(other).__eq__`` also returns ``NotImplemented`` against
-        # ``_DBAPIType``, so the reflected comparison works and identity
-        # resolves to False.
         assert type_obj != other
         assert other != type_obj
 
     @pytest.mark.parametrize("type_obj", DBAPI_TYPE_OBJECTS)
     @pytest.mark.parametrize("value", [True, False])
     def test_not_equal_to_bool_even_if_integer_match(self, type_obj: object, value: bool) -> None:
-        # bool is a subclass of int; a refactor that dropped the
-        # ``not isinstance(other, bool)`` guard would silently let
-        # ``NUMBER == True`` return True. Pin both directions so a
-        # regression cannot land without a test failure.
+        # bool subclasses int; without the guard ``NUMBER == True`` would be True.
         assert type_obj != value
         assert value != type_obj
 
     def test_types_are_hashable_by_singleton_name(self) -> None:
-        # ``_DBAPIType`` hashes on the singleton's class-level
-        # ``_name`` so it can be used as a dict key / set member.
-        # The hash-eq invariant against multi-value equality with
-        # bare wire ints is intentionally relaxed: ``NUMBER ==
-        # FLOAT_CODE`` is True, but ``{NUMBER: x}[FLOAT_CODE]``
-        # returns ``KeyError`` because the hash codes differ. The
-        # cross-driver idiom for testing ``description[i][1]`` is
-        # linear ``== STRING`` etc., not hash lookup.
+        # Hashes by ``_name``; the hash-eq invariant vs bare wire ints is relaxed
+        # (``NUMBER == FLOAT_CODE`` but a dict lookup by FLOAT_CODE misses).
         assert isinstance(hash(STRING), int)
         assert isinstance(hash(NUMBER), int)
         assert hash(STRING) != hash(NUMBER)
 
 
 class TestDBAPITypeAcceptRejectMatrix:
-    """Pin the explicit accept / reject matrix for each PEP 249 type
-    singleton.
-
-    The case-insensitive name match is intentional and supports
-    operators that mirror SQLite's permissive declared-type strings.
-    What we do NOT want is for typos (``"DATETIEM"``, ``"BLOBS"``) to
-    be silently equal to anything — both halves should be pinned so a
-    future cleanup that tightens the comparator doesn't accidentally
-    break user code that relied on case-insensitive matching."""
+    """Case-insensitive name matching is intentional, but typos must not match;
+    pin both halves so a comparator tweak can't silently break either."""
 
     @pytest.mark.parametrize(
         ("type_obj", "accepts", "rejects"),

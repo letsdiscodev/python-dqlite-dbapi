@@ -1,14 +1,6 @@
-"""Pin: ``dqlitedbapi.Binary`` is the stdlib ``memoryview`` alias and
-deliberately leaks bare ``TypeError`` on bad input — outside the
-``dqlitedbapi.Error`` hierarchy — to preserve stdlib drop-in parity
-(``isinstance(Binary(b), memoryview)``).
-
-This is a deliberate tradeoff documented in ``types.py`` and the
-README "Limitations vs stdlib" section. Sibling
-``Date``/``Time``/``Timestamp`` constructors wrap as ``DataError``;
-``Binary`` does not. See architect triage on
-``dbapi-binary-leaks-typeerror-outside-error-hierarchy-on-bad-input.md``.
-"""
+"""Pin: ``Binary`` is the stdlib memoryview alias and deliberately leaks bare
+TypeError (outside the Error hierarchy) on bad input, for stdlib drop-in parity.
+Sibling Date/Time/Timestamp constructors wrap as DataError; Binary does not."""
 
 from __future__ import annotations
 

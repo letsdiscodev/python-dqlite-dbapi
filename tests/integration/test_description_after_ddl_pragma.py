@@ -1,15 +1,5 @@
-"""Pin ``cursor.description is None`` after CREATE / DROP / ALTER / REINDEX.
-
-Cross-reference: ``TestDescriptionNoneAfterDml`` in
-``tests/integration/test_misc_coverage.py`` already pins CREATE TABLE,
-DROP TABLE, and DML without RETURNING. This fixture extends the
-regression fence to index- and table-altering DDL so an accidental
-flip of ``_is_row_returning`` cannot silently return rows for a
-non-returning statement.
-
-``PRAGMA table_info`` is included as the positive case: it IS
-row-returning and description must be non-None.
-"""
+"""``cursor.description is None`` after CREATE/DROP/ALTER/REINDEX DDL;
+``PRAGMA table_info`` is the positive case (row-returning, description non-None)."""
 
 from __future__ import annotations
 
@@ -37,7 +27,6 @@ class TestDescriptionAfterDdlPragma:
     def test_description_is_none_after_ddl(self, conn: dqlitedbapi.Connection) -> None:
         cur = conn.cursor()
         try:
-            # Clean slate — DROP IF EXISTS is a non-returning DDL too.
             cur.execute("DROP TABLE IF EXISTS t_ddl_pragma")
             assert cur.description is None
 
@@ -56,13 +45,8 @@ class TestDescriptionAfterDdlPragma:
             cur.execute("DROP INDEX ix_t_ddl_pragma_a")
             assert cur.description is None
 
-            # PRAGMA table_info IS row-returning; the fence captures the
-            # distinction explicitly so a future _is_row_returning
-            # misclassification in either direction trips a test.
             cur.execute("PRAGMA table_info(t_ddl_pragma)")
             assert cur.description is not None
-            # Drain the result set so the cursor is in a clean state
-            # before the final DROP.
             cur.fetchall()
 
             cur.execute("DROP TABLE t_ddl_pragma")

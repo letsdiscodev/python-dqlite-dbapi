@@ -1,10 +1,5 @@
-"""Pin: ``Cursor.setinputsizes(None)`` and ``AsyncCursor.setinputsizes(None)``
-accept None silently as a no-op (PEP 249 §6.2 permits "do nothing").
-
-Matches stdlib ``sqlite3``, aiosqlite, psycopg, and asyncpg behavior.
-The strict rejection for genuinely invalid types (int, dict, str, bytes,
-memoryview) remains in place; only ``None`` is special-cased.
-"""
+"""Pin: ``setinputsizes(None)`` is a silent no-op (matching stdlib sqlite3/aiosqlite/psycopg);
+only None is special-cased — invalid types (int, etc.) are still rejected."""
 
 from __future__ import annotations
 

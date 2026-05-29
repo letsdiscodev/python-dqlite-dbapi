@@ -1,17 +1,8 @@
-"""Pin the actual ``"no transaction is active"`` wording the dqlite server emits.
+"""Pin the ``"no transaction is active"`` wording the dqlite server emits.
 
-``Connection.commit`` / ``Connection.rollback`` swallow ``OperationalError``
-when the message matches a substring whitelist. The substring approach is
-brittle by design — string matching across SQLite/dqlite version
-boundaries is fragile. This test runs ``COMMIT`` / ``ROLLBACK`` directly
-through a cursor (bypassing ``Connection.commit``'s swallow) and pins the
-exact (code, message) tuple the server emits today.
-
-If the wording drifts (capitalisation, punctuation, locale), the test
-fails — surface the change in CI rather than have ``conn.commit()``
-silently start raising in production. Do *not* paper over a wording
-change by adjusting the substring; raise a follow-up issue capturing the
-new wording.
+``Connection.commit`` / ``rollback`` swallow this OperationalError via a brittle
+substring whitelist; these tests run COMMIT/ROLLBACK directly through a cursor
+(bypassing the swallow) so a wording drift fails loudly instead of silently re-raising.
 """
 
 from __future__ import annotations
@@ -73,10 +64,8 @@ class TestNoTransactionErrorWording:
     def test_commit_swallows_no_tx_via_connection_method(
         self, conn: dqlitedbapi.Connection
     ) -> None:
-        # Force the connection to actually open the underlying socket.
         conn.connect()
-        # conn.commit() (not cur.execute('COMMIT')) silently succeeds for a
-        # never-begun tx.
+        # conn.commit() (unlike cur.execute('COMMIT')) silently succeeds with no tx.
         conn.commit()
 
     def test_rollback_swallows_no_tx_via_connection_method(

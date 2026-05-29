@@ -1,9 +1,5 @@
-"""``_is_multi_statement`` must treat a single ``CREATE TRIGGER ... BEGIN
-... END`` as ONE statement (its body's inner ``;`` are not statement
-boundaries), matching stdlib ``sqlite3`` and the client layer's
-trigger-aware splitter — while still rejecting genuine multi-statement
-batches and preserving the tuned empty-statement / stray-``;`` behaviour.
-"""
+"""``_is_multi_statement`` treats one ``CREATE TRIGGER ... BEGIN ... END`` as a single
+statement (inner ``;`` are not boundaries), while still rejecting real batches."""
 
 from __future__ import annotations
 
@@ -40,8 +36,7 @@ def test_genuine_batches_still_rejected() -> None:
 
 
 def test_non_trigger_edge_cases_unchanged() -> None:
-    # The surgical trigger carve-out must NOT alter the tuned flat-scan
-    # behaviour for non-trigger SQL (empty statements / stray ';').
+    # The trigger carve-out must not change empty-statement / stray-';' behaviour.
     assert _is_multi_statement("SELECT 1") is False
     assert _is_multi_statement("SELECT 1;") is False
     assert _is_multi_statement(";") is False
@@ -58,8 +53,7 @@ def test_create_trigger_executes_end_to_end_and_fires() -> None:
         cur = conn.cursor()
         cur.execute(f"CREATE TABLE {base}_t (id INTEGER PRIMARY KEY, v TEXT)")
         cur.execute(f"CREATE TABLE {base}_log (msg TEXT)")
-        # This previously raised ProgrammingError("You can only execute one
-        # statement at a time.") due to the trigger body's inner ';'.
+        # Previously raised "You can only execute one statement at a time" on the body's ';'.
         cur.execute(
             f"CREATE TRIGGER {base}_trg AFTER INSERT ON {base}_t "
             f"BEGIN INSERT INTO {base}_log(msg) VALUES('fired'); END"

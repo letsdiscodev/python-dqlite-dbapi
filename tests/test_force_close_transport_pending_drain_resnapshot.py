@@ -1,22 +1,7 @@
-"""Pin: ``AsyncConnection.force_close_transport`` re-snapshots
-``inner._pending_drain`` so a concurrent ``_invalidate`` queued via
-``loop.call_soon_threadsafe`` cannot orphan a freshly-created drain
-task.
-
-The race shape: ``force_close_transport`` runs from a foreign thread
-(SA finalize, atexit, GC). Pre-fix, it snapshotted
-``pending = getattr(inner, "_pending_drain", None)`` once near entry,
-then later wrote ``inner._pending_drain = None``. Between those two
-operations, a ``call_soon_threadsafe(_invalidate, ...)`` queued by the
-loop-thread coroutine could fire and CREATE a fresh ``_pending_drain``
-task. The cross-thread cancel only acted on the OLD task; the NEW
-task was then nulled with no observer/cancel — orphaned, surfacing
-as "Task was destroyed but it is pending" at GC.
-
-The fix mirrors the in-thread re-snapshot loop in
-``DqliteConnection._close_impl`` (the cap-and-fail-loud
-discipline): repeat snapshot+null+cancel for up to 3 iterations; on
-cap-exhaustion, log a WARNING and leave the residual task cancelled.
+"""Pin: ``force_close_transport`` re-snapshots ``inner._pending_drain`` so a
+concurrent ``_invalidate`` (queued via ``call_soon_threadsafe`` on the loop
+thread) cannot orphan a freshly-created drain task between snapshot and null-out.
+Re-snapshot+cancel loops up to 3 iterations, then logs a WARNING on cap-exhaust.
 """
 
 from __future__ import annotations
@@ -32,10 +17,8 @@ from dqlitedbapi.aio.connection import AsyncConnection
 
 
 class _SeqPendingInner:
-    """Inner-conn double whose ``_pending_drain`` returns a configured
-    sequence of tasks on each read, simulating a concurrent
-    ``_invalidate`` re-publishing a fresh task between our snapshot
-    and our null-out.
+    """Inner-conn double whose ``_pending_drain`` yields a configured sequence
+    on each read, simulating a concurrent ``_invalidate`` re-publishing a task.
     """
 
     def __init__(self, sequence: list[object]) -> None:
@@ -52,9 +35,8 @@ class _SeqPendingInner:
 
     @_pending_drain.setter
     def _pending_drain(self, value: object) -> None:
-        # Null-out is a no-op for the sequence — the next read
-        # automatically yields the next value in the sequence,
-        # simulating the concurrent _invalidate side-effect.
+        # No-op: the next read yields the next sequence value, simulating
+        # the concurrent _invalidate side-effect.
         pass
 
 
@@ -69,11 +51,8 @@ def _build_aconn(inner: object) -> AsyncConnection:
 
 
 def test_force_close_resnapshots_when_invalidate_creates_new_pending() -> None:
-    """Simulate a concurrent ``_invalidate`` running between our
-    snapshot and our null-out: each null is followed by a fresh task
-    appearing in the slot. The re-snapshot loop must see the new
-    tasks and cancel each (up to the cap).
-    """
+    """Each null is followed by a fresh task in the slot; the re-snapshot
+    loop must see and cancel each (up to the cap)."""
     closed_loop = asyncio.new_event_loop()
     closed_loop.close()
 
@@ -91,7 +70,6 @@ def test_force_close_resnapshots_when_invalidate_creates_new_pending() -> None:
 
     aconn.force_close_transport()
 
-    # All three tasks (initial + 2 fresh) should have had cancel called.
     initial_task.cancel.assert_called_once()
     for t in fresh_tasks:
         t.cancel.assert_called_once()
@@ -100,10 +78,7 @@ def test_force_close_resnapshots_when_invalidate_creates_new_pending() -> None:
 def test_force_close_logs_warning_when_resnapshot_cap_exhausted(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """If ``_invalidate`` keeps creating fresh pending tasks each
-    iteration (pathological feedback loop), the re-snapshot loop hits
-    the cap (3) and a WARNING fires.
-    """
+    """A pathological feedback loop hits the cap (3) and fires a WARNING."""
     closed_loop = asyncio.new_event_loop()
     closed_loop.close()
 
@@ -113,7 +88,7 @@ def test_force_close_logs_warning_when_resnapshot_cap_exhausted(
         t.get_loop.return_value = closed_loop
         return t
 
-    # 10 fresh tasks — never converges; the cap kicks in at 3.
+    # Never converges; the cap kicks in at 3.
     inner = _SeqPendingInner([_make_pending() for _ in range(10)])
     aconn = _build_aconn(inner)
 
@@ -132,12 +107,9 @@ def test_force_close_logs_warning_when_resnapshot_cap_exhausted(
 
 
 def test_force_close_no_resnapshot_loop_iteration_when_pending_initially_none() -> None:
-    """Negative pin: when there is no pending drain at entry, the
-    loop body breaks on the first iteration. No exception, no
-    warning, no cap-exhaustion path.
-    """
+    """Negative pin: no pending drain at entry breaks the loop on the first
+    iteration — no exception, warning, or cap-exhaustion path."""
     inner = _SeqPendingInner([None])
     aconn = _build_aconn(inner)
     aconn.force_close_transport()
-    # No exception raised. _async_conn nulled at the tail.
     assert aconn._async_conn is None

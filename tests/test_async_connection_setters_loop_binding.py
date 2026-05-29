@@ -1,13 +1,5 @@
-"""``AsyncConnection.autocommit`` / ``isolation_level`` / ``text_factory``
-setters must enforce the loop-binding affinity contract — even on
-their no-op accept-paths (``True``/``-1``, ``None``, ``str``). The
-class docstring's universal affinity claim covers any state-mutating
-setter attempt; cross-loop callers must surface ``ProgrammingError``.
-
-Mirror of the sync sibling pin in
-``test_thread_safety_enforcement.py`` and the cursor-side pin in
-``test_async_cursor_arraysize_row_factory_loop_binding.py``.
-"""
+"""``autocommit``/``isolation_level``/``text_factory`` setters enforce loop-binding even on
+their no-op accept-paths; cross-loop callers must surface ``ProgrammingError``."""
 
 from __future__ import annotations
 
@@ -40,7 +32,7 @@ def _run_on_other_loop_setter(
 
 async def test_autocommit_setter_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
-    conn._ensure_locks()  # prime binding on this loop
+    conn._ensure_locks()  # prime loop binding
     err = _run_on_other_loop_setter(conn, "autocommit", True)
     assert isinstance(err, ProgrammingError)
 

@@ -1,13 +1,5 @@
-"""Integration tests for the DBAPI boolean conversion layer.
-
-A column declared ``BOOLEAN`` is tagged ``DQLITE_BOOLEAN`` by the
-server, so the DBAPI returns Python ``bool`` for non-NULL cells while
-preserving the NULL-vs-FALSE distinction: a NULL reads back as ``None``,
-never ``False``. This is the boolean arm of the upstream NULL-type fix.
-These tests exercise the end-to-end path against a live cluster; the
-existing coverage stops at the raw client layer (which returns
-primitives) and never asserts the DBAPI consumer contract.
-"""
+"""A BOOLEAN column returns Python ``bool`` for non-NULL cells; NULL reads back as ``None``,
+never ``False``."""
 
 import asyncio
 
@@ -20,12 +12,7 @@ from dqlitewire.constants import ValueType
 
 @pytest.mark.integration
 class TestBooleanRoundTrip:
-    """BOOLEAN column round-trips through cursor.execute."""
-
     def test_boolean_null_true_false_roundtrip(self, cluster_address: str) -> None:
-        """A BOOLEAN column returns Python ``bool`` for non-NULL cells
-        and ``None`` (not ``False``) for NULL.
-        """
         with connect(cluster_address, database="test_bool") as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE IF NOT EXISTS bool_rt (id INTEGER PRIMARY KEY, b BOOLEAN)")
@@ -36,15 +23,13 @@ class TestBooleanRoundTrip:
             cursor.execute("SELECT b FROM bool_rt ORDER BY id")
             rows = cursor.fetchall()
             assert cursor.description is not None
-            # A BOOLEAN-declared column carries the BOOLEAN wire code,
-            # which resolves through the NUMBER Type Object.
+            # The BOOLEAN wire code resolves through the NUMBER Type Object.
             assert cursor.description[0][1] == int(ValueType.BOOLEAN)
             assert cursor.description[0][1] == NUMBER
             cursor.execute("DROP TABLE bool_rt")
 
             assert len(rows) == 3
-            # Identity assertions so a 0/1 int regression is caught:
-            # ``1 == True`` and ``0 == False`` would pass under ``==``.
+            # Identity (`is`) checks: a 0/1 int regression would pass under ``==``.
             assert rows[0][0] is None
             assert rows[1][0] is True
             assert rows[2][0] is False
@@ -52,8 +37,6 @@ class TestBooleanRoundTrip:
 
 @pytest.mark.integration
 class TestAsyncBooleanRoundTrip:
-    """AsyncCursor goes through the same boolean conversion path."""
-
     def test_async_boolean_null_true_false_roundtrip(self, cluster_address: str) -> None:
         async def scenario() -> tuple[object, list[tuple[object, ...]]]:
             async with AsyncConnection(cluster_address, database="test_bool_async") as conn:

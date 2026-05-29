@@ -1,19 +1,6 @@
-"""Pin: ``_run_sync``'s KI / SystemExit cleanup paths defend against
-their own cleanup failing.
-
-Two test gaps in the existing KI suite:
-
-1. ``coro.close()`` on the never-scheduled coroutine MUST run so the
-   coroutine frame is freed and CPython does not emit
-   "coroutine was never awaited" ResourceWarning. The op-lock-acquire
-   KI tests pin invalidation but never inspect the coroutine itself.
-
-2. ``call_soon_threadsafe`` is wrapped in ``contextlib.suppress(
-   RuntimeError)`` so a closed loop (concurrent ``engine.dispose()``)
-   does not mask the KI. Pin that contract: when the loop is closing
-   and call_soon_threadsafe raises RuntimeError, the KI still
-   propagates to the caller.
-"""
+"""Pin: ``_run_sync``'s KI / SystemExit cleanup paths defend against their own cleanup
+failing — the never-scheduled coro is closed, and a closed-loop RuntimeError from
+``call_soon_threadsafe`` is suppressed so it does not mask the KI."""
 
 from __future__ import annotations
 
@@ -39,13 +26,9 @@ def _make_with_loop_thread() -> Connection:
 
 
 def test_op_lock_acquire_keyboard_interrupt_closes_unscheduled_coroutine() -> None:
-    """The ``coro.close()`` call on the never-scheduled coroutine must
-    run so the coroutine frame is freed. Inspect ``cr_frame`` and
-    ``cr_running`` to verify the close landed."""
+    """The never-scheduled coroutine must be closed so its frame is freed (cr_frame None)."""
     conn = _make_with_loop_thread()
     try:
-        # Capture the coroutine that _commit_async builds before
-        # _run_sync runs. Patch _run_sync so we can intercept the coro.
         captured = {}
 
         async def stub_coro() -> None:
@@ -54,7 +37,6 @@ def test_op_lock_acquire_keyboard_interrupt_closes_unscheduled_coroutine() -> No
         coro = stub_coro()
         captured["coro"] = coro
 
-        # Force the op-lock acquire to KI.
         fake_lock = MagicMock()
         fake_lock.acquire.side_effect = KeyboardInterrupt
         conn._op_lock = fake_lock
@@ -62,7 +44,6 @@ def test_op_lock_acquire_keyboard_interrupt_closes_unscheduled_coroutine() -> No
         with pytest.raises(KeyboardInterrupt):
             conn._run_sync(coro)
 
-        # ``cr_frame`` becomes None after the coroutine is closed.
         assert getattr(coro, "cr_frame", None) is None, (
             "expected coro.close() to have freed the coroutine frame; cr_frame is still set"
         )
@@ -71,9 +52,7 @@ def test_op_lock_acquire_keyboard_interrupt_closes_unscheduled_coroutine() -> No
 
 
 def test_op_lock_acquire_returns_false_closes_unscheduled_coroutine() -> None:
-    """When ``_op_lock.acquire`` returns False (lock held elsewhere),
-    the never-scheduled coroutine must also be closed before raising
-    OperationalError."""
+    """When ``_op_lock.acquire`` returns False, the coro is closed before OperationalError."""
     from dqlitedbapi.exceptions import OperationalError
 
     conn = _make_with_loop_thread()
@@ -100,10 +79,7 @@ def test_op_lock_acquire_returns_false_closes_unscheduled_coroutine() -> None:
 
 
 def _patch_call_soon_threadsafe_for_invalidate(loop: Any) -> Any:
-    """Patch ``loop.call_soon_threadsafe`` so that scheduling
-    ``_invalidate`` raises RuntimeError, while every other use
-    (``asyncio.run_coroutine_threadsafe``, etc.) passes through.
-    """
+    """Make scheduling ``_invalidate`` raise RuntimeError; other call_soon_threadsafe uses pass."""
     original = loop.call_soon_threadsafe
 
     def conditional(callback: Any, *args: Any, **kwargs: Any) -> Any:
@@ -116,15 +92,11 @@ def _patch_call_soon_threadsafe_for_invalidate(loop: Any) -> Any:
 
 
 def test_keyboard_interrupt_propagates_when_call_soon_threadsafe_raises_runtime_error() -> None:
-    """The ``contextlib.suppress(RuntimeError)`` around the post-result
-    ``call_soon_threadsafe`` invocation must absorb a "loop closed"
-    RuntimeError so the KI still reaches the caller. Without
-    suppression, the RuntimeError would supplant the KI and the user's
-    Ctrl-C would be silently swallowed."""
+    """A "loop closed" RuntimeError from the post-result call_soon_threadsafe must be
+    suppressed so the KI still reaches the caller."""
     conn = _make_with_loop_thread()
     try:
-        # ``conn._async_conn._in_use = True`` so the cleanup branch fires.
-        conn._async_conn._in_use = True  # type: ignore[union-attr]
+        conn._async_conn._in_use = True  # type: ignore[union-attr]  # make cleanup branch fire
 
         original_loop = conn._loop
         assert original_loop is not None
@@ -142,9 +114,8 @@ def test_keyboard_interrupt_propagates_when_call_soon_threadsafe_raises_runtime_
 
 
 def test_op_lock_acquire_keyboard_interrupt_propagates_when_call_soon_threadsafe_raises() -> None:
-    """Same contract on the op-lock-acquire KI arm: a RuntimeError from
-    ``call_soon_threadsafe`` (loop closed mid-Ctrl-C) must not mask the
-    KI."""
+    """Same contract on the op-lock-acquire KI arm: a call_soon_threadsafe RuntimeError
+    must not mask the KI."""
     conn = _make_with_loop_thread()
     try:
         conn._async_conn._in_use = True  # type: ignore[union-attr]

@@ -1,9 +1,4 @@
-"""Tests that commit/rollback don't create spurious connections.
-
-If commit() or rollback() is called on a connection that was never used
-(no execute() was called), it should be a no-op. It should NOT create a
-new TCP connection just to send COMMIT/ROLLBACK.
-"""
+"""commit()/rollback() on an unused connection must be a no-op, not a new TCP dial."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -12,7 +7,6 @@ from dqlitedbapi.connection import Connection
 
 class TestCommitNoSpuriousConnect:
     def test_commit_on_unused_connection_is_noop(self) -> None:
-        """commit() should not create a connection if none exists."""
         conn = Connection("localhost:9001", timeout=2.0)
 
         with patch.object(conn, "_get_async_connection") as mock_get:
@@ -23,7 +17,6 @@ class TestCommitNoSpuriousConnect:
         conn.close()
 
     def test_rollback_on_unused_connection_is_noop(self) -> None:
-        """rollback() should not create a connection if none exists."""
         conn = Connection("localhost:9001", timeout=2.0)
 
         with patch.object(conn, "_get_async_connection") as mock_get:

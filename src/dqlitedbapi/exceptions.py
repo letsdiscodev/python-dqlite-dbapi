@@ -25,17 +25,8 @@ __all__ = [
 ]
 
 
-# Hardcoded primary SQLite result-code table. The numeric range 0-28
-# (plus 100 / 101 for ROW / DONE) collides with stdlib's authorizer-
-# action constants (``SQLITE_CREATE_INDEX = 1``, ``SQLITE_CREATE_TABLE
-# = 2``, ``SQLITE_CREATE_TRIGGER = 7``, ``SQLITE_DETACH = 25``,
-# ``SQLITE_ALTER_TABLE = 26``, etc.) — a ``dir()`` walk over the
-# ``sqlite3`` module yields the alphabetically-first name per numeric
-# value, which is the AUTHORIZER constant for ~half the primary
-# error codes. Hardcoding the canonical primary names per the
-# upstream SQLite ``rescode.html`` page guarantees the right
-# symbol even when stdlib's constant set grows.
-#
+# Primary codes (0-28) collide by value with stdlib authorizer-action constants, so a
+# dir(sqlite3) walk picks the wrong (alphabetically-first) name; hardcode canonical names.
 # Source of truth: https://www.sqlite.org/rescode.html
 _PRIMARY_RESULT_CODE_NAMES: Final[dict[int, str]] = {
     0: "SQLITE_OK",
@@ -74,18 +65,8 @@ _PRIMARY_RESULT_CODE_NAMES: Final[dict[int, str]] = {
 
 @lru_cache(maxsize=1)
 def _stdlib_extended_code_to_name() -> dict[int, str]:
-    """Cache stdlib's extended-code ``SQLITE_*`` constants
-    (codes >= 256) as a code-to-name map. Built lazily on first
-    access.
-
-    Extended codes use upper bits (subcode << 8 | primary) so they
-    do NOT collide with the authorizer / opcode / limit / config
-    constants, which are all in the 0-255 range. Walking
-    ``dir(sqlite3)`` and filtering on ``value >= 256`` yields a
-    clean code-to-name table for every extended result code stdlib
-    exposes (e.g. ``SQLITE_CONSTRAINT_UNIQUE = 2067``,
-    ``SQLITE_IOERR_READ = 266``).
-    """
+    """Map stdlib extended SQLITE_* codes (>= 256) to names; codes < 256 collide with
+    authorizer/opcode/limit/config constants so they are excluded here."""
     table: dict[int, str] = {}
     for name in dir(_stdlib_sqlite3):
         if not name.startswith("SQLITE_"):
@@ -94,80 +75,43 @@ def _stdlib_extended_code_to_name() -> dict[int, str]:
         if not isinstance(value, int):
             continue
         if value < 256:
-            # Primary codes (0-28) and authorizer / opcode / limit
-            # constants share this range; primary error names are
-            # hand-curated in ``_PRIMARY_RESULT_CODE_NAMES`` to dodge
-            # the alphabetical-collision ambiguity.
+            # Primary codes are hand-curated in _PRIMARY_RESULT_CODE_NAMES (collision ambiguity).
             continue
         table.setdefault(value, name)
     return table
 
 
 def _sqlite_errorname(code: int | None) -> str | None:
-    """Look up the symbolic SQLite error name for ``code``. Returns
-    ``None`` for ``None`` codes, for dqlite-namespace codes
-    ([1000, 1024)) and leader-change codes (which have no upstream
-    symbolic name and whose values can collide with unrelated stdlib
-    constants), and for any code not present in the primary-code table
-    or stdlib's extended-code constant set."""
+    """Symbolic SQLite name for code, or None for unknown/dqlite-namespace/leader codes."""
     if code is None:
         return None
     name = _PRIMARY_RESULT_CODE_NAMES.get(code)
     if name is not None:
         return name
-    # dqlite-namespace codes ([1000, 1024)) have no upstream symbolic
-    # name. Several of them collide by value with stdlib
-    # ``SQLITE_DBCONFIG_*`` config opcodes (1002-1017) — e.g.
-    # DQLITE_NOTFOUND=1002, DQLITE_PARSE=1005 — which the
-    # ``_stdlib_extended_code_to_name`` sweep would otherwise surface as
-    # bogus "config opcode" names. Short-circuit to None.
+    # dqlite-namespace codes collide by value with stdlib SQLITE_DBCONFIG_* opcodes
+    # (e.g. DQLITE_NOTFOUND=1002); short-circuit to avoid surfacing bogus opcode names.
     if _is_dqlite_namespace_code(code):
         return None
-    # Leader-change codes have no meaningful stdlib symbolic name. The
-    # legacy values (8202/8458) collide with real stdlib extended IOERR
-    # codes (SQLITE_IOERR_DATA / SQLITE_IOERR_CORRUPTFS), so suppress
-    # them here so all four leader codes behave uniformly with the
-    # modern ones (10250/10506), which miss the table and return None.
+    # Legacy leader codes (8202/8458) collide with stdlib IOERR_DATA/IOERR_CORRUPTFS;
+    # suppress so all leader codes behave uniformly with the modern ones.
     if code in _LEADER_ERROR_CODES:
         return None
     return _stdlib_extended_code_to_name().get(code)
 
 
 class Warning(Exception):  # noqa: A001, N818 - PEP 249 §7 mandated class name
-    """PEP 249 Warning class.
-
-    Exported for compatibility with generic cross-driver code and
-    for symmetry with ``Connection.messages`` / ``Cursor.messages``
-    (both PEP 249 extension surfaces). The driver does not currently
-    raise ``Warning`` — the dqlite wire protocol does not surface the
-    SQLite-level warning conditions (data truncation on BLOB / TEXT
-    bind, implicit type conversion during bind, etc.) that stdlib
-    ``sqlite3`` would report. The parallel ``Connection.messages``
-    attribute is therefore always empty in practice. If a concrete
-    warning condition surfaces later, populate ``messages`` and use
-    this class as the tuple's first element.
-    """
+    """PEP 249 Warning class; exported for parity but never raised."""
 
     pass
 
 
-# Cap on ``raw_message`` carried by any code-bearing dbapi Error.
-# Hosted in ``dqlitewire.DEFAULT_MAX_RAW_MESSAGE`` as the
-# cross-package single source of truth shared with
-# ``dqliteclient.exceptions.DqliteError._MAX_RAW_MESSAGE``. The
-# rationale (~64 KiB FailureResponse, BaseExceptionGroup fan-out,
-# cross-process pickling) lives at the wire-layer definition.
+# Cap on raw_message; single source of truth at the wire layer (where the rationale lives).
 _MAX_RAW_MESSAGE: Final[int] = _DEFAULT_MAX_RAW_MESSAGE
 
 
 def _cap_raw_message(raw_message: str) -> str:
-    # Thin wrapper over the wire-layer helper so the truncation logic
-    # + suffix wording lives in one place. The non-Optional return is
-    # preserved so call sites that already filtered out None don't
-    # need a type-narrow.
     capped = _wire_cap_raw_message(raw_message, _MAX_RAW_MESSAGE)
-    # ``_wire_cap_raw_message`` returns ``None`` only when the input is
-    # ``None``; this caller passes ``str`` so the narrow is safe.
+    # _wire_cap_raw_message returns None only for None input; this caller passes str.
     assert capped is not None
     return capped
 
@@ -178,19 +122,8 @@ class Error(Exception):
     def __reduce__(
         self,
     ) -> tuple[type["Error"], tuple[object, ...], dict[str, object]]:
-        # Default ``Exception.__reduce__`` returns ``(cls, self.args)``,
-        # losing every field set on the instance after
-        # ``Exception.__init__`` — most notably ``raw_message`` and
-        # ``code`` carried by :class:`InterfaceError` /
-        # :class:`_DatabaseErrorWithCode`. SA's ``is_disconnect``
-        # reads ``raw_message`` first; without preserving it,
-        # cross-process error capture (Celery, multiprocessing pool,
-        # SA's multiprocess test harness) silently dropped the
-        # un-truncated server text and forced the substring branch
-        # of the disconnect classifier to fall back to ``str(cause)``.
-        #
-        # Mirrors the discipline applied at the client layer in
-        # ``dqliteclient.exceptions.DqliteError``.
+        # Default __reduce__ drops instance fields (code/raw_message); preserve them so
+        # cross-process pickling keeps the server text SA's is_disconnect reads.
         return (self.__class__, self.args, self.__getstate__())
 
     def __getstate__(self) -> dict[str, object]:
@@ -202,19 +135,7 @@ class Error(Exception):
 
 
 class InterfaceError(Error):
-    """Error related to the database interface.
-
-    Optionally carries the SQLite or dqlite extended error ``code``
-    and the full server text on ``raw_message``. Most ``InterfaceError``
-    instances are misuse diagnostics raised inside the driver itself
-    (no code), but server-emitted ``DQLITE_PROTO`` (1001 — protocol
-    misuse) routes to ``InterfaceError`` per PEP 249 §6 and carries
-    the wire-level code so callers / SA's ``is_disconnect`` /
-    ``raw_message``-consuming log tooling can branch on it without
-    walking ``__cause__``. Symmetric with :class:`DatabaseError`'s
-    code-bearing accessor; callers should use
-    ``getattr(exc, "code", None)`` to test rather than ``isinstance``.
-    """
+    """Error related to the database interface; optionally carries code and raw_message."""
 
     code: int | None
     raw_message: str
@@ -226,15 +147,8 @@ class InterfaceError(Error):
         *,
         raw_message: str | None = None,
     ) -> None:
-        # Cap the displayed ``message`` (i.e. ``args[0]``, what
-        # ``str(exc)`` / ``repr(exc)`` / pickling surfaces) at the same
-        # 4 KiB budget the ``raw_message`` cap uses. The wire layer's
-        # 64 KiB ``FailureResponse`` ceiling otherwise amplifies
-        # through Celery / multiprocessing pickled-exception payloads,
-        # BaseExceptionGroup fan-out, and repr-quoting overhead (Python
-        # repr inflates control-byte-heavy text 2-4×). String inputs
-        # take the cap; non-string ``message`` (e.g. integer code,
-        # exception ctxmgr None) passes through unchanged.
+        # Cap the displayed message (args[0]) so the wire-layer 64 KiB ceiling does not
+        # amplify through pickled-exception / repr surfaces; non-str messages pass through.
         capped_message: object = _cap_raw_message(message) if isinstance(message, str) else message
         super().__init__(capped_message)
         self.code = code
@@ -243,23 +157,12 @@ class InterfaceError(Error):
 
     @property
     def sqlite_errorcode(self) -> int | None:
-        """Stdlib ``sqlite3``-parity alias for :attr:`code` (since
-        Python 3.11). Returns the same value as :attr:`code`."""
+        """Stdlib sqlite3-parity alias for code (Python 3.11+)."""
         return self.code
 
     @property
     def sqlite_errorname(self) -> str | None:
-        """Stdlib ``sqlite3``-parity alias (Python 3.11+) for the
-        symbolic name of :attr:`code` (e.g. ``"SQLITE_CONSTRAINT_UNIQUE"``).
-
-        Looked up via stdlib ``sqlite3``'s ``SQLITE_*`` constant set so
-        cross-driver code that branches on
-        ``e.sqlite_errorname == "SQLITE_BUSY"`` continues to work
-        against dqlite. Returns ``None`` if :attr:`code` is ``None`` or
-        if the code is not present in stdlib's constant table — the
-        latter covers dqlite-namespace codes (≥1000) which have no
-        upstream symbolic name.
-        """
+        """Stdlib sqlite3-parity alias (3.11+): symbolic name of code, or None."""
         return _sqlite_errorname(self.code)
 
     def __repr__(self) -> str:
@@ -270,17 +173,7 @@ class InterfaceError(Error):
 
 
 class DatabaseError(Error):
-    """Error related to the database.
-
-    Optionally carries the SQLite extended error ``code`` and the
-    full server text on ``raw_message``. Most callers see the
-    code-bearing subclasses (OperationalError, IntegrityError,
-    InternalError, DataError, ProgrammingError) instead, but a few
-    SQLite primary codes (e.g. CORRUPT, NOTADB, FORMAT) route
-    directly to DatabaseError per PEP 249's ``"errors related to
-    the database"`` umbrella, and those still surface a code so
-    callers can branch on it without walking ``__cause__``.
-    """
+    """Error related to the database; optionally carries code and raw_message."""
 
     code: int | None
     raw_message: str
@@ -292,9 +185,7 @@ class DatabaseError(Error):
         *,
         raw_message: str | None = None,
     ) -> None:
-        # See InterfaceError.__init__: cap the displayed message at
-        # the same 4 KiB budget so the wire-layer 64 KiB ceiling does
-        # not amplify through pickled-exception / repr surfaces.
+        # See InterfaceError.__init__ for why the displayed message is capped.
         capped_message: object = _cap_raw_message(message) if isinstance(message, str) else message
         super().__init__(capped_message)
         self.code = code
@@ -303,20 +194,12 @@ class DatabaseError(Error):
 
     @property
     def sqlite_errorcode(self) -> int | None:
-        """Stdlib ``sqlite3``-parity alias for :attr:`code`.
-
-        Python 3.11 added ``sqlite3.Error.sqlite_errorcode`` exposing
-        the SQLite extended error code. Cross-driver code that branches
-        on ``e.sqlite_errorcode == sqlite3.SQLITE_BUSY`` continues to
-        work against dqlite without the caller importing dqlite-specific
-        symbols. Returns the same value as :attr:`code`.
-        """
+        """Stdlib sqlite3-parity alias for code (Python 3.11+)."""
         return self.code
 
     @property
     def sqlite_errorname(self) -> str | None:
-        """Stdlib ``sqlite3``-parity alias (Python 3.11+); see
-        :class:`InterfaceError.sqlite_errorname`."""
+        """Stdlib sqlite3-parity alias (3.11+): symbolic name of code, or None."""
         return _sqlite_errorname(self.code)
 
     def __repr__(self) -> str:
@@ -327,110 +210,46 @@ class DatabaseError(Error):
 
 
 class _DatabaseErrorWithCode(DatabaseError):
-    """Internal marker base for the five PEP 249 ``DatabaseError``
-    subclasses :class:`OperationalError`, :class:`IntegrityError`,
-    :class:`InternalError`, :class:`ProgrammingError`, and
-    :class:`DataError`.
+    """Internal marker base for the five coded PEP 249 DatabaseError subclasses.
 
-    Private by design — not part of the public PEP 249 hierarchy, not
-    re-exported via ``__all__``. The ``__init__`` and ``__repr__`` live
-    on :class:`DatabaseError` itself, so any ``DatabaseError`` instance
-    can carry ``code`` and ``raw_message`` (some primary SQLite codes —
-    CORRUPT, NOTADB, FORMAT — route directly to bare ``DatabaseError``
-    per :data:`~dqlitedbapi.cursor._CODE_TO_EXCEPTION`).
-
-    **Do not branch on ``isinstance(exc, _DatabaseErrorWithCode)`` to
-    detect code-bearing exceptions.** That predicate is incomplete:
-    bare ``DatabaseError`` instances raised for CORRUPT/NOTADB/FORMAT
-    also carry a code but are not marker subclasses. Use
-    ``getattr(exc, "code", None) is not None`` instead.
-
-    The marker is preserved as a grouping signal for the five canonical
-    code-bearing PEP 249 subclasses (pinned by
-    ``tests/test_exception_coded_mixin.py``); a future refactor that
-    silently promoted/demoted a class out of this group would break
-    that contract.
+    Do NOT use isinstance(exc, _DatabaseErrorWithCode) to detect code-bearing errors:
+    bare DatabaseError (CORRUPT/NOTADB/FORMAT) also carries a code. Use
+    getattr(exc, "code", None) is not None instead.
     """
 
     pass
 
 
 class OperationalError(_DatabaseErrorWithCode):
-    """Error related to database operation.
-
-    Optional ``code`` attribute carries the SQLite extended error code
-    forwarded from the dqlite server (e.g. ``SQLITE_IOERR_NOT_LEADER``).
-    Callers can inspect ``getattr(exc, "code", None)`` to branch on
-    specific wire-level failures without importing the lower-level
-    client exception module.
-    """
+    """Error related to database operation."""
 
     pass
 
 
 class AmbiguousCommitError(OperationalError):
-    """Surfaced when COMMIT raced a leader flip — the write may or
-    may not have been persisted.
+    """COMMIT raced a leader flip; the write may or may not have persisted.
 
-    A leader flip mid-COMMIT produces a ``LEADER_ERROR_CODES``-class
-    failure. The Raft log entry MAY have been replicated to the new
-    leader's quorum before the flip, OR the flip may have occurred
-    before the entry was appended; the client cannot tell from the
-    exception alone. Retrying non-idempotent DML against this case
-    risks silent duplicate writes.
-
-    The class inherits from :class:`OperationalError` so existing
-    ``except OperationalError:`` arms continue to catch it; new
-    callers that want to distinguish the in-doubt commit shape from
-    other operational faults can branch on
-    ``isinstance(exc, AmbiguousCommitError)``. SA's ``is_disconnect``
-    classifies via ``LEADER_ERROR_CODES`` regardless, so the SA pool
-    still recycles the slot.
-
-    Callers retrying after this error MUST use idempotent DML
-    (``INSERT OR REPLACE``, UPDATE keyed on a unique constraint) or
-    perform an out-of-band state check before retry.
+    Retry only with idempotent DML or after an out-of-band state check: retrying
+    non-idempotent DML risks silent duplicate writes.
     """
 
     pass
 
 
 class IntegrityError(_DatabaseErrorWithCode):
-    """Error related to database integrity.
-
-    Raised when the relational integrity of the database is affected,
-    e.g. a UNIQUE, NOT NULL, FOREIGN KEY, or CHECK constraint violation.
-    The SQLite primary error code is 19 (SQLITE_CONSTRAINT) plus a
-    family of extended codes that all share ``code & 0xFF == 19``.
-
-    Optional ``code`` attribute carries the SQLite extended error code
-    mirror of :class:`OperationalError`.
-    """
+    """Constraint violation (UNIQUE, NOT NULL, FOREIGN KEY, CHECK; SQLITE_CONSTRAINT family)."""
 
     pass
 
 
 class InternalError(_DatabaseErrorWithCode):
-    """Internal database error.
-
-    Raised for the SQLite ``SQLITE_INTERNAL`` primary error code (2) and
-    its extended family — the same classification stdlib ``sqlite3``
-    applies. Optional ``code`` attribute mirrors :class:`OperationalError`
-    so callers that branch on the SQLite extended code can do so without
-    reaching into the client layer.
-    """
+    """Internal database error (SQLITE_INTERNAL family)."""
 
     pass
 
 
 class ProgrammingError(_DatabaseErrorWithCode):
-    """Programming error (e.g., table not found, SQL syntax error).
-
-    Optional ``code`` attribute carries the SQLite extended error code
-    when the error originates from a server-reported failure (e.g.
-    ``SQLITE_RANGE`` = 25, bind-index out of range). Mirror of
-    :class:`OperationalError`.
-    """
+    """Programming error (e.g. table not found, SQL syntax error)."""
 
     pass
 
@@ -442,38 +261,16 @@ class NotSupportedError(DatabaseError):
 
 
 class DataError(_DatabaseErrorWithCode):
-    """Error due to problems with the processed data.
-
-    Optional ``code`` attribute carries the SQLite extended error code
-    for server-reported data-category failures (e.g.
-    ``SQLITE_MISMATCH``, ``SQLITE_TOOBIG``). Mirror of
-    :class:`OperationalError` so callers that branch on the extended
-    code can do so without reaching into the client layer.
-    """
+    """Error due to problems with the processed data (e.g. SQLITE_MISMATCH, SQLITE_TOOBIG)."""
 
     pass
 
 
 class AdapterLookupError(ProgrammingError, LookupError):
-    """Raised by :func:`~dqlitedbapi.unregister_adapter` when the
-    target type has no registered adapter.
+    """Raised by unregister_adapter when the type has no registered adapter.
 
-    Multiple-inherits from both :class:`ProgrammingError` (PEP 249 §7
-    hierarchy purity — ``except dqlitedbapi.Error:`` continues to
-    catch) and stdlib :class:`LookupError` (matches stdlib
-    ``sqlite3.unregister_adapter`` (Python 3.13+) which raises
-    ``KeyError``, a ``LookupError`` subclass). Cross-driver code
-    written for stdlib and using ``except LookupError:`` to handle
-    the "no adapter registered" condition catches uniformly against
-    dqlite without losing the PEP 249 hierarchy guarantee for
-    dqlite-only callers using ``except Error:``.
-
-    The MRO ordering puts ``ProgrammingError`` first so the existing
-    ``dbapi.Error``-rooted classification (which the broader driver
-    relies on for closed-state, retry, and pool semantics) wins on
-    ambiguous catches; the stdlib parity is provided by the
-    secondary base, which only matters when callers reach for the
-    ``LookupError`` lineage explicitly.
+    Inherits LookupError too (stdlib parity: sqlite3 raises KeyError); ProgrammingError is
+    first in the MRO so Error-rooted classification wins ambiguous catches.
     """
 
     pass

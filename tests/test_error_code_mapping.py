@@ -1,11 +1,4 @@
-"""Parametrised matrix: SQLite error codes → PEP 249 exception classes.
-
-Pins the classification rules of :func:`dqlitedbapi.cursor._call_client`.
-A regression that changes how a code is classified (e.g., a new SQLite
-error code added upstream that falls into the constraint family, or a
-refactor that forgets the mask) trips this test rather than silently
-surfacing via a bug report.
-"""
+"""Parametrised matrix pinning SQLite error code -> PEP 249 exception classification."""
 
 import pytest
 
@@ -20,9 +13,6 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
 )
 
-# (code, expected PEP 249 class) pairs. Primary codes and the
-# constraint extended family cover the non-default branches; a couple
-# of unrelated codes confirm the default stays OperationalError.
 _MATRIX = [
     # SQLITE_CONSTRAINT family — all map to IntegrityError.
     (19, IntegrityError),  # SQLITE_CONSTRAINT
@@ -42,30 +32,19 @@ _MATRIX = [
     (1, OperationalError),  # SQLITE_ERROR
     (5, OperationalError),  # SQLITE_BUSY
     (8, OperationalError),  # SQLITE_READONLY
-    # Data-category codes map to PEP 249 DataError.
     (18, DataError),  # SQLITE_TOOBIG
-    # SQLITE_MISMATCH — stdlib sqlite3 groups this with SQLITE_CONSTRAINT
-    # under IntegrityError (see cursor.py for rationale).
+    # SQLITE_MISMATCH — stdlib sqlite3 groups with SQLITE_CONSTRAINT under IntegrityError.
     (20, IntegrityError),  # SQLITE_MISMATCH
-    # SQLITE_RANGE / SQLITE_MISUSE — driver-interface misuse. Stdlib
-    # sqlite3 maps both to InterfaceError (CPython _sqlite/util.c
-    # get_exception_class switch); mirror for cross-driver parity.
+    # SQLITE_RANGE / SQLITE_MISUSE — driver misuse; stdlib sqlite3 maps both to InterfaceError.
     (25, InterfaceError),  # SQLITE_RANGE
     (21, InterfaceError),  # SQLITE_MISUSE
-    # SQLITE_NOTFOUND (12) — internal lookup miss. Stdlib sqlite3
-    # maps to InternalError.
     (12, InternalError),  # SQLITE_NOTFOUND
-    # SQLITE_INTERNAL (primary code 2) — PEP 249 and stdlib sqlite3 map
-    # this to InternalError. Extended-code siblings (``code & 0xFF == 2``)
-    # should follow the same mapping by the masking convention.
+    # SQLITE_INTERNAL: primary 2 and ``code & 0xFF == 2`` siblings -> InternalError.
     (2, InternalError),  # SQLITE_INTERNAL
     (258, InternalError),  # hypothetical extended SQLITE_INTERNAL sibling
-    # dqlite-specific leader-change codes. These share primary 10
-    # (SQLITE_IOERR) per SQLite's ``primary | (ext << 8)`` convention,
-    # so the mask correctly routes them to OperationalError.
+    # dqlite leader-change codes share primary 10 (SQLITE_IOERR), so the mask -> OperationalError.
     (10250, OperationalError),  # SQLITE_IOERR_NOT_LEADER
     (10506, OperationalError),  # SQLITE_IOERR_LEADERSHIP_LOST
-    # No code at all — default OperationalError.
     (None, OperationalError),
 ]
 
@@ -77,20 +56,14 @@ def test_classify_operational(code: int | None, expected_cls: type) -> None:
 
 @pytest.mark.parametrize("code,expected_cls", _MATRIX)
 async def test_call_client_maps_code(code: int | None, expected_cls: type) -> None:
-    """_call_client must dispatch a client.OperationalError to the
-    expected PEP 249 class with .code preserved.
-    """
+    """_call_client dispatches a client.OperationalError to the expected class, .code kept."""
 
     async def raise_op() -> None:
         raise _client_exc.OperationalError("boom", code or 0)
 
     with pytest.raises(expected_cls) as exc_info:
         await _call_client(raise_op())
-    # Code must be forwarded regardless of classification.
     assert getattr(exc_info.value, "code", None) == (code or 0)
-    # The mapped exception is a PEP 249 ``Error`` subclass — the
-    # five DatabaseError-coded subclasses for SQL-domain codes plus
-    # ``InterfaceError`` for driver-misuse codes (RANGE, MISUSE).
     assert isinstance(
         exc_info.value,
         OperationalError
@@ -103,9 +76,7 @@ async def test_call_client_maps_code(code: int | None, expected_cls: type) -> No
 
 
 async def test_call_client_other_client_errors_still_map() -> None:
-    """The non-OperationalError branches are not affected by the new
-    classification logic; confirm the mapping still works.
-    """
+    """Non-OperationalError client errors still map through unchanged."""
 
     async def raise_data() -> None:
         raise _client_exc.DataError("bad value")

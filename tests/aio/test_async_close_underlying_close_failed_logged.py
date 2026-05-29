@@ -1,22 +1,6 @@
-"""Pin: ``AsyncConnection.close()``'s bare ``except Exception`` arm at
-``aio/connection.py:732-737`` swallows a non-Cancel, non-InterfaceError
-exception from the *secondary* cleanup-close in the ``finally`` and
-DEBUG-logs it with ``exc_info``.
-
-The contract: when the body close at line 621 raises and the
-shielded cleanup close at line 652 ALSO raises (with something
-that is not CancelledError / KeyboardInterrupt / SystemExit /
-InterfaceError), the body's exception is what propagates — the
-secondary cleanup failure is recorded at DEBUG and otherwise
-swallowed. This preserves "the primary failure is what the caller
-sees" semantics, the same shape the dqliteclient sibling at
-``__init__.py:175-181`` follows.
-
-The sibling arms (CancelledError at 720-731 and InterfaceError at
-668-711) are pinned by ``test_async_close_finally_propagates_cancel.py``;
-this test pins the catch-all so a refactor that narrows
-``Exception`` or re-orders the chain is caught.
-"""
+"""Pin: when both the body close and the shielded cleanup close raise,
+the primary (body) exception propagates and the secondary cleanup
+failure is DEBUG-logged with ``exc_info`` and swallowed."""
 
 from __future__ import annotations
 
@@ -32,10 +16,8 @@ from dqlitedbapi.aio.connection import AsyncConnection
 
 
 def _prime_connection() -> AsyncConnection:
-    """Build an AsyncConnection with the minimum scaffolding needed to
-    drive ``close()`` without a real cluster — mirrors the helper in
-    ``test_async_close_finally_propagates_cancel.py``.
-    """
+    """Build an AsyncConnection scaffolded enough to drive ``close()``
+    without a real cluster."""
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
     conn._async_conn = None
@@ -55,28 +37,15 @@ def _prime_connection() -> AsyncConnection:
 async def test_close_finally_exception_arm_swallows_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Body close raises ``RuntimeError("body close failed")`` so the
-    body's ``self._async_conn = None`` is skipped; the finally's
-    shielded close then raises ``RuntimeError("shielded close also
-    failed")``. The bare ``except Exception`` arm at lines 732-737
-    swallows the secondary failure and DEBUG-logs it; the primary
-    body RuntimeError keeps propagating out of close().
-
-    Pinned behaviour:
-    1. The primary (body) RuntimeError propagates to the caller.
-    2. The secondary (shielded) RuntimeError is logged at DEBUG with
-       ``exc_info`` pointing at it, NOT propagated.
-    3. The slot reaches the unconditional ``self._async_conn = None``
-       at line 738 after the except so the close is idempotent.
-    """
+    """Primary body RuntimeError propagates; secondary shielded-close
+    RuntimeError is DEBUG-logged with ``exc_info`` and swallowed; the
+    slot is still cleared so close stays idempotent."""
     conn = _prime_connection()
     conn._ensure_locks()
 
     inner = MagicMock()
-    # First inner.close() call (body, line 621) raises so the body
-    # skips ``self._async_conn = None``. Second call (finally's
-    # shielded close, line 652) raises a non-Cancel non-InterfaceError
-    # Exception so flow falls into the bare-Exception arm.
+    # First close (body) raises so the body skips clearing _async_conn;
+    # second (shielded) raises a non-Cancel Exception -> bare-Exception arm.
     inner.close = AsyncMock(
         side_effect=[
             RuntimeError("body close failed"),
@@ -87,13 +56,9 @@ async def test_close_finally_exception_arm_swallows_and_logs(
 
     caplog.set_level(logging.DEBUG, logger="dqlitedbapi.aio.connection")
 
-    # Primary body failure propagates; secondary cleanup failure is
-    # swallowed by the bare-Exception arm.
     with pytest.raises(RuntimeError, match="body close failed"):
         await conn.close()
 
-    # Secondary (shielded) close was attempted, secondary RuntimeError
-    # was swallowed — slot is still cleared by line 738.
     assert conn._async_conn is None
     assert inner.close.call_count == 2
 
@@ -122,12 +87,8 @@ async def test_close_finally_exception_arm_swallows_and_logs(
 
 
 async def test_close_finally_exception_arm_does_not_match_cancelled() -> None:
-    """Order-of-arms regression pin: CancelledError must be handled by
-    the dedicated arm at lines 720-731 (re-raise + clear state),
-    NOT by the bare-Exception arm. A refactor that re-orders the
-    except chain would silently swallow CancelledError here and
-    break TaskGroup cancellation propagation.
-    """
+    """CancelledError must hit its dedicated re-raise arm, not the
+    bare-Exception arm; swallowing it would break TaskGroup cancellation."""
     conn = _prime_connection()
     conn._ensure_locks()
 

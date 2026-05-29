@@ -1,11 +1,4 @@
-"""Pin ``cursor.lastrowid`` end-to-end for INTEGER PRIMARY KEY inserts.
-
-PEP 249 optional extension: ``lastrowid`` carries the autoincrement
-primary-key value of the last row inserted. Unit tests cover the
-None initial state but not the real server round-trip; this fence
-catches any refactor of the ``StmtResponse`` / ``ResultResponse``
-decoder that accidentally reads the wrong field into ``lastrowid``.
-"""
+"""Pin ``cursor.lastrowid`` end-to-end for INTEGER PRIMARY KEY inserts."""
 
 from __future__ import annotations
 
@@ -35,8 +28,7 @@ class TestLastrowidAutoincrement:
         try:
             cur.execute("DROP TABLE IF EXISTS t_rowid_sync")
             cur.execute("CREATE TABLE t_rowid_sync (id INTEGER PRIMARY KEY, v TEXT)")
-            # stdlib-parity: DDL does not update ``lastrowid``. Pre-insert
-            # the field is ``None`` (its initial value).
+            # stdlib-parity: DDL does not update ``lastrowid`` (starts None).
             assert cur.lastrowid is None
 
             cur.execute("INSERT INTO t_rowid_sync (v) VALUES (?)", ("alpha",))
@@ -48,8 +40,7 @@ class TestLastrowidAutoincrement:
             assert second == first + 1
 
             cur.execute("DROP TABLE t_rowid_sync")
-            # DDL does not affect lastrowid — it still points at the
-            # last successful INSERT.
+            # DDL does not affect lastrowid; still points at last INSERT.
             assert cur.lastrowid == second
         finally:
             cur.close()

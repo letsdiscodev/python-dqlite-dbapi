@@ -1,24 +1,7 @@
-"""Pin: every public ``Cursor`` method on a closed cursor whose parent
-``Connection`` has been GC'd must raise inside the PEP 249 ``Error``
-hierarchy — not bleed ``ReferenceError`` from the
-``weakref.proxy(self._connection)`` swap done by ``Cursor.close()``.
-
-PEP 249 §6.1.2: "any method of a closed cursor will raise an exception."
-The expected exception is ``InterfaceError`` (subclass of ``Error``).
-
-The closed cursor swaps ``self._connection`` to a ``weakref.proxy`` to
-release the strong back-reference (see
-``test_cursor_close_releases_connection_pin.py``). Once the parent
-``Connection`` is GC'd, the proxy is stale and any attribute access
-raises ``ReferenceError``. The guard prelude in every cursor method
-calls ``self._connection._check_thread()`` BEFORE
-``self._check_closed()`` — so ``ReferenceError`` escapes the
-PEP 249 ``Error`` hierarchy on a reachable, real-world path.
-
-Fix: the prelude must check ``self._closed`` first; ``_check_closed``
-reads only the cursor's own ``_closed`` slot, never the proxied
-connection.
-"""
+"""Every public Cursor method on a closed cursor whose parent Connection
+was GC'd must raise inside the PEP 249 Error hierarchy, not bleed the
+ReferenceError from the stale weakref.proxy back-reference. The prelude
+must check _closed before touching the proxied connection."""
 
 from __future__ import annotations
 
@@ -31,11 +14,7 @@ from dqlitedbapi.connection import Connection
 
 
 def _open_closed_cursor_with_gcd_connection() -> dqlitedbapi.Cursor:
-    """Construct a closed cursor whose parent Connection has been GC'd.
-
-    Returns the cursor (still alive) holding a stale ``weakref.proxy``
-    back-reference.
-    """
+    """Closed cursor holding a stale weakref.proxy to a GC'd Connection."""
     conn = Connection("localhost:9001", timeout=1.0)
     cur = conn.cursor()
     cur.close()
@@ -99,18 +78,13 @@ def test_executescript_on_closed_cursor_after_connection_gc_raises_dbapi_error()
 
 
 def test_setinputsizes_on_closed_cursor_after_connection_gc_does_not_raise() -> None:
-    """``setinputsizes`` is documented as permissive on closed cursors
-    (PEP 249 §6.2 latitude). On a closed cursor with GC'd parent, it
-    must not raise ``ReferenceError`` — the documented intent is a
-    silent no-op."""
+    """setinputsizes is a permissive no-op (PEP 249 §6.2); must not leak
+    ReferenceError on a closed cursor with a GC'd parent."""
     cur = _open_closed_cursor_with_gcd_connection()
-    # Must not raise.
     cur.setinputsizes([None])
 
 
 def test_setoutputsize_on_closed_cursor_after_connection_gc_does_not_raise() -> None:
-    """``setoutputsize`` mirrors ``setinputsizes``: permissive on
-    closed cursors per PEP 249 §6.2."""
+    """setoutputsize mirrors setinputsizes: permissive no-op (PEP 249 §6.2)."""
     cur = _open_closed_cursor_with_gcd_connection()
-    # Must not raise.
     cur.setoutputsize(100)

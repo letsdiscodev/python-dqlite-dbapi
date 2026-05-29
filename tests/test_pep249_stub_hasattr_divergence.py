@@ -1,16 +1,7 @@
-"""Pin: PEP 249 optional-extension stubs are exposed as
-always-raising methods (PEP 249 §7 + cross-driver
-``except dbapi.Error:`` discipline). This means ``hasattr``
-returns True against this driver, diverging from stdlib
-``sqlite3`` (which omits ``tpc_*`` / ``callproc`` / ``nextset``
-/ ``scroll`` entirely).
+"""Optional-extension stubs are always-raising methods, so hasattr returns True.
 
-The divergence is documented in the relevant module / method
-docstrings. Cross-driver code porting from stdlib must use
-``try/except NotSupportedError`` for feature detection,
-not ``hasattr``. This test pins the documented contract so a
-future "harmonise hasattr with stdlib" change has to flip the
-test deliberately.
+Diverges from stdlib sqlite3 (which omits them); feature detection must use
+try/except NotSupportedError, not hasattr.
 """
 
 from __future__ import annotations
@@ -41,20 +32,13 @@ _STUB_NAMES = [
     "create_aggregate",
     "create_collation",
     "create_window_function",
-    # total_changes was the lone ``@property`` outlier in the family;
-    # converting it to a method preserves the hasattr-returns-True
-    # invariant the rest of the list relies on. See
-    # tests/test_total_changes_hasattr_safe.py for the rationale.
+    # total_changes is a method, not a @property, to keep the hasattr-True invariant.
     "total_changes",
 ]
 
 
 @pytest.mark.parametrize("name", _STUB_NAMES)
 def test_connection_stub_methods_present_for_pep249_compliance(conn: Connection, name: str) -> None:
-    """``hasattr`` returns True — the stub is present so
-    ``except dbapi.Error:`` catches the rejection uniformly.
-    Stdlib ``sqlite3`` omits these (so ``hasattr`` is False
-    there). Documented divergence."""
     assert hasattr(conn, name)
     method = getattr(conn, name)
     assert callable(method)
@@ -62,9 +46,6 @@ def test_connection_stub_methods_present_for_pep249_compliance(conn: Connection,
 
 @pytest.mark.parametrize("name", _STUB_NAMES)
 def test_async_connection_stub_methods_present_for_pep249_compliance(name: str) -> None:
-    """Async sibling pin — AsyncConnection's stub family mirrors the
-    sync sibling, including total_changes which was also a property
-    outlier."""
     from dqlitedbapi.aio.connection import AsyncConnection
 
     aconn = AsyncConnection("localhost:9001", timeout=1.0)
@@ -74,18 +55,13 @@ def test_async_connection_stub_methods_present_for_pep249_compliance(name: str) 
 
 
 def test_connection_tpc_methods_raise_not_supported(conn: Connection) -> None:
-    """Stubs raise ``NotSupportedError`` (a ``dbapi.Error``
-    subclass) so cross-driver ``except dbapi.Error:`` catches.
-    The ``hasattr`` trap is the cost; the catch-uniformity is
-    the benefit. Pin both halves."""
+    """Stubs raise NotSupportedError (a dbapi.Error subclass)."""
     with pytest.raises(NotSupportedError, match="two-phase commit"):
         conn.tpc_begin(object())
 
 
 def test_cursor_callproc_nextset_scroll_present_but_raise() -> None:
-    """Cursor stubs match the connection-side discipline:
-    present + raise NotSupportedError. ``hasattr`` is True;
-    the ``try/except`` portable path produces the right answer."""
+    """Cursor stubs are present (hasattr True) but raise NotSupportedError."""
     conn = Connection("localhost:9001", timeout=1.0)
     cur = conn.cursor()
     try:

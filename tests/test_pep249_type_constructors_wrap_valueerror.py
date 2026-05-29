@@ -1,13 +1,4 @@
-"""Pin: ``Date`` / ``Time`` / ``Timestamp`` wrap stdlib ``ValueError`` /
-``TypeError`` as ``DataError`` per PEP 249 §7.
-
-PEP 249 §7 mandates every error from a driver call subclass ``Error``.
-Stdlib's ``datetime.{date,time,datetime}.__init__`` raise bare
-``ValueError`` for invalid inputs (month=13, hour=25). Without
-wrapping, ``try: dqlitedbapi.Date(2026, 13, 1) except
-dqlitedbapi.Error:`` silently misses. Mirrors the discipline already
-in ``DateFromTicks`` / ``TimeFromTicks`` / ``TimestampFromTicks``.
-"""
+"""Date/Time/Timestamp wrap stdlib ValueError/TypeError as DataError per PEP 249 §7."""
 
 from __future__ import annotations
 
@@ -43,7 +34,6 @@ def test_valid_args_succeed() -> None:
 
 
 def test_non_int_args_also_wrapped() -> None:
-    """``datetime.date(year='x', ...)`` raises ``TypeError`` —
-    mid-driver, must surface as ``DataError`` for PEP 249 §7."""
+    """TypeError from non-int args must also surface as DataError (PEP 249 §7)."""
     with pytest.raises(DataError):
         dqlitedbapi.Date("2026", 5, 5)  # type: ignore[arg-type]

@@ -1,22 +1,4 @@
-"""``Cursor.rowcount`` returns ``-1`` after DDL / non-DML, matching
-stdlib ``sqlite3`` and PEP 249 §6.1.1's "not determinable" sentinel.
-
-The exec branch of ``_execute_async`` / ``_execute_unlocked``
-historically wrote ``_rowcount = _to_signed_int64(affected)``
-unconditionally; the dqlite wire returns 0 for DDL, so
-``cur.rowcount == 0`` was deterministic and True. Stdlib gives
-``-1`` (undetermined, False) for the same statements:
-
-    >>> sqlite3.connect(":memory:").execute("CREATE TABLE t (x)").rowcount
-    -1
-
-Cross-driver code that branches on ``if cur.rowcount == 0:`` after a
-DDL — migration tooling, "no-op DDL" detection, commit-decision
-shortcuts — took divergent branches on dqlite vs stdlib.
-
-Twin of ``ISSUE-1441_dbapi-rowcount-zero-after-pragma-write-stdlib-minus-one.md``
-(which fixed the row-returning empty-columns branch).
-"""
+"""``Cursor.rowcount`` returns ``-1`` after DDL / non-DML, matching stdlib ``sqlite3``."""
 
 from __future__ import annotations
 
@@ -29,8 +11,6 @@ import pytest
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.cursor import _is_dml_rowcount_meaningful
-
-# -------- helper unit tests on the predicate itself ----------------
 
 
 @pytest.mark.parametrize(
@@ -48,8 +28,6 @@ from dqlitedbapi.cursor import _is_dml_rowcount_meaningful
     ],
 )
 def test_dml_rowcount_meaningful_accepts_dml(sql: str) -> None:
-    """INSERT / UPDATE / DELETE / REPLACE — every verb where SQLite's
-    ``sqlite3_changes()`` returns a meaningful count."""
     assert _is_dml_rowcount_meaningful(sql) is True
 
 
@@ -77,14 +55,7 @@ def test_dml_rowcount_meaningful_accepts_dml(sql: str) -> None:
     ],
 )
 def test_dml_rowcount_meaningful_rejects_non_dml(sql: str) -> None:
-    """DDL / PRAGMA write / SAVEPOINT family / BEGIN-COMMIT-ROLLBACK
-    — every verb where ``sqlite3_changes()`` is documented to return
-    0 (or an unrelated count). Stdlib reports ``-1`` for these; we
-    must match."""
     assert _is_dml_rowcount_meaningful(sql) is False
-
-
-# -------- end-to-end stdlib-parity ---------------------------------
 
 
 @pytest.mark.parametrize(
@@ -98,7 +69,6 @@ def test_dml_rowcount_meaningful_rejects_non_dml(sql: str) -> None:
     ],
 )
 def test_stdlib_returns_minus_one_for_ddl(ddl: str) -> None:
-    """Documents the stdlib behavior the dqlite cursor must match."""
     expected = sqlite3.connect(":memory:").execute(ddl).rowcount
     assert expected == -1, f"stdlib changed: {ddl!r} now returns {expected}; update parity logic"
 
@@ -114,9 +84,6 @@ def test_stdlib_returns_minus_one_for_ddl(ddl: str) -> None:
     ],
 )
 async def test_async_cursor_rowcount_minus_one_after_ddl(ddl: str) -> None:
-    """End-to-end via the async cursor: the exec branch leaves
-    ``_rowcount == -1`` for DDL even though the wire returns
-    ``rows_affected = 0`` and ``last_insert_id = 0``."""
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
     inner = AsyncMock()
@@ -125,7 +92,7 @@ async def test_async_cursor_rowcount_minus_one_after_ddl(ddl: str) -> None:
     cur._rowcount = 999  # poison: must be overwritten to -1
 
     async def fake_call(_coro: Any) -> tuple[int, int]:
-        return (0, 0)  # wire: last_insert_id=0, rows_affected=0
+        return (0, 0)  # last_insert_id=0, rows_affected=0
 
     with patch("dqlitedbapi.aio.cursor._call_client", new=fake_call):
         await cur._execute_unlocked(ddl, None)
@@ -145,8 +112,6 @@ async def test_async_cursor_rowcount_minus_one_after_ddl(ddl: str) -> None:
     ],
 )
 async def test_async_cursor_dml_still_reports_affected(dml: str, affected: int) -> None:
-    """Sanity check: DML still propagates the wire's ``affected``
-    count. The new gating must NOT make every exec return ``-1``."""
     conn = AsyncConnection("localhost:9001")
     cur = AsyncCursor(conn)
     inner = AsyncMock()
@@ -175,15 +140,6 @@ async def test_async_cursor_dml_still_reports_affected(dml: str, affected: int) 
     ],
 )
 def test_sync_cursor_rowcount_minus_one_after_ddl(ddl: str) -> None:
-    """End-to-end via the SYNC cursor: the exec branch leaves
-    ``_rowcount == -1`` for DDL even though the wire returns
-    ``rows_affected = 0`` and ``last_insert_id = 0``.
-
-    Mirror of ``test_async_cursor_rowcount_minus_one_after_ddl``. The
-    sync sibling previously had only an inspection pin — a refactor
-    moving the gate into a helper would defeat the substring scan
-    without behavioral regression coverage. Drive ``_execute_async``
-    directly as a coroutine via ``asyncio.run``."""
     import asyncio
 
     from dqlitedbapi.connection import Connection
@@ -216,9 +172,6 @@ def test_sync_cursor_rowcount_minus_one_after_ddl(ddl: str) -> None:
     ],
 )
 def test_sync_cursor_dml_still_reports_affected(dml: str, affected: int) -> None:
-    """Sanity twin: DML still propagates the wire's ``affected`` count
-    on the SYNC side. The new gating must NOT make every exec return
-    ``-1``. Mirror of ``test_async_cursor_dml_still_reports_affected``."""
     import asyncio
 
     from dqlitedbapi.connection import Connection
@@ -243,10 +196,7 @@ def test_sync_cursor_dml_still_reports_affected(dml: str, affected: int) -> None
 
 
 def test_sync_exec_branch_gates_rowcount_on_dml_predicate() -> None:
-    """Inspection pin: the sync exec branch reads
-    ``_is_dml_rowcount_meaningful(operation)`` before writing
-    ``_rowcount``. A regression that drops the gate would silently
-    re-introduce ``rowcount == 0`` after DDL."""
+    """Inspection pin: sync exec branch gates ``_rowcount`` on the DML predicate."""
     import inspect
 
     from dqlitedbapi.cursor import Cursor
@@ -259,7 +209,6 @@ def test_sync_exec_branch_gates_rowcount_on_dml_predicate() -> None:
 
 
 def test_async_exec_branch_gates_rowcount_on_dml_predicate() -> None:
-    """Inspection pin: async sibling carries the same gate."""
     import inspect
 
     src = inspect.getsource(AsyncCursor._execute_unlocked)

@@ -1,22 +1,7 @@
-"""Pin: ``_cleanup_loop_thread`` finalizer is fork-safe — it skips
-the loop / thread teardown when invoked in a forked child whose
-parent owned the captured loop and thread refs.
-
-Every other fork-traversing site in the dbapi codebase
-(``Connection.close``, ``force_close_transport``,
-``DqliteConnection.close``, ``AsyncConnection.close``, ``Pool.close``)
-gates on ``get_current_pid() != self._creator_pid`` and short-
-circuits. The ``weakref.finalize``-registered cleanup did NOT —
-in a forked child it would: emit a false-positive ResourceWarning
-(closed_flag snapshot is the parent's, frozen at fork-time at
-False); ``loop.call_soon_threadsafe(loop.stop)`` against a parent-
-owned loop (unsafe — pushes onto a queue with no consumer in the
-child); ``thread.join`` for up to 5s on a non-existent OS thread;
-``loop.close()`` on inherited selector FDs the parent still uses.
-
-The fix passes ``creator_pid`` to the finalizer registration and
-checks it at the top of the cleanup body.
-"""
+"""``_cleanup_loop_thread`` is fork-safe: it skips loop/thread teardown
+in a forked child (checking ``creator_pid`` at the top), avoiding a
+false ResourceWarning, a join on a non-existent thread, and closing
+inherited selector FDs the parent still uses."""
 
 from __future__ import annotations
 
@@ -31,12 +16,8 @@ from dqlitedbapi.connection import _cleanup_loop_thread
 
 
 def test_cleanup_short_circuits_when_pid_mismatch_does_not_close_loop() -> None:
-    """When called from a forked child (pid mismatch with the captured
-    creator_pid), the cleanup must NOT call ``loop.close()`` /
-    ``loop.call_soon_threadsafe`` / ``thread.join`` — those would
-    operate on parent-owned state and either close inherited FDs or
-    block on a non-existent OS thread.
-    """
+    """Pid mismatch (forked child): no ``loop.close()`` /
+    ``call_soon_threadsafe`` / ``thread.join`` on parent-owned state."""
     fake_loop = MagicMock(spec=asyncio.AbstractEventLoop)
     fake_loop.is_closed.return_value = False
     fake_thread = MagicMock(spec=threading.Thread)
@@ -45,7 +26,6 @@ def test_cleanup_short_circuits_when_pid_mismatch_does_not_close_loop() -> None:
     parent_pid = os.getpid()
     child_pid = parent_pid + 1  # simulated child pid
     with patch("dqlitedbapi.connection.get_current_pid", return_value=child_pid):
-        # Should be a no-op in the simulated child (pid mismatch).
         _cleanup_loop_thread(
             fake_loop,
             fake_thread,
@@ -60,12 +40,9 @@ def test_cleanup_short_circuits_when_pid_mismatch_does_not_close_loop() -> None:
 
 
 def test_cleanup_short_circuits_when_pid_mismatch_does_not_emit_warning() -> None:
-    """In a forked child, the closed_flag is a snapshot of the parent's
-    state at fork-time. Emitting a ResourceWarning based on that
-    snapshot would be a false-positive — the parent may very well have
-    closed the connection AFTER the fork. The pid-mismatch path must
-    therefore also skip the warning.
-    """
+    """closed_flag is a parent snapshot at fork-time; emitting a
+    ResourceWarning from it would be a false-positive (parent may close
+    after the fork), so the pid-mismatch path also skips the warning."""
     import warnings as _warnings
 
     fake_loop = MagicMock(spec=asyncio.AbstractEventLoop)
@@ -96,10 +73,7 @@ def test_cleanup_short_circuits_when_pid_mismatch_does_not_emit_warning() -> Non
 
 
 def test_cleanup_runs_normally_when_pid_matches() -> None:
-    """Negative pin: when the cleanup runs in the SAME process that
-    registered the finalizer (the normal GC path), it executes the
-    full teardown — no behavioral change vs the pre-fix path.
-    """
+    """Same-process (normal GC) path executes the full teardown."""
     fake_loop = MagicMock(spec=asyncio.AbstractEventLoop)
     fake_loop.is_closed.return_value = False
     fake_thread = MagicMock(spec=threading.Thread)
@@ -122,12 +96,8 @@ def test_cleanup_runs_normally_when_pid_matches() -> None:
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
 def test_finalizer_in_forked_child_does_not_block_or_emit_warning() -> None:
-    """End-to-end pin: construct a Connection (which registers a
-    finalizer with creator_pid), fork, GC the inherited Connection
-    in the child, and verify the child does not block on
-    thread.join / does not close the parent's selector FDs / does
-    not emit a false-positive ResourceWarning.
-    """
+    """End-to-end: fork, GC the inherited Connection in the child, and
+    verify no thread.join block / no FD close / no false ResourceWarning."""
     import contextlib as _contextlib
     import gc
     import time
@@ -135,15 +105,10 @@ def test_finalizer_in_forked_child_does_not_block_or_emit_warning() -> None:
     import dqlitedbapi
 
     conn = dqlitedbapi.connect("127.0.0.1:9999")
-    # Force the loop thread to start so the finalizer has refs to
-    # manipulate. In some test environments _ensure_loop raises pre-
-    # connect; the test only needs the finalizer to be registered,
-    # which happens unconditionally inside _ensure_loop's first call.
+    # _ensure_loop registers the finalizer unconditionally on first call,
+    # even if it later raises pre-connect.
     with _contextlib.suppress(Exception):
         conn._ensure_loop()
-    # Assert the finalizer registration happened so the test can't
-    # trivially pass if _ensure_loop silently bailed before
-    # registering.
     assert conn._finalizer is not None, (
         "test pre-condition: finalizer must be registered before fork"
     )
@@ -151,18 +116,14 @@ def test_finalizer_in_forked_child_does_not_block_or_emit_warning() -> None:
     pipe_r, pipe_w = os.pipe()
     pid = os.fork()
     if pid == 0:
-        # Child: clean up the inherited Connection. The finalizer
-        # MUST short-circuit on pid mismatch.
+        # Child: GC the inherited Connection; the finalizer must
+        # short-circuit on pid mismatch.
         os.close(pipe_r)
         try:
             t0 = time.monotonic()
             del conn
             gc.collect()
             elapsed = time.monotonic() - t0
-            # If the finalizer ran the thread.join, it would block
-            # for up to the captured close_timeout budget. Forked-
-            # child GC + finalize should complete in well under
-            # 1 second.
             os.write(pipe_w, f"OK elapsed={elapsed:.3f}".encode())
         except BaseException as e:
             os.write(pipe_w, f"FAIL {type(e).__name__}: {e}".encode())
@@ -181,11 +142,9 @@ def test_finalizer_in_forked_child_does_not_block_or_emit_warning() -> None:
     os.waitpid(pid, 0)
     msg = raw.decode()
     assert msg.startswith("OK"), f"forked-child finalizer reported: {msg}"
-    # Parse the elapsed= field; assert below the join timeout.
     elapsed = float(msg.split("elapsed=")[1])
     assert elapsed < 1.0, (
         f"forked-child GC took {elapsed:.3f}s — likely the finalizer "
         f"ran thread.join on the parent's thread; expected fast no-op"
     )
-    # Cleanup the parent's connection
     conn.close()

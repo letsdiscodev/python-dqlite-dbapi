@@ -1,5 +1,3 @@
-"""Tests for exception classes."""
-
 import pytest
 
 from dqlitedbapi.exceptions import (

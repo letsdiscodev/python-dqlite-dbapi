@@ -1,17 +1,6 @@
-"""Pin: ``AsyncConnection.close()``'s cancel arm calls
-``force_close_transport()`` so the writer / FD is reaped regardless
-of which cancel delivered us there.
-
-Specifically:
-- An OUTER ``asyncio.timeout`` deadline cancels ``close()`` while the
-  shielded inner-drain is running. ``asyncio.timeout``'s
-  ``CancelledError`` -> ``TimeoutError`` re-classification only fires
-  when the INNER scope's deadline expires; on outer cancel the inner
-  ``except TimeoutError`` is bypassed entirely.
-- Without ``force_close_transport()`` in the cancel arm, the writer
-  stays open and the FD leaks to GC ("Task was destroyed but it is
-  pending" / un-reaped socket on shutdown).
-"""
+"""``close()``'s cancel arm calls ``force_close_transport()`` so the writer/FD is reaped
+regardless of which cancel arrived. An outer ``asyncio.timeout`` cancel bypasses the
+inner ``except TimeoutError``, so without the cancel-arm force-close the FD leaks at GC."""
 
 from __future__ import annotations
 
@@ -24,9 +13,8 @@ from dqlitedbapi.aio.connection import AsyncConnection
 
 
 def _build_bare_async_conn() -> AsyncConnection:
-    """Build a minimally-wired ``AsyncConnection`` for cancel-arm
-    coverage. Bypasses the real ``__init__`` (which would dial the
-    server) and sets only the fields the close()-cancel-arm reads."""
+    """Minimally-wired AsyncConnection: bypasses __init__ (which would dial) and sets only
+    the fields the close() cancel arm reads."""
     import os
     import weakref
 
@@ -50,16 +38,10 @@ def _build_bare_async_conn() -> AsyncConnection:
 
 @pytest.mark.asyncio
 async def test_close_cancel_arm_calls_force_close_transport() -> None:
-    """When the shielded inner-drain in close() is cancelled, the
-    cancel arm must invoke ``force_close_transport`` so the writer
-    is synchronously closed."""
     conn = _build_bare_async_conn()
 
-    # Stand-in for the inner client conn whose ``close()`` parks
-    # forever. The shielded await will absorb the FIRST cancel, but
-    # a SECOND cancel (which Python's ``asyncio.shield`` does NOT
-    # block) lands on the shield itself and re-delivers the
-    # CancelledError to the awaiter.
+    # Inner close parks forever. The shield absorbs the first cancel; a second cancel
+    # lands on the shield itself and re-delivers CancelledError to the awaiter.
     parked = asyncio.Event()
     drain_entered = asyncio.Event()
 
@@ -76,7 +58,6 @@ async def test_close_cancel_arm_calls_force_close_transport() -> None:
     inner._finalizer = None
     conn._async_conn = inner
 
-    # Spy on force_close_transport to confirm the cancel arm calls it.
     force_close_calls: list[int] = []
     real_force_close = conn.force_close_transport
 
@@ -89,31 +70,20 @@ async def test_close_cancel_arm_calls_force_close_transport() -> None:
     close_task = asyncio.create_task(conn.close())
     await drain_entered.wait()
 
-    # First cancel: absorbed by the shield.
-    close_task.cancel()
+    close_task.cancel()  # absorbed by the shield
     await asyncio.sleep(0)
-    # Second cancel: lands on the shield itself; the shielded await
-    # re-raises CancelledError into close()'s cancel arm.
-    close_task.cancel()
+    close_task.cancel()  # lands on the shield; re-raises into close()'s cancel arm
 
     with pytest.raises(asyncio.CancelledError):
         await close_task
 
-    # Load-bearing: the cancel arm called force_close_transport,
-    # guaranteeing the writer / FD is reaped regardless of which
-    # cancel delivered us here.
     assert force_close_calls, (
         "AsyncConnection.close()'s cancel arm must call "
         "force_close_transport so the transport is reaped under "
         "outer asyncio.timeout / cancel-cascade"
     )
-    # And the writer.close() was actually invoked — a future inner
-    # refactor that called force_close_transport but failed to reap
-    # the writer would defeat the cancel-arm contract.
     assert inner._protocol._writer.close.called, (
         "force_close_transport must reap the underlying writer"
     )
 
-    # Release the parked inner so the orphan close() can finish
-    # cleanly (test teardown hygiene).
-    parked.set()
+    parked.set()  # release the parked inner for clean teardown

@@ -1,24 +1,6 @@
-"""Pin: sync ``Cursor._executemany_async`` resets per-execute cursor
-state BEFORE running the hoisted SQL classifier so a classifier-raise
-leaves the cursor at the no-result baseline.
-
-Stdlib ``sqlite3.Cursor.executemany`` calls
-``pysqlite_statement_reset`` BEFORE ``pysqlite_statement_prepare`` —
-i.e. resets the cursor before validating SQL. The dqlite sync
-``_executemany_async`` previously ran ``_classify_caller_sql`` FIRST
-and ``_reset_execute_state`` SECOND, so an empty-SQL /
-multi-statement / NUL classifier raise after a prior SELECT left the
-cursor's ``description`` populated from that SELECT — confusing
-post-raise inspection code.
-
-The async sibling does not hoist ``_classify_caller_sql`` in its
-``executemany`` body (it already resets state first), so this pin
-covers only the sync surface; the existing reset-then-loop order on
-the async side is already aligned with the stdlib-parity contract.
-
-Driven via the internal ``_executemany_async`` coroutine to avoid
-the wire / op_lock plumbing.
-"""
+"""Sync ``Cursor._executemany_async`` resets cursor state BEFORE the hoisted SQL
+classifier (stdlib parity: sqlite3 resets before prepare), so a classifier-raise
+leaves the no-result baseline rather than a prior SELECT's description."""
 
 from __future__ import annotations
 
@@ -51,10 +33,7 @@ def _prime_sync_cursor() -> Cursor:
 
 
 def _drive_coroutine_to_first_exception(coro: Any) -> BaseException:
-    """Push a coroutine forward until it raises; return the exception.
-    Used because ``_executemany_async`` is a coroutine and we don't
-    want to spin a loop just to observe a synchronous classifier
-    raise — the raise happens before any await."""
+    """Send a coroutine forward once; return the exception it raises (before any await)."""
     try:
         coro.send(None)
     except StopIteration:
@@ -65,13 +44,8 @@ def _drive_coroutine_to_first_exception(coro: Any) -> BaseException:
 
 
 def test_executemany_async_classifier_raise_resets_state_first_empty_sql() -> None:
-    """A classifier-raise on empty SQL leaves the cursor's prior
-    SELECT state scrubbed: ``description`` is ``None``, ``rowcount``
-    is ``-1``, ``_rows`` is empty. ``_completed_iterations`` is
-    restored to the pre-batch snapshot (5) — the input-validation
-    raise leaves the prior batch's progress observable for
-    cross-batch compensation code.
-    """
+    """Empty-SQL classifier raise scrubs prior SELECT state; _completed_iterations
+    restored to the pre-batch snapshot (5)."""
     cur = _prime_sync_cursor()
 
     coro = cur._executemany_async("", iter([]))
@@ -86,10 +60,7 @@ def test_executemany_async_classifier_raise_resets_state_first_empty_sql() -> No
 
 
 def test_executemany_async_classifier_raise_resets_state_first_multi_statement() -> None:
-    """Multi-statement classifier raise on empty seq also resets
-    state first, mirroring the empty-SQL pin. ``_completed_iterations``
-    restored to pre-batch (5).
-    """
+    """Multi-statement classifier raise also resets state first; counter restored to 5."""
     cur = _prime_sync_cursor()
 
     coro = cur._executemany_async("SELECT 1; SELECT 2", iter([]))
@@ -104,9 +75,7 @@ def test_executemany_async_classifier_raise_resets_state_first_multi_statement()
 
 
 def test_executemany_async_classifier_raise_resets_state_first_nul_byte() -> None:
-    """NUL-in-SQL classifier raise resets state too;
-    ``_completed_iterations`` restored to pre-batch (5).
-    """
+    """NUL-in-SQL classifier raise resets state too; counter restored to 5."""
     cur = _prime_sync_cursor()
 
     coro = cur._executemany_async("SELECT \x00", iter([]))

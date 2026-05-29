@@ -1,9 +1,5 @@
-"""Exhausted cursor iterators keep raising StopIteration / StopAsyncIteration.
-
-PEP 234 (sync) and PEP 492 (async) require an exhausted iterator to
-keep raising its sentinel exception on every subsequent call — not
-silently yield cached values, not raise a different error. Pin the
-contract for both cursor flavours.
+"""Exhausted cursor iterators keep raising StopIteration / StopAsyncIteration on every
+subsequent call (PEP 234 / PEP 492), for both cursor flavours.
 """
 
 from unittest.mock import MagicMock
@@ -30,10 +26,8 @@ class _ScriptedClient:
     def query_raw_typed(self, sql: str, params):
         from dqlitewire.constants import ValueType
 
-        # One ValueType per column (mirrors what the wire decoder
-        # produces). Leave row_types empty since the rows here are
-        # already typed in a way the per-row dispatch can handle
-        # from ``column_types`` alone.
+        # One ValueType per column; row_types stays empty since per-row
+        # dispatch can handle these rows from column_types alone.
         column_types = [ValueType.INTEGER]
         row_types = [[] for _ in self._rows]  # type: ignore[var-annotated]
         return _AwaitableObj(obj=(["x"], column_types, row_types, self._rows))
@@ -59,7 +53,6 @@ async def test_sync_cursor_stop_iteration_repeats_after_exhaustion() -> None:
     assert next(it) == (2,)
     with pytest.raises(StopIteration):
         next(it)
-    # Repeat: still StopIteration.
     with pytest.raises(StopIteration):
         next(it)
 
@@ -85,6 +78,5 @@ async def test_async_cursor_stop_async_iteration_repeats_after_exhaustion() -> N
     assert await c.__anext__() == (2,)
     with pytest.raises(StopAsyncIteration):
         await c.__anext__()
-    # Repeat: still StopAsyncIteration.
     with pytest.raises(StopAsyncIteration):
         await c.__anext__()

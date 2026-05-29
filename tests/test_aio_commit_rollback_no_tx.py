@@ -1,10 +1,4 @@
-"""Async commit/rollback "no transaction is active" swallow behaviour.
-
-Mirrors the sync-side tests for ``_is_no_transaction_error``. The
-async path has the same silent-no-op contract (matches stdlib
-sqlite3); without dedicated tests, a regression that widened or
-narrowed the match would surface only via integration.
-"""
+"""Async commit/rollback silently no-op on "no transaction is active" (matches stdlib sqlite3)."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -48,11 +42,7 @@ class TestAsyncCommitNoTxSwallow:
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
             "some unrelated error", 10
         )
-        # The client-layer OperationalError is wrapped into the PEP 249
-        # dbapi OperationalError (via ``_call_client``); the code and
-        # message are preserved. Matching on message shape so the test
-        # fails loudly if either the wrap or the str representation
-        # ("[code] message") regresses.
+        # Client OperationalError is wrapped into dbapi OperationalError, preserving code/message.
         with pytest.raises(_dbapi_exc.OperationalError, match="some unrelated error"):
             await conn.commit()
 
@@ -66,10 +56,6 @@ class TestAsyncCommitNoTxSwallow:
             await conn.rollback()
 
     def test_sync_no_tx_helper_matches(self) -> None:
-        """Sanity check for sync/async parity on the helper that drives
-        both the dbapi sync Connection.commit/rollback and the
-        AsyncConnection.commit/rollback swallow paths.
-        """
         from dqlitedbapi.connection import _is_no_transaction_error
 
         exc = _client_exc.OperationalError("cannot commit - no transaction is active", 1)

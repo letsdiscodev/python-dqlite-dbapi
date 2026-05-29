@@ -1,12 +1,5 @@
-"""executemany must admit ``WITH cte AS (...) INSERT/UPDATE/DELETE``
-statements. The classifier had been rejecting them at the dbapi gate
-because the leading ``WITH`` keyword tripped ``_is_row_returning``
-while ``_is_dml_with_returning`` only matched the bare DML prefixes.
-
-Forcing users into a manual loop is also a concurrency-safety
-regression: the loop forfeits executemany's atomic op_lock hold and
-lets concurrent tasks slip statements between iterations.
-"""
+"""executemany must admit ``WITH cte AS (...) INSERT/UPDATE/DELETE``: a leading
+``WITH`` previously tripped the classifier into rejecting CTE-prefixed DML."""
 
 from __future__ import annotations
 
@@ -56,8 +49,7 @@ async def test_async_executemany_admits_cte_prefixed_delete(cluster_address: str
 
 
 def test_sync_executemany_still_rejects_cte_select(cluster_address: str) -> None:
-    """A CTE-prefixed SELECT must still be rejected — only DML
-    behind a CTE is admitted."""
+    """A CTE-prefixed SELECT must still be rejected; only DML behind a CTE is admitted."""
     from dqlitedbapi import ProgrammingError
 
     conn = connect(cluster_address, timeout=2.0)

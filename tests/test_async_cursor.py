@@ -44,7 +44,7 @@ class TestAsyncCursor:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         cursor.close()
-        cursor.close()  # must not raise
+        cursor.close()
         assert cursor._closed
 
     def test_connection_property(self) -> None:
@@ -75,23 +75,19 @@ class TestAsyncCursor:
             await cursor.fetchall()
 
     async def test_fetchone_without_execute_returns_none(self) -> None:
-        """Stdlib parity: fetchone on a never-executed cursor returns
-        None rather than raising. See sync sibling for rationale."""
+        """Stdlib parity: fetchone on a never-executed cursor returns None."""
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         assert await cursor.fetchone() is None
 
     async def test_fetchmany_without_execute_returns_empty_list(self) -> None:
-        """Stdlib parity: returns ``[]`` rather than raising —
-        symmetric with ``fetchone`` returning ``None``. See sync
-        sibling for rationale."""
+        """Stdlib parity: fetchmany on a never-executed cursor returns ``[]``."""
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         assert await cursor.fetchmany(5) == []
 
     async def test_fetchall_without_execute_returns_empty_list(self) -> None:
-        """Stdlib parity: returns ``[]`` rather than raising. See
-        sync sibling for rationale."""
+        """Stdlib parity: fetchall on a never-executed cursor returns ``[]``."""
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         assert await cursor.fetchall() == []
@@ -99,7 +95,6 @@ class TestAsyncCursor:
     async def test_fetchone_no_rows_returns_none(self) -> None:
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
-        # Simulate a query that returned zero rows
         cursor._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = []
         result = await cursor.fetchone()
@@ -120,8 +115,7 @@ class TestAsyncCursor:
         assert cursor._closed
 
     async def test_context_manager_propagates_body_exception(self) -> None:
-        """PEP 343 contract: __aexit__ returning falsy must NOT suppress
-        the body exception. Mirror of the sync sibling pin."""
+        """PEP 343: __aexit__ returning falsy must NOT suppress the body exception."""
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         with pytest.raises(ValueError, match="body raised"):  # noqa: SIM117
@@ -139,8 +133,7 @@ class TestAsyncCursor:
         assert results == [(1, "a"), (2, "b"), (3, "c")]
 
     async def test_setinputsizes_noop(self) -> None:
-        # Runs inside a loop because ``setinputsizes`` now routes through
-        # ``_ensure_locks()`` (loop-binding check).
+        # Needs a running loop: setinputsizes routes through _ensure_locks().
         conn = AsyncConnection("localhost:9001")
         cursor = AsyncCursor(conn)
         cursor.setinputsizes([None, None])
@@ -152,12 +145,7 @@ class TestAsyncCursor:
 
 
 class TestAsyncCursorDescriptionIdentity:
-    """Mirror of ``TestCursorDescriptionIdentity`` in ``test_cursor.py``.
-
-    Both sync and async `description` properties return the stored
-    tuple unchanged; a regression on either side would silently drift
-    the two branches apart.
-    """
+    """``description`` returns the stored tuple unchanged (mirror of the sync sibling)."""
 
     def _make_cursor_with_description(self) -> AsyncCursor:
         conn = AsyncConnection("localhost:9001")
@@ -207,12 +195,8 @@ class TestOptionalAsyncCursorMethodsRaise:
             cursor.callproc("some_proc")
 
     def test_callproc_nextset_scroll_are_sync(self) -> None:
-        """These three PEP 249 optional extensions all unconditionally raise
-        ``NotSupportedError``. They must stay sync so callers can catch the
-        error with a bare ``try: cursor.callproc(...) except ...`` rather
-        than accidentally returning a coroutine object that is never awaited.
-        The adapter in ``sqlalchemy-dqlite`` exposes the same three as sync.
-        """
+        """callproc/nextset/scroll stay sync so a bare ``try/except`` catches their
+        NotSupportedError instead of getting an unawaited coroutine."""
         import inspect
 
         assert not inspect.iscoroutinefunction(AsyncCursor.callproc)
@@ -236,12 +220,8 @@ class TestOptionalAsyncCursorMethodsRaise:
             cursor.scroll(0)
 
     async def test_execute_rechecks_closed_inside_op_lock(self) -> None:
-        """A cursor closed after the fast-path check but before the
-        inner execute work must still raise ``InterfaceError`` with a
-        "Cursor is closed" message. Without the re-check inside the
-        op-lock, the caller would see a generic connection error
-        instead of the sharper cursor-state error.
-        """
+        """A cursor closed after the fast-path check but before the inner execute work
+        must still raise the sharper "Cursor is closed" error, via the op-lock re-check."""
         import asyncio
         from unittest.mock import patch
 
@@ -254,8 +234,6 @@ class TestOptionalAsyncCursorMethodsRaise:
         async def fake_ensure(self_arg):
             ensure_entered.set()
             await close_allowed.wait()
-            # Return a sentinel; we expect the re-check of _closed to
-            # fire before this value is ever dereferenced.
             return object()
 
         async def run_execute() -> None:

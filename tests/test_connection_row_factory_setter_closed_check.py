@@ -1,12 +1,5 @@
-"""Pin: ``Connection.row_factory.setter`` (sync and async) rejects
-writes on a closed connection. Mirrors the ``Cursor.row_factory.setter``
-sibling and stdlib ``sqlite3``'s closed-state precedence.
-
-Also pins messages-clear: like every other state-mutating method on
-the package's Connection surface, the setter clears
-``self.messages`` as the first statement (extension of PEP 249
-§6.4).
-"""
+"""Connection.row_factory.setter (sync/async) rejects writes on a closed connection and
+clears self.messages first, like other state-mutating Connection methods."""
 
 from __future__ import annotations
 

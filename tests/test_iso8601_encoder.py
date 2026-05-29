@@ -1,11 +1,4 @@
-"""Encoder-side tests for ``_iso8601_from_datetime``.
-
-The decode side (``_datetime_from_iso8601``) has explicit error-path
-tests; the encoder was only exercised by integration tests. These unit
-tests pin the microsecond padding, tz-offset sign/magnitude, and the
-``date``-vs-``datetime`` fall-through so a regression in any branch
-surfaces quickly.
-"""
+"""Encoder-side tests for ``_iso8601_from_datetime``."""
 
 import datetime
 
@@ -21,7 +14,6 @@ class TestIso8601FromDatetime:
 
     def test_datetime_with_microseconds_zero_padded(self) -> None:
         d = datetime.datetime(2025, 1, 1, 12, 0, 0, microsecond=7)
-        # Six-digit padded microseconds.
         assert _iso8601_from_datetime(d) == "2025-01-01 12:00:00.000007"
 
     def test_datetime_with_six_digit_microseconds(self) -> None:
@@ -55,21 +47,13 @@ class TestIso8601FromDatetime:
         assert _iso8601_from_datetime(d) == "2025-06-15 09:30:45.000042-08:00"
 
     def test_date_only_takes_fall_through_branch(self) -> None:
-        """``date`` (not ``datetime``) must produce the short YYYY-MM-DD
-        form via the ``isoformat()`` fall-through, not the datetime
-        branch that would call strftime with time components.
-        """
+        """``date`` (not ``datetime``) produces the short YYYY-MM-DD form."""
         d = datetime.date(2025, 1, 1)
         assert _iso8601_from_datetime(d) == "2025-01-01"
 
     def test_sub_minute_offset_preserves_seconds(self) -> None:
-        """Historical tz data (some African, Irish, and Pacific zones in
-        the IANA database) carry LMT offsets with sub-minute precision.
-        ``datetime.fromisoformat`` on Python 3.11+ round-trips
-        ``±HH:MM:SS`` offsets; the encoder must emit them so the
-        round-trip through dqlite's TEXT column preserves the offset
-        exactly.
-        """
+        """Historical IANA LMT offsets carry sub-minute precision; the encoder
+        must emit ``±HH:MM:SS`` so the offset round-trips exactly."""
         tz = datetime.timezone(datetime.timedelta(minutes=5, seconds=30))
         d = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=tz)
         assert _iso8601_from_datetime(d) == "2025-01-01 12:00:00+00:05:30"
@@ -80,9 +64,7 @@ class TestIso8601FromDatetime:
         assert _iso8601_from_datetime(d) == "2025-01-01 12:00:00-01:00:15"
 
     def test_whole_minute_offset_stays_hh_mm(self) -> None:
-        """Common tz offsets (whole minutes) must still emit ``±HH:MM``
-        exactly — byte-identical with the pre-fix encoder. Only
-        sub-minute offsets get the widened ``±HH:MM:SS`` form."""
+        """Whole-minute offsets still emit ``±HH:MM`` (only sub-minute widens)."""
         tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
         d = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=tz)
         assert _iso8601_from_datetime(d) == "2025-01-01 12:00:00+05:30"
@@ -99,10 +81,7 @@ class TestIso8601FromDatetime:
 
 
 class TestIso8601FromTime:
-    """Encoder for ``datetime.time`` values. The DB-API ``Time()`` and
-    ``TimeFromTicks()`` constructors return ``datetime.time``; bind
-    parameters pass through ``_convert_bind_param`` which stringifies
-    to ISO 8601 (symmetric with the datetime/date branch)."""
+    """Encoder for ``datetime.time`` values."""
 
     def test_naive_time_without_microseconds(self) -> None:
         from dqlitedbapi.types import _iso8601_from_time
@@ -147,10 +126,7 @@ class TestIso8601FromTime:
         assert _iso8601_from_time(t) == "12:30:45.000042+05:30"
 
     def test_time_sub_minute_offset_preserves_seconds(self) -> None:
-        """Matches the datetime encoder's sub-minute-offset preservation:
-        ``datetime.time.utcoffset()`` can also return a sub-minute
-        timedelta, and ``datetime.time.fromisoformat`` on Python 3.11+
-        round-trips ``±HH:MM:SS`` offsets."""
+        """``datetime.time`` also preserves sub-minute offsets as ``±HH:MM:SS``."""
         from dqlitedbapi.types import _iso8601_from_time
 
         tz = datetime.timezone(datetime.timedelta(minutes=5, seconds=30))
@@ -165,10 +141,7 @@ class TestIso8601FromTime:
         assert _iso8601_from_time(t) == "12:30:45+05:30"
 
     def test_time_sub_minute_round_trips_through_fromisoformat(self) -> None:
-        """The emitted ISO string must decode back to a ``datetime.time``
-        with the exact utcoffset — pinning the symmetric decode path
-        in stdlib.
-        """
+        """The emitted ISO string decodes back to the exact utcoffset."""
         from dqlitedbapi.types import _iso8601_from_time
 
         tz = datetime.timezone(datetime.timedelta(minutes=5, seconds=30))
@@ -180,19 +153,7 @@ class TestIso8601FromTime:
 
 
 class _AbstractTz(datetime.tzinfo):
-    """tzinfo that carries a name but declines to produce an offset.
-
-    Python's stdlib contract explicitly allows ``utcoffset()`` to return
-    ``None`` — real-world tzinfo subclasses sometimes do so during
-    initialisation before their zone tables are loaded, or when the
-    tzinfo is "abstract" by design. Both ``_iso8601_from_datetime`` and
-    ``_iso8601_from_time`` carry a ``if offset is None: return base``
-    early-return to handle that case; these tests pin the fallback-to-
-    naive-format contract so a future cleanup cannot silently
-    reinstate an ``assert offset is not None`` (the assertion was
-    removed precisely because tzinfo subclasses are allowed to return
-    ``None``).
-    """
+    """tzinfo that carries a name but returns ``None`` from ``utcoffset()``."""
 
     def utcoffset(self, dt: datetime.datetime | None) -> datetime.timedelta | None:
         return None
@@ -205,15 +166,8 @@ class _AbstractTz(datetime.tzinfo):
 
 
 class TestIso8601EncoderBrokenTzinfo:
-    """Pin the ``utcoffset() is None`` rejection branch on both encoders.
-
-    A tzinfo subclass that declares itself but cannot resolve an
-    offset for the given datetime/time is a broken contract. The
-    encoders reject this with a hard ``DataError`` rather than
-    silently demoting to naive (which would lose the user's
-    tz-awareness intent). Pin the contract so a regression that
-    re-introduces silent demotion is caught.
-    """
+    """A broken tzinfo (offset unresolvable) raises ``DataError`` rather than
+    silently demoting to naive."""
 
     def test_datetime_broken_tzinfo_raises_data_error(self) -> None:
         from dqlitedbapi.exceptions import DataError
@@ -232,13 +186,7 @@ class TestIso8601EncoderBrokenTzinfo:
 
 
 class TestConvertBindParamTime:
-    """``_convert_bind_param`` routes ``datetime.time`` to the new
-    ISO 8601 encoder (symmetric with the existing datetime/date
-    branch). Prior behaviour let ``datetime.time`` fall through to
-    the wire encoder, which raised ``EncodeError`` — the driver's
-    own ``Time()`` constructor produced values its own binder could
-    not consume.
-    """
+    """``_convert_bind_param`` routes ``datetime.time`` to the ISO 8601 encoder."""
 
     def test_time_converted_to_iso_string(self) -> None:
         from dqlitedbapi.types import _convert_bind_param
@@ -252,11 +200,8 @@ class TestConvertBindParamTime:
         assert _convert_bind_param(t) == "12:30:45+00:00"
 
     def test_datetime_branch_still_takes_precedence(self) -> None:
-        """``datetime.datetime`` is a subclass of ``datetime.date`` but
-        NOT of ``datetime.time``, so the existing branch keeps firing
-        first for datetime inputs. Defensive pin in case the order of
-        checks is ever refactored.
-        """
+        """``datetime`` subclasses ``date`` but not ``time``, so its branch
+        fires first."""
         from dqlitedbapi.types import _convert_bind_param
 
         dt = datetime.datetime(2025, 1, 1, 12, 30, 45)
@@ -272,23 +217,15 @@ class TestConvertBindParamTime:
 
 
 class TestIso8601DecoderTrailingZ:
-    """Pin the decoder's trailing-Z handling. Python 3.11+ accepts a
-    bare ``Z`` natively in ``datetime.fromisoformat``; the decoder
-    previously substituted ``"Z"`` → ``"+00:00"`` unconditionally,
-    which mangled malformed inputs like ``"junkZ"`` → ``"junk+00:00"``
-    before reaching ``fromisoformat`` and obscured operator
-    diagnostics. The substitution is now removed; these tests pin
-    that the decoder still handles well-formed Z suffixes correctly
-    AND that malformed inputs surface in the ``DataError`` message
-    verbatim (no pre-substitution mangling).
-    """
+    """Decoder relies on 3.11+ native ``Z`` parsing; well-formed suffixes
+    decode to UTC and malformed inputs surface verbatim (no pre-substitution
+    mangling)."""
 
     def test_well_formed_z_suffix_decodes_to_utc(self) -> None:
         import pytest
 
         from dqlitedbapi.types import _datetime_from_iso8601
 
-        # The well-formed cases must still produce a UTC-aware datetime.
         for text in (
             "2024-01-02T03:04:05Z",
             "2024-01-02T03:04:05.123Z",
@@ -303,11 +240,7 @@ class TestIso8601DecoderTrailingZ:
         del pytest
 
     def test_malformed_z_input_dataerror_echoes_original_text(self) -> None:
-        """The DataError message must contain the original wire text
-        verbatim — not a post-substitution intermediate. An operator
-        debugging "all UNIXTIME from server X is bad" needs to see
-        what the server actually sent.
-        """
+        """The DataError message echoes the original wire text verbatim."""
         import pytest
 
         from dqlitedbapi.exceptions import DataError
@@ -326,9 +259,7 @@ class TestIso8601DecoderTrailingZ:
             )
 
     def test_lowercase_z_is_rejected(self) -> None:
-        """``fromisoformat`` rejects lowercase ``z``. Pin this so any
-        future Python-version drift surfaces visibly.
-        """
+        """``fromisoformat`` rejects lowercase ``z``."""
         import pytest
 
         from dqlitedbapi.exceptions import DataError
@@ -339,21 +270,8 @@ class TestIso8601DecoderTrailingZ:
 
 
 class TestIso8601YearBoundaryRoundTrip:
-    """Pin ISO 8601 round-trip at Python's ``MINYEAR`` (1) and
-    ``MAXYEAR`` (9999).
-
-    The datetime branch of the encoder builds the year prefix
-    explicitly (``f"{value.year:04d}"``); the date branch delegates to
-    ``value.isoformat()`` and inherits CPython's documented zero-pad.
-    A future "simplify" pass on either branch could silently break
-    cluster-shared cells written by a Go/C peer at the year
-    boundaries (Go's ``time.RFC3339Nano`` zero-pads unconditionally).
-
-    Also pins decoder rejection at year > 9999 — Go has no MAXYEAR
-    cap, so a peer could deliver a value outside Python's range; the
-    decoder must wrap the resulting ``ValueError`` as ``DataError``
-    with the original wire text.
-    """
+    """ISO 8601 round-trip at ``MINYEAR``/``MAXYEAR``, plus decoder rejection
+    of year > 9999 (which a Go peer with no MAXYEAR cap could deliver)."""
 
     @pytest.mark.parametrize(
         "value",
@@ -371,8 +289,7 @@ class TestIso8601YearBoundaryRoundTrip:
 
         encoded = _iso8601_from_datetime(value)
         decoded = _datetime_from_iso8601(encoded)
-        # ``_datetime_from_iso8601`` widens ``date`` to ``datetime``
-        # on round-trip (documented behaviour matching pysqlite).
+        # The decoder widens ``date`` to ``datetime`` on round-trip (pysqlite parity).
         if isinstance(value, datetime.datetime):
             assert decoded == value, (
                 f"year-boundary round-trip lost: original={value!r}, "
@@ -385,21 +302,16 @@ class TestIso8601YearBoundaryRoundTrip:
             )
 
     def test_date_branch_year_zero_padded_to_four_digits(self) -> None:
-        """The date branch delegates to ``value.isoformat()`` so the
-        zero-pad guarantee is inherited from CPython. A regression
-        that produces ``"1-01-01"`` would round-trip locally only
-        until a Go/C peer fails to parse it.
-        """
+        """The date branch must zero-pad year to 4 digits (else a Go/C peer
+        fails to parse it)."""
         encoded = _iso8601_from_datetime(datetime.date(1, 1, 1))
         assert encoded == "0001-01-01", (
             f"date branch must zero-pad year to 4 digits even at year=1; got {encoded!r}"
         )
 
     def test_decoder_rejects_year_above_python_maxyear(self) -> None:
-        """Go has no MAXYEAR cap; a non-Python cluster peer could
-        deliver a year > 9999. The decoder must wrap the resulting
-        ``ValueError`` as ``DataError`` with the original wire text.
-        """
+        """Year > 9999 (deliverable by a Go peer) wraps as DataError with the
+        original wire text."""
         import pytest
 
         from dqlitedbapi.exceptions import DataError
@@ -413,18 +325,8 @@ class TestIso8601YearBoundaryRoundTrip:
 
 
 class TestIso8601FractionalSecondsVariants:
-    """Pin the matrix of fractional-second representations the decoder
-    accepts. Python's ``datetime.fromisoformat`` is lenient on the
-    input side: 0 / 3 / 6 fractional digits, ``T`` or space separator,
-    and ``Z`` / explicit-offset / no-offset are all valid. The dqlite
-    server emits canonical space-separated 6-digit values, but a peer
-    client (Go, C, custom) might emit a different shape; the decoder
-    must accept all of them.
-
-    A future change to the parser (custom regex, strict validation)
-    would silently break the no-µs case which is the canonical wire
-    form for whole-second wall clocks.
-    """
+    """The decoder accepts the full matrix of fractional-second shapes a peer
+    client might emit (0/3/6 digits, T or space separator, Z/offset/none)."""
 
     @pytest.mark.parametrize(
         ("encoded", "expected"),
@@ -459,11 +361,7 @@ class TestIso8601FractionalSecondsVariants:
         assert _datetime_from_iso8601(encoded) == expected
 
     def test_decoder_accepts_bare_date_via_datetime_fromisoformat(self) -> None:
-        """Python 3.11+ relaxed ``datetime.fromisoformat`` to accept
-        bare ``YYYY-MM-DD`` without a time component (returning a
-        midnight datetime). Pin the contract so a regression that
-        re-tightens the parser, or that re-introduces a dead
-        ``date.fromisoformat`` fallback, cannot land silently."""
+        """3.11+ accepts bare ``YYYY-MM-DD`` as a midnight datetime."""
         from dqlitedbapi.types import _datetime_from_iso8601
 
         result = _datetime_from_iso8601("2024-01-15")

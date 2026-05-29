@@ -1,10 +1,5 @@
-"""Pin: ``register_adapter`` and ``unregister_adapter`` are
-positional-only — matching stdlib ``sqlite3.register_adapter``'s
-C-implemented signature. Cross-driver code that passes ``type_=`` /
-``adapter=`` keyword args fails on stdlib; dqlite previously
-accepted the form and gave shipped code a silent portability
-trap. The positional-only marker forecloses the surface.
-"""
+"""Pin: ``register_adapter``/``unregister_adapter`` are positional-only, matching
+stdlib's C signature (keyword args would be a silent cross-driver portability trap)."""
 
 from __future__ import annotations
 

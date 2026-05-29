@@ -1,11 +1,5 @@
-"""Pin: fork-after-init diagnostic includes both the creator pid
-and the current observed pid so an operator chasing a stack trace
-in worker logs can correlate the failure to the master / forkserver
-pid.
-
-Symmetric with the cross-thread sibling diagnostic which already
-includes both ids. Without the pids, the diagnostic was a constant
-string with no operator-correlation surface.
+"""Pin: the fork-after-init diagnostic includes both creator and current
+pid so an operator can correlate a worker-log trace to the master pid.
 """
 
 from __future__ import annotations
@@ -42,7 +36,6 @@ def test_async_fork_diagnostic_includes_creator_and_current_pid() -> None:
     ):
         conn.cursor()
     msg = str(exc.value)
-    # The cursor() entry uses the "AsyncConnection used after fork" lead-in.
     assert "used after fork" in msg
     assert re.search(rf"pid {conn._creator_pid}\b", msg), msg
     assert re.search(rf"pid {fake_child_pid}\b", msg), msg

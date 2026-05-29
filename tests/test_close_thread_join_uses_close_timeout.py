@@ -1,17 +1,6 @@
-"""``Connection.close()`` joins the loop thread within
-``self._close_timeout`` (floored at ``_LOOP_THREAD_JOIN_MIN_SECONDS``),
-mirroring ``force_close_transport()``.
-
-The graceful close used to join with a hard-coded 5 s constant, ignoring
-the operator's ``close_timeout`` knob and breaking both directions:
-
-- Tight-budget operators (SIGTERM SLOs with ``close_timeout=0.5``)
-  saw graceful close pay 5 s on a stuck loop.
-- WAN-tuned operators (``close_timeout=10``) saw the join truncated
-  at 5 s — the configured value silently did nothing.
-
-These tests pin both directions, plus a symmetry check that the
-graceful and force-close paths consult the same source of truth.
+"""close() joins the loop thread within self._close_timeout (floored at
+_LOOP_THREAD_JOIN_MIN_SECONDS), mirroring force_close_transport(). The prior hard-coded 5s
+ignored the operator's close_timeout knob in both directions (tight-budget and WAN-tuned).
 """
 
 from __future__ import annotations
@@ -31,8 +20,7 @@ from dqlitedbapi.connection import (
 
 @contextlib.contextmanager
 def _patched_dqlite_connection():
-    """Patch the leader-discovery + DqliteConnection construction so a
-    Connection can spin up its loop+thread without touching the wire."""
+    """Patch leader-discovery + DqliteConnection so a Connection spins up loop+thread offline."""
     with (
         patch(
             "dqlitedbapi.connection._resolve_leader",
@@ -51,14 +39,13 @@ def _patched_dqlite_connection():
 
 
 def _establish_loop(conn: Connection) -> None:
-    """Spin up the background loop + thread without actually connecting."""
+    """Spin up the background loop + thread without connecting."""
     with _patched_dqlite_connection():
         conn._run_sync(conn._get_async_connection())
 
 
 class _JoinTimeoutRecorder:
-    """Wrap a ``threading.Thread`` so ``join(timeout=...)`` arguments are
-    captured for inspection while still forwarding to the real join."""
+    """Wrap a Thread to capture join(timeout=...) arguments while forwarding to the real join."""
 
     def __init__(self, thread: threading.Thread) -> None:
         self._thread = thread
@@ -77,9 +64,7 @@ class _JoinTimeoutRecorder:
 
 class TestCloseThreadJoinUsesCloseTimeout:
     def test_close_thread_join_uses_close_timeout(self) -> None:
-        """Graceful ``close()`` derives its thread.join timeout from
-        ``self._close_timeout`` (floored at the documented MIN), NOT
-        from a hard-coded constant."""
+        """Graceful close() derives its thread.join timeout from self._close_timeout."""
         conn = Connection("localhost:19001", timeout=10.0, close_timeout=0.25)
         _establish_loop(conn)
         recorder = _JoinTimeoutRecorder(conn._thread)  # type: ignore[arg-type]
@@ -89,15 +74,12 @@ class TestCloseThreadJoinUsesCloseTimeout:
 
         assert len(recorder.timeouts) == 1
         observed = recorder.timeouts[0]
-        # close_timeout=0.25 is above the floor; budget == 0.25.
         assert observed == pytest.approx(0.25, abs=1e-9), (
             f"join timeout was {observed!r}; expected close_timeout=0.25 (no hard-coded constant)."
         )
 
     def test_close_thread_join_extends_for_wan_close_timeout(self) -> None:
-        """A WAN-tuned ``close_timeout`` past the prior 5 s constant
-        extends the graceful-close join budget — the configured value
-        is no longer silently truncated."""
+        """A WAN-tuned close_timeout past the prior 5s constant extends the join budget."""
         conn = Connection("localhost:19001", timeout=10.0, close_timeout=12.5)
         _establish_loop(conn)
         recorder = _JoinTimeoutRecorder(conn._thread)  # type: ignore[arg-type]
@@ -112,9 +94,8 @@ class TestCloseThreadJoinUsesCloseTimeout:
         )
 
     def test_close_thread_join_floor_applies_at_min(self) -> None:
-        """``close_timeout`` below the documented floor is widened to
-        ``_LOOP_THREAD_JOIN_MIN_SECONDS`` — the queued ``loop.stop``
-        needs enough scheduling slack to land on a non-stuck loop."""
+        """close_timeout below the floor is widened to _LOOP_THREAD_JOIN_MIN_SECONDS so the
+        queued loop.stop has enough scheduling slack to land on a non-stuck loop."""
         conn = Connection("localhost:19001", timeout=10.0, close_timeout=0.01)
         _establish_loop(conn)
         recorder = _JoinTimeoutRecorder(conn._thread)  # type: ignore[arg-type]
@@ -129,8 +110,7 @@ class TestCloseThreadJoinUsesCloseTimeout:
         )
 
     def test_force_close_thread_join_uses_close_timeout(self) -> None:
-        """``force_close_transport()`` join budget mirrors ``close()``:
-        operator's ``close_timeout`` floored at MIN."""
+        """force_close_transport() join budget mirrors close(): close_timeout floored at MIN."""
         conn = Connection("localhost:19001", timeout=10.0, close_timeout=0.4)
         _establish_loop(conn)
         recorder = _JoinTimeoutRecorder(conn._thread)  # type: ignore[arg-type]
@@ -142,8 +122,7 @@ class TestCloseThreadJoinUsesCloseTimeout:
         assert observed == pytest.approx(0.4, abs=1e-9)
 
     def test_close_and_force_close_share_join_budget_derivation(self) -> None:
-        """Pin symmetry: both close shapes feed the same value through
-        the join timeout for the same ``close_timeout`` setting."""
+        """Both close shapes feed the same join timeout for the same close_timeout setting."""
         budgets: dict[str, float | None] = {}
         for shape in ("close", "force_close_transport"):
             conn = Connection("localhost:19001", timeout=10.0, close_timeout=0.3)
@@ -160,24 +139,16 @@ class TestCloseThreadJoinUsesCloseTimeout:
 
 @pytest.mark.parametrize("close_timeout", [0.1, 0.5, 2.0])
 def test_finalizer_captures_close_timeout(close_timeout: float) -> None:
-    """The ``weakref.finalize``-registered cleanup mirrors the operator's
-    ``close_timeout`` so the GC path is not held to a 5 s legacy
-    constant either."""
+    """The weakref.finalize cleanup mirrors close_timeout so the GC path is not held to 5s."""
     conn = Connection("localhost:19001", timeout=10.0, close_timeout=close_timeout)
     _establish_loop(conn)
     finalizer = conn._finalizer
     assert finalizer is not None
-    # peek() returns ``(obj, func, args_tuple, kwargs_dict)``. The
-    # positional args in the finalize registration are
-    # ``(loop, thread, closed_flag, address, creator_pid,
-    # close_timeout, inner_finalize_handle)`` — close_timeout is
-    # at index 5 from the start; the inner_finalize_handle box
-    # follows it.
+    # peek() -> (obj, func, args, kwargs); close_timeout is positional arg index 5.
     peeked = finalizer.peek()
     assert peeked is not None
     _obj, _func, args, _kwargs = peeked
-    # Look up by argspec position rather than args[-1] so a future
-    # addition of another positional after the inner_finalize_handle
+    # Index by argspec position, not args[-1], so a future trailing positional
     # does not silently silence this pin.
     captured_close_timeout = args[5]
     assert captured_close_timeout == close_timeout, (

@@ -1,21 +1,5 @@
-"""Pin: ``_strip_leading_comments`` strips a leading UTF-8 BOM
-(``\\ufeff``) so SQL imported via PowerShell ``Set-Content``,
-Notepad, or read with ``encoding='utf-8'`` (instead of
-``encoding='utf-8-sig'``) is classified correctly.
-
-SQLite's ``prepare.c::sqlite3_prepare_v2`` skips a leading BOM
-before tokenisation. Python's ``str.strip()`` does NOT consider
-``\\ufeff`` whitespace (``'\\ufeff'.isspace()`` is False), so the
-classifier helpers (which start with ``s.strip()``) would otherwise
-miss ``\\ufeffSELECT`` / ``\\ufeffBEGIN`` etc.
-
-Two duplicate helpers exist:
-- ``dqlitedbapi/cursor.py:_strip_leading_comments`` (also imported
-  by ``aio/cursor.py``)
-- ``dqliteclient/connection.py:_strip_leading_comments``
-
-Both must strip the BOM. A parity test in this file pins both copies.
-"""
+"""``_strip_leading_comments`` strips a leading UTF-8 BOM, which str.strip() leaves intact
+(``'\\ufeff'.isspace()`` is False). Both duplicate helpers (dbapi + client) must match."""
 
 from __future__ import annotations
 
@@ -47,9 +31,7 @@ class TestClassifierRecognisesBomPrefixedSelect:
 
 
 class TestClientHelperParity:
-    """Both copies of ``_strip_leading_comments`` must behave
-    identically on BOM input — drift would re-introduce the
-    classifier-desync defect on one side or the other."""
+    """Both copies must behave identically on BOM input; drift re-introduces desync."""
 
     def test_client_and_dbapi_agree_on_bom(self) -> None:
         from dqliteclient.connection import (

@@ -1,16 +1,7 @@
-"""Pin: ``Cursor.executemany`` and ``AsyncCursor.executemany`` reject
-the same outer shapes (``str`` / ``bytes`` / ``bytearray`` /
-``memoryview`` / ``dict`` / ``set`` / ``frozenset``) as the
-``Connection.executemany`` / ``AsyncConnection.executemany`` shortcuts.
-
-Without this pin, a caller invoking ``cur.executemany(sql, "abc")``
-silently iterates the string character-by-character, treats each
-character as a parameter set, and may mutate cursor state before
-the per-iteration binding fails with a less-helpful diagnostic. The
-connection-layer shortcut already rejects upfront; the cursor layer
-must match for API symmetry. Shared module-private helper
-``_validate_executemany_seq_shape`` is the single source of truth.
-"""
+"""Cursor.executemany rejects the same outer shapes (str/bytes/bytearray/
+memoryview/dict/set/frozenset) as the Connection.executemany shortcuts.
+Otherwise executemany(sql, "abc") silently iterates char-by-char. Shared
+helper _validate_executemany_seq_shape is the single source of truth."""
 
 from __future__ import annotations
 
@@ -27,8 +18,8 @@ from dqlitedbapi.exceptions import ProgrammingError
 
 
 def _sync_cursor() -> Any:
-    """Construct a Connection / Cursor without dialing — sufficient
-    to drive the up-front shape validation on ``executemany``."""
+    """Connection/Cursor without dialing — enough to drive the up-front
+    shape validation on executemany."""
     conn = cast(Any, SyncConnection.__new__(SyncConnection))
     conn._closed = False
     conn._creator_thread = threading.get_ident()
@@ -42,9 +33,8 @@ def _sync_cursor() -> Any:
 
 
 def _bare_async_cursor() -> Any:
-    """Async sibling of :func:`_sync_cursor` — see the
-    ``test_executemany_none_seq_rejected`` test for the attribute
-    rationale (``_loop_ref`` / ``_creator_pid`` on AsyncConnection)."""
+    """Async sibling of _sync_cursor (see test_executemany_none_seq_rejected
+    for the _loop_ref / _creator_pid attribute rationale)."""
     aconn = cast(Any, dqlitedbapi.aio.AsyncConnection.__new__(dqlitedbapi.aio.AsyncConnection))
     aconn._closed = False
     aconn._creator_pid = os.getpid()

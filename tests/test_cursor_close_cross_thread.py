@@ -1,10 +1,6 @@
-"""``Cursor.close()`` must be safe to call from a migrated thread.
-
-A ``with conn.cursor() as c:`` body whose work runs in an executor /
-``asyncio.to_thread`` may hand control back to ``__exit__`` on a
-worker thread. Close deliberately omits the Connection thread-affinity
-check so the cleanup does not raise ``ProgrammingError`` and mask the
-body's original exception. Matches stdlib ``sqlite3.Cursor.close``.
+"""``Cursor.close()`` is safe from a migrated thread: it omits the
+Connection thread-affinity check so cleanup can't raise and mask a body
+exception (e.g. when ``__exit__`` runs on an executor worker thread).
 """
 
 from __future__ import annotations
@@ -17,8 +13,7 @@ from dqlitedbapi.cursor import Cursor
 
 def test_close_from_non_creator_thread_does_not_raise() -> None:
     conn = MagicMock()
-    # Wire the thread-check to raise just like Connection._check_thread
-    # would on a cross-thread call; close() must NOT invoke it.
+    # close() must not invoke _check_thread; make it raise if it does.
     conn._check_thread.side_effect = AssertionError("close() must not call _check_thread")
     conn.messages = []
     cur = Cursor(conn)
@@ -44,5 +39,5 @@ def test_close_is_idempotent() -> None:
     conn.messages = []
     cur = Cursor(conn)
     cur.close()
-    cur.close()  # must not raise
+    cur.close()
     assert cur._closed is True

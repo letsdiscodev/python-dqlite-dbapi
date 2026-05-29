@@ -1,12 +1,5 @@
-"""Pin: ``Cursor.completed_iterations`` reports the count of
-executemany() iterations that committed before a cancel / mid-batch
-raise.
-
-After a cancel, ``rowcount`` resets to PEP 249's "undetermined"
-sentinel (-1); ``completed_iterations`` retains the count so callers
-can write idempotent compensation against the exact prefix of
-``seq_of_parameters`` that already persisted.
-"""
+"""``Cursor.completed_iterations`` reports the executemany iterations that
+committed; unlike ``rowcount`` it survives a cancel for idempotent compensation."""
 
 from __future__ import annotations
 
@@ -41,7 +34,6 @@ def test_completed_iterations_resets_per_call(cluster_address: str) -> None:
         conn.commit()
         cur.executemany("INSERT INTO exec_iter VALUES (?)", [(1,), (2,), (3,)])
         assert cur.completed_iterations == 3
-        # Second call resets:
         cur.executemany("INSERT INTO exec_iter VALUES (?)", [(4,)])
         assert cur.completed_iterations == 1
 
@@ -50,7 +42,7 @@ def test_completed_iterations_resets_per_call(cluster_address: str) -> None:
 def test_completed_iterations_starts_at_zero() -> None:
     """A never-executed cursor reports 0."""
     cur = dqlitedbapi.Cursor.__new__(dqlitedbapi.Cursor)
-    cur._completed_iterations = 0  # mirror what __init__ would do
+    cur._completed_iterations = 0  # mirror __init__
     assert cur.completed_iterations == 0
 
 

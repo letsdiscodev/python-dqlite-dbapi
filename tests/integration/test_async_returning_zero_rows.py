@@ -1,9 +1,5 @@
-"""Pin the async sibling of ``test_returning.py`` zero-row contract.
-
-UPDATE/DELETE ... WHERE no-match RETURNING must leave the async cursor
-in a clean PEP 249 post-execute state: ``rowcount == 0``,
-``fetchone() is None``, ``fetchall() == []``.
-"""
+"""Async UPDATE/DELETE ... WHERE no-match RETURNING leaves a clean cursor:
+``rowcount == 0``, ``fetchone() is None``, ``fetchall() == []``."""
 
 from __future__ import annotations
 

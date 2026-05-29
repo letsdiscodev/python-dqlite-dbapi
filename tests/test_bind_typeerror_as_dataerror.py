@@ -1,19 +1,5 @@
-"""Pin: ``_call_client``'s narrow wrap discipline.
-
-PEP 249 §7 requires bind-time encoder rejections to surface as
-``DataError`` (per the "problems with the processed data" arm). The
-wire encoder (``dqlitewire.types``) raises ``EncodeError`` for
-unsupported bind values (``Decimal``, ``UUID``, ``Path``, ``Enum``,
-arbitrary user classes); ``_call_client`` catches ``EncodeError``
-and wraps as ``DataError``.
-
-The previous catch was wider — ``except (TypeError, ValueError)``
-— and over-attributed coro-internal faults (driver refactor bugs,
-third-party retry middleware typos) as ``DataError("caller-input
-fault ...")``. The wrap is now narrow: ``EncodeError`` ->
-``DataError``; bare ``TypeError`` / ``ValueError`` propagates raw so
-the originating frame surfaces honestly.
-"""
+"""Pin: ``_call_client`` narrowly wraps EncodeError as DataError (PEP 249 §7);
+bare TypeError/ValueError propagates raw so the originating frame surfaces."""
 
 import pytest
 
@@ -39,10 +25,7 @@ class TestCallClientWrapsEncodeError:
 
 
 class TestCallClientPropagatesCoroInternalErrors:
-    """Narrow-catch discipline: bare ``TypeError`` / ``ValueError`` from
-    the awaited coro propagates raw so operators triaging the failure
-    see the originating frame instead of a misleading ``DataError(
-    "caller-input fault ...")`` wrap."""
+    """Bare TypeError/ValueError from the coro propagates raw, not wrapped as DataError."""
 
     async def test_bare_typeerror_propagates_raw(self) -> None:
         with pytest.raises(TypeError):

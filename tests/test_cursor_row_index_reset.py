@@ -1,11 +1,5 @@
-"""_row_index must reset to 0 after every execute (SELECT or DML).
-
-The SELECT branch always set ``_row_index = 0``; the DML branch did
-not. Because ``_check_result_set`` gates fetches on ``_description
-is None`` after DML, the stale ``_row_index`` was not directly
-observable — but it broke the invariant the rest of the code
-assumes (and that the iterator-reset tests pin).
-"""
+"""``_row_index`` resets to 0 after every execute, including DML (the DML branch
+previously skipped it — latent because fetches are gated on ``_description``)."""
 
 from unittest.mock import MagicMock
 
@@ -14,8 +8,6 @@ from dqlitedbapi.cursor import Cursor
 
 
 class _AwaitableObj:
-    """A bare-bones awaitable that resolves to ``obj`` on ``await``."""
-
     def __init__(self, obj: object) -> None:
         self.obj = obj
 
@@ -25,8 +17,6 @@ class _AwaitableObj:
 
 
 class _FakeClient:
-    """Mock of the async client interface the cursor talks to."""
-
     def execute(self, sql: str, params):
         return _AwaitableObj(obj=(42, 1))
 
@@ -39,16 +29,13 @@ def _cursor_with_prior_select() -> Cursor:
     c = Cursor(conn)
     c._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
     c._rows = [(1,), (2,), (3,)]
-    c._row_index = 2  # Caller had fetched two rows.
+    c._row_index = 2
     c._rowcount = 3
     return c
 
 
 async def test_sync_cursor_dml_resets_row_index() -> None:
-    """Sync cursor's ``_execute_async`` DML branch must reset
-    ``_row_index`` to 0 so that a subsequent SELECT starts iteration
-    from a clean state (see the iterator-reset tests in
-    ``test_cursor_iterator_reset``)."""
+    """Sync cursor's ``_execute_async`` DML branch resets ``_row_index`` to 0."""
     c = _cursor_with_prior_select()
 
     async def fake_get_async_connection():

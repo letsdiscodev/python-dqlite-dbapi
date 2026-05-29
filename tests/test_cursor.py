@@ -44,7 +44,7 @@ class TestCursor:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
         cursor.close()
-        cursor.close()  # must not raise
+        cursor.close()
         assert cursor._closed
 
     def test_connection_property(self) -> None:
@@ -75,25 +75,19 @@ class TestCursor:
             cursor.fetchall()
 
     def test_fetchone_without_execute_returns_none(self) -> None:
-        """Stdlib parity: fetchone on a never-executed / DML-only
-        cursor returns None rather than raising. fetchmany / fetchall
-        return an empty list on the same path (also stdlib-parity)."""
+        """Stdlib parity: fetchone on a never-executed / DML-only cursor returns None."""
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
         assert cursor.fetchone() is None
 
     def test_fetchall_without_execute_returns_empty_list(self) -> None:
-        """Stdlib parity: ``sqlite3.Cursor.fetchall()`` on a never-
-        executed / DML-only cursor returns ``[]``. Symmetric with
-        ``fetchone`` returning ``None``."""
+        """Stdlib parity: fetchall on a never-executed / DML-only cursor returns []."""
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
         assert cursor.fetchall() == []
 
     def test_fetchmany_without_execute_returns_empty_list(self) -> None:
-        """Stdlib parity: ``sqlite3.Cursor.fetchmany()`` on a never-
-        executed / DML-only cursor returns ``[]``. Symmetric with
-        ``fetchone`` and ``fetchall``."""
+        """Stdlib parity: fetchmany on a never-executed / DML-only cursor returns []."""
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
         assert cursor.fetchmany(5) == []
@@ -105,10 +99,8 @@ class TestCursor:
         assert cursor._closed
 
     def test_context_manager_propagates_body_exception(self) -> None:
-        """PEP 343 contract: __exit__ returning falsy must NOT suppress
-        the body exception. Cursor.__exit__ delegates to close() which
-        returns None, so a body exception must propagate AND the cursor
-        must still be closed afterwards."""
+        """PEP 343: __exit__ returning falsy must not suppress the body exception,
+        and the cursor must still be closed afterwards."""
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
         with pytest.raises(ValueError, match="body raised"), cursor:
@@ -127,26 +119,16 @@ class TestCursor:
     def test_setinputsizes_noop(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        # Should not raise
         cursor.setinputsizes([None, None])
 
     def test_setoutputsize_noop(self) -> None:
         conn = Connection("localhost:9001")
         cursor = Cursor(conn)
-        # Should not raise
         cursor.setoutputsize(100, 0)
 
 
 class TestCursorDescriptionIdentity:
-    """Pin the `Cursor.description` same-object-per-access contract.
-
-    The property returns ``self._description`` unchanged (matching
-    stdlib ``sqlite3.Cursor.description``). Storage is a tuple of
-    7-tuples — structurally immutable, so a defensive copy is not
-    needed to keep the cursor's internal state safe from caller
-    mutation. A regression that reintroduced a ``list(...)`` wrap
-    would fail these tests.
-    """
+    """Pin the ``Cursor.description`` same-object-per-access contract (no defensive copy)."""
 
     def _make_cursor_with_description(self) -> Cursor:
         conn = Connection("localhost:9001")
@@ -163,7 +145,6 @@ class TestCursorDescriptionIdentity:
         desc2 = cursor.description
         assert desc1 is not None
         assert desc2 is not None
-        # Same tuple object each call — matches stdlib sqlite3.
         assert desc1 is desc2
 
     def test_description_is_the_internal_tuple(self) -> None:
@@ -215,13 +196,13 @@ class TestOptionalCursorMethodsRaise:
 
 class TestConnectionCloseResetsLock:
     def test_close_nulls_connect_lock(self) -> None:
-        """After close(), the asyncio connect lock must be reset so it
-        doesn't outlive its owning loop (symmetry with the async side)."""
+        """After close(), the asyncio connect lock must be reset so it doesn't
+        outlive its owning loop."""
         import asyncio
 
         conn = Connection("localhost:9001")
-        # Simulate the state a lazy _get_async_connection would have left:
-        # a background loop running and an asyncio.Lock created on it.
+        # Simulate the state a lazy _get_async_connection leaves: a running
+        # background loop with an asyncio.Lock created on it.
         loop = conn._ensure_loop()
 
         async def _make_lock() -> asyncio.Lock:

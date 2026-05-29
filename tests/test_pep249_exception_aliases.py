@@ -1,12 +1,4 @@
-"""PEP 249 ``Connection.Error`` alias coverage.
-
-PEP 249 "Optional DB-API Extensions" expects every Connection to expose
-the module-level exception classes as attributes so cross-driver
-generic code (testing adapters, pool middleware, SQLAlchemy plugins)
-can write ``except conn.Error:`` without importing the driver module.
-Stdlib ``sqlite3.Connection`` and every mainstream DB-API driver ship
-these; this test pins that dqlitedbapi matches.
-"""
+"""PEP 249 Connection.Error alias coverage: exception classes mirrored as attributes."""
 
 from __future__ import annotations
 
@@ -28,9 +20,7 @@ _PEP249_ALIAS_NAMES = (
     "InternalError",
     "ProgrammingError",
     "NotSupportedError",
-    # dqlite-specific extension subclass of OperationalError, exported
-    # at the module level and mirrored as a class attribute to match
-    # the sibling discipline of the nine PEP 249 mandated names.
+    # dqlite-specific OperationalError subclass, mirrored like the mandated names.
     "AmbiguousCommitError",
 )
 
@@ -54,9 +44,7 @@ def test_async_connection_alias_identity(name: str) -> None:
 
 
 def test_operational_error_via_connection_alias_preserves_code() -> None:
-    """The alias must be the SAME class, not a subclass, so custom
-    ``__init__(message, code=...)`` continues to work.
-    """
+    """The alias must be the SAME class, not a subclass, so custom code= kwarg works."""
     with pytest.raises(Connection.OperationalError) as excinfo:
         raise Connection.OperationalError("explode", code=42)
     assert excinfo.value.code == 42
@@ -64,7 +52,7 @@ def test_operational_error_via_connection_alias_preserves_code() -> None:
 
 
 def test_catch_via_instance_attribute() -> None:
-    """PEP 249's wording covers both ``Class.Error`` and ``instance.Error``."""
+    """PEP 249 covers both Class.Error and instance.Error."""
     conn = Connection("localhost:9001")
     try:
         raise dqlitedbapi.DataError("boom")

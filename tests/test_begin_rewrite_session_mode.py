@@ -1,21 +1,5 @@
-"""Unit tests for the ``BEGIN`` → ``BEGIN IMMEDIATE`` rewrite at the
-dbapi cursor layer.
-
-dqlite-server's VFS recommends ``BEGIN IMMEDIATE`` for write-bearing
-transactions so the writer-lock is held from BEGIN onwards,
-eliminating the ``SQLITE_BUSY_SNAPSHOT (517)`` race for the
-SELECT-then-INSERT pattern. The rewrite fires only when the
-connection's ``session_mode`` is ``"immediate"`` (the default).
-Other modes (``"deferred"``, ``"exclusive"``, ``"read_only"``) leave
-bare ``BEGIN`` untouched. Configure via
-``connect(..., session_mode="...")`` or ``DQLITE_SESSION_MODE`` env
-var.
-
-These tests cover only the SQL-string rewriter + env-var default
-resolution + value validation. The end-to-end "8 concurrent writers
-all commit" integration test lives in
-``sqlalchemy-dqlite/tests/integration/``.
-"""
+"""Unit tests for the ``BEGIN`` → ``BEGIN IMMEDIATE`` rewrite (fires only when
+session_mode is "immediate") that avoids the SQLITE_BUSY_SNAPSHOT (517) race."""
 
 from __future__ import annotations
 
@@ -29,8 +13,7 @@ from dqlitedbapi._pragma_intercept import (
 
 
 class TestRewrittenForms:
-    """Plain BEGIN family — rewritten to ``BEGIN IMMEDIATE`` when
-    session_mode is ``"immediate"``."""
+    """Plain BEGIN family, rewritten to BEGIN IMMEDIATE when session_mode is immediate."""
 
     @pytest.mark.parametrize(
         "stmt",
@@ -50,14 +33,8 @@ class TestRewrittenForms:
 
 
 class TestPassThroughForms:
-    """Explicit-intent and non-BEGIN statements pass through unchanged
-    (the rewriter returns ``None`` so the caller leaves the SQL as-is).
-
-    ``BEGIN DEFERRED`` is on this list: it is the explicit-intent
-    signal emitted by the SA dialect when the user sets
-    ``execution_options(dqlite_session_mode="deferred")``. Plain bare
-    ``BEGIN`` is the only ambiguous shape the rewrite touches.
-    """
+    """Explicit-intent and non-BEGIN statements pass through (rewriter returns None).
+    Plain bare BEGIN is the only ambiguous shape the rewrite touches."""
 
     @pytest.mark.parametrize(
         "stmt",
@@ -84,15 +61,13 @@ class TestPassThroughForms:
         assert try_rewrite_begin_to_immediate(stmt, session_mode="immediate") is None
 
     def test_multi_statement_not_rewritten(self) -> None:
-        # A trailing keyword after the BEGIN means this is not a bare
-        # BEGIN — leave it to the wire's multi-statement classifier.
+        # Trailing keyword after BEGIN: not bare, left to the wire's classifier.
         assert try_rewrite_begin_to_immediate("BEGIN; SELECT 1", session_mode="immediate") is None
 
 
 class TestNonImmediateModes:
-    """Modes other than ``"immediate"`` skip the rewrite — bare
-    ``BEGIN`` passes through unchanged so the SQLite engine treats it
-    as DEFERRED."""
+    """Non-immediate modes skip the rewrite; bare BEGIN passes through (SQLite treats
+    it as DEFERRED)."""
 
     @pytest.mark.parametrize("mode", ["deferred", "exclusive", "read_only"])
     def test_non_immediate_modes_pass_bare_begin_through(self, mode: str) -> None:
@@ -104,8 +79,7 @@ class TestNonImmediateModes:
 
 
 class TestNonStringInput:
-    """Defensive: a non-str ``statement`` returns None rather than
-    raising."""
+    """Defensive: a non-str statement returns None rather than raising."""
 
     def test_bytes_input(self) -> None:
         assert (
@@ -121,8 +95,7 @@ class TestNonStringInput:
 
 
 class TestEnvVarDefault:
-    """``DQLITE_SESSION_MODE`` env-var controls the default for
-    callers who don't pass an explicit ``session_mode`` kwarg."""
+    """DQLITE_SESSION_MODE env-var sets the default when no session_mode kwarg given."""
 
     @pytest.mark.parametrize(
         ("env_value", "expected"),
@@ -169,17 +142,13 @@ class TestEnvVarDefault:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("DQLITE_SESSION_MODE", raising=False)
-        # Falls back to whatever the import-time read decided. In a
-        # clean test env that's "immediate"; assert the result is
-        # at least a recognised mode.
+        # Falls back to the import-time read; assert it's at least a recognised mode.
         result = session_mode_default_from_env()
         assert result in {"immediate", "deferred", "exclusive", "read_only"}
 
 
 class TestValidateSessionMode:
-    """``validate_session_mode`` is the boundary validator used by
-    ``Connection.__init__`` and the SA characteristic to coerce
-    user-supplied values to the canonical lowercase form."""
+    """validate_session_mode coerces user-supplied values to canonical lowercase."""
 
     @pytest.mark.parametrize(
         ("raw", "expected"),

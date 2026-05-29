@@ -1,9 +1,4 @@
-"""max_total_rows plumbing from Connection → DqliteConnection → Protocol.
-
-max_total_rows is wired through every layer. This test verifies that
-a custom cap set on the DBAPI Connection actually propagates down to
-the protocol, so users can't silently end up with the default.
-"""
+"""A custom max_total_rows on the dbapi Connection propagates down to the protocol."""
 
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.connection import Connection
@@ -40,8 +35,7 @@ class TestMaxTotalRowsPropagation:
         assert conn._max_total_rows == 7
 
     def test_propagates_to_underlying_dqlite_connection(self) -> None:
-        """After the first use, the inner DqliteConnection should see the
-        same cap as the dbapi-level Connection."""
+        """The inner DqliteConnection is constructed with the dbapi-level cap."""
         from unittest.mock import AsyncMock, patch
 
         with (
@@ -63,7 +57,6 @@ class TestMaxTotalRowsPropagation:
                     await conn._get_async_connection()
 
                 conn._run_sync(warm_up())
-                # DqliteConnection was constructed with max_total_rows=123
                 _args, kwargs = MockConn.call_args
                 assert kwargs["max_total_rows"] == 123
             finally:

@@ -1,25 +1,8 @@
-"""Pin: sync ``Cursor._next_row_unlocked`` snapshots ``_rows`` /
-``_row_index`` / ``_row_factory`` to locals before the bounds check
-so a foreign-thread ``force_close_transport`` cascade that rewrites
-``self._rows = []`` between the bounds check and the indexed read
-cannot turn the indexed read into a bare ``IndexError`` that escapes
-the ``dbapi.Error`` hierarchy.
-
-The local-snapshot is preferable to a try/except wrap: it makes the
-read atomic w.r.t. the cascade (the snapshot is consistent; either
-we deliver the pre-cascade row or we observe the post-cascade empty
-list). The next ``fetchone`` after a delivered stale row observes
-``_closed`` via the prelude check and raises ``InterfaceError``
-cleanly.
-
-We pin two surfaces:
-
-1. A direct AST-level pin that ``_next_row_unlocked`` reads
-   ``self._rows`` exactly once (a regression to two reads brings
-   back the TOCTOU race).
-2. A behavioural pin that simulates the cascade racing the bounds
-   check via a ``Barrier``-synchronised sibling thread.
-"""
+"""_next_row_unlocked snapshots _rows/_row_index/_row_factory to locals
+before the bounds check so a foreign-thread force_close cascade rewriting
+self._rows = [] between check and indexed read cannot leak a bare
+IndexError. Pinned both via an AST check (reads self._rows exactly once)
+and a Barrier-synchronised race."""
 
 from __future__ import annotations
 
@@ -51,10 +34,8 @@ def _make_cursor(rows: list[tuple[Any, ...]]) -> Cursor:
 
 
 def test_next_row_unlocked_snapshots_self_rows_to_local() -> None:
-    """AST-level pin: ``_next_row_unlocked`` must read ``self._rows``
-    exactly once, never twice (the second read is the TOCTOU race
-    partner with ``_cascade_cursors``' ``self._rows = []`` write).
-    """
+    """_next_row_unlocked must read self._rows exactly once; a second read
+    is the TOCTOU partner of the cascade's self._rows = [] write."""
     src = textwrap.dedent(inspect.getsource(Cursor._next_row_unlocked))
     tree = ast.parse(src)
     self_rows_reads = 0
@@ -75,30 +56,16 @@ def test_next_row_unlocked_snapshots_self_rows_to_local() -> None:
 
 
 def test_next_row_unlocked_race_with_cascade_empty_rows() -> None:
-    """Behavioural pin: simulate the cascade writing
-    ``self._rows = []`` between the bounds check and the indexed read.
-
-    Before the fix: bare ``IndexError`` escapes.
-    After the fix: snapshot delivers the row cleanly (the cascade's
-    effect is observed on the NEXT call via ``_check_closed``).
-    """
+    """Simulate the cascade writing self._rows = [] between the bounds
+    check and the indexed read; the snapshot must keep the read clean."""
     cur = _make_cursor([(1,), (2,), (3,)])
 
-    # Drive the cursor manually through the path: snapshot happens
-    # first, then if the cascade fires the snapshot still points at
-    # the pre-cascade list. After delivering the row the test then
-    # simulates the cascade-completed state by reading the next row
-    # AFTER the cascade swap.
     barrier = threading.Barrier(2)
     errors: list[BaseException] = []
     delivered: list[Any] = []
 
     def reader() -> None:
         try:
-            # Sync with the canceller before we enter the helper; the
-            # helper runs without yielding the GIL between snapshot
-            # and indexed read, so the snapshot semantics are what
-            # protects us against the cascade landing first.
             barrier.wait()
             row = cur._next_row_unlocked()
             delivered.append(row)
@@ -107,9 +74,7 @@ def test_next_row_unlocked_race_with_cascade_empty_rows() -> None:
 
     def canceller() -> None:
         barrier.wait()
-        # Cascade-equivalent: scrub rows + index from the sibling
-        # thread. Even with a sub-microsecond reader head start, the
-        # snapshot guarantees the indexed read does not race.
+        # Cascade-equivalent: scrub rows + index from the sibling thread.
         cur._rows = []
         cur._row_index = 0
 
@@ -120,8 +85,7 @@ def test_next_row_unlocked_race_with_cascade_empty_rows() -> None:
     t_read.join()
     t_cancel.join()
 
-    # The reader either delivered the first row (snapshot won) or
-    # observed the post-cascade empty list and returned None. Both
-    # are clean outcomes; neither raises IndexError.
+    # Reader delivered the first row (snapshot won) or saw the empty list
+    # and returned None — both clean, neither raises IndexError.
     assert not errors, f"reader raised: {errors!r}"
     assert delivered == [(1,)] or delivered == [None]

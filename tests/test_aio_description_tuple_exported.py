@@ -1,11 +1,4 @@
-"""Pin: ``DescriptionTuple`` is exported from ``dqlitedbapi.aio``,
-matching the sync ``dqlitedbapi`` surface.
-
-The async surface re-exports the type aliases the sync surface
-exports (Date / Time / Binary / STRING / etc.). ``DescriptionTuple``
-was promoted to public earlier but the async-side ``__all__`` was
-missed.
-"""
+"""DescriptionTuple is exported from dqlitedbapi.aio, matching the sync surface."""
 
 from __future__ import annotations
 

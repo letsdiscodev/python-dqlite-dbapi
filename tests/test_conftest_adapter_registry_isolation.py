@@ -1,10 +1,7 @@
-"""Pin: the autouse ``_restore_adapters`` fixture in conftest snapshots
-and restores ``_ADAPTERS`` between tests.
+"""Pin: the autouse ``_restore_adapters`` fixture restores ``_ADAPTERS`` between tests.
 
-A test that registers a custom adapter and then aborts mid-body must
-not leak state into subsequent tests. Two cooperating tests verify
-this: the first registers a probe adapter; the second observes that
-the registry is clean again.
+Two cooperating tests: the first registers a probe adapter, the second asserts the
+registry is clean again.
 """
 
 from __future__ import annotations
@@ -21,7 +18,7 @@ def _adapter(_: _Probe) -> str:
 
 
 def test_step_one_register_then_leak_simulates_test_failure() -> None:
-    """Step 1: register an adapter. The conftest fixture must restore."""
+    """Step 1: register an adapter for the fixture to restore."""
     register_adapter(_Probe, _adapter)
     assert _Probe in _ADAPTERS
 

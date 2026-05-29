@@ -1,14 +1,4 @@
-"""Pin: ``setinputsizes`` accepts any ``collections.abc.Sequence``.
-
-PEP 249 §6.2 specifies ``sizes`` as "a sequence". Stdlib
-``sqlite3.Cursor.setinputsizes`` is documented as a no-op and accepts
-any value. The dqlite cursor used to validate against the narrow
-``(list, tuple)`` tuple, rejecting ``deque`` / ``range`` / custom
-``Sequence`` subclasses that work on stdlib + psycopg2. Loosen to the
-structural ``Sequence`` ABC; keep the ``str`` / ``bytes`` rejection so
-a single-string "passed for N sizes" caller bug still surfaces as
-``ProgrammingError``.
-"""
+"""``setinputsizes`` accepts any Sequence ABC; str/bytes stay rejected as caller bugs."""
 
 from __future__ import annotations
 
@@ -30,7 +20,7 @@ def cursor() -> Iterator[dqlitedbapi.Cursor]:
 
 
 def test_list_accepted(cursor: dqlitedbapi.Cursor) -> None:
-    cursor.setinputsizes([10, None])  # no raise
+    cursor.setinputsizes([10, None])
 
 
 def test_tuple_accepted(cursor: dqlitedbapi.Cursor) -> None:
@@ -61,11 +51,7 @@ def test_bytearray_rejected(cursor: dqlitedbapi.Cursor) -> None:
 
 
 def test_memoryview_rejected(cursor: dqlitedbapi.Cursor) -> None:
-    """``memoryview`` slips past a ``(str, bytes, bytearray)`` rejection
-    triplet because it satisfies ``collections.abc.Sequence`` — explicit
-    rejection keeps the validator family aligned with the sibling
-    ``_reject_non_sequence_params`` quartet (str/bytes/bytearray/memoryview).
-    """
+    """memoryview satisfies Sequence so it needs explicit rejection alongside str/bytes."""
     with pytest.raises(ProgrammingError, match="size hints"):
         cursor.setinputsizes(memoryview(b"ab"))
 

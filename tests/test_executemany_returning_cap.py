@@ -1,13 +1,7 @@
 """``_ExecuteManyAccumulator`` enforces ``max_total_rows`` cumulatively.
 
-Each ``executemany`` iteration is a distinct round-trip, so the wire-
-layer ``max_total_rows`` governor caps each iteration independently —
-the accumulator's running total is not otherwise bounded. A 10M-
-parameter ``INSERT ... RETURNING id`` would accumulate ~560 MB of
-Python tuples without the cap.
-
-Thread the connection's ``_max_total_rows`` into the accumulator and
-raise ``DataError`` when the cumulative total exceeds it.
+The per-iteration wire governor bounds each round-trip but not the accumulator's
+running total, so a huge ``INSERT ... RETURNING`` could balloon memory without this cap.
 """
 
 from __future__ import annotations
@@ -21,7 +15,7 @@ from dqlitedbapi.exceptions import DataError
 
 
 class _FakeCursor:
-    """Shape-compatible stub matching ``_ExecuteManyCursor`` protocol."""
+    """Stub matching the ``_ExecuteManyCursor`` protocol."""
 
     def __init__(self, rows: list[tuple[Any, ...]], description: Any) -> None:
         self._rowcount = len(rows)
@@ -38,9 +32,8 @@ class TestAccumulatorCap:
     def test_cap_raises_dataerror_on_breach(self) -> None:
         acc = _ExecuteManyAccumulator(max_rows=5)
         desc = _description()
-        # First push: 3 rows, still under cap.
         acc.push(_FakeCursor([(i,) for i in range(3)], desc))  # type: ignore[arg-type]
-        # Second push: 3 more rows → cumulative 6, trips cap.
+        # Cumulative 6 trips the cap of 5.
         with pytest.raises(DataError, match="max_total_rows"):
             acc.push(_FakeCursor([(i,) for i in range(3)], desc))  # type: ignore[arg-type]
 
@@ -59,11 +52,10 @@ class TestAccumulatorCap:
         assert len(acc.rows) == 10_000
 
     def test_cap_ignores_pure_dml_rows(self) -> None:
-        # A DML push with ``_description is None`` (plain INSERT/UPDATE
-        # without RETURNING) has no rows — the accumulator should not
-        # trip the cap on ``total_affected`` alone.
+        # Plain DML (``_description is None``) has no rows, so the cap never trips
+        # on ``total_affected`` alone.
         acc = _ExecuteManyAccumulator(max_rows=5)
         for _ in range(100):
             acc.push(_FakeCursor([], None))  # type: ignore[arg-type]
-        assert acc.total_affected == 0  # rowcount is 0 on empty push
+        assert acc.total_affected == 0
         assert len(acc.rows) == 0

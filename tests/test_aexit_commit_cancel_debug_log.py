@@ -1,17 +1,5 @@
-"""Pin: ``AsyncConnection.__aexit__`` clean-exit commit emits a DEBUG
-breadcrumb when interrupted by ``CancelledError`` /
-``KeyboardInterrupt`` / ``SystemExit``.
-
-Symmetric to ``test_connection_exit_commit_ki_breadcrumb`` for the
-sync sibling. The breadcrumb is the only forensic trail an operator
-triaging a "dangling server-side transaction after cancel" symptom
-has — without the log line, the partial-commit-on-cancel hazard is
-undetectable post-hoc.
-
-Pinned so a future cleanup that drops the try/except wrap (arguing
-"commit() already raises, no point catching here") lights up as a
-test failure.
-"""
+"""__aexit__ clean-exit commit emits a DEBUG breadcrumb when interrupted by cancel/KI/SystemExit
+— the only forensic trail for a dangling-server-side-transaction-after-cancel symptom."""
 
 from __future__ import annotations
 
@@ -60,10 +48,6 @@ def _connection_with_commit(commit_side_effect: BaseException) -> AsyncConnectio
 def test_aexit_clean_commit_cancel_logs_breadcrumb_and_re_raises(
     exc_cls: type[BaseException], caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A cancel / signal landing inside the implicit commit at
-    ``__aexit__`` must produce a DEBUG breadcrumb pointing at dqlite
-    AND re-raise the original exception class faithfully.
-    """
     conn = _connection_with_commit(exc_cls("simulated"))
 
     async def run() -> None:
@@ -85,8 +69,6 @@ def test_aexit_clean_commit_cancel_logs_breadcrumb_and_re_raises(
         f"{exc_cls.__name__}; got: "
         f"{[r.getMessage() for r in caplog.records if r.levelname == 'DEBUG']}"
     )
-    # exc_info carries the propagating cancel/signal so the audit trail
-    # shows where the abort came from.
     assert breadcrumbs[0].exc_info is not None
     assert isinstance(breadcrumbs[0].exc_info[1], exc_cls)
 
@@ -94,10 +76,7 @@ def test_aexit_clean_commit_cancel_logs_breadcrumb_and_re_raises(
 def test_aexit_clean_commit_normal_exception_does_not_log_breadcrumb(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Negative pin: an ordinary exception during commit (e.g.
-    ``OperationalError``) does NOT trigger the cancel/signal breadcrumb;
-    the except arm is narrowly scoped to cancel + KI + SystemExit.
-    """
+    """An ordinary exception during commit must NOT trigger the cancel/signal breadcrumb."""
     conn = _connection_with_commit(OperationalError("server-side"))
 
     async def run() -> None:

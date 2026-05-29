@@ -1,18 +1,6 @@
-"""``Connection.__init__`` and ``AsyncConnection.__init__`` must wrap
-the client-layer ``_validate_positive_int_or_none``'s
-``TypeError``/``ValueError`` into PEP 249 ``ProgrammingError``.
-
-The client-layer validator deliberately raises Python-convention
-exceptions (client consumers don't sit behind the PEP 249 boundary).
-The dbapi entry points are the PEP 249 boundary: every error
-originating from the driver must be a subclass of
-``dqlitedbapi.Error`` (PEP 249 §7). The sibling validator
-``_validate_timeout`` already wraps to ``ProgrammingError``; the
-parallel ``_client_parse_address`` ``ValueError`` is wrapped to
-``InterfaceError``. ``_validate_positive_int_or_none`` follows the
-same wrap discipline for ``max_total_rows`` /
-``max_continuation_frames``.
-"""
+"""Both ``Connection.__init__``s wrap the client-layer validator's
+``TypeError``/``ValueError`` into PEP 249 ``ProgrammingError`` (the dbapi
+boundary requires every driver error to subclass ``dqlitedbapi.Error``)."""
 
 from __future__ import annotations
 
@@ -45,13 +33,12 @@ class TestSyncConnectionWrapsPositiveIntValidator:
             Connection("127.0.0.1:9001", max_continuation_frames=[])  # type: ignore[arg-type]
 
     def test_valid_positive_int_accepted(self) -> None:
-        """Sanity: well-formed positive ints still construct."""
         c = Connection("127.0.0.1:9001", max_total_rows=100, max_continuation_frames=50)
         assert c._max_total_rows == 100
         assert c._max_continuation_frames == 50
 
     def test_none_accepted_for_both(self) -> None:
-        """``None`` means "no cap" — must remain accepted."""
+        """``None`` means "no cap"."""
         c = Connection("127.0.0.1:9001", max_total_rows=None, max_continuation_frames=None)
         assert c._max_total_rows is None
         assert c._max_continuation_frames is None
@@ -81,10 +68,7 @@ class TestAsyncConnectionWrapsPositiveIntValidator:
 
 
 class TestExceptionChaining:
-    """``ProgrammingError`` must preserve the original
-    ``TypeError`` / ``ValueError`` via ``__cause__`` so callers
-    debugging from the dbapi error can still see the underlying
-    Python-convention message."""
+    """``ProgrammingError`` preserves the original error via ``__cause__``."""
 
     def test_sync_chains_value_error(self) -> None:
         try:

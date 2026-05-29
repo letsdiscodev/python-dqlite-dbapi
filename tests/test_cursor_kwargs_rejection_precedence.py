@@ -1,18 +1,5 @@
-"""Pin: ``Connection.cursor(**unknown_kwargs)`` runs the affinity check
-BEFORE the unknown-kwarg rejection so cross-thread / cross-loop /
-post-fork callers see the more-salient diagnostic.
-
-Before the fix, the order was ``closed → kwargs → thread`` (sync) and
-``closed → kwargs → pid → loop`` (async). A foreign-thread caller
-passing ``factory=...`` saw ``NotSupportedError("...unknown kwarg
-...")`` while the underlying thread-affinity misuse was hidden until
-the next no-kwarg call.
-
-The ``_stub_unsupported`` helper deliberately keeps the opposite
-discipline (it has no thread check) because rejection there is
-universal regardless of state — the asymmetry is intentional and
-documented at the helper itself.
-"""
+"""``Connection.cursor(**unknown)`` runs the affinity check before unknown-kwarg
+rejection, so cross-thread/loop/fork callers see the more-salient diagnostic."""
 
 from __future__ import annotations
 
@@ -29,8 +16,7 @@ from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
 
 def test_sync_cursor_factory_kwarg_from_foreign_thread_raises_thread_error_first() -> None:
-    """Cross-thread misuse must surface as ``ProgrammingError`` (thread-
-    affinity), not ``NotSupportedError`` (unknown-kwarg)."""
+    """Cross-thread misuse surfaces as ``ProgrammingError``, not ``NotSupportedError``."""
     conn = Connection.__new__(Connection)
     conn._closed = False
     conn._creator_pid = _client_conn_mod.get_current_pid()
@@ -59,8 +45,7 @@ def test_sync_cursor_factory_kwarg_from_foreign_thread_raises_thread_error_first
 def test_async_cursor_factory_kwarg_after_fork_raises_interface_error_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Forked-child misuse on async surface must surface as
-    ``InterfaceError("after fork")``, not ``NotSupportedError``."""
+    """Forked-child misuse surfaces as ``InterfaceError``, not ``NotSupportedError``."""
     aconn = AsyncConnection.__new__(AsyncConnection)
     aconn._closed = False
     aconn._creator_pid = _client_conn_mod.get_current_pid()

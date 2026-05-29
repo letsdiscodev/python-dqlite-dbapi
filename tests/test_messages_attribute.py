@@ -10,7 +10,6 @@ def test_connection_messages_attribute() -> None:
     conn = Connection("localhost:9001")
     assert isinstance(conn.messages, list)
     assert conn.messages == []
-    # Must be mutable.
     conn.messages.append((RuntimeError, RuntimeError("x")))
 
 

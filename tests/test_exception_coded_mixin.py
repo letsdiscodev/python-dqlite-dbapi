@@ -1,22 +1,8 @@
-"""The three coded-error classes share a private ``_DatabaseErrorWithCode``
-base.
+"""Pin the private ``_DatabaseErrorWithCode`` base shared by the three coded-error classes.
 
-This intermediate base holds the ``__init__(message, code=...)`` and
-``__repr__`` that surface the SQLite extended error code. It is a
-deliberate implementation detail — **not** part of the public PEP 249
-hierarchy — so these tests import it via its private name to pin the
-contract that a future refactor cannot silently promote/demote classes
-into or out of the coded-subfamily.
-
-Also pins:
-- PEP 249 hierarchy preservation (OperationalError is still a
-  DatabaseError is still an Error is still an Exception — the
-  intermediate class sits between DatabaseError and the concrete).
-- Pickle round-trip preservation of ``.code`` — guards against a
-  future refactor that moves ``code`` into ``args`` (which would
-  break every caller that stores these exceptions in
-  Sentry-style queues).
-- The mixin is **not** re-exported via ``__all__``.
+It is an implementation detail (not public PEP 249 surface): a refactor must not silently
+move classes into/out of the coded subfamily, break the hierarchy, or move ``code`` into
+``args`` (which would lose ``.code`` on pickle round-trip).
 """
 
 from __future__ import annotations
@@ -41,8 +27,7 @@ from dqlitedbapi.exceptions import (
 
 
 class TestCodedFamilyMembership:
-    """The three coded-error classes inherit from ``_DatabaseErrorWithCode``;
-    the other PEP 249 DatabaseError subclasses do not."""
+    """Coded-error classes inherit ``_DatabaseErrorWithCode``; other subclasses do not."""
 
     @pytest.mark.parametrize(
         "cls",
@@ -64,10 +49,8 @@ class TestCodedFamilyMembership:
 
 
 class TestPEP249HierarchyPreserved:
-    """Inserting ``_DatabaseErrorWithCode`` between ``DatabaseError`` and
-    the three concrete classes must not break the PEP 249 ``Error ->
-    DatabaseError -> <concrete>`` chain that users catch on.
-    """
+    """The intermediate base must not break the PEP 249 ``Error -> DatabaseError ->
+    <concrete>`` chain that users catch on."""
 
     @pytest.mark.parametrize("cls", [OperationalError, IntegrityError, InternalError])
     def test_coded_class_is_database_error(self, cls: type[Exception]) -> None:
@@ -81,19 +64,14 @@ class TestPEP249HierarchyPreserved:
 
 
 class TestNotPubliclyExported:
-    """``_DatabaseErrorWithCode`` is private — not in ``__all__``, and not
-    part of the PEP 249 surface."""
+    """``_DatabaseErrorWithCode`` is private: not in ``__all__``."""
 
     def test_private_class_not_in_module_all(self) -> None:
         assert "_DatabaseErrorWithCode" not in _exceptions_module.__all__
 
 
 class TestPickleRoundTrip:
-    """Default ``__reduce_ex__`` preserves ``.code`` because ``__init__``
-    takes ``(message, code=...)`` and ``args == (message,)``. Pinning
-    this so a future refactor that moves ``code`` into ``args`` is a
-    visible contract change rather than silent breakage.
-    """
+    """Default ``__reduce_ex__`` preserves ``.code`` because ``args == (message,)``."""
 
     @pytest.mark.parametrize("cls", [OperationalError, IntegrityError, InternalError])
     def test_pickle_preserves_code(self, cls: type[_DatabaseErrorWithCode]) -> None:

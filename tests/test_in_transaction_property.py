@@ -1,8 +1,5 @@
-"""``Connection.in_transaction`` / ``AsyncConnection.in_transaction``
-mirror stdlib ``sqlite3.Connection.in_transaction``. Closed or
-never-used connections return False; the live state tracks the
-underlying client-layer ``DqliteConnection.in_transaction``.
-"""
+"""in_transaction: closed/never-used connections return False; live state
+tracks the client-layer DqliteConnection.in_transaction."""
 
 from __future__ import annotations
 
@@ -18,7 +15,6 @@ def test_sync_never_used_returns_false() -> None:
 def test_sync_closed_returns_false() -> None:
     conn = Connection("127.0.0.1:9001")
     conn.close()
-    # Closed Connection may still inspect the property; return False.
     assert conn.in_transaction is False
 
 

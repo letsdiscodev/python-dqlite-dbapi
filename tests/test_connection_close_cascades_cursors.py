@@ -1,10 +1,5 @@
-"""``Connection.close()`` cascades to outstanding cursors.
-
-stdlib ``sqlite3.Connection.close()`` marks every cursor spawned from
-the connection as closed so subsequent fetches on those cursors raise
-rather than silently answering from stale in-memory rows. Track
-outstanding cursors via ``weakref.WeakSet`` and cascade on close.
-"""
+"""``Connection.close()`` cascades to outstanding cursors (tracked via WeakSet)
+so later fetches raise instead of returning stale in-memory rows."""
 
 from __future__ import annotations
 
@@ -21,11 +16,9 @@ def _make_conn() -> Connection:
 
 def test_connection_close_cascades_to_cursor_state() -> None:
     conn = _make_conn()
-    # Keep construction pure unit — no real cluster dial.
     with patch.object(Connection, "connect"):
         cur1 = conn.cursor()
         cur2 = conn.cursor()
-    # Pre-set some state so we can verify the scrub.
     cur1._rows = [(1,)]
     cur1._description = [("v", 1, None, None, None, None, None)]  # type: ignore[assignment]
     cur1._rowcount = 1
@@ -48,7 +41,6 @@ def test_gc_of_cursor_does_not_keep_connection_alive() -> None:
     cur_id = id(cur)
     del cur
     gc.collect()
-    # WeakSet should have dropped the reference.
     assert not any(id(c) == cur_id for c in conn._cursors)
     conn.close()
 
@@ -59,7 +51,6 @@ def test_async_connection_close_cascades_to_cursor_state() -> None:
 
     async def _run() -> None:
         conn = AsyncConnection("localhost:19001")
-        # Don't actually connect — keep this a pure state-machine test.
         cur1 = conn.cursor()
         cur2 = conn.cursor()
         cur1._rows = [(1,)]

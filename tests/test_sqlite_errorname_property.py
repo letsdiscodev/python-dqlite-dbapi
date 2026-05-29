@@ -1,7 +1,4 @@
-"""Pin: ``Error.sqlite_errorname`` mirrors stdlib
-``sqlite3.Error.sqlite_errorname`` (Python 3.11+) — companion
-to the already-shipped ``sqlite_errorcode``.
-"""
+"""``Error.sqlite_errorname`` mirrors stdlib sqlite3 (Python 3.11+)."""
 
 from __future__ import annotations
 
@@ -42,9 +39,7 @@ def test_sqlite_errorname_returns_none_for_none_code() -> None:
 
 
 def test_sqlite_errorname_returns_none_for_unknown_code() -> None:
-    """dqlite-namespace codes (≥1000) have no upstream symbolic
-    name, so the lookup returns None — caller-side code that
-    branches on the name still works."""
+    """dqlite-namespace codes (>=1000) have no upstream symbolic name; lookup returns None."""
     err = DatabaseError("dqlite-specific", code=1001)  # DQLITE_PROTO
     assert err.sqlite_errorname is None
 
@@ -57,26 +52,17 @@ def test_sqlite_errorname_returns_none_for_unknown_code() -> None:
     ],
 )
 def test_sqlite_errorname_none_for_namespace_codes_colliding_with_dbconfig(code: int) -> None:
-    """dqlite-namespace error codes must return None even when their
-    integer value coincides with a stdlib ``SQLITE_DBCONFIG_*`` config
-    opcode (1002-1017). The accessor must not report a config-opcode
-    name for a dqlite error code."""
+    """dqlite codes return None even when colliding with stdlib SQLITE_DBCONFIG_* opcodes."""
     assert DatabaseError("namespace", code=code).sqlite_errorname is None
 
 
 @pytest.mark.parametrize("code", [10250, 10506, 8202, 8458])
 def test_sqlite_errorname_none_for_leader_change_codes(code: int) -> None:
-    """All leader-change codes — modern (10250/10506) and legacy
-    (8202/8458) — return None uniformly. The legacy values collide
-    with stdlib extended IOERR codes (SQLITE_IOERR_DATA /
-    SQLITE_IOERR_CORRUPTFS); the accessor must not surface those
-    misleading names for a leader-change error."""
+    """Leader-change codes return None even though legacy 8202/8458 collide with IOERR codes."""
     assert DatabaseError("leader", code=code).sqlite_errorname is None
 
 
 def test_module_exports_errorname_alongside_errorcode() -> None:
-    """The two stdlib accessors ship together on the code-bearing
-    subclasses. Pin both presences."""
     assert hasattr(dqlitedbapi.DatabaseError, "sqlite_errorcode")
     assert hasattr(dqlitedbapi.DatabaseError, "sqlite_errorname")
     assert hasattr(dqlitedbapi.InterfaceError, "sqlite_errorcode")
@@ -105,16 +91,8 @@ def test_module_exports_errorname_alongside_errorcode() -> None:
     ],
 )
 def test_primary_error_codes_return_canonical_error_names(code: int, expected_name: str) -> None:
-    """Primary SQLite error codes (0-28) must return the canonical
-    error symbol — NOT an authorizer / opcode / limit constant
-    that happens to share the numeric value.
-
-    stdlib ``sqlite3`` exposes constants like ``SQLITE_CREATE_INDEX
-    = 1`` (authorizer) alongside ``SQLITE_ERROR = 1`` (error code).
-    A naive ``dir()`` walk produces the wrong name for ~half the
-    primary codes when the authorizer / opcode / limit constant
-    sorts alphabetically before the error symbol.
-    """
+    """Primary codes return the error symbol, not an authorizer/opcode constant
+    sharing the value (e.g. SQLITE_CREATE_INDEX == SQLITE_ERROR == 1)."""
     err = DatabaseError("test", code=code)
     assert err.sqlite_errorname == expected_name, (
         f"code {code} should yield {expected_name!r}, got {err.sqlite_errorname!r}"

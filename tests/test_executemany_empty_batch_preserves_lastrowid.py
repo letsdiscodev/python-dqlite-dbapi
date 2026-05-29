@@ -1,14 +1,5 @@
-"""Pin: empty ``executemany`` preserves the pre-batch ``lastrowid``
-instead of clearing it to None — stdlib parity (stdlib
-``sqlite3.Cursor.executemany([])`` leaves ``lastrowid`` unchanged).
-
-Sibling `_ExecuteManyAccumulator.apply()` already special-cases the
-empty-batch path for rowcount (sets rowcount=0); the symmetric
-lastrowid treatment had been missed. The fix lives inside
-``Cursor._executemany_async`` (sync surface) and inside the async
-sibling's executemany body; both are exercised here directly so the
-test is independent of the daemon-loop bridge.
-"""
+"""Empty ``executemany`` preserves the pre-batch ``lastrowid`` (stdlib parity:
+``sqlite3.Cursor.executemany([])`` leaves it unchanged) rather than clearing to None."""
 
 from __future__ import annotations
 
@@ -44,18 +35,14 @@ def _make_sync_cursor(starting_lastrowid: int | None) -> object:
 
 
 def test_sync_empty_executemany_async_preserves_lastrowid() -> None:
-    """A prior single-row INSERT set lastrowid=5; an empty-batch
-    ``_executemany_async`` must leave it at 5 (not clear to None).
-    Drives the inner coroutine directly to verify the fix
-    (independent of the daemon-loop bridge)."""
+    """Prior INSERT set lastrowid=5; empty-batch executemany must leave it at 5."""
     cursor = _make_sync_cursor(starting_lastrowid=5)
     asyncio.run(cursor._executemany_async("INSERT INTO t VALUES (?)", []))  # type: ignore[attr-defined]
     assert cursor._lastrowid == 5  # type: ignore[attr-defined]
 
 
 def test_sync_empty_executemany_async_with_none_pre_batch_value() -> None:
-    """Boundary: pre-batch lastrowid=None (no prior INSERT) →
-    empty-batch executemany preserves the None."""
+    """Boundary: pre-batch lastrowid=None is preserved as None."""
     cursor = _make_sync_cursor(starting_lastrowid=None)
     asyncio.run(cursor._executemany_async("INSERT INTO t VALUES (?)", []))  # type: ignore[attr-defined]
     assert cursor._lastrowid is None  # type: ignore[attr-defined]

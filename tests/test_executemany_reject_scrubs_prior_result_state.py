@@ -1,25 +1,8 @@
-"""Pin: ``Cursor.executemany`` / ``AsyncCursor.executemany`` apply
-the stdlib `sqlite3` two-class rejection contract:
+"""executemany applies the two-class rejection contract.
 
-1. **Input-validation rejection** (``None`` seq, bad outer shape
-   like ``str`` / dict / set, non-str ``operation``, cross-task
-   slot mismatch) — PRESERVES prior cursor state. These are
-   caller-shape misuses fired before any SQL parser touches the
-   bytes. Stdlib `sqlite3` preserves prior state on the bare
-   TypeError path; we extend the same discipline to the project-
-   specific seq-shape and cross-task-slot rejects.
-
-2. **Prepare-stage rejection** (verb-reject like BEGIN/COMMIT,
-   row-returning like SELECT, PRAGMA) — SCRUBS prior state to
-   the "no result set" baseline. Stdlib `sqlite3` clears on
-   ``cur.execute("")`` (the closest analog), and the project-
-   specific verb/row-returning rejects follow the same pattern
-   because they're inspecting the SQL text.
-
-``_lastrowid`` is the documented exception: cursor-scoped,
-intentionally preserved across BOTH classes of rejection. The two
-contracts coexist because ``_reset_execute_state`` does not touch
-``_lastrowid`` or ``_executing_task``.
+Input-validation rejects (None seq, bad outer shape, non-str operation, cross-task slot)
+PRESERVE prior cursor state; prepare-stage rejects (verb/row-returning/PRAGMA) SCRUB it.
+``_lastrowid`` is preserved across both classes.
 """
 
 from __future__ import annotations
@@ -38,8 +21,7 @@ from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
 
 def _seed_prior_select_state(cur: Cursor | AsyncCursor) -> None:
-    """Mimic state that a prior ``SELECT ... fetchall()`` would have
-    left on the cursor."""
+    """Mimic state that a prior ``SELECT ... fetchall()`` would have left on the cursor."""
     cur._description = (
         ("a", None, None, None, None, None, None),
         ("b", None, None, None, None, None, None),
@@ -48,17 +30,14 @@ def _seed_prior_select_state(cur: Cursor | AsyncCursor) -> None:
     cur._rows = [(1, 2), (3, 4), (5, 6)]
     cur._row_index = 3
     cur._lastrowid = 4242
-    # Only the async cursor exposes ``_completed_iterations`` (mid-loop
-    # progress counter). Seed it to a non-zero value so that "scrubbed"
-    # is distinguishable from "never set" — ``_reset_execute_state``
-    # co-scrubs this sixth field per its docstring.
+    # Only the async cursor exposes ``_completed_iterations``; seed non-zero so
+    # "scrubbed" is distinguishable from "never set".
     if hasattr(cur, "_completed_iterations"):
         cur._completed_iterations = 17
 
 
 def _assert_scrubbed_to_baseline(cur: Cursor | AsyncCursor) -> None:
-    """Stdlib-parity baseline after a rejected executemany:
-    description / rowcount / rows / row_index reset; lastrowid preserved."""
+    """Baseline after a rejected executemany: result state reset, lastrowid preserved."""
     assert cur._description is None, (
         f"description must scrub to None after rejection; got {cur._description!r}"
     )
@@ -67,18 +46,10 @@ def _assert_scrubbed_to_baseline(cur: Cursor | AsyncCursor) -> None:
     )
     assert cur._rows == [], f"rows must scrub to []; got {cur._rows!r}"
     assert cur._row_index == 0, f"row_index must scrub to 0; got {cur._row_index}"
-    # Per the lastrowid lifecycle contract, rejection preserves it.
     assert cur._lastrowid == 4242, f"lastrowid must survive rejection; got {cur._lastrowid}"
-    # Outer-dispatch verb-reject / row-returning / PRAGMA paths run
-    # ``_reset_execute_state`` BEFORE the rejection raise, so the
-    # mid-loop progress counter is scrubbed to 0 — the inner
-    # snapshot/restore arm at ``_executemany_async`` is not reached
-    # on these paths. The classifier-raise path (empty SQL / multi-
-    # statement / NUL byte INSIDE ``_executemany_async``) is the
-    # only path where the snapshot fires, since that runs after the
-    # snapshot is taken; see
-    # ``test_executemany_classifier_resets_state_first.py`` for those
-    # pins.
+    # Outer-dispatch rejects run ``_reset_execute_state`` before raising, scrubbing the
+    # counter to 0. The inner snapshot/restore arm fires only on classifier-raise paths;
+    # see ``test_executemany_classifier_resets_state_first.py``.
     if hasattr(cur, "_completed_iterations"):
         assert cur._completed_iterations == 0, (
             f"_completed_iterations must scrub to 0 after outer-dispatch "
@@ -171,10 +142,7 @@ async def test_async_executemany_pragma_rejection_scrubs_prior_result_state() ->
     _assert_scrubbed_to_baseline(cursor)
 
 
-# Input-validation rejects (None seq, bad outer shape, non-str operation,
-# async cross-task slot): PRESERVE prior cursor state, matching stdlib's
-# behavior on the bare TypeError path. A caller's retry-with-coerce
-# idiom can then inspect ``cur.description`` to shape the retry.
+# Input-validation rejects PRESERVE prior cursor state (stdlib bare-TypeError parity).
 
 
 _PRIOR_DESC = (
@@ -245,9 +213,7 @@ async def test_async_executemany_non_str_operation_rejection_preserves_prior_res
 
 
 async def test_async_executemany_cross_task_slot_rejection_preserves_prior_result_state() -> None:
-    """The cross-task slot reject is a project-specific misuse-rejection
-    that follows the input-validation pattern: PRESERVE prior cursor
-    state, leave the foreign task's slot intact."""
+    """Cross-task slot reject preserves prior state and leaves the foreign task's slot intact."""
     cursor = _make_async_cursor()
     _seed_prior_select_state(cursor)
     other_task = asyncio.create_task(asyncio.sleep(60))

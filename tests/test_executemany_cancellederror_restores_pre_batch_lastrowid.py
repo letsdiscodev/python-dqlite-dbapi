@@ -1,20 +1,6 @@
-"""Pin: ``executemany``'s BaseException arm catches cancel-class
-raises (``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit``),
-not just `Exception`-class mid-batch failures, and preserves the
-in-batch ``_lastrowid`` consistently with ``_completed_iterations``.
-
-The existing pin `test_executemany_cancel_restores_pre_batch_lastrowid.py`
-drives the BaseException arm with a `RuntimeError`. A regression that
-narrowed the `except BaseException:` arm to `except Exception:` would
-silently lose the cancel-class handling because `CancelledError`
-inherits from `BaseException` (not `Exception`). To make that narrowing
-observable, the mock dirties the torn mid-batch state (`_rowcount`,
-`_rows`, `_description`) before raising `CancelledError`; the arm resets
-that state, so under the regression the un-reset values would survive
-the propagation and the asserts fail. The in-batch `_lastrowid` is
-preserved (count=1 + anchor=101) so the (count, anchor) pair stays
-consistent.
-"""
+"""``executemany``'s ``except BaseException`` arm must catch cancel-class raises
+(CancelledError etc.), not just Exception: narrowing it to ``except Exception``
+would let CancelledError skip the reset, leaving the dirtied mid-batch state visible."""
 
 from __future__ import annotations
 
@@ -48,11 +34,7 @@ async def test_sync_executemany_cancellederror_mid_batch_restores_pre_batch_last
     async def fake_execute_async(self_inner: Cursor, operation: str, params: object) -> None:
         iteration_state["calls"] += 1
         if iteration_state["calls"] >= 2:
-            # Dirty the torn mid-batch state the BaseException arm is
-            # responsible for resetting. If the arm were narrowed to
-            # ``except Exception`` it would NOT catch the BaseException-
-            # class CancelledError, so these dirty values would survive
-            # the propagation and the asserts below would fail.
+            # Dirty the torn mid-batch state the arm must reset.
             self_inner._rowcount = 99
             self_inner._rows = [("x",)]
             self_inner._description = (("c", None, None, None, None, None, None),)
@@ -65,10 +47,7 @@ async def test_sync_executemany_cancellederror_mid_batch_restores_pre_batch_last
     ):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-    # BaseException arm fires for CancelledError: the torn rowcount /
-    # rows / description are reset, while the in-batch lastrowid is
-    # preserved (count=1 + anchor=101) because a mid-batch failure keeps
-    # the (count, anchor) pair consistent.
+    # Arm fires for CancelledError: torn state reset, in-batch lastrowid preserved.
     assert cur._lastrowid == 101
     assert cur._rowcount == -1
     assert cur._rows == []
@@ -102,9 +81,7 @@ async def test_async_executemany_cancellederror_mid_batch_restores_pre_batch_las
     ) -> None:
         iteration_state["calls"] += 1
         if iteration_state["calls"] >= 2:
-            # Dirty the torn mid-batch state the BaseException arm must
-            # reset; a narrowing to ``except Exception`` would let the
-            # CancelledError skip the arm and leave these visible.
+            # Dirty the torn mid-batch state the arm must reset.
             self_inner._rowcount = 99
             self_inner._rows = [("x",)]
             self_inner._description = (("c", None, None, None, None, None, None),)

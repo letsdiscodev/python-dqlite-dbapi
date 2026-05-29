@@ -1,12 +1,5 @@
-"""Pin: sync ``Connection.execute(operation, parameters=None)``
-exists and matches the discipline of the async sibling.
-
-Stdlib ``sqlite3.Connection.execute`` is the parity target;
-the async ``AsyncAdaptedConnection.execute`` was added
-for the same reason — SA's ``connect``-event listener
-idiom calls ``dbapi_connection.execute("PRAGMA ...")`` and
-the missing method surfaces as a confusing ``AttributeError``.
-"""
+"""Sync ``Connection.execute`` exists (parity with sqlite3 / the async sibling): SA's
+connect-event idiom calls ``dbapi_connection.execute("PRAGMA ...")``."""
 
 from __future__ import annotations
 
@@ -27,9 +20,7 @@ def test_sync_connection_has_execute_method() -> None:
 
 
 def test_sync_connection_execute_returns_cursor_and_calls_through() -> None:
-    """Stub the cursor so we can assert execute() opens it,
-    forwards to ``cur.execute(...)``, and returns the cursor.
-    Mirrors the async-side parity test."""
+    """execute() opens a cursor, forwards to ``cur.execute(...)``, and returns the cursor."""
     conn = Connection("localhost:9001", timeout=1.0)
     fake_cur = MagicMock()
     conn.cursor = MagicMock(return_value=fake_cur)
@@ -52,10 +43,7 @@ def test_sync_connection_execute_passes_parameters() -> None:
 
 
 def test_sync_connection_execute_closes_cursor_on_synchronous_raise() -> None:
-    """Cleanup-on-raise discipline:
-    a synchronous failure of ``cur.execute(...)`` must close the
-    freshly-opened cursor before re-raising, so the caller's
-    exception path does not leak an unowned cursor."""
+    """A synchronous ``cur.execute(...)`` failure must close the cursor before re-raising."""
     conn = Connection("localhost:9001", timeout=1.0)
     fake_cur = MagicMock()
     fake_cur.execute.side_effect = RuntimeError("simulated execute failure")

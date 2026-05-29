@@ -1,15 +1,6 @@
-"""Pin: ``Connection.connect()`` precedence: thread-affinity check
-FIRST, then closed-state, then ``messages`` clear. Mirrors the
-async sibling's discipline at ``aio/connection.py:1576-1582``.
-
-Rationale: a foreign-thread caller must not mutate the owner
-thread's ``messages`` list before the diagnostic fires. PEP 249
-§6.1.1's "messages cleared by every standard method call" invariant
-scopes to the owning caller; cross-thread misuse hitting the clear
-first violates that.
-
-Replaces the prior "closed-first precedence" pin -- the project
-explicitly reversed the precedence to align with the async sibling.
+"""Pin: ``Connection.connect()`` precedence is thread-affinity, then closed-state,
+then the ``messages`` clear, so a foreign-thread caller can't mutate the owner's
+``messages`` list before the diagnostic fires. Mirrors the async sibling.
 """
 
 from __future__ import annotations
@@ -22,8 +13,7 @@ from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
 
 def test_connect_on_closed_from_creator_thread_raises_interface_error() -> None:
-    """On the creator thread, closed-state is the only failure mode
-    and surfaces as InterfaceError."""
+    """On the creator thread, closed-state surfaces as InterfaceError."""
     conn = Connection("localhost:9001", timeout=2.0)
     conn.close()
     try:
@@ -35,10 +25,8 @@ def test_connect_on_closed_from_creator_thread_raises_interface_error() -> None:
 
 
 def test_connect_from_other_thread_raises_thread_affinity_first() -> None:
-    """Foreign-thread caller surfaces the thread-affinity diagnostic
-    (ProgrammingError) -- even when the connection is closed. The
-    thread check runs BEFORE the closed-state check so a cross-thread
-    caller cannot mutate the owner thread's ``messages`` list."""
+    """Foreign-thread caller gets the thread-affinity ProgrammingError even when
+    closed: the thread check runs before the closed-state check."""
     conn = Connection("localhost:9001", timeout=2.0)
     conn.close()
 
@@ -62,8 +50,7 @@ def test_connect_from_other_thread_raises_thread_affinity_first() -> None:
 
 
 def test_connect_from_other_thread_on_open_conn_raises_thread_affinity() -> None:
-    """Negative pin: open conn from foreign thread still raises the
-    thread-affinity diagnostic (no regression)."""
+    """Open conn from a foreign thread still raises the thread-affinity diagnostic."""
     conn = Connection("localhost:9001", timeout=2.0)
     try:
         result_holder: list[Any] = [None]

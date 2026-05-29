@@ -1,20 +1,4 @@
-"""``lastrowid`` is cursor-scoped, not connection-scoped.
-
-stdlib ``sqlite3.Cursor.lastrowid`` is connection-scoped: every
-cursor on the connection sees the same ``last_insert_rowid()`` from
-the underlying SQLite handle. The dqlite dbapi deliberately diverges
-— each cursor's ``lastrowid`` reflects only INSERTs run on THAT
-cursor, leaving sibling cursors at None until they do their own
-INSERT.
-
-Both behaviours are PEP 249 compliant; the dqlite contract is
-documented but unpinned. A future refactor to "match stdlib"
-semantics would silently change user-visible behaviour for any
-caller that holds two cursors per connection inside a transaction.
-
-Pin the cursor-scoped invariant so the deliberate design choice is
-loud against drift.
-"""
+"""``lastrowid`` is cursor-scoped, not connection-scoped (diverges from stdlib sqlite3)."""
 
 from __future__ import annotations
 

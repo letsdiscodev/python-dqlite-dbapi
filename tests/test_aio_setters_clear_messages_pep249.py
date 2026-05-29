@@ -1,13 +1,5 @@
-"""Pin: ``AsyncConnection.autocommit``, ``isolation_level``, and
-``text_factory`` setters clear ``messages`` first (PEP 249 §6.4 +
-project discipline + sync-sibling parity).
-
-Sync ``autocommit.setter`` / ``isolation_level.setter`` /
-``text_factory.setter`` already begin with ``del self.messages[:]``.
-The async siblings used to skip the clear, so a populated
-``messages`` list survived the no-op accept path and observable
-attribute mutation.
-"""
+"""Async ``autocommit`` / ``isolation_level`` / ``text_factory`` setters clear
+``messages`` first (PEP 249 §6.4, sync-sibling parity)."""
 
 from __future__ import annotations
 

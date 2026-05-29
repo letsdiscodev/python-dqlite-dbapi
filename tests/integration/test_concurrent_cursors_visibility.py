@@ -1,8 +1,5 @@
-"""PEP 249 §6.1.2: cursors created from the same connection share that
-connection's transaction visibility. Pin that two cursors on one
-connection see each other's uncommitted writes inside a transaction,
-and that ROLLBACK on one cursor is observed by the other.
-"""
+"""PEP 249 §6.1.2: two cursors on one connection share transaction visibility — they see each
+other's uncommitted writes and a ROLLBACK on one is observed by the other."""
 
 from __future__ import annotations
 

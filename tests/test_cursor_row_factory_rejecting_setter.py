@@ -1,9 +1,4 @@
-"""``Cursor.row_factory`` and ``AsyncCursor.row_factory`` are
-read+writable Python-side hooks matching stdlib
-``sqlite3.Cursor.row_factory``. Setter accepts callable or None;
-non-callable input raises ``ProgrammingError`` (inside the PEP 249
-``Error`` hierarchy).
-"""
+"""``row_factory`` setter accepts callable or None; non-callable raises ProgrammingError."""
 
 from __future__ import annotations
 
@@ -57,7 +52,6 @@ def test_async_cursor_row_factory_default_is_none() -> None:
 
 
 def test_sync_cursor_row_factory_accepts_callable() -> None:
-    """stdlib idiom: ``cur.row_factory = sqlite3.Row`` works."""
     import sqlite3
 
     cur = _make_sync_cursor()
@@ -94,11 +88,10 @@ def test_async_cursor_row_factory_rejects_non_callable() -> None:
 
 def test_sync_cursor_row_factory_accepts_none_to_clear() -> None:
     cur = _make_sync_cursor()
-    cur.row_factory = lambda c, r: list(r)  # set
-    cur.row_factory = None  # clear
+    cur.row_factory = lambda c, r: list(r)
+    cur.row_factory = None
     assert cur.row_factory is None
 
 
 def test_programming_error_is_dbapi_error_subclass() -> None:
-    """Defence pin: ProgrammingError remains inside PEP 249 §7."""
     assert issubclass(dqlitedbapi.ProgrammingError, dqlitedbapi.Error)

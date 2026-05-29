@@ -1,20 +1,6 @@
-"""Pin: ``AsyncCursor.execute`` sets ``_executing_task = cur_task``
-INSIDE the protective try-frame, mirroring the sibling
-``executemany``'s already-correct discipline.
-
-The bytecode boundary between the assignment and the ``try:`` is
-where a ``KeyboardInterrupt`` / ``SystemExit`` (delivered by the
-interpreter's signal-eval machinery between any two bytecodes) can
-escape with the slot pinned to a now-completed task. A subsequent
-``cur.execute(...)`` from any task then trips
-``InterfaceError("cursor is already executing in another task")``
-on a cursor that is not actually executing — process-lifetime
-stuck.
-
-The pin is structural: assert ``try:`` opens before
-``self._executing_task = cur_task`` in both ``execute`` and
-``executemany``.
-"""
+"""``execute`` sets ``_executing_task = cur_task`` INSIDE the try-frame: a KeyboardInterrupt /
+SystemExit on the assignment/``try:`` bytecode boundary could otherwise leave the slot pinned to a
+completed task, wedging later ``execute()`` calls with a bogus "already executing" error."""
 
 from __future__ import annotations
 
@@ -52,9 +38,7 @@ def test_execute_executing_task_assignment_inside_try() -> None:
 
 
 def test_executemany_executing_task_assignment_inside_try() -> None:
-    """Negative-control: executemany already follows the discipline.
-    Pin asserts the in-package reference shape stays intact so a
-    future regression that flips executemany also gets fenced."""
+    """executemany already follows the discipline; pin it so a regression that flips it fails."""
     src = _source_of("executemany")
     try_pos = _try_index(src)
     assign_pos = _slot_assign_index(src)

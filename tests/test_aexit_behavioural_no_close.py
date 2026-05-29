@@ -1,19 +1,5 @@
-"""Behavioural pin for ``AsyncConnection.__aexit__`` no-close
-divergence from aiosqlite / psycopg.
-
-The existing ``test_async_with_exit_does_not_close.py`` is source-
-substring-only (matches on ``"await self.close()"`` /
-``"self._async_conn.close()"`` literals). A regression that closes
-via any other syntactic surface — helper invocation, attribute
-drop, GC-triggered teardown via ``_async_conn = None`` — passes the
-substring assertion while semantically closing.
-
-This file drives the actual ``__aexit__`` body against a hand-seeded
-``AsyncConnection`` with ``AsyncMock``-wrapped close paths and
-asserts close was NOT invoked regardless of syntactic surface, and
-that ``_async_conn`` remains bound for reusability per the
-documented contract.
-"""
+"""Behavioural pin: __aexit__ does not close (diverges from aiosqlite / psycopg) and leaves
+_async_conn bound for reuse, regardless of syntactic surface."""
 
 from __future__ import annotations
 
@@ -25,9 +11,6 @@ from dqlitedbapi.aio.connection import AsyncConnection
 
 
 def _seed_async_conn_for_aexit() -> AsyncConnection:
-    """Hand-build an ``AsyncConnection`` for direct ``__aexit__``
-    invocation. The body walks ``commit()`` / ``rollback()`` which
-    we patch out to AsyncMock no-ops so the test is wire-free."""
     aconn = AsyncConnection.__new__(AsyncConnection)
     aconn._closed = False
     aconn._creator_pid = 0  # bypass fork-check via test-only seeding
@@ -49,9 +32,6 @@ def _seed_async_conn_for_aexit() -> AsyncConnection:
 
 @pytest.mark.asyncio
 async def test_aexit_does_not_call_self_close_behavioural() -> None:
-    """Drive ``__aexit__`` on a real AsyncConnection with ``close``
-    wrapped in AsyncMock. Assert close was NOT invoked regardless of
-    the syntactic surface a future regression might use."""
     aconn = _seed_async_conn_for_aexit()
     close_mock = AsyncMock()
     commit_mock = AsyncMock()
@@ -68,13 +48,7 @@ async def test_aexit_does_not_call_self_close_behavioural() -> None:
 
 @pytest.mark.asyncio
 async def test_aexit_leaves_async_conn_bound_for_reusability() -> None:
-    """The documented contract: the connection remains REUSABLE after
-    ``async with`` exits — ``_async_conn`` must still be bound to
-    the inner conn so a subsequent ``aconn.cursor()`` does not raise
-    ``InterfaceError("Connection is closed")``. A regression that
-    nulls ``_async_conn`` as a soft-close trick would fail this pin
-    even though it'd pass the source-substring assertions in the
-    sibling test file."""
+    """Connection stays reusable after async-with exits: _async_conn must remain bound."""
     aconn = _seed_async_conn_for_aexit()
     commit_mock = AsyncMock()
     aconn.commit = commit_mock

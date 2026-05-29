@@ -1,18 +1,6 @@
-"""Pin: PEP 249 §6.1.1 / §6.1.2 — ``Connection.messages`` and
-``Cursor.messages`` are independent surfaces. Cursor methods clear
-only ``Cursor.messages``; connection methods clear only
-``Connection.messages``.
+"""PEP 249 §6.1: Connection.messages and Cursor.messages are independent surfaces.
 
-Previously the cursor's secondary methods (``fetchone`` /
-``fetchmany`` / ``fetchall`` / ``setinputsizes`` / ``setoutputsize``
-/ ``callproc`` / ``nextset`` / ``scroll``) over-cleared
-``Connection.messages`` from inside the cursor — defeating PEP 249's
-independent-surface contract: a sibling-cursor or direct-connection
-inspection of ``connection.messages`` after a cursor call always saw
-``[]`` regardless of what events the connection had collected.
-
-This module pins the corrected behaviour: cross-surface reads survive
-across cursor / connection method boundaries.
+Cursor methods clear only Cursor.messages; they must not over-clear Connection.messages.
 """
 
 from __future__ import annotations
@@ -69,8 +57,7 @@ def test_cursor_secondary_methods_preserve_connection_messages(
 def test_cursor_unsupported_methods_preserve_connection_messages(
     method: str, args: tuple[object, ...]
 ) -> None:
-    """The methods that always raise ``NotSupportedError`` also must
-    not clear ``Connection.messages``."""
+    """Methods that always raise NotSupportedError must not clear Connection.messages."""
     cur = _make_cursor()
     cur._connection.messages.append(_SESSION_DIAGNOSTIC)
     with pytest.raises(NotSupportedError):
@@ -79,9 +66,7 @@ def test_cursor_unsupported_methods_preserve_connection_messages(
 
 
 def test_cursor_methods_still_clear_cursor_messages() -> None:
-    """Defence pin: the §6.1.2 contract that cursor methods clear
-    ``Cursor.messages`` is preserved — only the over-clear of
-    ``Connection.messages`` is removed."""
+    """Cursor methods still clear Cursor.messages; only the over-clear was removed."""
     cur = _make_cursor()
     cur.messages.append((Warning, Warning("cursor-level diag")))
     cur.fetchone()

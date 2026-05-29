@@ -1,15 +1,5 @@
-"""Pin: ``fetchone`` / ``fetchmany`` must apply ``_row_factory`` BEFORE
-advancing ``_row_index``. A factory that raises must leave the index
-unchanged so the next ``fetchone()`` call returns the same row.
-
-Without this ordering, ``fetchmany``'s snapshot/restore at
-``snapshot + len(result)`` underestimates by 1 for factory-raised
-rows — silently REPLAYING a row on the next call (skipping over it
-in `result` AND advancing past it in `_row_index`).
-
-Tested across both sync and async cursors using direct attribute
-priming so we don't need a live connection.
-"""
+"""``fetchone``/``fetchmany`` apply ``_row_factory`` before advancing ``_row_index``,
+so a raising factory leaves the index unchanged (no replay, no skip on the next call)."""
 
 from typing import Any
 from unittest.mock import MagicMock
@@ -64,15 +54,11 @@ def test_sync_fetchone_factory_raise_does_not_advance_index() -> None:
 
     with pytest.raises(RuntimeError, match="simulated factory failure"):
         cur.fetchone()
-    # _row_index unchanged: a retry returns the SAME row, not the
-    # next one (which would be a silent skip).
     assert cur._row_index == 0
 
 
 def test_sync_fetchmany_factory_raise_no_replay_no_skip() -> None:
-    """5 rows; factory raises on the 3rd call (rows[2]). After the
-    fetchmany raises, the next fetchone must return rows[2] — not
-    rows[1] (replay) and not rows[3] (skip)."""
+    """Factory raises on rows[2]; the next fetchone must return rows[2], not [1] or [3]."""
     cur = _prime_sync_cursor([(0,), (1,), (2,), (3,), (4,)])
 
     call_count = [0]
@@ -88,10 +74,7 @@ def test_sync_fetchmany_factory_raise_no_replay_no_skip() -> None:
     with pytest.raises(RuntimeError):
         cur.fetchmany(size=5)
 
-    # After the raise: _row_index points at rows[2] (the failed row).
-    # Without the fix it would point at rows[3] (skip) — len(result)=2
-    # but _row_index pre-advanced once more.
-    cur._row_factory = None  # neutralise so the next call returns raw.
+    cur._row_factory = None
     assert cur.fetchone() == (2,)
 
 

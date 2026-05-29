@@ -1,10 +1,4 @@
-"""Integration tests for previously-uncovered territory.
-
-- Large result set (forces continuation frames) + large BLOB.
-- Unicode in identifiers + emoji in TEXT.
-- Multi-statement SQL is rejected with a specific error.
-- rowcount semantics after SELECT / empty SELECT.
-"""
+"""Integration tests for previously-uncovered territory."""
 
 import pytest
 
@@ -15,16 +9,7 @@ from dqlitedbapi.exceptions import ProgrammingError
 
 @pytest.mark.integration
 class TestRowcountAfterSelect:
-    """Pins the rowcount contract for SELECT statements.
-
-    dqlite knows the full result set at execute time (rows arrive in
-    the same response + continuation frames, not lazily), so the
-    driver reports ``len(rows)`` — the PEP 249 literal reading of
-    "number of rows that the last execute*() produced". This diverges
-    intentionally from stdlib ``sqlite3``'s ``-1`` convention and must
-    stay pinned: a refactor of the execute path that flipped to ``-1``
-    would be a silent semantics change.
-    """
+    """SELECT rowcount reports ``len(rows)``; diverges from stdlib sqlite3's ``-1``."""
 
     def test_rowcount_after_select_reports_row_count(self, cluster_address: str) -> None:
         with connect(cluster_address, database="test_rowcount_sel") as conn:
@@ -69,8 +54,7 @@ class TestRowcountAfterSelect:
 @pytest.mark.integration
 class TestLargeData:
     def test_large_result_set_round_trips(self, cluster_address: str) -> None:
-        """Insert 5k rows and read them all back; exercises continuation frames
-        on most server chunk sizes."""
+        """Insert 5k rows and read them back; exercises continuation frames."""
         with connect(cluster_address, database="test_large") as conn:
             c = conn.cursor()
             c.execute("DROP TABLE IF EXISTS many")
@@ -102,12 +86,7 @@ class TestLargeData:
             c.execute("DROP TABLE big_blob")
 
     def test_binary_constructor_blob_round_trip(self, cluster_address: str) -> None:
-        """``Binary(...)`` (= ``memoryview``) round-trips as BLOB.
-
-        The PEP 249 constructor is aliased to stdlib ``memoryview``.
-        The wire encoder accepts memoryview for BLOB columns; the
-        readback comes back as ``bytes``.
-        """
+        """``Binary(...)`` (= ``memoryview``) round-trips as BLOB; readback is ``bytes``."""
         import dqlitedbapi
 
         payload = b"binary-constructor-round-trip" * 40
@@ -142,7 +121,7 @@ class TestUnicode:
     def test_non_bmp_codepoint_round_trip(self, cluster_address: str) -> None:
         """4-byte UTF-8 codepoint survives the wire round-trip."""
         grinning = "\U0001f600"  # 😀
-        payload = grinning * 1000  # 4000 bytes of non-BMP codepoints
+        payload = grinning * 1000
         with connect(cluster_address, database="test_non_bmp") as conn:
             c = conn.cursor()
             c.execute("DROP TABLE IF EXISTS nbmp")
@@ -158,11 +137,8 @@ class TestUnicode:
 @pytest.mark.integration
 class TestMultiStatementRejection:
     def test_semicolon_separated_select_rejected(self, cluster_address: str) -> None:
-        """dqlite rejects multi-statement SQL — a real deviation from stdlib
-        sqlite3 that applications commonly trip over. Pinning the error so
-        regressions don't silently change the behavior. Client-side classifier
-        (cursor._classify_caller_sql) raises ProgrammingError per PEP 249 §7
-        before any wire round-trip; mirrors stdlib's exact wording."""
+        """Multi-statement SQL is rejected client-side as ProgrammingError before any
+        wire round-trip (deviates from stdlib sqlite3, which allows it)."""
         with connect(cluster_address, database="test_multi_stmt") as conn:
             c = conn.cursor()
             with pytest.raises(ProgrammingError, match="one statement at a time"):
@@ -171,13 +147,8 @@ class TestMultiStatementRejection:
 
 @pytest.mark.integration
 class TestUnsupportedBindParameterTypes:
-    """Types the wire codec cannot encode (Decimal, Fraction, complex,
-    custom objects) must surface at the DBAPI boundary as ``DataError``,
-    not as a wire-layer ``EncodeError`` and not as a silent misencoding.
-    Pins the PEP 249 "all DB errors funnel through Error" contract through
-    the DqliteConnection._run_protocol wrapper, which maps EncodeError
-    into the client-layer DataError that the DBAPI re-exports.
-    """
+    """Types the wire codec cannot encode must surface as ``DataError``, not a
+    wire-layer ``EncodeError`` or silent misencoding."""
 
     def test_decimal_rejected_as_data_error(self, cluster_address: str) -> None:
         from decimal import Decimal
@@ -208,9 +179,7 @@ class TestUnsupportedBindParameterTypes:
                 c.execute("SELECT ?", [complex(1, 2)])
 
     def test_uuid_rejected_as_data_error(self, cluster_address: str) -> None:
-        """UUID is not a wire-recognized type — must surface as DataError.
-        Common in callers porting from psycopg/asyncpg which both
-        accept UUID."""
+        """UUID is not wire-recognized; must surface as DataError (psycopg/asyncpg accept it)."""
         from uuid import UUID
 
         from dqlitedbapi.exceptions import DataError
@@ -224,8 +193,7 @@ class TestUnsupportedBindParameterTypes:
                 )
 
     def test_path_rejected_as_data_error(self, cluster_address: str) -> None:
-        """``pathlib.Path`` (sometimes used for filename columns) must
-        surface as DataError so a caller is steered to ``str(path)``."""
+        """``pathlib.Path`` must surface as DataError so the caller is steered to ``str(path)``."""
         from pathlib import Path
 
         from dqlitedbapi.exceptions import DataError
@@ -236,8 +204,7 @@ class TestUnsupportedBindParameterTypes:
                 c.execute("SELECT ?", [Path("/tmp/foo")])
 
     def test_array_array_rejected_as_data_error(self, cluster_address: str) -> None:
-        """``array.array`` is bytes-like but not in the accepted
-        BLOB-input set. Must surface as DataError."""
+        """``array.array`` is bytes-like but not an accepted BLOB input; must be DataError."""
         from array import array
 
         from dqlitedbapi.exceptions import DataError
@@ -248,10 +215,7 @@ class TestUnsupportedBindParameterTypes:
                 c.execute("SELECT ?", [array("b", b"hello")])
 
     def test_intenum_round_trips_as_int(self, cluster_address: str) -> None:
-        """``enum.IntEnum`` is an ``int`` subclass; the wire encoder
-        accepts it as INTEGER. Pin observed behavior so a future
-        refactor that tightened the type check (rejecting subclasses)
-        is a deliberate decision, not an accident."""
+        """``enum.IntEnum`` is an ``int`` subclass; the wire encoder accepts it as INTEGER."""
         from enum import IntEnum
 
         class _Color(IntEnum):
@@ -266,12 +230,8 @@ class TestUnsupportedBindParameterTypes:
 
 @pytest.mark.integration
 class TestBindBoundaryDataErrors:
-    """Boundary inputs that must surface at the DBAPI as ``DataError``
-    (not as raw ValueError / EncodeError leaking from the wire layer).
-    The wire encoder enforces caps; the dbapi's ``_call_client``
-    wraps the wire's ValueError into PEP 249 ``DataError``. Pin the
-    end-to-end contract so a future narrowing of the wrap cannot
-    silently let a wire exception leak past the dbapi boundary."""
+    """Wire-cap boundary inputs must surface as ``DataError``, not a raw
+    ValueError / EncodeError leaking from the wire layer."""
 
     @pytest.mark.parametrize(
         "value",
@@ -293,10 +253,8 @@ class TestBindBoundaryDataErrors:
             assert c.fetchone() == (value,)
 
     def test_bind_blob_over_cap_raises_data_error(self, cluster_address: str) -> None:
-        """A bind value larger than the wire-layer BLOB cap must surface
-        as ``DataError`` — never as a raw EncodeError or a silent
-        truncation. Sources the cap from the wire layer so future cap
-        raises don't silently break the pin."""
+        """A bind value over the wire BLOB cap must surface as ``DataError``,
+        never a raw EncodeError or silent truncation."""
         from dqlitedbapi.exceptions import DataError
         from dqlitewire.types import _MAX_BLOB_SIZE
 
@@ -309,20 +267,11 @@ class TestBindBoundaryDataErrors:
 
 @pytest.mark.integration
 class TestCursorDescriptionEdgeCases:
-    """``cursor.description`` invariants after queries whose result sets
-    are either empty or contain only NULLs. PEP 249 requires description
-    to reflect the query's column shape regardless of row count.
-    """
+    """``cursor.description`` must reflect column shape even for empty / all-NULL result sets."""
 
     def test_description_populated_for_empty_resultset(self, cluster_address: str) -> None:
-        """A SELECT that returns zero rows still populates description
-        with column names. ``type_code`` is the ``UNKNOWN`` sentinel
-        for each column because the wire layer sources it from the
-        first row's type header and there are no rows; ``UNKNOWN``
-        is a real Type Object so PEP 249 §6.1.2's
-        ``type_code == STRING`` introspection idiom returns False
-        cleanly without TypeError.
-        """
+        """Zero-row SELECT still populates description; type_code is UNKNOWN since
+        the wire sources it from the (absent) first row's type header."""
         from dqlitedbapi import UNKNOWN
 
         with connect(cluster_address, database="test_desc_empty") as conn:
@@ -334,21 +283,12 @@ class TestCursorDescriptionEdgeCases:
             assert c.description is not None
             assert len(c.description) == 2
             assert [col[0] for col in c.description] == ["a", "b"]
-            # No rows → no per-row type header → UNKNOWN sentinel.
             assert [col[1] for col in c.description] == [UNKNOWN, UNKNOWN]
             assert c.fetchall() == []
 
     def test_description_typecode_when_only_row_is_all_null(self, cluster_address: str) -> None:
-        """A row of all-NULLs sets every column's type nibble to NULL
-        in the wire frame. The dbapi maps NULL-only columns to the
-        ``UNKNOWN`` Type Object sentinel on ``description[i][1]`` to
-        satisfy PEP 249 §6.1.2: ``type_code`` "must compare equal to
-        one of Type Objects defined below". NULL itself is not one
-        of the five Type Objects; the prior ``None`` value violated
-        the spec via NotImplemented → False. Locked in so a future
-        refactor that surfaces the raw wire byte (or reverts to
-        None) is a deliberate decision, not a silent drift.
-        """
+        """All-NULL columns map to the UNKNOWN Type Object sentinel: NULL is not one of
+        PEP 249's five Type Objects, and a raw None type_code violates §6.1.2."""
         from dqlitedbapi import UNKNOWN
 
         with connect(cluster_address, database="test_desc_nulls") as conn:
@@ -362,21 +302,14 @@ class TestCursorDescriptionEdgeCases:
             assert c.description is not None
             assert len(c.description) == 2
             assert [col[0] for col in c.description] == ["a", "b"]
-            # PEP 249 §6.1.2 — NULL-only column → UNKNOWN sentinel.
             assert [col[1] for col in c.description] == [UNKNOWN, UNKNOWN]
             assert c.fetchall() == [(None, None)]
 
 
 @pytest.mark.integration
 class TestDescriptionNoneAfterDML:
-    """PEP 249: ``cursor.description`` must be ``None`` after any
-    statement that did not produce a result set. The
-    ``_is_row_returning`` heuristic selects the code branch that
-    sets description; pin the end-to-end contract against a real
-    server so a future heuristic change cannot silently violate
-    PEP 249 for common DML shapes (CREATE / INSERT / UPDATE /
-    DELETE / DROP).
-    """
+    """PEP 249: ``cursor.description`` must be ``None`` after any non-row-returning
+    statement (CREATE / INSERT / UPDATE / DELETE / DROP)."""
 
     def test_description_is_none_after_dml(self, cluster_address: str) -> None:
         with connect(cluster_address, database="test_desc_dml") as conn:

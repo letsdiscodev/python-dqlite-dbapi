@@ -1,20 +1,6 @@
-"""Pin: ``_join_budget_for_current_thread`` survives the
-``Py_FinalizeEx`` phase-3 module-globals-set-to-None teardown
-without raising into the calling ``weakref.finalize`` machinery.
-
-During interpreter shutdown CPython's ``PyImport_Cleanup`` walks
-``sys.modules`` and sets every module's globals to ``None``. If
-``dqlitedbapi.connection.asyncio`` becomes ``None`` between the
-finalize-callback firing and the helper's `asyncio.get_running_loop()`
-dereference, the call would raise ``AttributeError`` —
-``contextlib.suppress(RuntimeError)`` at the only protected call
-site does NOT catch ``AttributeError``, and the second call site
-inside ``force_close_transport`` has no suppression at all.
-
-The fix captures ``asyncio`` as a kwarg-default at function-
-definition time, mirroring the discipline ``_cleanup_loop_thread``
-applies to ``warnings`` / ``logger`` / ``contextlib`` /
-``sanitize_for_log``.
+"""``_join_budget_for_current_thread`` must survive interpreter shutdown,
+where ``Py_FinalizeEx`` sets module globals (including ``asyncio``) to
+``None``, without raising into the calling ``weakref.finalize`` machinery.
 """
 
 from __future__ import annotations
@@ -31,10 +17,8 @@ from dqlitedbapi import connection as _conn_mod
 def test_helper_returns_off_loop_budget_when_asyncio_module_global_is_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Simulate phase-3 teardown: set the module-level ``asyncio``
-    reference to ``None``. The helper must not raise; it must fall
-    back to the off-loop budget so the surrounding ``thread.join``
-    still runs."""
+    """With the module-level ``asyncio`` set to ``None``, the helper must not
+    raise and must fall back to the off-loop budget."""
     monkeypatch.setattr(_conn_mod, "asyncio", None)
 
     budget = _conn_mod._join_budget_for_current_thread(0.5)
@@ -49,9 +33,7 @@ def test_helper_returns_off_loop_budget_when_asyncio_module_global_is_none(
 def test_helper_returns_off_loop_budget_when_asyncio_is_corrupted_object(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Defence in depth: a ``mock``-style object that raises on
-    attribute access must not propagate from the helper.
-    """
+    """An object that raises on attribute access must not propagate."""
 
     class _Broken:
         def __getattr__(self, name: str) -> Any:
@@ -64,9 +46,8 @@ def test_helper_returns_off_loop_budget_when_asyncio_is_corrupted_object(
 
 
 def test_helper_returns_foreign_floor_on_loop_thread() -> None:
-    """Positive case: when called from a coroutine the helper must
-    return the foreign-loop floor so the user loop is not parked.
-    """
+    """From a coroutine the helper returns the foreign-loop floor (the user
+    loop is not parked)."""
 
     async def runner() -> float:
         return _conn_mod._join_budget_for_current_thread(0.5)
@@ -76,9 +57,8 @@ def test_helper_returns_foreign_floor_on_loop_thread() -> None:
 
 
 def test_helper_returns_full_budget_off_loop() -> None:
-    """Positive case: from a thread with no running loop the helper
-    must return ``max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)``.
-    """
+    """From a thread with no running loop the helper returns
+    ``max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)``."""
     result: list[float] = []
 
     def runner() -> None:

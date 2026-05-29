@@ -1,14 +1,6 @@
-"""Pin: ``AsyncConnection.close()``'s cancel arm cancels the inner
-client connection's ``_pending_drain`` task before nulling our
-reference to the inner.
-
-The orderly close path drains the inner ``_pending_drain`` under a
-bounded resnapshot loop. On the cancel arm (the shielded close itself
-was cancelled), the inner conn may still own a pending Task. Without
-the cancel, GC of the now-unreachable inner emits the exact
-"Task was destroyed but it is pending" warning that
-``force_close_transport`` goes to extensive lengths to prevent.
-"""
+"""``close()``'s cancel arm cancels the inner conn's ``_pending_drain`` task before
+nulling the inner reference; otherwise GC of the unreachable inner emits the
+"Task was destroyed but it is pending" warning."""
 
 from __future__ import annotations
 
@@ -47,9 +39,6 @@ def _make_conn() -> AsyncConnection:
 async def test_cancel_arm_cancels_inner_pending_drain() -> None:
     conn = _make_conn()
 
-    # Inner client conn with a pending drain Task. The Task is parked
-    # indefinitely; on cancel-arm cleanup we expect the close to
-    # cancel it before nulling the inner reference.
     pending_was_cancelled: list[bool] = []
 
     async def park_forever() -> None:
@@ -64,26 +53,18 @@ async def test_cancel_arm_cancels_inner_pending_drain() -> None:
     inner._pending_drain = pending_task
 
     async def slow_close(*args: object, **kwargs: object) -> None:
-        # Park until cancelled — simulates the shielded close being
-        # interrupted by an outer cancel landing on the close call.
-        await asyncio.sleep(60)
+        await asyncio.sleep(60)  # park until the outer cancel interrupts the shield
 
     inner.close = slow_close
     conn._async_conn = inner
 
-    # Wrap close() in a tight outer cancel so the shielded inner-close
-    # is interrupted and the cancel arm runs.
+    # Tight outer cancel interrupts the shielded inner-close so the cancel arm runs.
     with pytest.raises((asyncio.CancelledError, asyncio.TimeoutError)):
         async with asyncio.timeout(0.02):
             await conn.close()
 
-    # After close()'s cancel arm runs:
-    # - inner._pending_drain must have been cancelled.
-    # - The inner is no longer reachable from conn (conn._async_conn
-    #   is None).
     assert conn._async_conn is None
-    # Yield a tick so the cancel propagates into park_forever's body.
-    await asyncio.sleep(0)
+    await asyncio.sleep(0)  # let the cancel propagate into park_forever
     assert pending_was_cancelled == [True], (
         f"inner _pending_drain must be cancelled; got {pending_was_cancelled!r}"
     )
@@ -112,8 +93,7 @@ async def test_cancel_arm_no_warning_on_inner_gc() -> None:
                 await conn.close()
         del inner
         gc.collect()
-        # Give the loop a chance to reap the cancelled tasks.
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # let the loop reap the cancelled tasks
 
     matching = [
         str(w.message) for w in caught if "Task was destroyed but it is pending" in str(w.message)

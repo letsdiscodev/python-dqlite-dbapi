@@ -1,21 +1,4 @@
-"""Coverage gaps surfaced by the 2026-05 audit pass.
-
-Five behavioural arms that are correct in the source but were not
-pinned by the existing test suite — a regression that re-shapes any
-of them would have shipped silently:
-
-1. ``AsyncConnection.__aenter__`` cleanup-close DEBUG-log arm.
-2. ``_build_and_connect`` ProtocolError / DataError /
-   InterfaceError / DqliteError catch-all / OSError arms.
-3. Connection.execute / executemany shortcut: cleanup-on-raise
-   closes the freshly-opened cursor (sync executemany; async
-   execute; async executemany).
-4. Sync ``Connection.force_close_transport`` post-fork pid-mismatch
-   arm (cursor cascade + finalizer detach without touching the
-   inherited socket).
-5. ``_run_sync`` KeyboardInterrupt cleanup: bounded-wait Exception
-   debug-log arm.
-"""
+"""Coverage gaps surfaced by the 2026-05 audit pass."""
 
 import asyncio
 import logging
@@ -39,22 +22,13 @@ from dqlitedbapi.exceptions import (
     OperationalError,
 )
 
-# ---------------------------------------------------------------
-# 1. AsyncConnection.__aenter__ cleanup-close DEBUG-log arm
-# ---------------------------------------------------------------
-
 
 async def test_aenter_close_failure_debug_logged(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When ``__aenter__`` runs ``await self.connect()`` and connect
-    raises, it best-effort closes; if THAT close also raises, the
-    exception is DEBUG-logged with exc_info. The original connect
-    error must continue propagating.
-
-    Without this pin, a refactor that re-raises the close error
-    would silently mask the real connect failure for operators."""
+    """If __aenter__'s best-effort close also raises, it's DEBUG-logged and the
+    original connect error keeps propagating (must not be masked)."""
 
     async def boom_connect(self: AsyncConnection) -> None:
         raise OperationalError("simulated connect fail")
@@ -65,10 +39,8 @@ async def test_aenter_close_failure_debug_logged(
     monkeypatch.setattr(AsyncConnection, "connect", boom_connect)
     monkeypatch.setattr(AsyncConnection, "close", boom_close)
 
-    # ``aio.connect`` (NOT ``aconnect``) does NOT pre-connect — the
-    # AsyncConnection is returned lazily and ``__aenter__`` is the
-    # first place ``connect()`` runs. That's what we need to trigger
-    # the cleanup-close path INSIDE ``__aenter__``.
+    # aio.connect (NOT aconnect) does not pre-connect, so connect() first runs
+    # inside __aenter__ — needed to trigger the cleanup-close path there.
     aconn = aio_connect("127.0.0.1:9999")
     with (
         caplog.at_level(logging.DEBUG, logger="dqlitedbapi.aio.connection"),
@@ -83,18 +55,9 @@ async def test_aenter_close_failure_debug_logged(
     )
 
 
-# ---------------------------------------------------------------
-# 2. _build_and_connect connect-time classifier arms
-# ---------------------------------------------------------------
-
-
 def _build_classifier_cases() -> list[tuple[Exception, type[Exception], str]]:
-    """Build the classifier-arm cases as a function so any
-    dynamically-created subclass of ``_client_exc.DqliteError`` lives
-    only inside the test module — not in the parametrize argvalues
-    list, which pytest holds for the full session and which would
-    otherwise leak into ``__subclasses__`` and trip the forward-compat
-    test in ``test_audit_2026_05_coverage_gaps.py``."""
+    """Cases built in a function (not parametrize argvalues, which pytest holds
+    session-long) so no DqliteError subclass leaks into the forward-compat sweep."""
     return [
         (
             _client_exc.ProtocolError("decode bad"),
@@ -155,15 +118,9 @@ async def test_build_and_connect_classifier_arms(
 
 
 async def test_build_and_connect_dqlite_error_catch_all_arm() -> None:
-    """Pin the ``DqliteError`` catch-all arm: a future client-layer
-    subclass not enumerated in the per-class arms must surface as
-    ``DatabaseError`` with the canonical
-    ``"unrecognized client error"`` prefix.
-
-    The dynamic class is constructed and then deleted at end-of-test
-    so it doesn't persist in ``__subclasses__`` and trip the
-    forward-compat regression test that audits all DqliteError
-    subclasses for explicit ``_call_client`` coverage."""
+    """An un-enumerated DqliteError subclass surfaces as DatabaseError with the
+    "unrecognized client error" prefix. The dynamic class is deleted at end so it
+    doesn't persist in __subclasses__ and trip the forward-compat sweep."""
     fake_cls = type("FakeFutureDqliteError", (_client_exc.DqliteError,), {})
     try:
         with (
@@ -190,28 +147,17 @@ async def test_build_and_connect_dqlite_error_catch_all_arm() -> None:
 
         assert "unrecognized client error" in str(exc_info.value)
     finally:
-        # Drop the only strong reference so __subclasses__ reaps it
-        # before the next test queries DqliteError.__subclasses__.
+        # Drop the only strong reference so __subclasses__ reaps it.
         del fake_cls
         import gc
 
         gc.collect()
 
 
-# ---------------------------------------------------------------
-# 3. Connection.execute / executemany shortcut cleanup-on-raise
-# ---------------------------------------------------------------
-
-
 def test_sync_executemany_shortcut_closes_cursor_on_raise() -> None:
-    """``Connection.executemany`` opens a cursor; if cursor.executemany
-    raises, the cursor must be closed before the exception
-    propagates. Without the cleanup, partially-iterated state would
-    leak with no caller able to clean it up (the cursor was never
-    returned)."""
+    """If cursor.executemany raises, the never-returned cursor must be closed
+    before the exception propagates, else its state leaks unreachably."""
     conn = dqlitedbapi.Connection.__new__(dqlitedbapi.Connection)
-    # Prime just enough state for ``Connection.executemany`` to reach
-    # cur.executemany without going through the loop machinery.
     cursors_seen: list[Cursor] = []
 
     def fake_cursor() -> Cursor:
@@ -241,9 +187,7 @@ async def test_async_execute_shortcut_closes_cursor_on_raise() -> None:
     def fake_cursor() -> AsyncCursor:
         cur = MagicMock(spec=AsyncCursor)
         cur.execute = AsyncMock(side_effect=OperationalError("boom"))
-        # ``AsyncCursor.close`` is sync by design — a forgotten
-        # ``await`` would silently leak the cursor — so use a
-        # MagicMock (not AsyncMock) for the close attribute.
+        # AsyncCursor.close is sync by design, so MagicMock (not AsyncMock).
         cur.close = MagicMock()
         cursors_seen.append(cur)
         return cur
@@ -284,24 +228,15 @@ async def test_async_executemany_shortcut_closes_cursor_on_raise() -> None:
     close_mock.assert_called_once()
 
 
-# ---------------------------------------------------------------
-# 4. Sync force_close_transport post-fork pid-mismatch arm
-# ---------------------------------------------------------------
-
-
 def test_sync_force_close_transport_post_fork_short_circuits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the module-level ``_current_pid`` no longer matches the
-    Connection's ``_creator_pid`` (i.e. we're now running in a
-    forked child), ``force_close_transport`` must mark cursors
-    closed and detach the finalizer without touching the inherited
-    socket / loop. Without this branch, FIN goes out on a shared fd
-    and silently terminates the parent's session."""
+    """In a forked child (pid mismatch), force_close_transport marks cursors closed
+    and detaches the finalizer without touching the inherited socket — else FIN on a
+    shared fd kills the parent's session."""
     import weakref
 
     conn = dqlitedbapi.Connection.__new__(dqlitedbapi.Connection)
-    # Prime minimum state.
     conn._closed = False
     conn._closed_flag = [False]
     conn._creator_pid = os.getpid()
@@ -313,7 +248,7 @@ def test_sync_force_close_transport_post_fork_short_circuits(
     conn._finalizer = MagicMock()
     conn._close_timeout = 0.5
 
-    # Inject one cursor so the cascade arm has something to walk.
+    # One cursor so the cascade arm has something to walk.
     cur = Cursor.__new__(Cursor)
     cur._closed = False
     cur._rows = [(1,)]
@@ -325,14 +260,12 @@ def test_sync_force_close_transport_post_fork_short_circuits(
     cur.messages = []
     conn._cursors.add(cur)
 
-    # Simulate fork: bump _client_conn_mod.get_current_pid().
+    # Simulate fork: bump the pid seen by the connection.
     _real_getpid = os.getpid
     monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: _real_getpid() + 1)
 
     conn.force_close_transport()
 
-    # The pid-mismatch arm marks cursors closed, detaches finalizer,
-    # and returns without touching ``_loop_lock`` / writer.
     assert cur._closed is True
     assert cur._description is None
     assert cur._row_index == 0
@@ -342,24 +275,11 @@ def test_sync_force_close_transport_post_fork_short_circuits(
     assert conn._closed_flag[0] is True
 
 
-# ---------------------------------------------------------------
-# 5. _run_sync KI cleanup bounded-wait Exception debug-log arm
-# ---------------------------------------------------------------
-
-
 def test_run_sync_ki_cleanup_exception_debug_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """KI lands during ``future.result(timeout=self._timeout)``; we
-    cancel the future and bound-wait 1 s. If the cancelled coroutine
-    raises a non-Cancelled / non-Timeout Exception (programming bug
-    in cleanup), DEBUG-log it and continue to re-raise the original
-    KI.
-
-    Without coverage, a regression that re-raises the cleanup
-    exception would mask the KI signal — catastrophic for the
-    Ctrl-C-driven shutdown path.
-    """
+    """KI during future.result: we cancel and bound-wait; an Exception in the
+    cleanup is DEBUG-logged but the KI must still re-raise (else Ctrl-C is masked)."""
     import concurrent.futures
 
     conn = dqlitedbapi.Connection.__new__(dqlitedbapi.Connection)
@@ -369,9 +289,7 @@ def test_run_sync_ki_cleanup_exception_debug_logged(
     conn._creator_pid = os.getpid()
     conn._op_lock = threading.RLock()  # type: ignore[assignment]
 
-    # Construct a fake future that:
-    # 1. raises KeyboardInterrupt on the first ``future.result(timeout=self._timeout)``
-    # 2. raises a vanilla Exception on the bounded-wait ``future.result(timeout=1.0)``
+    # First result() raises KI; the bounded-wait result() raises a vanilla Exception.
     fake_future = MagicMock(spec=concurrent.futures.Future)
     fake_future.result = MagicMock(
         side_effect=[
@@ -403,9 +321,8 @@ def test_run_sync_ki_cleanup_exception_debug_logged(
             with pytest.raises(KeyboardInterrupt):
                 conn._run_sync(coro)
         finally:
-            # The fake future never actually consumed the coroutine —
-            # close it explicitly so we don't trip the
-            # ``coroutine was never awaited`` warning at gc.
+            # The fake future never consumed the coroutine; close it to avoid
+            # the "coroutine was never awaited" warning.
             coro.close()
 
     debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
@@ -413,9 +330,3 @@ def test_run_sync_ki_cleanup_exception_debug_logged(
         "expected KI/SystemExit cleanup DEBUG record from the bounded-wait Exception arm"
     )
     fake_future.cancel.assert_called()
-
-
-# ---------------------------------------------------------------
-# Suppress ``coroutine ... was never awaited`` warnings from the
-# stub coroutines that we deliberately route through MagicMock.
-# ---------------------------------------------------------------

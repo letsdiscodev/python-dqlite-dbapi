@@ -1,15 +1,7 @@
-"""close_timeout plumbing from Connection → DqliteConnection.
+"""close_timeout plumbing from Connection to DqliteConnection.
 
-The client-layer ``DqliteConnection`` accepts a ``close_timeout``
-governing the ``asyncio.wait_for`` deadline around
-``protocol.wait_closed()`` during ``close()``. The dbapi layer must
-forward the kwarg end-to-end so callers with non-LAN latencies (or
-strict-shutdown SLAs) can tune the drain budget without reaching
-into private attributes.
-
-Validation raises ``ProgrammingError`` at the dbapi boundary — not
-``ValueError`` like the client layer — so PEP 249 classification
-is preserved (matches the sibling ``timeout`` validator).
+The dbapi layer forwards close_timeout end-to-end and validates it at the boundary as
+ProgrammingError (not ValueError) so PEP 249 classification is preserved.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -58,9 +50,8 @@ class TestCloseTimeoutPlumbing:
 
     @pytest.mark.parametrize("bad", ["0.5", b"0.5", None, [], {}, complex(1)])
     def test_non_numeric_close_timeout_raises_programmingerror(self, bad: object) -> None:
-        """PEP 249 §7: every input-validation failure must subclass Error.
-        Previously the close_timeout validator called math.isfinite on
-        non-numeric inputs and leaked a bare TypeError."""
+        """PEP 249 §7: input-validation failures subclass Error. The validator previously
+        called math.isfinite on non-numeric inputs and leaked a bare TypeError."""
         with pytest.raises(ProgrammingError):
             Connection("localhost:19001", timeout=2.0, close_timeout=bad)  # type: ignore[arg-type]
         with pytest.raises(ProgrammingError):
@@ -86,10 +77,7 @@ class TestCloseTimeoutPlumbing:
             dqlitedbapi.aio.connect("localhost:19001", timeout=2.0, close_timeout=-1)
 
     def test_propagates_to_underlying_dqlite_connection(self) -> None:
-        """After the first use, the inner DqliteConnection must receive
-        the dbapi-level close_timeout so the actual wait_closed drain
-        honours the caller's budget.
-        """
+        """The inner DqliteConnection must receive the dbapi-level close_timeout."""
         with (
             patch(
                 "dqlitedbapi.connection._resolve_leader",

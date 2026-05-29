@@ -1,16 +1,5 @@
-"""Pin: ``_RESOLVE_LEADER_CACHE_LOCK`` is replaced by a fresh
-``threading.Lock`` in the child process via an
-``os.register_at_fork(after_in_child=...)`` hook so a parent that
-forked while another thread held the lock cannot leave the child
-with a permanently-inherited held lock (deadlock).
-
-Realistic threat: the dbapi sync layer spins up a daemon
-``_loop_thread`` per ``Connection``, so any process opening a sync
-connection then forking is multi-threaded at the moment of fork.
-A parent thread parked inside ``_get_resolve_leader_cluster``'s
-lock-protected composite would hand the child a held lock that
-no thread in the child owns.
-"""
+"""``_RESOLVE_LEADER_CACHE_LOCK`` is replaced by a fresh lock after fork so a
+child cannot inherit a held lock and deadlock."""
 
 from __future__ import annotations
 
@@ -22,8 +11,6 @@ import dqlitedbapi.connection as _conn_mod
 
 
 def test_atfork_callback_replaces_cache_lock() -> None:
-    """Calling the after-fork hook directly should swap the module-
-    level lock for a fresh ``threading.Lock`` instance."""
     original = _conn_mod._RESOLVE_LEADER_CACHE_LOCK
     try:
         _conn_mod._at_fork_replace_resolve_leader_cache_lock()
@@ -34,7 +21,6 @@ def test_atfork_callback_replaces_cache_lock() -> None:
             "the child"
         )
         assert isinstance(replacement, type(threading.Lock()))
-        # The replacement must be acquirable (not held).
         assert replacement.acquire(blocking=False)
         replacement.release()
     finally:
@@ -42,20 +28,8 @@ def test_atfork_callback_replaces_cache_lock() -> None:
 
 
 def test_atfork_hook_registered_at_module_level() -> None:
-    """The after-fork hook must be registered via
-    ``os.register_at_fork(after_in_child=_at_fork_replace_resolve_leader_cache_lock)``
-    at module top-level so the child process inherits a fresh lock
-    instead of a potentially-held one.
-
-    Verified by source-level regex (NOT by ``importlib.reload``).
-    Reload mutates module state in-place: the ``Connection`` class
-    identity changes, the original ``_RESOLVE_LEADER_CACHE`` /
-    ``_RESOLVE_LEADER_CACHE_PID`` globals are reset, and the
-    OS-level fork-handler list still holds the original function
-    pointer. Subsequent tests in the same pytest session that rely
-    on ``isinstance(x, dqlitedbapi.Connection)`` would fail
-    spuriously. Source-level introspection avoids the pollution.
-    """
+    """Verify the at-fork registration via source regex, not importlib.reload:
+    reload mutates module state and pollutes later tests in the session."""
     src = inspect.getsource(_conn_mod)
     pattern = (
         r"os\.register_at_fork\("

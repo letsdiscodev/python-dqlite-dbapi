@@ -1,10 +1,5 @@
-"""``AsyncConnection.transaction()`` is the async-DB-API canonical
-context manager wrapping ``BEGIN`` / ``COMMIT`` / ``ROLLBACK``.
-Mirrors ``asyncpg.Connection.transaction()`` /
-``psycopg.AsyncConnection.transaction()`` — the pattern that
-asyncpg / psycopg / sqlalchemy_orm code expects when writing
-``async with conn.transaction(): ...``.
-"""
+"""``AsyncConnection.transaction()``: an ``async with`` context manager over
+BEGIN/COMMIT/ROLLBACK, matching asyncpg/psycopg."""
 
 from __future__ import annotations
 
@@ -17,17 +12,13 @@ from dqlitedbapi.exceptions import InterfaceError
 
 
 async def test_transaction_method_exists() -> None:
-    """Pin: AsyncConnection has a ``transaction`` method (the
-    feature itself, before behaviour). Cross-driver code that uses
-    ``async with conn.transaction(): ...`` previously raised
-    ``AttributeError`` outside ``dbapi.Error``."""
+    """Pin: AsyncConnection has a ``transaction`` method at all."""
     conn = AsyncConnection("localhost:9001")
     assert hasattr(conn, "transaction")
 
 
 async def test_transaction_raises_interface_error_when_closed() -> None:
     conn = AsyncConnection("localhost:9001")
-    # Force-close without ever connecting.
     conn._closed = True
     with pytest.raises(InterfaceError, match="closed"):
         async with conn.transaction():
@@ -35,10 +26,8 @@ async def test_transaction_raises_interface_error_when_closed() -> None:
 
 
 async def test_transaction_delegates_to_underlying_client_transaction() -> None:
-    """The dbapi-async transaction() is plumbing — the cancellation-
-    aware rollback discipline lives at the client layer
-    (``dqliteclient.connection.DqliteConnection.transaction``).
-    Verify the delegation calls the underlying context manager."""
+    """transaction() just delegates to the client-layer context manager (where the
+    cancellation-aware rollback lives)."""
     conn = AsyncConnection("localhost:9001")
 
     fake_inner = MagicMock()

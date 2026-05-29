@@ -1,10 +1,6 @@
-"""Unit tests for ``_is_no_transaction_error``.
-
-The helper mask-compares the SQLite primary result code (low byte of
-the extended code) to pin the silent ``commit()``/``rollback()`` swallow
-to genuine "no active transaction" replies. This mirrors the mask
-already performed by ``_classify_operational`` in cursor.py.
-"""
+"""Unit tests for ``_is_no_transaction_error``: it mask-compares the SQLite
+primary result code so the silent commit()/rollback() swallow only fires on
+genuine "no active transaction" replies."""
 
 from dqlitedbapi.connection import _is_no_transaction_error
 from dqlitedbapi.exceptions import OperationalError
@@ -17,23 +13,18 @@ class TestIsNoTransactionError:
         assert _is_no_transaction_error(exc) is True
 
     def test_misuse_code_does_not_match(self) -> None:
-        # SQLITE_MISUSE = 21 — never used by the dqlite server for
-        # transaction-state errors (verified upstream:
-        # ``dqlite-upstream/src/vfs.c::vfsFileControlPersistWal`` is the
-        # only MISUSE site, and it's an unrelated VFS file-control
-        # path). A real misuse must surface as a real error, not a
-        # silent commit/rollback no-op.
+        # SQLITE_MISUSE = 21 is never used by dqlite for transaction-state
+        # errors, so a real misuse must surface rather than be swallowed.
         exc = OperationalError("cannot rollback - no transaction is active", code=21)
         assert _is_no_transaction_error(exc) is False
 
     def test_extended_snapshot_code_matches(self) -> None:
-        # SQLITE_ERROR_SNAPSHOT = 769 = 3 << 8 | 1
-        # Low byte == 1 (SQLITE_ERROR), so the swallow must apply.
+        # SQLITE_ERROR_SNAPSHOT = 769; low byte == 1 (SQLITE_ERROR), so swallow.
         exc = OperationalError("cannot commit - no transaction is active", code=769)
         assert _is_no_transaction_error(exc) is True
 
     def test_extended_retry_code_matches(self) -> None:
-        # SQLITE_ERROR_RETRY = 513 = 2 << 8 | 1
+        # SQLITE_ERROR_RETRY = 513; low byte == 1 (SQLITE_ERROR)
         exc = OperationalError("cannot rollback - no transaction is active", code=513)
         assert _is_no_transaction_error(exc) is True
 
@@ -43,18 +34,9 @@ class TestIsNoTransactionError:
         assert _is_no_transaction_error(exc) is False
 
     def test_code_none_does_not_match_even_with_substring(self) -> None:
-        """A code-None OperationalError must NOT swallow even when the
-        message contains the magic substring.
-
-        The dbapi's ``_call_client`` wraps DqliteConnectionError /
-        ClusterError / ProtocolError / DataError with code=None.
-        Those classes are precisely the errors we want to surface
-        (leader-flip disconnects, cluster failures), never silently
-        swallow. The integration test ``test_no_transaction_error_wording``
-        proves the genuine server reply always carries code=1, so the
-        whitelist is exhaustive on its own — the substring fallback is
-        only valid alongside a real SQLite code.
-        """
+        """code=None must NOT swallow: _call_client wraps the errors we want to
+        surface (leader-flip/cluster failures) with code=None, and the genuine
+        server reply always carries code=1."""
         exc = OperationalError("no transaction is active")
         assert _is_no_transaction_error(exc) is False
 
@@ -63,38 +45,23 @@ class TestIsNoTransactionError:
         assert _is_no_transaction_error(exc) is False
 
     def test_cannot_commit_with_no_tx_clause_matches(self) -> None:
-        # Both upstream wordings ("cannot rollback - no transaction
-        # is active" and "cannot commit - no transaction is active")
-        # contain the anchored "no transaction is active" substring,
-        # which is now the single canonical match. The bare "cannot
-        # rollback" token was removed because it was too permissive
-        # (any unrelated SQLite error or DQLITE_ERROR=1 message
-        # containing those words would otherwise trigger silent-swallow).
+        # "no transaction is active" is the single canonical substring; the bare
+        # "cannot rollback" token was dropped as too permissive.
         exc = OperationalError("cannot commit - no transaction is active", code=1)
         assert _is_no_transaction_error(exc) is True
 
     def test_bare_cannot_rollback_no_longer_matches(self) -> None:
-        # A message containing "cannot rollback" but not the anchored
-        # "no transaction is active" clause must NOT trigger silent-
-        # swallow.
         exc = OperationalError("cannot rollback because the disk is full", code=1)
         assert _is_no_transaction_error(exc) is False
 
     def test_cannot_rollback_with_unrelated_code_rejected(self) -> None:
-        # Code-gate (primary code 1) is the real defence — the
-        # substring is secondary. A constraint-failed message that
-        # happens to contain the magic substring must NOT be
-        # swallowed.
+        # The primary-code gate is the real defence; the substring is secondary.
         exc = OperationalError("cannot rollback - constraint failed", code=19)
         assert _is_no_transaction_error(exc) is False
 
     def test_no_such_savepoint_not_swallowed_unquoted(self) -> None:
-        # SQLite's "no such savepoint: <name>" error has primary code
-        # 1 but its wording does NOT contain "no transaction is active"
-        # or "cannot rollback". The substring guard must therefore
-        # reject — RELEASE / ROLLBACK TO of an unknown savepoint must
-        # surface to the caller, never be silently swallowed by
-        # commit() / rollback().
+        # "no such savepoint" has primary code 1 but lacks the substring, so
+        # RELEASE/ROLLBACK TO of an unknown savepoint must surface to the caller.
         exc = OperationalError("no such savepoint: sp1", code=1)
         assert _is_no_transaction_error(exc) is False
 
@@ -104,12 +71,8 @@ class TestIsNoTransactionError:
 
 
 class TestIsNoTransactionErrorEdgeCases:
-    """Pin the case-insensitive / whitespace / both-substring matrix.
-    The recogniser does ``str(exc).lower()`` then ``any(s in lowered
-    for s in _NO_TX_SUBSTRINGS)``, so each axis below should match,
-    but no test pinned that contract before — a future refactor that
-    drops the ``.lower()`` or substring-list semantics could regress
-    silently."""
+    """Pin the case-insensitive / whitespace / both-substring matrix; the
+    recogniser does str(exc).lower() then a substring check."""
 
     def test_uppercase_message_matches(self) -> None:
         exc = OperationalError("NO TRANSACTION IS ACTIVE", code=1)
@@ -128,35 +91,23 @@ class TestIsNoTransactionErrorEdgeCases:
         assert _is_no_transaction_error(exc) is True
 
     def test_both_substrings_concatenated_match(self) -> None:
-        # The canonical server wording: "cannot rollback - no transaction is active".
         exc = OperationalError("cannot rollback - no transaction is active", code=1)
         assert _is_no_transaction_error(exc) is True
 
     def test_empty_message_with_correct_code_does_not_match(self) -> None:
-        # Empty message: code-gate alone is not enough; the substring
-        # check must still fire.
+        # Code-gate alone is not enough; the substring check must still fire.
         exc = OperationalError("", code=1)
         assert _is_no_transaction_error(exc) is False
 
     def test_substring_inside_unrelated_message_currently_matches(self) -> None:
-        # Documents the current substring-positional behaviour. A
-        # message that happens to embed the substring inside an
-        # unrelated phrase will be treated as no-tx. False-positive
-        # risk is bounded by the primary-code gate (only code 1 reaches
-        # the substring check). Pin the current behaviour so a future
-        # change is deliberate.
+        # Documents current behaviour: an embedded substring is treated as no-tx;
+        # false-positive risk is bounded by the primary-code gate.
         exc = OperationalError("error: cannot find table 'no transaction is active'", code=1)
         assert _is_no_transaction_error(exc) is True
 
     def test_code_zero_empty_statement_not_swallowed(self) -> None:
-        """Pin: code=0 is NOT in ``_NO_TX_PRIMARY_CODES`` — upstream emits
-        ``failure(req, 0, "empty statement")`` from
-        ``gateway.c::handle_prepare_done_cb`` for empty / comment-only
-        SQL, and the wire layer accepts it as a legal FailureResponse.
-        The dbapi must surface that as a normal OperationalError, not
-        silently swallow it at the commit/rollback boundary — a
-        well-meaning future refactor that adds 0 to the whitelist on
-        the intuition that "code=0 means no real error" would mask a
-        legitimate empty-statement diagnostic."""
+        """Pin: code=0 is NOT in _NO_TX_PRIMARY_CODES; upstream emits code 0 for
+        empty/comment-only SQL, which must surface as a normal OperationalError
+        rather than be swallowed at the commit/rollback boundary."""
         exc = OperationalError("empty statement", code=0)
         assert _is_no_transaction_error(exc) is False

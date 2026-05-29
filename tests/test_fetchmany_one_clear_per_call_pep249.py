@@ -1,11 +1,4 @@
-"""Pin: ``fetchmany`` clears ``cur.messages`` ONCE at the call
-boundary (PEP 249 §6.1.1), not once per inner row delivery.
-
-A user who populates ``cur.messages`` between fetchmany's prelude and
-the first inner row would see the entries wiped mid-call under the
-prior shape that routed each row through ``fetchone()``. Mirrors the
-discipline applied symmetrically to async ``fetchmany``.
-"""
+"""``fetchmany`` clears ``cur.messages`` once at the call boundary, not per inner row."""
 
 from __future__ import annotations
 
@@ -21,31 +14,18 @@ def test_sync_fetchmany_clears_messages_only_once() -> None:
         cur.execute("CREATE TABLE fm_pin (n INTEGER)")
         cur.executemany("INSERT INTO fm_pin VALUES (?)", [(i,) for i in range(5)])
         cur.execute("SELECT n FROM fm_pin ORDER BY n")
-        # Inject a message just before fetchmany's prelude clear runs.
-        # The call's prelude is allowed to clear it; what we test is
-        # that the SECOND injected entry (set after the prelude has
-        # run, i.e. between rows) survives.
         rows = cur.fetchmany(2)
         assert len(rows) == 2
-        # Push a sentinel and call fetchmany again — only the prelude
-        # clear should fire.
         cur.messages.append(("Warning", "sentinel"))  # type: ignore[arg-type]
-        # Now a follow-up fetchmany() should clear once at entry, not
-        # once per inner row.
         more = cur.fetchmany(2)
         assert len(more) == 2
-        # The append above is wiped by the prelude, which is correct
-        # behaviour. The pin we want is structural — verified via
-        # the structural test below.
+        # The sentinel is wiped by the prelude clear (correct); the real pin is structural below.
     finally:
         conn.close()
 
 
 def test_sync_fetchmany_loop_body_uses_unlocked_helper() -> None:
-    """Structural pin: ``fetchmany``'s loop body calls
-    ``_next_row_unlocked`` (the helper that does NOT clear messages
-    or re-run guards), not ``fetchone`` (which DOES clear and guard).
-    """
+    """``fetchmany``'s loop calls ``_next_row_unlocked``, not ``fetchone``."""
     import ast
     import inspect
     import textwrap

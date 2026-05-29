@@ -1,14 +1,5 @@
-"""Pin: dbapi's `pyproject.toml` declares every cross-package
-runtime dependency present in the source-tree import graph.
-
-The dbapi package imports from `dqlitewire` directly (not just
-through the client layer). The runtime dependency manifest must
-match the import graph so a future release that decouples client
-from wire (or any consumer that resolves dbapi's pins without
-client transitively pinning wire) does not silently break at
-first-error time inside `DqliteError.__init__`'s lazy import of
-`dqlitewire._truncate`.
-"""
+"""Pin: dbapi's `pyproject.toml` declares every cross-package runtime dependency in
+the import graph — it imports `dqlitewire` directly, not only via the client layer."""
 
 from __future__ import annotations
 
@@ -31,10 +22,7 @@ def _declared_runtime_deps() -> set[str]:
 
 
 def test_pyproject_declares_dqlite_wire_runtime_dep() -> None:
-    """dqlitewire is imported throughout dbapi src/; the dependency
-    declaration must mention it explicitly rather than rely on
-    dqlite-client transitively pulling it in.
-    """
+    """dqlite-wire must be declared explicitly, not relied on transitively."""
     declared = _declared_runtime_deps()
     assert "dqlite-wire" in declared, (
         "dbapi imports `dqlitewire` directly (exceptions.py, types.py, "

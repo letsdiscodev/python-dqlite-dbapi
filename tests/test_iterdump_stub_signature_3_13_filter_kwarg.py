@@ -1,19 +1,6 @@
-"""Pin: ``iterdump`` stub exposes the stdlib-3.13 ``filter=`` kwarg
-via ``inspect.signature`` so cross-driver tooling that walks the
-dbapi-connection API surface (documentation generators, IDE
-auto-complete, compatibility-shim detection) sees the documented
-stdlib shape rather than the bare ``(*args, **kwargs)`` envelope.
-
-The runtime parity — ``conn.iterdump(filter="x")`` not leaking
-``TypeError`` — is already covered by
-``test_stub_signatures_normalize_to_dbapi_error``. This file is the
-introspection-parity follow-up.
-
-Additionally pins that the iterdump signature carries NO
-``VAR_POSITIONAL`` (``*args``) parameter — stdlib's iterdump is
-keyword-only after ``self``. ``VAR_KEYWORD`` (``**kwargs``) is
-deliberately KEPT per architect triage as a forward-compat envelope
-for future Python additions; this test must therefore allow it.
+"""``iterdump`` stubs expose the stdlib-3.13 ``filter=`` kwarg via
+``inspect.signature`` and carry no ``*args`` (stdlib is keyword-only after
+``self``); ``**kwargs`` is deliberately kept as a forward-compat envelope.
 """
 
 from __future__ import annotations
@@ -47,10 +34,7 @@ def test_async_iterdump_signature_exposes_filter_kwarg() -> None:
 
 
 def test_sync_iterdump_signature_has_no_var_positional() -> None:
-    """Stdlib's ``iterdump`` is ``(*, filter=None)`` — keyword-only
-    after ``self``. A ``*args`` envelope deviates from that shape and
-    leaks a ``VAR_POSITIONAL`` parameter to introspection that stdlib
-    does not. ``**kwargs`` is deliberately KEPT for forward-compat."""
+    """No ``*args``: stdlib's ``iterdump`` is ``(*, filter=None)``."""
     sig = inspect.signature(dqlitedbapi.Connection.iterdump)
     kinds = {p.kind for p in sig.parameters.values()}
     assert inspect.Parameter.VAR_POSITIONAL not in kinds, (
@@ -60,7 +44,6 @@ def test_sync_iterdump_signature_has_no_var_positional() -> None:
 
 
 def test_async_iterdump_signature_has_no_var_positional() -> None:
-    """Async-sibling pin for the no-``*args`` invariant."""
     sig = inspect.signature(AsyncConnection.iterdump)
     kinds = {p.kind for p in sig.parameters.values()}
     assert inspect.Parameter.VAR_POSITIONAL not in kinds, (

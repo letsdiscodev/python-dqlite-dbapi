@@ -1,17 +1,6 @@
-"""Tests for thread safety DEFAULT enforcement and close() hardening.
-
-The package declares ``threadsafety=2`` (capability ceiling: threads
-may share module + connections), but the DEFAULT ``check_same_thread
-=True`` enforces strict per-thread connection use via
-``_check_thread()``. These tests pin the strict default; the
-relaxation under ``check_same_thread=False`` is tested in
-``test_check_same_thread_kwarg.py``.
-
-Like stdlib sqlite3 (which advertises ``threadsafety=3`` while
-defaulting ``check_same_thread=True``), the capability ceiling
-describes what the driver SUPPORTS once the user opts in; default
-enforcement is the Python-layer safety net.
-"""
+"""Thread-safety DEFAULT enforcement and close() hardening. ``threadsafety=2`` is the
+capability ceiling, but the default ``check_same_thread=True`` enforces strict per-thread use;
+the relaxation is tested in ``test_check_same_thread_kwarg.py``."""
 
 import threading
 
@@ -21,10 +10,7 @@ from dqlitedbapi.exceptions import ProgrammingError
 
 
 class TestThreadIdentityCheck:
-    """Test that connections reject cross-thread access."""
-
     def test_cursor_from_wrong_thread_raises(self) -> None:
-        """Creating a cursor from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 
@@ -43,7 +29,6 @@ class TestThreadIdentityCheck:
         assert "thread" in str(error).lower()
 
     def test_commit_from_wrong_thread_raises(self) -> None:
-        """commit() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 
@@ -61,7 +46,6 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_rollback_from_wrong_thread_raises(self) -> None:
-        """rollback() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 
@@ -79,7 +63,6 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_close_from_wrong_thread_raises(self) -> None:
-        """close() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 
@@ -99,16 +82,14 @@ class TestThreadIdentityCheck:
     def test_same_thread_works(self) -> None:
         """Operations from the creating thread must work normally."""
         conn = Connection("localhost:9001")
-        # These should not raise
         cursor = conn.cursor()
         assert isinstance(cursor, Cursor)
         conn.close()
 
     def test_cursor_fetchone_from_wrong_thread_raises(self) -> None:
-        """Cursor fetch from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
-        # Pre-populate cursor so fetch doesn't fail for other reasons
+        # Pre-populate so fetch doesn't fail for other reasons.
         cursor._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
         cursor._rows = [(1,)]
 
@@ -128,15 +109,8 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_row_factory_setter_from_wrong_thread_raises(self) -> None:
-        """Setting Connection.row_factory from a different thread must raise
-        ProgrammingError under default ``check_same_thread=True``. The
-        class docstring claims every public method enforces the per-
-        thread default; the row_factory setter mutates state and
-        must follow the same discipline. Cross-thread mutation could
-        otherwise let a foreign thread override the row_factory used by
-        cursors created on the creator thread. (Under
-        ``check_same_thread=False`` this restriction relaxes — the
-        module's ``threadsafety=2`` ceiling allows the sharing.)"""
+        """row_factory setter from a foreign thread must raise: cross-thread mutation could
+        otherwise override the row_factory used by cursors on the creator thread."""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 
@@ -154,10 +128,7 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_autocommit_setter_from_wrong_thread_raises(self) -> None:
-        """Setting Connection.autocommit from a different thread must
-        raise ProgrammingError, even on the no-op accept-path
-        (``True`` / ``-1``). The class docstring's universal affinity
-        claim covers any state-mutating setter attempt."""
+        """autocommit setter from a foreign thread must raise even on the no-op accept-path."""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 
@@ -175,8 +146,7 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_isolation_level_setter_from_wrong_thread_raises(self) -> None:
-        """Setting Connection.isolation_level from a different thread
-        must raise ProgrammingError, even for the ``None`` accept-path."""
+        """isolation_level setter from a foreign thread must raise even on the None accept-path."""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 
@@ -194,8 +164,7 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_text_factory_setter_from_wrong_thread_raises(self) -> None:
-        """Setting Connection.text_factory from a different thread must
-        raise ProgrammingError, even for the ``str`` accept-path."""
+        """text_factory setter from a foreign thread must raise even on the str accept-path."""
         conn = Connection("localhost:9001")
         error: Exception | None = None
 
@@ -213,11 +182,8 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_cursor_arraysize_setter_from_wrong_thread_raises(self) -> None:
-        """Setting Cursor.arraysize from a different thread must raise
-        ProgrammingError. The Connection-class docstring's universal
-        affinity claim extends to Connection-allocated cursors —
-        ``cur.arraysize = N`` mid-batch from a foreign thread silently
-        changes the creator thread's next ``fetchmany`` size."""
+        """Cursor.arraysize setter from a foreign thread must raise: a mid-batch change would
+        silently alter the creator thread's next ``fetchmany`` size."""
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
         error: Exception | None = None
@@ -236,9 +202,8 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_cursor_row_factory_setter_from_wrong_thread_raises(self) -> None:
-        """Setting Cursor.row_factory from a different thread must raise
-        ProgrammingError. Cross-thread mutation could otherwise swap the
-        creator thread's per-row materialisation hook mid-fetch."""
+        """Cursor.row_factory setter from a foreign thread must raise: it could otherwise swap
+        the creator thread's per-row materialisation hook mid-fetch."""
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
         error: Exception | None = None
@@ -259,7 +224,6 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_setinputsizes_from_wrong_thread_raises(self) -> None:
-        """setinputsizes() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
         error: Exception | None = None
@@ -278,7 +242,6 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_setoutputsize_from_wrong_thread_raises(self) -> None:
-        """setoutputsize() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
         error: Exception | None = None
@@ -297,7 +260,6 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_callproc_from_wrong_thread_raises(self) -> None:
-        """callproc() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
         error: Exception | None = None
@@ -316,7 +278,6 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_nextset_from_wrong_thread_raises(self) -> None:
-        """nextset() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
         error: Exception | None = None
@@ -335,7 +296,6 @@ class TestThreadIdentityCheck:
         assert isinstance(error, ProgrammingError)
 
     def test_scroll_from_wrong_thread_raises(self) -> None:
-        """scroll() from a different thread must raise ProgrammingError."""
         conn = Connection("localhost:9001")
         cursor = conn.cursor()
         error: Exception | None = None
@@ -355,13 +315,10 @@ class TestThreadIdentityCheck:
 
 
 class TestCloseHardening:
-    """Test that close() is idempotent and handles edge cases."""
-
     def test_double_close_is_safe(self) -> None:
-        """Calling close() twice must not raise."""
         conn = Connection("localhost:9001")
         conn.close()
-        conn.close()  # Must not raise
+        conn.close()
 
     def test_close_sets_closed_immediately(self) -> None:
         """close() must set _closed before doing any cleanup."""

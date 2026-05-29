@@ -1,14 +1,7 @@
-"""``Cursor.execute`` and ``AsyncCursor.execute`` reject
-multi-statement SQL with ``ProgrammingError``, matching stdlib
-``sqlite3.Cursor.execute``.
+"""execute rejects multi-statement SQL with ``ProgrammingError``, matching stdlib sqlite3.
 
-dqlite's server prepare path returns only the first statement;
-without this guard, ``"INSERT ...; INSERT ..."`` silently drops
-everything past the first ``;`` with no diagnostic — silent data
-loss.
-
-Multi-statement intent is via ``executescript`` (we stub it as
-``NotSupportedError``).
+dqlite's prepare path returns only the first statement, so without this guard
+``"INSERT ...; INSERT ..."`` would silently drop everything past the first ``;``.
 """
 
 import pytest
@@ -20,30 +13,18 @@ class TestIsMultiStatement:
     @pytest.mark.parametrize(
         "sql",
         [
-            # Single statement, no trailing semicolon.
             "SELECT 1",
-            # Single statement, trailing whitespace only.
             "SELECT 1   ",
-            # Single statement plus trailing semicolon.
             "SELECT 1;",
-            # Single statement + trailing whitespace after semicolon.
             "SELECT 1;\n   \n",
-            # Single statement + trailing line comment.
             "SELECT 1; -- trailing",
-            # Single statement + trailing block comment.
             "SELECT 1; /* trailing */",
-            # Semicolon inside string literal — not a boundary.
+            # Semicolons inside literals/comments/quoted identifiers are not boundaries.
             "INSERT INTO t VALUES (';')",
-            # Semicolon inside line comment — not a boundary.
             "-- ; not a real semicolon\nSELECT 1",
-            # Semicolon inside block comment — not a boundary.
             "/* ; not real */ SELECT 1",
-            # Semicolon inside double-quoted identifier — not a
-            # boundary (SQLite identifier-quoting rule).
             'SELECT "col;name" FROM t',
-            # Empty SQL (covered by a sibling issue's empty-SQL
-            # classification fix; here it must NOT be flagged as
-            # multi-statement).
+            # Empty SQL must NOT be flagged as multi-statement.
             "",
             "   ",
             "-- comment\n",
@@ -55,17 +36,11 @@ class TestIsMultiStatement:
     @pytest.mark.parametrize(
         "sql",
         [
-            # Two DML statements.
             "INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)",
-            # DDL + DDL.
             "CREATE TABLE a (x); CREATE TABLE b (y)",
-            # Mixed DDL + DML.
             "CREATE TABLE t (x); INSERT INTO t VALUES (1)",
-            # Whitespace-then-statement after the first ``;``.
             "SELECT 1;   SELECT 2",
-            # Comment + second statement past the first ``;``.
             "SELECT 1; /* sep */ SELECT 2",
-            # Double semicolon followed by another statement —
             # stdlib treats consecutive ``;`` as separate statements.
             "SELECT 1;; SELECT 2",
         ],
@@ -92,9 +67,7 @@ class TestExecuteRejectsMultiStatementSync:
 
         conn = Connection("localhost:19001", timeout=2.0)
         cur = Cursor(conn)
-        # Should not raise the multi-statement error. (It will fail
-        # at the wire round-trip because the server isn't running,
-        # but that's a separate error class.)
+        # Fails at the wire round-trip (no server), but not with the multi-statement error.
         with pytest.raises(Exception) as excinfo:
             cur.execute("SELECT 1; -- comment")
         assert not isinstance(excinfo.value, ProgrammingError) or (

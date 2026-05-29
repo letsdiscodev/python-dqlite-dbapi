@@ -1,30 +1,8 @@
 # mypy: disable-error-code="arg-type,type-arg"
-"""Pin: ``PRAGMA busy_timeout`` (setter + getter) is intercepted at
-the dbapi cursor layer.
+"""PRAGMA busy_timeout (setter + getter) is intercepted at the dbapi cursor layer.
 
-dqlite's VFS authorizer denies the PRAGMA server-side; the
-interception lets callers tune the busy_timeout via the canonical
-SQLite escape hatch without it ever reaching the wire. Mirrors
-stdlib ``sqlite3``'s C-level behaviour where the PRAGMA writes the
-connection's busy_timeout register and returns the new value.
-
-Behaviours pinned:
-
-- Setter form (``PRAGMA busy_timeout = N``) updates
-  ``connection._busy_timeout`` (seconds, divided from ms) and
-  emits the new value as a single-row result.
-- Setter alt form (``PRAGMA busy_timeout(N)``) works the same.
-- Getter form (``PRAGMA busy_timeout``) emits the current value
-  without modifying it.
-- Case-insensitive and whitespace-tolerant per SQLite parser
-  conventions.
-- Negative values clamp to 0 (stdlib parity — SQLite's
-  ``sqlite3_busy_timeout`` clamps).
-- Other PRAGMAs are NOT intercepted (regression — only busy_timeout).
-- Multi-statement input does NOT match (routes to the wire where
-  the existing classifier rejects it).
-- ``_rowcount = -1`` matches stdlib's "no meaningful count for
-  PRAGMA" convention.
+dqlite's VFS authorizer denies the PRAGMA server-side, so we handle it client-side and
+never reach the wire, mirroring stdlib sqlite3's C-level busy_timeout behaviour.
 """
 
 from __future__ import annotations
@@ -37,9 +15,7 @@ from dqlitewire import ValueType
 
 
 class _FakeCursor:
-    """Minimal cursor stand-in for testing the interception. Real
-    Cursor has more state; we only need _connection, _description,
-    _rows, _rowcount, _row_index."""
+    """Minimal cursor stand-in for testing the interception."""
 
     def __init__(self, busy_timeout_seconds: float = 5.0) -> None:
         self._connection = _FakeConnection(busy_timeout_seconds)
@@ -55,8 +31,7 @@ class _FakeConnection:
 
 
 def test_setter_eq_form_updates_busy_timeout_and_returns_value() -> None:
-    """``PRAGMA busy_timeout = N`` updates the connection's busy_timeout
-    (N is ms; stored as seconds) and emits the new value as a row."""
+    """PRAGMA busy_timeout = N updates the timeout (N is ms, stored as seconds)."""
     cur = _FakeCursor(busy_timeout_seconds=5.0)
     intercepted = try_intercept_busy_timeout(
         cur,
@@ -74,13 +49,7 @@ def test_setter_eq_form_updates_busy_timeout_and_returns_value() -> None:
 
 
 def test_busy_timeout_description_type_code_is_integer() -> None:
-    """The intercept emits an integer value, so its description
-    ``type_code`` must be the wire-level INTEGER code (which compares
-    equal to the ``NUMBER`` Type Object), matching the contract the
-    normal wire path honours for every column. Emitting ``None`` would
-    break ``cur.description[0][1] == NUMBER`` introspection that works
-    everywhere else in the driver.
-    """
+    """description type_code is the INTEGER wire code so ``== NUMBER`` introspection works."""
     cur = _FakeCursor(busy_timeout_seconds=7.5)
     intercepted = try_intercept_busy_timeout(cur, "PRAGMA busy_timeout", None)
     assert intercepted is True
@@ -91,7 +60,7 @@ def test_busy_timeout_description_type_code_is_integer() -> None:
 
 
 def test_setter_paren_form_updates_busy_timeout() -> None:
-    """``PRAGMA busy_timeout(N)`` is an accepted SQLite alt form."""
+    """PRAGMA busy_timeout(N) is an accepted SQLite alt form."""
     cur = _FakeCursor()
     intercepted = try_intercept_busy_timeout(
         cur,
@@ -104,8 +73,7 @@ def test_setter_paren_form_updates_busy_timeout() -> None:
 
 
 def test_getter_form_returns_current_value() -> None:
-    """``PRAGMA busy_timeout`` (no value) is the getter — emits the
-    current value without modifying it."""
+    """PRAGMA busy_timeout (no value) is the getter; it must not modify the value."""
     cur = _FakeCursor(busy_timeout_seconds=7.5)
     intercepted = try_intercept_busy_timeout(
         cur,
@@ -119,11 +87,7 @@ def test_getter_form_returns_current_value() -> None:
 
 @pytest.mark.parametrize("ms", [2120321820, 535301320, 65551900])
 def test_setter_getter_roundtrip_exact_for_lossy_values(ms: int) -> None:
-    """``PRAGMA busy_timeout = N`` must echo ``N`` exactly. The intercept
-    stores the timeout in seconds (``N / 1000.0``) and re-derives ms;
-    a plain ``int()`` truncation of ``(N/1000.0)*1000`` lands at ``N-1``
-    for many values, so the round-trip must round, not truncate.
-    """
+    """Round-trip must round, not truncate: int() of (N/1000.0)*1000 lands at N-1."""
     cur = _FakeCursor()
     intercepted = try_intercept_busy_timeout(cur, f"PRAGMA busy_timeout = {ms}", None)
     assert intercepted is True
@@ -131,7 +95,6 @@ def test_setter_getter_roundtrip_exact_for_lossy_values(ms: int) -> None:
 
 
 def test_case_insensitive() -> None:
-    """SQLite's lexer is case-insensitive; intercept must match."""
     for variant in [
         "pragma busy_timeout = 5000",
         "PRAGMA BUSY_TIMEOUT = 5000",
@@ -142,7 +105,6 @@ def test_case_insensitive() -> None:
 
 
 def test_whitespace_tolerant() -> None:
-    """SQLite tolerates extra whitespace around the ``=``."""
     for variant in [
         "PRAGMA  busy_timeout=5000",
         "  PRAGMA busy_timeout  =  5000  ",
@@ -154,7 +116,7 @@ def test_whitespace_tolerant() -> None:
 
 
 def test_negative_value_clamps_to_zero() -> None:
-    """SQLite clamps negative busy_timeout to 0. Stdlib parity."""
+    """SQLite clamps negative busy_timeout to 0."""
     cur = _FakeCursor()
     intercepted = try_intercept_busy_timeout(
         cur,
@@ -167,8 +129,7 @@ def test_negative_value_clamps_to_zero() -> None:
 
 
 def test_zero_value_disables_retry() -> None:
-    """``PRAGMA busy_timeout = 0`` is the canonical 'no retry' setter
-    (stdlib parity for ``timeout=0``)."""
+    """PRAGMA busy_timeout = 0 is the 'no retry' setter."""
     cur = _FakeCursor(busy_timeout_seconds=5.0)
     intercepted = try_intercept_busy_timeout(
         cur,
@@ -181,8 +142,7 @@ def test_zero_value_disables_retry() -> None:
 
 
 def test_other_pragmas_not_intercepted() -> None:
-    """Regression: only busy_timeout is intercepted. Other PRAGMAs
-    flow to the wire as before."""
+    """Regression: only busy_timeout is intercepted; other PRAGMAs flow to the wire."""
     for statement in [
         "PRAGMA foreign_keys = ON",
         "PRAGMA journal_mode",
@@ -194,10 +154,7 @@ def test_other_pragmas_not_intercepted() -> None:
 
 
 def test_multi_statement_not_intercepted() -> None:
-    """``PRAGMA busy_timeout = N; SELECT 1`` has trailing content
-    AFTER the optional trailing semicolon — does not match. Routes
-    to the wire where the existing multi-statement classifier
-    rejects it."""
+    """Trailing content after the optional semicolon does not match; routes to wire."""
     cur = _FakeCursor()
     assert (
         try_intercept_busy_timeout(
@@ -210,9 +167,7 @@ def test_multi_statement_not_intercepted() -> None:
 
 
 def test_non_string_not_intercepted() -> None:
-    """Belt-and-suspenders: a non-str operation (caller bug) doesn't
-    crash the interceptor — returns False so the upstream caller's
-    own type check fires."""
+    """A non-str operation returns False rather than crashing the interceptor."""
     cur = _FakeCursor()
     assert try_intercept_busy_timeout(cur, 12345, None) is False
     assert try_intercept_busy_timeout(cur, None, None) is False
@@ -228,7 +183,6 @@ def test_non_string_not_intercepted() -> None:
     ],
 )
 def test_setter_variants_all_intercept(statement: str) -> None:
-    """Parametrised pin across the setter variants SQLite documents."""
     cur = _FakeCursor()
     intercepted = try_intercept_busy_timeout(cur, statement, None)
     assert intercepted is True

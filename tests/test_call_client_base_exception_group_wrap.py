@@ -1,17 +1,5 @@
-"""Pin: ``_call_client`` and ``_build_and_connect`` wrap a
-``BaseExceptionGroup`` raised from inside the awaited coro as a
-PEP 249 ``DatabaseError`` / ``OperationalError`` instead of letting
-it propagate past the dbapi boundary.
-
-``BaseExceptionGroup`` does NOT inherit from ``Exception`` (PEP 654
-— it inherits from ``BaseException`` so ``except Exception:`` blocks
-correctly miss it) and no client / wire exception class matches it.
-A group leaked from a future ``TaskGroup`` codec path or from
-third-party retry / telemetry middleware would otherwise propagate
-as-is past every ``except dbapi.Error:`` clause — violating PEP 249
-§7's "errors during database operation surface as Error subclasses"
-contract.
-"""
+"""Pin: ``_call_client`` wraps a ``BaseExceptionGroup`` as a PEP 249 DatabaseError.
+The group is a BaseException (not Exception, per PEP 654) so no client/wire arm matches it."""
 
 from __future__ import annotations
 
@@ -26,9 +14,7 @@ from dqlitedbapi.exceptions import DatabaseError
 
 @pytest.mark.asyncio
 async def test_base_exception_group_wraps_as_database_error() -> None:
-    """A group raised from inside the awaited coro must surface as
-    ``DatabaseError`` (with the group on ``__cause__``) so cross-driver
-    ``except dbapi.Error:`` catches it."""
+    """A group must surface as DatabaseError (group on __cause__) so ``dbapi.Error`` catches it."""
 
     async def aggregate_op() -> Any:
         raise BaseExceptionGroup(
@@ -44,22 +30,17 @@ async def test_base_exception_group_wraps_as_database_error() -> None:
 
     err = info.value
     assert "aggregate" in str(err)
-    # Python downgrades ``BaseExceptionGroup`` to ``ExceptionGroup``
-    # at construction when every child derives from Exception (which
-    # is the case for ``DqliteConnectionError``).
+    # Python downgrades BaseExceptionGroup to ExceptionGroup when all children derive Exception.
     assert "ExceptionGroup" in str(err)
     assert "2 child" in str(err)
-    # The original group survives on __cause__ so SA's _walk_cause_chain
-    # can still descend the children.
+    # Original group survives on __cause__ so SA's _walk_cause_chain can descend the children.
     assert isinstance(err.__cause__, BaseExceptionGroup)
     assert len(err.__cause__.exceptions) == 2
 
 
 @pytest.mark.asyncio
 async def test_exception_group_subclass_also_wrapped() -> None:
-    """``ExceptionGroup`` (the ``Exception``-derived sibling, raised
-    by ``asyncio.TaskGroup``) inherits from ``BaseExceptionGroup`` so
-    the same arm catches it."""
+    """ExceptionGroup inherits BaseExceptionGroup, so the same arm catches it."""
 
     async def task_group_failure() -> Any:
         raise ExceptionGroup(
@@ -75,8 +56,7 @@ async def test_exception_group_subclass_also_wrapped() -> None:
 
 @pytest.mark.asyncio
 async def test_base_exception_group_with_single_child() -> None:
-    """A degenerate single-child group still routes through the wrap;
-    the message names the single class."""
+    """A single-child group still routes through the wrap; the message names the single class."""
 
     async def single_op() -> Any:
         raise BaseExceptionGroup(

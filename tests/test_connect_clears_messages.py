@@ -1,8 +1,5 @@
-"""Pin: ``Connection.connect()`` and ``AsyncConnection.connect()``
-clear ``Connection.messages`` first, like every other public
-Connection method does. PEP 249 §6.4 says ``messages`` is cleared
-by all standard methods; ``connect()`` is a dqlite extension but
-the project-wide uniformity discipline extends here too.
+"""Pin: ``connect()`` clears ``Connection.messages`` first, like every standard
+method does (PEP 249 §6.4). connect() is a dqlite extension but follows the same rule.
 """
 
 from __future__ import annotations
@@ -16,9 +13,7 @@ _RUNTIMEERROR_STALE: tuple[type[Exception], Exception] = (RuntimeError, RuntimeE
 
 
 def test_sync_connect_clears_messages_even_when_connect_raises() -> None:
-    """Pre-populate ``messages`` then drive ``connect()``. The
-    connect attempt will raise (no real cluster), but ``messages``
-    must already be cleared by the time the body raises."""
+    """connect() must clear messages before its body raises (no real cluster here)."""
     conn = Connection("localhost:9999", timeout=0.1)
     conn.messages.append(_RUNTIMEERROR_STALE)
     assert conn.messages == [_RUNTIMEERROR_STALE]

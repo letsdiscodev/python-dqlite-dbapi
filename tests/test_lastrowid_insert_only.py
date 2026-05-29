@@ -1,6 +1,5 @@
-"""``Cursor.lastrowid`` updates only on successful INSERT / REPLACE,
-matching stdlib ``sqlite3.Cursor.lastrowid``. UPDATE / DELETE / DDL
-leave the previous INSERT's rowid in place.
+"""``Cursor.lastrowid`` updates only on successful INSERT / REPLACE (matching
+stdlib); UPDATE / DELETE / DDL leave the previous rowid in place.
 """
 
 from __future__ import annotations
@@ -9,14 +8,12 @@ from dqlitedbapi import Connection
 
 
 async def test_lastrowid_sticky_across_update_and_delete(monkeypatch) -> None:
-    """Simulate a realistic INSERT → UPDATE → DELETE sequence where
-    the wire returns 42, then 0, then 0. The cursor must expose 42
-    throughout, matching stdlib sqlite3."""
+    """Across INSERT -> UPDATE -> DELETE (wire returns 42, 0, 0) the cursor
+    exposes 42 throughout."""
     conn = Connection("127.0.0.1:9001")
     cur = conn.cursor()
 
-    # Patch the async client's ``execute`` to return the sequence
-    # of ``(last_insert_id, affected)`` the wire would produce.
+    # Fake execute returning the ``(last_insert_id, affected)`` wire sequence.
     class _FakeAsyncConn:
         def __init__(self) -> None:
             self.calls = 0
@@ -29,25 +26,23 @@ async def test_lastrowid_sticky_across_update_and_delete(monkeypatch) -> None:
 
     fake = _FakeAsyncConn()
 
-    # Cursor calls conn._get_async_connection(); patch it to return fake.
     async def _fake_get_async() -> _FakeAsyncConn:
         return fake
 
     conn._get_async_connection = _fake_get_async  # type: ignore[assignment]
 
-    # Drive the cursor through the sync public API.
     cur.execute("INSERT INTO t (v) VALUES (?)", ("x",))
     assert cur.lastrowid == 42
     cur.execute("UPDATE t SET v = 'y' WHERE id = 42")
-    # Sticky — did not get zeroed by the UPDATE wire response.
+    # Sticky: the UPDATE wire response did not zero it.
     assert cur.lastrowid == 42
     cur.execute("DELETE FROM t WHERE id = 42")
     assert cur.lastrowid == 42
 
 
 def test_is_insert_or_replace_prefix_detection() -> None:
-    """Low-level helper pin: detect INSERT / INSERT OR REPLACE /
-    INSERT OR IGNORE / REPLACE; reject UPDATE / DELETE / DDL / WITH."""
+    """Detect INSERT / INSERT OR REPLACE / INSERT OR IGNORE / REPLACE;
+    reject UPDATE / DELETE / DDL / WITH."""
     from dqlitedbapi.cursor import _is_insert_or_replace
 
     for sql in (

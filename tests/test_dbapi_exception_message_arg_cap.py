@@ -1,23 +1,5 @@
-"""Defense-in-depth pin: every dbapi exception class caps the
-``message`` argument (i.e. ``args[0]``, the value used by
-``str(exc)``, ``repr(exc)``, and pickling) at the same 4 KiB budget
-the ``raw_message`` cap uses.
-
-Without the cap, the wire-layer 64 KiB ``FailureResponse`` ceiling
-flows through to ``args[0]`` and amplifies across:
-
-- Celery / multiprocessing pickled exception payloads (per-attempt
-  retry result pickle).
-- BaseExceptionGroup fan-out aggregating many failures.
-- ``logging.exception`` traceback formatters that materialise
-  ``repr(exc)`` at full size — the repr's quoting overhead on
-  control-byte-heavy peer text can EXCEED the ``args[0]`` byte
-  size (Amplification 2-4× from Python's repr escape rules).
-
-The companion ``raw_message`` cap already exists
-(``test_dbapi_exception_raw_message_cap``); this file mirrors the
-discipline at the ``message`` arg + repr surface.
-"""
+"""Pin: every dbapi exception caps ``message`` (``args[0]``, used by
+``str``/``repr``/pickle) at the same 4 KiB budget as ``raw_message``."""
 
 from __future__ import annotations
 
@@ -35,8 +17,7 @@ from dqlitedbapi.exceptions import (
     ProgrammingError,
 )
 
-# 4 KiB cap + ~50-byte truncation suffix; allow some headroom for
-# the suffix format string in the wire helper.
+# 4 KiB cap + ~50-byte truncation suffix, plus headroom.
 _CAP_BUDGET = 5000
 
 
@@ -53,9 +34,7 @@ _CAP_BUDGET = 5000
     ],
 )
 def test_message_arg_capped_at_4kb(cls: type) -> None:
-    """A 63 KiB ``message`` argument (well below the wire cap)
-    produces a ``str(exc)`` bounded at the 4 KiB cap + truncation
-    suffix — not the full 63 KiB."""
+    """A 63 KiB ``message`` produces a ``str(exc)`` bounded at the cap."""
     big = "X" * 63_000
     e = cls(big, code=42)
     rendered = str(e)
@@ -77,10 +56,7 @@ def test_message_arg_capped_at_4kb(cls: type) -> None:
     ],
 )
 def test_repr_capped_via_args0(cls: type) -> None:
-    """``repr(exc)`` derives from ``args[0]``; once args[0] is
-    bounded the repr inherits the bound (modulo Python's quoting
-    overhead and class-name / code field). 6 KiB ceiling absorbs
-    the worst-case repr escape inflation on a 4 KiB capped string."""
+    """``repr(exc)`` inherits the args[0] bound; 6 KiB absorbs escape inflation."""
     big = "X" * 63_000
     e = cls(big, code=42)
     rendered = repr(e)
@@ -90,10 +66,7 @@ def test_repr_capped_via_args0(cls: type) -> None:
 
 
 def test_pickled_exception_bounded() -> None:
-    """The pickled payload — what Celery / multiprocessing
-    serialises — stays inside the same budget. Previously the
-    uncapped ``args[0]`` blew the pickle out to 64 KiB+ per
-    exception."""
+    """The pickled payload stays inside the budget once args[0] is capped."""
     big = "X" * 63_000
     e = OperationalError(big, code=1)
     pickled = pickle.dumps(e)
@@ -108,8 +81,7 @@ def test_pickled_exception_bounded() -> None:
     [InterfaceError, DatabaseError, OperationalError],
 )
 def test_short_message_arg_round_trips(cls: type) -> None:
-    """Negative pin: short messages round-trip unchanged through
-    args[0] — the cap only kicks in past the 4 KiB threshold."""
+    """Short messages round-trip unchanged; the cap only fires past 4 KiB."""
     short = "ordinary error"
     e = cls(short, code=1)
     assert str(e) == short

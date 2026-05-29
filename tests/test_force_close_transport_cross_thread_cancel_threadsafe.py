@@ -1,21 +1,8 @@
-"""Pin: ``AsyncConnection.force_close_transport`` schedules a
-``Task.cancel`` on the task's owning loop via ``call_soon_threadsafe``
-when the calling thread is NOT the loop's owner.
+"""``force_close_transport`` schedules ``Task.cancel`` via ``call_soon_threadsafe`` from
+a foreign thread; direct cancel only when the loop is closed or this thread owns it.
 
-``asyncio.Task.cancel()`` is not documented as thread-safe; CPython
-implements it via ``loop.call_soon`` which is also not thread-safe.
-``loop.call_soon_threadsafe(task.cancel)`` is the correct shape.
-
-The previous implementation called ``pending.cancel()`` directly, which
-falls silent when the loop is closed (a CancelledError nobody hears),
-but is undefined behaviour against a live loop owned by another
-thread (mid-tick of the asyncio ready queue).
-
-This pins the loop-aware schedule path:
-- Loop closed  → direct cancel (no-op; matches the old contract).
-- Loop alive, this thread is the owner → direct cancel.
-- Loop alive, foreign thread → call_soon_threadsafe(cancel).
-"""
+``Task.cancel()`` is not thread-safe (CPython routes it via the non-threadsafe
+``loop.call_soon``)."""
 
 from __future__ import annotations
 
@@ -30,8 +17,7 @@ from dqlitedbapi.aio.connection import AsyncConnection
 def _make_async_connection_with_pending_loop(
     *, loop: asyncio.AbstractEventLoop, loop_closed: bool
 ) -> tuple[AsyncConnection, MagicMock, MagicMock]:
-    """Build an AsyncConnection whose inner._pending_drain is a Mock
-    Task whose ``get_loop()`` returns ``loop``."""
+    """AsyncConnection whose inner._pending_drain is a Mock Task with ``get_loop() -> loop``."""
     aconn = AsyncConnection.__new__(AsyncConnection)
     aconn._closed = False
     aconn._creator_pid = os.getpid()
@@ -39,7 +25,7 @@ def _make_async_connection_with_pending_loop(
     aconn._closed_flag = [False]
 
     inner = MagicMock()
-    inner._protocol = None  # exercise the cleanup-tail-only branch
+    inner._protocol = None  # cleanup-tail-only branch
 
     pending = MagicMock()
     pending.done.return_value = False
@@ -48,9 +34,6 @@ def _make_async_connection_with_pending_loop(
     inner._pending_drain = pending
 
     if loop_closed:
-        # Make the loop's is_closed() report True. Real loops returned by
-        # asyncio.new_event_loop() track their own closed state; we can
-        # rely on actual `loop.close()` to flip is_closed.
         loop.close()
 
     aconn._async_conn = inner
@@ -58,8 +41,7 @@ def _make_async_connection_with_pending_loop(
 
 
 def test_cancel_called_directly_when_loop_closed() -> None:
-    """SA finalize / atexit / GC path: loop is gone. Cancel falls back
-    to direct call (no-op at the asyncio C level)."""
+    """Loop gone (SA finalize / atexit / GC): cancel falls back to a direct call."""
     loop = asyncio.new_event_loop()
     aconn, inner, pending = _make_async_connection_with_pending_loop(loop=loop, loop_closed=True)
 
@@ -70,15 +52,11 @@ def test_cancel_called_directly_when_loop_closed() -> None:
 
 
 def test_cancel_scheduled_via_call_soon_threadsafe_from_foreign_thread() -> None:
-    """Live loop on thread A; force_close_transport invoked from
-    thread B. Cancel must be scheduled via call_soon_threadsafe;
-    pending.cancel must NOT be called directly from thread B (that
-    would race the ready-queue)."""
+    """Foreign thread, live loop: cancel scheduled via call_soon_threadsafe, not direct."""
     loop = asyncio.new_event_loop()
 
     aconn, inner, pending = _make_async_connection_with_pending_loop(loop=loop, loop_closed=False)
 
-    # Wrap call_soon_threadsafe so we can observe the call shape.
     cstu_calls: list[tuple[object, tuple[object, ...]]] = []
     real_cstu = loop.call_soon_threadsafe
 
@@ -88,7 +66,6 @@ def test_cancel_scheduled_via_call_soon_threadsafe_from_foreign_thread() -> None
 
     loop.call_soon_threadsafe = _capture_cstu  # type: ignore[assignment]
 
-    # Run force_close_transport on a foreign thread.
     def _run_from_foreign_thread() -> None:
         aconn.force_close_transport()
 
@@ -97,15 +74,11 @@ def test_cancel_scheduled_via_call_soon_threadsafe_from_foreign_thread() -> None
     t.join(timeout=2.0)
     assert not t.is_alive()
 
-    # The cancel must have been scheduled, not called directly.
     pending.cancel.assert_not_called()
     assert len(cstu_calls) == 1
     callback, args = cstu_calls[0]
-    # The scheduled callback is a wrapper that calls cancel() AND
-    # adds a done-callback to absorb the resulting CancelledError —
-    # otherwise asyncio's task-finalisation logger emits "Task
-    # exception was never retrieved" at GC. The wrapper's first
-    # positional arg is the pending task itself.
+    # Scheduled callback is a wrapper that cancels and absorbs the CancelledError
+    # (else asyncio logs "Task exception was never retrieved" at GC); arg is the task.
     assert callable(callback)
     assert args == (pending,)
     assert aconn._async_conn is None
@@ -114,8 +87,7 @@ def test_cancel_scheduled_via_call_soon_threadsafe_from_foreign_thread() -> None
 
 
 def test_cancel_called_directly_on_owning_thread() -> None:
-    """Live loop, current thread is the owner. Cancel runs directly
-    (no need to schedule via call_soon_threadsafe)."""
+    """Live loop owned by the current thread: cancel runs directly."""
 
     async def _drive() -> None:
         loop = asyncio.get_running_loop()

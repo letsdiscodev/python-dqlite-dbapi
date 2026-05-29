@@ -1,23 +1,6 @@
-"""AST pin for ``AsyncConnection.force_close_transport``'s nested
-``_cancel_and_observe`` / ``_observe`` closures.
-
-The existing ``test_force_close_cancel_and_observe_narrow_suppress``
-matches on source substrings — a regression that moves the
-``contextlib.suppress(Exception)`` literal to a different statement
-position AND reintroduces a ``contextlib.suppress(BaseException)``
-inside the ``_observe`` arm is invisible to the substring counts.
-This file walks the ``force_close_transport``'s AST and asserts
-every ``with contextlib.suppress(...)`` statement inside the
-function (including nested closures) names ``Exception`` — NOT
-``BaseException`` — so the narrow-suppress discipline is robust to
-position refactoring.
-
-The narrow-suppress discipline is project-wide and load-bearing:
-``KeyboardInterrupt`` / ``SystemExit`` raised at the bytecode
-boundary inside ``t.exception()`` must propagate to drive loop
-shutdown. A widening to ``BaseException`` would swallow those
-signals.
-"""
+"""AST pin: every ``contextlib.suppress(...)`` in ``force_close_transport`` (including
+nested closures) names ``Exception``, not ``BaseException`` — position-independent, so
+KI/SystemExit at the ``t.exception()`` boundary propagate to drive loop shutdown."""
 
 from __future__ import annotations
 
@@ -29,10 +12,7 @@ from dqlitedbapi.aio.connection import AsyncConnection
 
 
 def _collect_suppress_args(tree: ast.AST) -> list[str]:
-    """Return the name of the argument to every
-    ``contextlib.suppress(...)`` call inside ``tree``. ``ast.walk``
-    descends into nested function bodies — exactly what we want for
-    closures defined inside the production function."""
+    """Names of the arg to every ``contextlib.suppress(...)`` in ``tree`` (nested too)."""
     found: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.With):
@@ -42,9 +22,7 @@ def _collect_suppress_args(tree: ast.AST) -> list[str]:
             if not isinstance(call, ast.Call):
                 continue
             func = call.func
-            # Match both ``contextlib.suppress(X)`` and the bare
-            # ``suppress(X)`` form (the production source uses the
-            # qualified form throughout).
+            # Match both qualified ``contextlib.suppress(X)`` and bare ``suppress(X)``.
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
             if name != "suppress":
                 continue
@@ -55,10 +33,6 @@ def _collect_suppress_args(tree: ast.AST) -> list[str]:
 
 
 def test_force_close_transport_suppress_arms_all_narrow_to_exception() -> None:
-    """Every ``contextlib.suppress(...)`` statement inside
-    ``force_close_transport`` (including nested closures) names
-    ``Exception``, NOT ``BaseException``. The narrow-suppress
-    discipline must hold position-independently."""
     src = textwrap.dedent(inspect.getsource(AsyncConnection.force_close_transport))
     tree = ast.parse(src)
 

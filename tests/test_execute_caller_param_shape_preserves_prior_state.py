@@ -1,21 +1,6 @@
-"""Pin: ``Cursor.execute`` / ``AsyncCursor.execute`` preserve the
-prior result-set state (``description``, ``rowcount``, ``rows``,
-``_row_index``) when the call is rejected with ``ProgrammingError``
-for a caller-shape parameter misuse (Mapping for qmark, set, str,
-bytes, bytearray, memoryview).
-
-Per ``Cursor.execute``'s documented contract:
-    "stdlib only scrubs on prepare-stage rejections (empty SQL,
-    multi-statement, NUL byte, bind-count mismatch). Match that
-    split: ProgrammingError here surfaces with cursor state intact
-    so a caller's retry-with-coerce idiom can inspect
-    cur.description to shape the retry."
-
-The structural-parameter rejections were running AFTER
-``_reset_execute_state``, so a sibling ``cur.execute("SELECT 1");
-cur.execute("SELECT ?", {"a": 1})`` sequence scrubbed
-``cur.description`` between the two calls, breaking the
-preservation contract. Hoist the structural reject ABOVE the reset.
+"""Pin: caller-shape parameter rejection (``ProgrammingError``) preserves prior result-set
+state. Stdlib only scrubs on prepare-stage rejections; the structural reject must run ABOVE
+``_reset_execute_state`` so a retry-with-coerce idiom can still inspect ``cur.description``.
 """
 
 from __future__ import annotations
@@ -32,8 +17,7 @@ from dqlitedbapi.exceptions import ProgrammingError
 
 
 def _sync_cursor_with_prior_result_state() -> Any:
-    """Construct a Cursor with a pretend prior result set so we can
-    observe whether the rejection scrubs it."""
+    """Cursor with a pretend prior result set to observe whether rejection scrubs it."""
     conn = cast(Any, SyncConnection.__new__(SyncConnection))
     conn._closed = False
     conn._creator_thread = threading.get_ident()
@@ -65,8 +49,7 @@ def _sync_cursor_with_prior_result_state() -> Any:
     ],
 )
 def test_caller_shape_param_rejection_preserves_prior_description(bad_params: Any) -> None:
-    """Per the documented contract, a caller-shape parameter rejection
-    must NOT scrub cur.description."""
+    """Caller-shape parameter rejection must NOT scrub cur.description."""
     cur = _sync_cursor_with_prior_result_state()
     prior_description = cur._description
     prior_rowcount = cur._rowcount
@@ -86,22 +69,17 @@ def test_caller_shape_param_rejection_preserves_prior_description(bad_params: An
 
 
 def test_prepare_stage_rejection_still_scrubs_description() -> None:
-    """Sibling negative pin: prepare-stage rejections (empty SQL,
-    multi-statement, NUL byte, bind-count mismatch) STILL scrub
-    state — those are the documented "scrub on rejection" cases."""
+    """Negative pin: prepare-stage rejections (empty SQL, etc.) STILL scrub state."""
     cur = _sync_cursor_with_prior_result_state()
 
     with pytest.raises(ProgrammingError, match="empty"):
         cur.execute("")
 
-    # Prepare-stage rejection: description was scrubbed.
     assert cur._description is None
 
 
 def test_non_str_operation_also_preserves_state() -> None:
-    """Symmetric pin: non-str operation already preserves state via
-    its early-return ProgrammingError; pin that the discipline
-    survives any future refactor."""
+    """Non-str operation preserves state via its early-return ProgrammingError."""
     cur = _sync_cursor_with_prior_result_state()
     prior_description = cur._description
 

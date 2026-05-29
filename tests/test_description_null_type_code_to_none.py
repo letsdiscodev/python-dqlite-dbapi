@@ -1,25 +1,6 @@
-"""Pin: ``Cursor.description`` / ``AsyncCursor.description`` map
-NULL-only columns to the ``UNKNOWN`` Type Object sentinel in
-the type_code slot.
-
-Wire-layer returns ``column_types`` derived from row 0; if a
-column was tagged ``ValueType.NULL`` (e.g. a ``LEFT JOIN``
-unmatched row, or a literal ``SELECT NULL``), the description
-mapping resolves it to ``UNKNOWN`` (the rescue scan picks up a
-non-NULL value from a later row when possible). PEP 249 §6.1.2
-requires the type_code "must compare equal to one of the Type
-Objects"; ``UNKNOWN`` is a real Type Object with empty
-``values`` so equality against STRING/NUMBER/BINARY/DATETIME/
-ROWID cleanly returns False (the prior ``None`` behaviour
-silently violated the spec — ``None`` compared equal to no
-Type Object).
-
-The mixed-row case is the load-bearing surface for the test
-gap: a column tagged NULL alongside columns with real type
-codes. A refactor that drops the comprehension would silently
-re-introduce ``ValueType.NULL`` into description and break
-every cross-driver type-branch.
-"""
+"""Pin: sync + async ``description`` map NULL-only columns to the
+``UNKNOWN`` Type Object sentinel (not ``None``, which compared equal to
+no Type Object and silently violated PEP 249 §6.1.2)."""
 
 from __future__ import annotations
 
@@ -32,8 +13,7 @@ from dqlitewire.constants import ValueType
 
 
 class _MixedNullTypesClient:
-    """Returns ``column_types=[TEXT, NULL, INTEGER]`` — the
-    mixed-row case the description mapping must handle."""
+    """Returns ``column_types=[TEXT, NULL, INTEGER]`` (the mixed-row case)."""
 
     async def query_raw_typed(
         self, sql: str, params: Any

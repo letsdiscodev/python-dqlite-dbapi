@@ -1,11 +1,5 @@
-"""Targeted tests for the exception-type mapping in ``_call_client``.
-
-The generic ``DqliteError`` catch-all is already tested; the two
-specific branches below are not, which means a refactor that reorders
-or removes them could fall through to the catch-all and silently
-change the dbapi exception type surfaced to SQLAlchemy (which keys on
-``is_disconnect`` classification).
-"""
+"""Tests for the specific exception-type mapping branches in ``_call_client`` that, if
+removed, would fall through to the catch-all and change the type SQLAlchemy keys on."""
 
 import asyncio
 
@@ -25,33 +19,17 @@ class TestCallClientClusterErrorMapping:
             asyncio.run(_call_client(raiser()))
 
     def test_cluster_error_is_not_wrapped_as_interface_error(self) -> None:
-        """Regression guard: the catch-all branch would re-classify a
-        ClusterError as InterfaceError if the specific branch were
-        removed. Assert the mapping is stable so SQLAlchemy's
-        is_disconnect path continues to see OperationalError.
-        """
+        """ClusterError must stay OperationalError (not InterfaceError) for SA's is_disconnect."""
 
         async def raiser() -> None:
             raise _client_exc.ClusterError("no leader")
 
-        # Also: it must NOT be an InterfaceError (which would mask the
-        # disconnect signal from the dialect's is_disconnect). Chain
-        # the negative assertion off ``exc_info.value`` so a regression
-        # where ``_call_client`` returns normally fails the
-        # ``pytest.raises`` upfront — earlier shape used a bare
-        # ``try/except`` which would silently pass on no-raise.
         with pytest.raises(OperationalError) as exc_info:
             asyncio.run(_call_client(raiser()))
         assert not isinstance(exc_info.value, InterfaceError)
 
     def test_cluster_error_wraps_with_code_none(self) -> None:
-        """Signature parity with the sibling DqliteConnectionError arm
-        (which explicitly passes ``code=None``). ClusterError carries
-        no SQLite code today; pinning ``.code is None`` catches a
-        future refactor that accidentally forwards a bogus code or
-        drops the explicit kwarg on the sibling in a way that makes
-        the two arms diverge again.
-        """
+        """ClusterError carries no SQLite code; pin ``.code is None`` for sibling-arm parity."""
 
         async def raiser() -> None:
             raise _client_exc.ClusterError("no leader")
@@ -72,16 +50,7 @@ class TestCallClientInterfaceErrorMapping:
             asyncio.run(_call_client(raiser()))
 
     def test_interface_error_is_not_operational_error(self) -> None:
-        """The dbapi InterfaceError is a DatabaseError sibling, not a
-        subclass of OperationalError. Verify the mapping preserves the
-        PEP 249 taxonomy boundary.
-
-        Use ``pytest.raises`` so a regression where ``_call_client``
-        silently swallows ``client.InterfaceError`` (returning ``None``
-        instead of re-raising) is caught — a bare ``try/except``
-        without an enforced raise would silently pass on the
-        no-exception branch.
-        """
+        """InterfaceError is a DatabaseError sibling, not an OperationalError subclass."""
 
         async def raiser() -> None:
             raise _client_exc.InterfaceError("closed")
@@ -92,13 +61,8 @@ class TestCallClientInterfaceErrorMapping:
 
 
 class TestCallClientClusterPolicyErrorMapping:
-    """``ClusterPolicyError`` routes to ``InterfaceError`` with a
-    distinguishing ``"Cluster policy rejection;"`` prefix. The SA
-    dialect's ``is_disconnect`` narrows ``InterfaceError`` matching to
-    "connection is closed" / "cursor is closed" so the pool invalidates
-    the permanent-reject slot without scheduling a retry against the
-    policy wall.
-    """
+    """ClusterPolicyError → InterfaceError with a "Cluster policy rejection;" prefix; SA's
+    is_disconnect narrows matching so the pool invalidates without retrying the policy wall."""
 
     def test_becomes_interface_error(self) -> None:
         async def raiser() -> None:
@@ -118,9 +82,7 @@ class TestCallClientClusterPolicyErrorMapping:
         assert isinstance(exc_info.value.__cause__, _client_exc.ClusterPolicyError)
 
     def test_is_not_operational_error(self) -> None:
-        """Must not land in ``OperationalError`` — routing there would
-        let SA's substring list match "Failed to connect" variants and
-        re-enter the retry loop against a permanent rejection."""
+        """Must not be OperationalError, else SA would retry against a permanent rejection."""
 
         async def raiser() -> None:
             raise _client_exc.ClusterPolicyError("policy")
@@ -131,12 +93,7 @@ class TestCallClientClusterPolicyErrorMapping:
 
 
 class TestCallClientReturnType:
-    """``_call_client`` is a thin exception-mapping wrapper — the
-    coroutine's success value must pass through unchanged and with its
-    static type preserved so callers that destructure the result (e.g.
-    ``last_id, affected = await _call_client(conn.execute(...))``) keep
-    compile-time checks on the shape.
-    """
+    """``_call_client`` passes the coroutine's success value through unchanged."""
 
     def test_returns_value_unchanged(self) -> None:
         async def produce_tuple() -> tuple[int, int]:
@@ -145,11 +102,4 @@ class TestCallClientReturnType:
         result = asyncio.run(_call_client(produce_tuple()))
         assert result == (7, 3)
 
-    # Note: TypeVar narrowing of ``_call_client(coro)`` is verified
-    # statically by mypy on the project's type-checking pass — the
-    # signature ``_call_client(coro: Coroutine[Any, Any, T]) -> T``
-    # is a static contract. A runtime test using ``typing.assert_type``
-    # was previously included here; ``assert_type`` is a no-op at
-    # runtime, so the runtime portion was redundant with
-    # ``test_returns_value_unchanged`` above. The static contract
-    # remains pinned by mypy's coverage of the dbapi sources.
+    # TypeVar narrowing of _call_client(coro) -> T is verified statically by mypy, not at runtime.

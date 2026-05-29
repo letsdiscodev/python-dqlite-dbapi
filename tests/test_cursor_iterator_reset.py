@@ -1,10 +1,4 @@
-"""Cursor iterator state resets when execute() is called again.
-
-PEP 249 allows re-executing a cursor. The fetch position and
-``_rows`` buffer must move to the new result set so ``next(iter(
-cursor))`` and ``list(cursor)`` both start from row 0 of the new
-SELECT — not from wherever the previous iteration left off.
-"""
+"""Re-executing a cursor resets fetch position and ``_rows`` to the new result set."""
 
 from unittest.mock import MagicMock
 
@@ -25,8 +19,6 @@ class _AwaitableObj:
 
 
 class _ScriptedClient:
-    """Replays pre-canned ``query_raw_typed`` responses in order."""
-
     def __init__(self, scripted: list[tuple[list[str], list, list[list], list[list]]]) -> None:  # type: ignore[type-arg]
         self._scripted = scripted
         self._idx = 0
@@ -41,8 +33,6 @@ class _ScriptedClient:
 
 
 async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
-    """After a second ``execute``, iterating must yield the new
-    result set in full — not continue from the prior index."""
     conn = MagicMock()
     scripted = _ScriptedClient(
         [
@@ -60,7 +50,7 @@ async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
 
     await c._execute_async("SELECT x FROM t")
     it = iter(c)
-    assert next(it) == (1,)  # consume first row; _row_index is now 1
+    assert next(it) == (1,)
 
     await c._execute_async("SELECT x FROM u")
     rows = list(c)
@@ -68,10 +58,7 @@ async def test_sync_cursor_iterator_resets_on_reexecute() -> None:
 
 
 async def test_async_cursor_iterator_resets_on_reexecute() -> None:
-    """Async parity of the sync test. After a second ``execute``,
-    ``async for`` over the cursor must yield the complete new
-    result set from row 0 — not skip rows based on the prior index.
-    """
+    """Async parity of the sync test."""
     import asyncio
 
     conn = MagicMock()
@@ -95,7 +82,7 @@ async def test_async_cursor_iterator_resets_on_reexecute() -> None:
 
     await c.execute("SELECT x FROM t")
     first = await c.__anext__()
-    assert first == (1,)  # _row_index is now 1
+    assert first == (1,)
 
     await c.execute("SELECT x FROM u")
     rows: list[tuple] = []  # type: ignore[type-arg]

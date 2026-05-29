@@ -1,19 +1,6 @@
-"""Pin: ``force_close_transport`` (both sync and async siblings)
-disarms the inner client's ResourceWarning finalizer
-(``DqliteConnection._connection_unclosed_warning``) so a subsequent
-GC sweep does NOT emit a misleading "GC'd without close" on the
-very connection that was explicitly closed via the force path.
-
-``close()`` detaches the inner finalizer inside ``_close_impl``;
-``force_close_transport`` historically did not route through
-``close()`` so the inner finalizer survived the explicit close
-and the three-flag gate
-(``_closed_flag`` AND ``_connected_flag``) failed open after
-``self._async_conn`` was nulled.
-
-Pin: after a ``force_close_transport`` on a connection with a
-finalizer-armed inner, ``inner._closed_flag[0]`` is ``True`` and
-``inner._finalizer`` is ``None``.
+"""Pin: ``force_close_transport`` (sync and async) disarms the inner
+client's ResourceWarning finalizer so a later GC sweep does not emit a
+misleading "GC'd without close" on a connection closed via the force path.
 """
 
 from __future__ import annotations
@@ -26,9 +13,7 @@ from dqlitedbapi.connection import Connection
 
 
 def _stub_inner_with_finalizer() -> MagicMock:
-    """A fake inner ``DqliteConnection`` with the three-flag gate
-    pattern and an armed weakref finalizer. Returned ``inner``
-    has the same shape ``_connection_unclosed_warning`` reads."""
+    """Fake inner with the three-flag gate and an armed weakref finalizer."""
     inner = MagicMock()
     inner._closed_flag = [False]
     inner._connected_flag = [True]
@@ -41,8 +26,7 @@ def _stub_inner_with_finalizer() -> MagicMock:
 
 
 def test_async_force_close_transport_disarms_inner_finalizer() -> None:
-    """The async sibling must detach the inner's finalizer and flip
-    its closed flag."""
+    """The async sibling detaches the inner finalizer and flips its closed flag."""
     conn = AsyncConnection.__new__(AsyncConnection)
     conn._closed = False
     conn._closed_flag = [False]
@@ -60,7 +44,6 @@ def test_async_force_close_transport_disarms_inner_finalizer() -> None:
 
 
 def test_sync_force_close_transport_disarms_inner_finalizer() -> None:
-    """The sync sibling must apply the same discipline."""
     import threading
 
     conn = Connection.__new__(Connection)

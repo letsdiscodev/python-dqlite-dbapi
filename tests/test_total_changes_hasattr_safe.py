@@ -1,19 +1,6 @@
-"""Pin: ``hasattr(conn, "total_changes")`` does not raise.
-
-``total_changes`` is part of the family of stdlib ``sqlite3``-parity
-stubs that raise ``NotSupportedError`` when called. The rest of the
-family are methods, so ``hasattr`` returns True (``getattr`` returns
-the bound method without invoking it). ``total_changes`` was the
-lone ``@property`` outlier — accessing the attribute invoked the
-descriptor's getter, which raised ``NotSupportedError``, which
-``hasattr`` (in Python 3.2+) propagates because it only catches
-``AttributeError``.
-
-The fix converts the ``@property`` to a method. Stdlib
-``sqlite3.Connection.total_changes`` is attribute-style; the project
-deliberately favours the "``hasattr`` always returns True for stubs"
-invariant over property-style fidelity. Documented divergence.
-"""
+"""``hasattr(conn, "total_changes")`` must not raise. ``total_changes`` is a stdlib-parity stub
+that raises ``NotSupportedError`` when called; it is a method (not a ``@property``) so getattr
+returns the bound method without invoking it and hasattr stays True."""
 
 from __future__ import annotations
 
@@ -25,10 +12,6 @@ from dqlitedbapi.exceptions import NotSupportedError
 
 
 def test_hasattr_total_changes_sync_does_not_raise() -> None:
-    """``hasattr`` is documented to never raise (it catches
-    ``AttributeError`` only). With ``total_changes`` as a method,
-    ``getattr(conn, "total_changes")`` returns the bound method
-    without invoking the stub, so ``hasattr`` returns True cleanly."""
     conn = dqlitedbapi.Connection("localhost:9001", timeout=1.0)
     try:
         try:
@@ -47,8 +30,7 @@ def test_hasattr_total_changes_sync_does_not_raise() -> None:
 
 
 def test_hasattr_total_changes_async_does_not_raise() -> None:
-    """Async sibling. AsyncConnection's ``total_changes`` was also a
-    ``@property`` outlier."""
+    """Async sibling: AsyncConnection's ``total_changes`` was also a ``@property`` outlier."""
     aconn = AsyncConnection("localhost:9001", timeout=1.0)
     try:
         present = hasattr(aconn, "total_changes")

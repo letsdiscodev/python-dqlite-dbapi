@@ -1,12 +1,6 @@
-"""Pin: ``AsyncConnection.force_close_transport`` is a public,
-synchronous, idempotent, never-raising last-resort cleanup hook.
-
-The SA dialect's async adapter calls this from its non-greenlet
-finalize path (GC sweep with no event loop). Walking the
-underlying client connection's private ``_protocol._writer``
-chain from outside this package broke silently when the chain
-shape changed; this hook is the single supported access boundary.
-"""
+"""Pin: ``AsyncConnection.force_close_transport`` is a public, synchronous,
+idempotent, never-raising last-resort cleanup hook (SA's non-greenlet
+finalize path, GC sweep with no event loop)."""
 
 from __future__ import annotations
 
@@ -16,8 +10,7 @@ from dqlitedbapi.aio.connection import AsyncConnection
 
 
 def test_force_close_transport_calls_writer_close() -> None:
-    """The hook walks _async_conn → _protocol → _writer and calls
-    writer.close()."""
+    """The hook walks _async_conn → _protocol → _writer and calls writer.close()."""
     conn = AsyncConnection("localhost:9001", database="x")
     inner = MagicMock()
     proto = MagicMock()
@@ -32,11 +25,8 @@ def test_force_close_transport_calls_writer_close() -> None:
 
 
 def test_force_close_transport_is_idempotent() -> None:
-    """Multiple invocations are safe; subsequent calls after the
-    first short-circuit on the now-None ``self._async_conn``. The
-    writer's close() is invoked exactly once on the first call,
-    not redundantly — the first call nulls the inner reference
-    so re-entries no-op cleanly."""
+    """Multiple invocations are safe; the first call nulls the inner reference
+    so re-entries short-circuit and writer.close() runs exactly once."""
     conn = AsyncConnection("localhost:9001", database="x")
     inner = MagicMock()
     proto = MagicMock()
@@ -49,34 +39,27 @@ def test_force_close_transport_is_idempotent() -> None:
     conn.force_close_transport()
     conn.force_close_transport()
 
-    # Idempotence (per docstring): "Multiple invocations are safe."
-    # The post-fix discipline nulls ``self._async_conn`` after the
-    # first call, so subsequent calls observe inner=None and return
-    # immediately — still safe, no longer redundant.
     assert writer.close.call_count == 1
     assert conn._async_conn is None
 
 
 def test_force_close_transport_handles_missing_async_conn() -> None:
-    """A connection that was never opened (or already closed and
-    nulled) absorbs the call without raising."""
+    """A connection never opened (or already closed) absorbs the call."""
     conn = AsyncConnection("localhost:9001", database="x")
-    assert conn._async_conn is None  # never connected
-    conn.force_close_transport()  # must not raise
+    assert conn._async_conn is None
+    conn.force_close_transport()
 
 
 def test_force_close_transport_handles_missing_protocol() -> None:
-    """An inner connection without ``_protocol`` (mid-construction
-    or already torn down) absorbs the call."""
+    """An inner connection without ``_protocol`` absorbs the call."""
     conn = AsyncConnection("localhost:9001", database="x")
     inner = MagicMock(spec=[])  # no attributes
     conn._async_conn = inner
-    conn.force_close_transport()  # must not raise
+    conn.force_close_transport()
 
 
 def test_force_close_transport_swallows_writer_close_exception() -> None:
-    """``writer.close()`` raising must not propagate — last-resort
-    cleanup must always finish."""
+    """``writer.close()`` raising must not propagate; cleanup always finishes."""
     conn = AsyncConnection("localhost:9001", database="x")
     inner = MagicMock()
     proto = MagicMock()
@@ -86,26 +69,13 @@ def test_force_close_transport_swallows_writer_close_exception() -> None:
     inner._protocol = proto
     conn._async_conn = inner
 
-    conn.force_close_transport()  # must not raise
+    conn.force_close_transport()
     writer.close.assert_called_once_with()
 
 
 async def test_force_close_transport_concurrent_with_async_close() -> None:
-    """Pin the docstring's concurrent-safety contract: invoking the
-    sync hook while an async ``close()`` is in flight on the same
-    connection must not raise. Both paths converge on
-    ``writer.close()`` (idempotent on asyncio's StreamWriter).
-
-    Setup:
-      * Build an AsyncConnection in the post-_ensure_locks state.
-      * The inner client conn's ``close()`` yields once via
-        ``asyncio.sleep(0)`` so the async path reaches its first
-        await before completing.
-      * Start ``conn.close()`` as a task; let it park.
-      * Invoke ``conn.force_close_transport()`` synchronously from
-        the parent coroutine.
-      * Resume the close_task; assert it finished cleanly.
-    """
+    """Invoking the sync hook while an async ``close()`` is in flight on the
+    same connection must not raise; both converge on ``writer.close()``."""
     import asyncio
 
     conn = AsyncConnection("localhost:9001", database="x")
@@ -123,16 +93,12 @@ async def test_force_close_transport_concurrent_with_async_close() -> None:
     inner.close = AsyncMock(side_effect=slow_close)
     conn._async_conn = inner
 
-    # Use the production lock-binding path. Any future enhancement to
-    # ``_ensure_locks`` (loop-lifecycle validation, state-machine
-    # flags, etc.) automatically applies to this test.
     conn._ensure_locks()
 
     # Park the async close inside its first await.
     close_task = asyncio.create_task(conn.close())
     await asyncio.sleep(0)
 
-    # Synchronous hook from the same coroutine — must not raise.
     conn.force_close_transport()
 
     await close_task
@@ -145,20 +111,9 @@ async def test_force_close_transport_concurrent_with_async_close() -> None:
 
 
 async def test_force_close_transport_cancels_inner_pending_drain() -> None:
-    """``force_close_transport`` is the synchronous fallback used by
-    SA's non-greenlet finalize path. The canonical async ``close()``
-    awaits ``inner._pending_drain`` to completion; the sync helper
-    cannot await but MUST cancel and null the task — otherwise the
-    drain task is orphaned on the loop and Python prints
-    "Task was destroyed but it is pending" once the loop is torn
-    down (which is the exact path SA's sync fallback runs on).
-
-    Also pins the symmetric null-out: the fork branch of
-    ``force_close_transport`` already nulls ``self._async_conn``;
-    the regular sync writer-close path must do the same so the
-    AsyncConnection does not pretend to still reference a dead
-    inner conn.
-    """
+    """The sync helper cannot await ``inner._pending_drain`` so it must cancel
+    and null it, else Python logs "Task was destroyed but it is pending" at
+    loop teardown. Also nulls ``self._async_conn`` (parity with the fork branch)."""
     import asyncio
 
     conn = AsyncConnection("localhost:9001", database="x")
@@ -169,8 +124,6 @@ async def test_force_close_transport_cancels_inner_pending_drain() -> None:
     proto._writer = writer
     inner._protocol = proto
 
-    # Synthesize a pending_drain task; mimics what _invalidate
-    # would have set on the inner client at its last invalidation.
     async def _stuck() -> None:
         await asyncio.sleep(60)
 
@@ -180,7 +133,7 @@ async def test_force_close_transport_cancels_inner_pending_drain() -> None:
 
     conn.force_close_transport()
 
-    # Pump the loop briefly so the cancel can land on the task.
+    # Pump the loop so the cancel can land on the task.
     for _ in range(3):
         await asyncio.sleep(0)
 

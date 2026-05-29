@@ -1,23 +1,6 @@
-"""Pin: ``AsyncCursor.fetch*`` and ``executescript`` use the
-non-binding loop-affinity helper so a fresh cursor's first call
-does NOT lazy-bind the connection's loop before the result-set guard
-fires.
-
-Previously, ``fetchone`` / ``fetchmany`` / ``fetchall`` routed through
-``_ensure_locks()``, which lazily creates the asyncio locks and pins
-``_loop_ref`` on first call. A fresh cursor whose first method ever
-called was ``fetchone()`` (the "fetch before execute" misuse path)
-silently bound the connection to the *current* loop before raising
-``ProgrammingError("no results to fetch; execute a query first")``.
-A subsequent legitimate call from a different loop then surfaced a
-"different event loop" diagnostic referring to a loop the user did
-not intend to bind.
-
-Switching to ``_check_loop_binding`` (the non-binding variant) keeps
-the up-front cross-loop diagnostic but does not lazy-bind on first
-read — same family-of-footgun fix the no-op-shape cursor methods
-(``setinputsizes`` / ``setoutputsize`` / ``callproc`` / ``nextset`` /
-``scroll``) already adopted.
+"""``AsyncCursor.fetch*`` and ``executescript`` use the non-binding loop helper
+``_check_loop_binding`` (not ``_ensure_locks``) so a fresh cursor's first call
+does not lazy-bind the connection's loop before the result-set guard fires.
 """
 
 from __future__ import annotations
@@ -30,10 +13,7 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 
 
 def test_async_fetch_methods_call_non_binding_helper_not_ensure_locks() -> None:
-    """Source-level pin: each fetch* method must call
-    ``_check_loop_binding`` (non-binding) and must NOT call
-    ``_ensure_locks`` (binding). A regression that swaps back to
-    ``_ensure_locks`` reintroduces the lazy-bind footgun."""
+    """Each fetch* method must call ``_check_loop_binding``, not ``_ensure_locks``."""
     for method_name in ("fetchone", "fetchmany", "fetchall"):
         method = getattr(AsyncCursor, method_name)
         src = inspect.getsource(method)
@@ -46,20 +26,13 @@ def test_async_fetch_methods_call_non_binding_helper_not_ensure_locks() -> None:
 
 
 def test_async_executescript_calls_non_binding_helper_not_ensure_locks() -> None:
-    """The executescript stub also keeps to the non-binding helper."""
     src = inspect.getsource(AsyncCursor.executescript)
     assert "_check_loop_binding" in src
     assert "_ensure_locks" not in src
 
 
 def test_fresh_cursor_fetch_does_not_bind_connection_loop() -> None:
-    """Behavioural pin: a fresh AsyncCursor whose first method ever
-    called is ``fetchone()`` (no execute first) raises
-    ``ProgrammingError("no results to fetch")`` WITHOUT lazy-binding
-    the connection's loop. A subsequent call from a different loop
-    must NOT surface a confusing "different event loop" diagnostic
-    referring to a loop the user did not intend to bind.
-    """
+    """A fresh cursor's first call being fetchone() raises without lazy-binding the loop."""
     from dqlitedbapi.aio.connection import AsyncConnection
     from dqlitedbapi.exceptions import ProgrammingError
 

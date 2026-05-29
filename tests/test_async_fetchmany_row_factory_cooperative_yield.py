@@ -1,22 +1,7 @@
-"""Pin: ``AsyncCursor.fetchmany`` yields cooperatively when a large
-``size`` is requested, so the per-row delivery loop (which applies a
-custom ``row_factory`` via ``_next_row_unlocked``) does not monopolise
-the user's event loop.
-
-``fetchmany(size)`` delivers up to ``size`` rows by calling the sync
-``_next_row_unlocked`` per row, which applies ``row_factory``. The prior
-loop had no ``await`` — a large explicit ``size`` (a common batch-buffer
-idiom) with a row_factory pinned the user's loop for the whole batch.
-Default small ``size`` is benign; the concern is an explicit large size.
-
-The fix inserts ``await asyncio.sleep(0)`` every ``_CONVERT_ROWS_YIELD_EVERY``
-DELIVERED rows, gated on ``size >= _LARGE_RESULT_ROW_THRESHOLD`` so small
-fetches keep zero scheduler overhead. The yield sits AFTER
-``result.append(row)`` so ``len(result)`` always equals the count of
-fully-delivered rows: a cancel landing on the yield restores
-``_row_index`` to ``snapshot + len(result)`` exactly — no row skipped or
-replayed — preserving the existing cancel-atomicity contract.
-"""
+"""Pin: ``AsyncCursor.fetchmany`` yields cooperatively on large ``size``
+(row_factory delivery loop), gated above ``_LARGE_RESULT_ROW_THRESHOLD``.
+The yield sits after ``result.append`` so a cancel restores ``_row_index``
+to a clean delivered-count boundary (cancel-atomicity)."""
 
 from __future__ import annotations
 
@@ -49,9 +34,7 @@ def _prime_async_cursor(rows: list[tuple[Any, ...]]) -> AsyncCursor:
 
 @pytest.mark.asyncio
 async def test_fetchmany_large_size_row_factory_yields_between_batches() -> None:
-    """A 50k-row fetchmany under a row_factory must let a sibling ticker
-    run a non-trivial number of times. Under the prior loop the sibling
-    got zero ticks."""
+    """A 50k-row fetchmany under a row_factory must let a sibling ticker run."""
     cur = _prime_async_cursor([(i,) for i in range(50_000)])
     cur._row_factory = lambda _c, r: tuple(r)
 
@@ -83,8 +66,7 @@ async def test_fetchmany_large_size_row_factory_yields_between_batches() -> None
 
 @pytest.mark.asyncio
 async def test_fetchmany_small_size_no_yield() -> None:
-    """Small explicit ``size`` (below the threshold) must not pay any
-    yield overhead."""
+    """Small explicit ``size`` (below the threshold) must not pay yield overhead."""
     cur = _prime_async_cursor([(i,) for i in range(1_000)])
     cur._row_factory = lambda _c, r: tuple(r)
 
@@ -113,8 +95,7 @@ async def test_fetchmany_small_size_no_yield() -> None:
 
 @pytest.mark.asyncio
 async def test_fetchmany_large_size_result_identity() -> None:
-    """The yielding loop must deliver the same transformed rows, in the
-    same order, as the prior loop."""
+    """The yielding loop delivers the same transformed rows, in order."""
     cur = _prime_async_cursor([(i, i * 2) for i in range(10_000)])
     cur._description = (
         ("a", None, None, None, None, None, None),
@@ -129,15 +110,13 @@ async def test_fetchmany_large_size_result_identity() -> None:
 
 @pytest.mark.asyncio
 async def test_fetchmany_cancel_mid_batch_restores_index_exactly() -> None:
-    """The load-bearing pin: a cancel landing on an inserted yield leaves
-    ``_row_index`` at a clean delivered-count boundary, and a follow-up
-    fetchmany continues from there with NO row skipped or replayed."""
+    """A cancel on a yield leaves ``_row_index`` at a clean delivered-count
+    boundary; a follow-up fetchmany continues with no row skipped or replayed."""
     n = 200_000
     cur = _prime_async_cursor([(i,) for i in range(n)])
     cur._row_factory = lambda _c, r: tuple(r)
 
     task = asyncio.create_task(cur.fetchmany(n))
-    # Let the loop cross several yield boundaries, then cancel.
     for _ in range(5):
         await asyncio.sleep(0)
     task.cancel()
@@ -145,13 +124,10 @@ async def test_fetchmany_cancel_mid_batch_restores_index_exactly() -> None:
         await task
 
     idx = cur._row_index
-    # Partial progress, landed on a yield boundary (delivered count is a
-    # multiple of the yield stride).
+    # Partial progress, landed on a yield boundary.
     assert 0 < idx < n
     assert idx % _CONVERT_ROWS_YIELD_EVERY == 0
 
-    # Continuation is exact: the next row delivered is the one at ``idx``
-    # (no replay of consumed rows, no skip past un-consumed ones).
     cur._row_factory = None
     nxt = await cur.fetchmany(1)
     assert nxt == [(idx,)]
@@ -159,9 +135,8 @@ async def test_fetchmany_cancel_mid_batch_restores_index_exactly() -> None:
 
 @pytest.mark.asyncio
 async def test_fetchmany_row_factory_typeerror_wrapped_on_yielding_path() -> None:
-    """A factory ``TypeError`` on the large (yielding) path — past the
-    first yield boundary — surfaces as ``DataError``, index unchanged for
-    the failing row."""
+    """A factory ``TypeError`` on the yielding path surfaces as ``DataError``,
+    index unchanged for the failing row."""
     from dqlitedbapi.exceptions import DataError
 
     cur = _prime_async_cursor([(i,) for i in range(20_000)])
@@ -175,5 +150,4 @@ async def test_fetchmany_row_factory_typeerror_wrapped_on_yielding_path() -> Non
 
     with pytest.raises(DataError, match="row_factory call failed"):
         await cur.fetchmany(20_000)
-    # The failing row never advanced the index; delivered rows did.
     assert cur._row_index == 9_000

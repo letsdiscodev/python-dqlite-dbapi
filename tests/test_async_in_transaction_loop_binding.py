@@ -1,17 +1,6 @@
-"""Pin: ``AsyncConnection.in_transaction`` raises ``ProgrammingError``
-on foreign-loop access, symmetric with the sync sibling's
-``_check_thread()`` raise on cross-thread access.
-
-Without the loop-binding check, the property silently read through to
-the underlying client-layer ``DqliteConnection.in_transaction``,
-returning a value computed against loop-A primitives from loop B —
-the very same loop-affinity violation that ``commit`` / ``rollback`` /
-``cursor`` raise on. A SA-engine cleanup branch that probes
-``if dbapi_conn.in_transaction: dbapi_conn.rollback()`` therefore
-returned True (silently) and then raised ProgrammingError on the
-rollback, defeating the property's documented "cleanup discriminator"
-purpose.
-"""
+"""Pin: ``AsyncConnection.in_transaction`` raises ``ProgrammingError`` on
+foreign-loop access, symmetric with the sync sibling's ``_check_thread()``.
+Without it the property silently read loop-A primitives from loop B."""
 
 from __future__ import annotations
 
@@ -25,9 +14,7 @@ from dqlitedbapi.exceptions import ProgrammingError
 
 
 def _make_loop_bound_async_connection(loop: asyncio.AbstractEventLoop) -> AsyncConnection:
-    """Build a minimal AsyncConnection with ``_loop_ref`` already
-    bound to ``loop`` so a foreign-loop read of ``in_transaction``
-    triggers the ``_check_loop_only`` raise."""
+    """AsyncConnection with ``_loop_ref`` bound to ``loop``."""
     import weakref
 
     aconn = AsyncConnection.__new__(AsyncConnection)
@@ -39,15 +26,13 @@ def _make_loop_bound_async_connection(loop: asyncio.AbstractEventLoop) -> AsyncC
 
 
 def test_in_transaction_raises_on_foreign_loop_read() -> None:
-    """A read from a different event loop must raise ProgrammingError
-    matching the sync sibling's cross-thread behaviour."""
+    """A read from a different event loop must raise ProgrammingError."""
     bound_loop = asyncio.new_event_loop()
     foreign_loop = asyncio.new_event_loop()
     try:
         aconn = _make_loop_bound_async_connection(bound_loop)
 
         async def read_from_foreign() -> None:
-            # Inside foreign_loop now; bound to bound_loop.
             with pytest.raises(ProgrammingError):
                 _ = aconn.in_transaction
 
@@ -58,15 +43,11 @@ def test_in_transaction_raises_on_foreign_loop_read() -> None:
 
 
 def test_in_transaction_does_not_lazy_bind_loop_on_first_read() -> None:
-    """``_check_loop_only`` is the non-binding variant: a fresh
-    AsyncConnection (``_loop_ref is None``) reading ``in_transaction``
-    must NOT bind the loop. Pin so a future refactor that swaps to
-    ``_check_loop_binding`` (or ``_ensure_locks``) doesn't re-introduce
-    the lazy-bind footgun.
-    """
+    """Reading ``in_transaction`` on a fresh connection must NOT lazy-bind the
+    loop (``_check_loop_only`` is the non-binding variant)."""
     aconn = AsyncConnection.__new__(AsyncConnection)
     aconn._closed = False
-    aconn._loop_ref = None  # not yet bound
+    aconn._loop_ref = None
     aconn._async_conn = None
     loop = asyncio.new_event_loop()
     try:

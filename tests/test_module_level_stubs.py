@@ -1,12 +1,5 @@
-"""Pin: module-level stdlib-sqlite3-parity stubs raise
-``NotSupportedError`` rather than escaping ``AttributeError``.
-
-The four module-level helpers (``register_adapter``,
-``register_converter``, ``complete_statement``,
-``enable_callback_tracebacks``) plus the ``connect()``
-``**unknown_kwargs`` rejection arm were added alongside the
-sibling per-class stub family but had no direct unit pins.
-"""
+"""Module-level stdlib-parity stubs raise ``NotSupportedError`` rather than
+escaping ``AttributeError`` outside the ``Error`` hierarchy."""
 
 from __future__ import annotations
 
@@ -17,32 +10,18 @@ from dqlitedbapi.exceptions import NotSupportedError
 
 
 def test_register_adapter_is_callable_stdlib_parity() -> None:
-    """``register_adapter`` is now a real Python-side hook (matches
-    stdlib ``sqlite3.register_adapter``). Common uses: ``Decimal``,
-    ``UUID``, ``Path``, ``Enum`` binding. Verify the basic shape.
+    """``register_adapter`` is a real hook; bad shape raises ``ProgrammingError``
+    (a PEP 249 ``Error``), not bare ``TypeError``."""
 
-    Bad-shape rejection raises ``ProgrammingError`` (a PEP 249
-    ``Error`` subclass) rather than a bare ``TypeError`` — cross-
-    driver code that wraps registry mutations in
-    ``except dbapi.Error:`` blocks classifies uniformly.
-
-    Use a test-only sentinel class to avoid polluting the
-    module-level ``_ADAPTERS`` dict for ``int`` / ``str`` /
-    ``bytes`` etc. that other tests rely on.
-    """
-
-    class _RegAdapterSentinel:
+    class _RegAdapterSentinel:  # test-only type, avoids polluting the shared _ADAPTERS dict
         pass
 
     from dqlitedbapi.exceptions import Error, ProgrammingError
     from dqlitedbapi.types import _ADAPTERS
 
-    # Should not raise:
     dqlitedbapi.register_adapter(_RegAdapterSentinel, str)
     try:
         assert _RegAdapterSentinel in _ADAPTERS
-        # Bad shape still fails fast — and raises a PEP 249 Error
-        # subclass (ProgrammingError), not bare TypeError.
         with pytest.raises(ProgrammingError, match="callable") as ei:
             dqlitedbapi.register_adapter(_RegAdapterSentinel, "not callable")  # type: ignore[arg-type]
         assert isinstance(ei.value, Error)
@@ -78,30 +57,15 @@ def test_enable_callback_tracebacks_raises_not_supported() -> None:
     ],
 )
 def test_connect_rejects_stdlib_sqlite3_kwargs(kwarg: str) -> None:
-    """``connect()``'s ``**unknown_kwargs`` rejection arm: stdlib
-    ``sqlite3.connect`` kwargs that this driver cannot honour
-    must raise ``NotSupportedError`` (in the dbapi.Error
-    hierarchy) rather than bare ``TypeError`` (escapes the
-    hierarchy).
-
-    ``check_same_thread`` is pulled out of this parametrize set
-    because it gets a specific, actionable rejection message — see
-    ``test_connect_rejects_check_same_thread_with_specific_message``.
-
-    ``isolation_level`` and ``autocommit`` accept their no-op
-    sentinel values (``None`` / ``True`` / ``-1``) symmetric with
-    the setter — see
-    ``test_connect_isolation_level_autocommit_kwargs_symmetric.py``."""
+    """Unhonoured stdlib ``sqlite3.connect`` kwargs raise ``NotSupportedError``,
+    not bare ``TypeError``. (``check_same_thread``/``isolation_level``/``autocommit``
+    are handled separately.)"""
     with pytest.raises(NotSupportedError, match="stdlib sqlite3 kwargs"):
         dqlitedbapi.connect("127.0.0.1:9999", **{kwarg: 0})  # type: ignore[arg-type]
 
 
 def test_connect_accepts_check_same_thread_false() -> None:
-    """``check_same_thread`` is now a real kwarg on the sync
-    ``dqlitedbapi.connect`` surface; passing ``False`` is accepted
-    and stored on the Connection. (Previously rejected with a
-    NotSupportedError. The new behaviour relaxes the cross-thread
-    arm of ``_check_thread`` per stdlib sqlite3 parity.)"""
+    """``check_same_thread=False`` is accepted and stored on the Connection."""
     conn = dqlitedbapi.connect("127.0.0.1:9999", check_same_thread=False)
     assert conn._check_same_thread is False
 
@@ -113,9 +77,7 @@ def test_connect_accepts_check_same_thread_true() -> None:
 
 
 def test_module_exports_register_adapter_in_all() -> None:
-    """The four module-level stubs must appear in ``__all__`` so
-    ``hasattr(dqlitedbapi, "register_adapter") is True`` (parity
-    with the per-class stubs)."""
+    """The four module-level stubs appear in ``__all__`` and on the module."""
     for name in (
         "register_adapter",
         "register_converter",

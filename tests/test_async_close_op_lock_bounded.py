@@ -1,15 +1,5 @@
-"""``AsyncConnection.close()`` bounds its ``op_lock`` acquire by
-``self._timeout``.
-
-Without the bound, a sibling task parked on a slow ``reader.read()``
-holds ``op_lock`` for the whole per-RPC ``timeout`` window. Under
-SIGTERM / ``engine.dispose()`` an N-slot SA pool with stuck siblings
-hangs shutdown for up to ``N * timeout`` seconds.
-
-The sync sibling at ``connection.py:756`` already uses a bounded
-acquire with ``InterfaceError`` on miss; this pin enforces the same
-contract on the async surface.
-"""
+"""``close()`` bounds its ``op_lock`` acquire by ``self._timeout``; without it a sibling
+parked on a slow read holds the lock, hanging an N-slot pool's shutdown for N * timeout."""
 
 import asyncio
 import os
@@ -41,8 +31,8 @@ def _prime() -> AsyncConnection:
 
 
 async def test_close_raises_interface_error_when_op_lock_held_past_timeout() -> None:
-    """Sibling holds op_lock indefinitely → close() raises
-    InterfaceError after self._timeout, not after a longer wall-clock."""
+    """Sibling holds op_lock indefinitely -> close() raises InterfaceError after
+    self._timeout, not a longer wall-clock."""
     conn = _prime()
     conn._ensure_locks()
 
@@ -54,7 +44,6 @@ async def test_close_raises_interface_error_when_op_lock_held_past_timeout() -> 
     inner.close = AsyncMock()
     conn._async_conn = inner
 
-    # Sibling task holds the lock and parks.
     sibling_started = asyncio.Event()
     release = asyncio.Event()
 
@@ -71,18 +60,15 @@ async def test_close_raises_interface_error_when_op_lock_held_past_timeout() -> 
         await conn.close()
     elapsed = time.monotonic() - started
 
-    # The wall-clock must be bounded by self._timeout (with slack).
     assert elapsed < 1.0, f"close took {elapsed}s — bound was 0.2s"
 
-    # Cleanup the sibling.
     release.set()
     await sibling
 
 
 async def test_close_force_closes_transport_on_op_lock_timeout() -> None:
-    """When the bound trips, close() must force-close the transport
-    so SIGTERM/dispose actually reap the writer rather than leaving
-    a half-open socket."""
+    """When the bound trips, close() force-closes the transport so the writer is reaped
+    rather than left as a half-open socket."""
     conn = _prime()
     conn._ensure_locks()
 
@@ -108,8 +94,6 @@ async def test_close_force_closes_transport_on_op_lock_timeout() -> None:
     with pytest.raises(InterfaceError):
         await conn.close()
 
-    # The synchronous force-close path was taken: writer.close() was
-    # invoked, ``_async_conn`` was nulled.
     writer.close.assert_called()
     assert conn._async_conn is None
     assert conn._closed is True
@@ -119,9 +103,7 @@ async def test_close_force_closes_transport_on_op_lock_timeout() -> None:
 
 
 async def test_close_does_not_fire_bound_when_sibling_releases_quickly() -> None:
-    """A well-behaved sibling that holds the lock for less than
-    self._timeout must not trip the bound — close() proceeds
-    normally with no InterfaceError."""
+    """A sibling holding the lock for less than self._timeout must not trip the bound."""
     conn = _prime()
     conn._ensure_locks()
 
@@ -139,7 +121,6 @@ async def test_close_does_not_fire_bound_when_sibling_releases_quickly() -> None
     sibling = asyncio.create_task(quick_sibling())
     await sibling_started.wait()
 
-    # Should complete without InterfaceError.
     await conn.close()
     await sibling
 

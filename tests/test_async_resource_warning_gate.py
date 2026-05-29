@@ -1,29 +1,7 @@
-"""Pin: the three-flag gate on
-``AsyncConnection``'s GC-time ``ResourceWarning``.
-
-The gate adds the ``connected_flag`` argument and the
-check ``if closed_flag[0] or not connected_flag[0]: return``
-plus an early ``self._closed_flag[0] = True`` in
-``force_close_transport``. The three behavioural promises:
-
-1. A never-connected instance does NOT emit
-   ``ResourceWarning`` on GC. The connected-flag gate
-   prevents a misleading false positive on
-   ``conn = AsyncConnection(...); del conn`` (test
-   fixtures, early-error flows).
-2. ``force_close_transport`` flips ``closed_flag[0] = True``
-   so SA's ``terminate()`` path (which runs the sync
-   force-close, not the async ``close()``) silences the
-   subsequent GC warning.
-3. A connected-but-not-closed instance DOES emit the
-   warning — the original load-bearing behaviour
-   (matches stdlib ``sqlite3.Connection.__del__``).
-
-A regression that drops any clause from the gate, or
-inverts it, or removes the ``_closed_flag`` set in
-force_close_transport silently breaks one of the three
-promises without failing any existing test.
-"""
+"""Pin: the three-flag gate on ``AsyncConnection``'s GC-time
+``ResourceWarning`` — never-connected does NOT warn, force_close_transport
+sets closed_flag to silence SA's terminate() path, and connected-but-not-closed
+DOES warn (matches stdlib ``sqlite3.Connection.__del__``)."""
 
 from __future__ import annotations
 
@@ -36,8 +14,7 @@ from dqlitedbapi.aio.connection import _async_unclosed_warning
 
 
 def test_never_connected_does_not_warn_on_gc() -> None:
-    """``connected_flag[0] is False`` short-circuits the warning —
-    a never-connected instance has nothing to clean up."""
+    """``connected_flag[0] is False`` short-circuits: nothing to clean up."""
     closed_flag = [False]
     connected_flag = [False]
 
@@ -50,8 +27,7 @@ def test_never_connected_does_not_warn_on_gc() -> None:
 
 
 def test_closed_flag_short_circuits_warning() -> None:
-    """``closed_flag[0] is True`` short-circuits the warning —
-    user (or terminate) explicitly cleaned up."""
+    """``closed_flag[0] is True`` short-circuits: explicitly cleaned up."""
     closed_flag = [True]
     connected_flag = [True]
 
@@ -64,8 +40,7 @@ def test_closed_flag_short_circuits_warning() -> None:
 
 
 def test_connected_unclosed_warns() -> None:
-    """The load-bearing case: connected, not closed → emit the
-    warning. Mirrors stdlib ``sqlite3.Connection.__del__``."""
+    """Connected, not closed: emit. Mirrors stdlib ``sqlite3.Connection.__del__``."""
     closed_flag = [False]
     connected_flag = [True]
 
@@ -80,14 +55,11 @@ def test_connected_unclosed_warns() -> None:
 
 
 def test_force_close_transport_sets_closed_flag() -> None:
-    """``force_close_transport`` must set
-    ``self._closed_flag[0] = True`` BEFORE any short-circuit
-    so a subsequent GC sweep finds the closed-flag set even
-    on the inner-None / fork-child branches."""
+    """``force_close_transport`` sets ``_closed_flag[0] = True`` before any
+    short-circuit, so a later GC sweep sees it even on inner-None / fork-child."""
     from dqlitedbapi.aio.connection import AsyncConnection
 
     conn = AsyncConnection("localhost:9999", database="x")
-    # Simulate a connected state by setting the flags directly.
     conn._connected_flag[0] = True
     conn._closed_flag[0] = False
     inner = MagicMock()
@@ -107,35 +79,28 @@ def test_force_close_transport_sets_closed_flag() -> None:
 
 
 def test_force_close_transport_sets_closed_flag_even_with_no_inner() -> None:
-    """Even on the early-return ``inner is None`` branch, the
-    flag must be set so the warning gate sees it."""
+    """Even on the early-return ``inner is None`` branch, the flag must be set."""
     from dqlitedbapi.aio.connection import AsyncConnection
 
     conn = AsyncConnection("localhost:9999", database="x")
-    # Never connected — inner is None.
     conn.force_close_transport()
     assert conn._closed_flag[0] is True
 
 
 def test_resource_warning_silenced_by_force_close_through_module_scope() -> None:
-    """End-to-end: a connected instance whose ``force_close_transport``
-    ran does NOT emit the dqlite-layer ``ResourceWarning`` when the
-    finalizer fires on GC. (Filters to dqlite-emitted warnings —
-    asyncio's own ``"unclosed transport"`` warnings can leak from
-    sibling tests' GC trails when this test runs in a full suite.)"""
+    """End-to-end: a connected instance whose ``force_close_transport`` ran
+    emits no dqlite-layer ``ResourceWarning`` on GC. Filtered to dqlite
+    warnings since asyncio's "unclosed transport" can leak from sibling tests."""
     from dqlitedbapi.aio.connection import AsyncConnection
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
         conn = AsyncConnection("localhost:9999", database="x")
-        conn._connected_flag[0] = True  # simulate connected
+        conn._connected_flag[0] = True
         conn.force_close_transport()
         del conn
         gc.collect()
 
-    # Filter to dqlite-layer ResourceWarnings (the ones our finalizer
-    # emits); drop asyncio-layer "unclosed transport" warnings that
-    # are unrelated to this test's contract.
     rw = [
         w
         for w in captured

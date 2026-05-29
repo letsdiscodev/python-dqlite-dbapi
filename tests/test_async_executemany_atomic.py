@@ -1,10 +1,5 @@
-"""``AsyncCursor.executemany`` holds ``op_lock`` for the whole loop.
-
-Previously each iteration called ``self.execute(...)`` which
-re-acquired the lock, so a concurrent task on the same AsyncConnection
-could slip arbitrary statements between iterations. Hold the lock
-once across all iterations to match the sync path's atomicity (sync
-``_run_sync`` already holds the lock for the outer coroutine).
+"""``AsyncCursor.executemany`` holds ``op_lock`` once across the whole loop so a
+concurrent task cannot slip statements between iterations (matches sync atomicity).
 """
 
 from __future__ import annotations

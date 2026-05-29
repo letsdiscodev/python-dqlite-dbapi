@@ -1,19 +1,5 @@
-"""Server-side constraint extended codes survive wire → client → dbapi.
-
-The unit-level matrix in ``test_error_code_mapping.py`` exercises
-``_classify_operational`` in isolation against constructed exceptions
-with extended codes (e.g., ``19 | (5 << 8) = 1299`` for
-``SQLITE_CONSTRAINT_NOTNULL``). The matrix does NOT exercise the
-end-to-end wire path, so a regression at the wire / client layer that
-stripped the high byte before reaching the dbapi would leave the
-matrix passing while the live exception lost its extended-code shape.
-
-These integration tests provoke real server-side constraint violations
-through the wire, then assert the surfaced ``IntegrityError`` carries
-both the masked primary (``code & 0xFF == 19``) AND a non-zero high
-byte — the latter being the diagnostic signal that the extended code
-made it through.
-"""
+"""Server-side constraint extended codes survive wire -> client -> dbapi: the surfaced
+``IntegrityError`` carries primary ``code & 0xFF == 19`` AND a non-zero high byte."""
 
 from __future__ import annotations
 
@@ -25,8 +11,7 @@ from dqlitedbapi.aio import aconnect
 
 
 def _assert_extended_constraint_code(exc: IntegrityError) -> None:
-    """A real SQLITE_CONSTRAINT_* extended code has primary 19 and a
-    non-zero high byte. Asserting both pins the wire round-trip."""
+    """A real SQLITE_CONSTRAINT_* extended code has primary 19 and a non-zero high byte."""
     code = getattr(exc, "code", None)
     assert code is not None, f"no code attribute on IntegrityError: {exc!r}"
     assert code & 0xFF == 19, f"primary code is not SQLITE_CONSTRAINT (19): {code}"

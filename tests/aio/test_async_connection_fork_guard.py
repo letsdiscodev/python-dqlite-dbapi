@@ -1,20 +1,6 @@
-"""Pin: dbapi ``AsyncConnection`` and ``force_close_transport`` reject
-or short-circuit when used after ``os.fork``.
-
-Pid guards exist on the sync ``Connection`` and the
-client-layer ``DqliteConnection`` / ``ConnectionPool``. The dbapi
-async surface (``AsyncConnection``) and its synchronous
-``force_close_transport`` hook (used by SA's adapter outside-greenlet
-preflight, post-await RuntimeError catches, and ``terminate()``)
-must mirror the same discipline. The hook in particular calls
-``writer.close()`` on the inherited socket — the exact "FIN on the
-parent's connection" the pid-guards exist to prevent.
-
-Tests cover:
-- public-method use after fork raises a clear ``InterfaceError``
-- ``force_close_transport`` short-circuits without touching the wire
-- ``close()`` short-circuits without touching the wire or op_lock
-"""
+"""Pin: ``AsyncConnection`` and ``force_close_transport`` reject or
+short-circuit after ``os.fork`` — calling ``writer.close()`` on the
+inherited socket would send FIN on the parent's connection."""
 
 from __future__ import annotations
 
@@ -41,9 +27,8 @@ async def test_async_connection_used_after_fork_raises_interface_error() -> None
 
 
 def test_force_close_transport_after_fork_short_circuits() -> None:
-    """``force_close_transport`` in the child must not call
-    ``writer.close()`` on the inherited socket (which would send FIN
-    on the parent's connection). Just drop the reference."""
+    """In the child, must drop the reference without calling
+    ``writer.close()`` (which would FIN the parent's connection)."""
     conn = AsyncConnection("127.0.0.1:9999")
     inner = MagicMock()
     inner._protocol = MagicMock()
@@ -59,19 +44,16 @@ def test_force_close_transport_after_fork_short_circuits() -> None:
         conn.force_close_transport()
 
     writer.close.assert_not_called()
-    # Reference cleared so child GC has nothing to act on.
     assert conn._async_conn is None
 
 
 async def test_async_connection_close_after_fork_short_circuits() -> None:
-    """``close()`` in the child must not enter the ``async with
+    """In the child, ``close()`` must not enter the ``async with
     op_lock`` arm — the lock is bound to the parent's loop and the
-    underlying connection's writer is the inherited FD. Quietly flip
-    the local state and drop refs."""
+    writer is the inherited FD. Flip local state and drop refs."""
     conn = AsyncConnection("127.0.0.1:9999")
     inner = MagicMock()
-    # Make close raise so a regression that drives it through the
-    # async-teardown path manifests as a clean failure.
+    # Raise on close so a regression through the async-teardown path fails loudly.
     inner.close = MagicMock(side_effect=AssertionError("must not call inner.close in fork branch"))
     conn._async_conn = inner
     conn._op_lock = asyncio.Lock()
@@ -93,8 +75,7 @@ async def test_async_connection_close_after_fork_short_circuits() -> None:
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
 def test_async_connection_force_close_transport_actual_fork() -> None:
-    """End-to-end fork: parent stages a connection with a writer ref;
-    child calls force_close_transport and reports back. Parent
+    """End-to-end fork: child calls force_close_transport; parent
     confirms its writer.close was never called."""
     conn = AsyncConnection("127.0.0.1:9999")
     parent_close_calls = MagicMock()
@@ -111,7 +92,6 @@ def test_async_connection_force_close_transport_actual_fork() -> None:
             os.close(r)
             try:
                 conn.force_close_transport()
-                # Reference cleared; writer.close not invoked from child.
                 if conn._async_conn is None:
                     os.write(w, b"OK")
                 else:
@@ -132,5 +112,4 @@ def test_async_connection_force_close_transport_actual_fork() -> None:
     os.close(r)
     os.waitpid(pid, 0)
     assert result == b"OK", f"child reported: {result!r}"
-    # Parent's writer.close must NOT have been called from the child.
     parent_close_calls.assert_not_called()

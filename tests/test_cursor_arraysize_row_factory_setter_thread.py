@@ -1,14 +1,5 @@
-"""Pin: under ``check_same_thread=False``, ``Cursor.arraysize.setter``
-and ``Cursor.row_factory.setter`` delegate to
-``Connection._check_thread`` which short-circuits — by design.
-``check_same_thread=False`` is the explicit Connection-sharing
-opt-in; cursor-sharing has no separate flag, so the cursor-per-
-thread sub-contract becomes the caller's responsibility under
-that relaxation.
-
-This pin documents the behaviour so a future stricter cursor-
-layer thread check (which would re-impose what the user opted
-out of) is caught here as a regression.
+"""Pin: under ``check_same_thread=False`` the ``arraysize``/``row_factory``
+setters skip the thread check (by design — the user opted into sharing).
 """
 
 from __future__ import annotations
@@ -39,9 +30,7 @@ def _make_cursor_with_check_same_thread_false() -> Cursor:
 
 
 def test_arraysize_setter_does_not_raise_from_foreign_thread_under_csf_false() -> None:
-    """Under check_same_thread=False, a foreign-thread setter call
-    must NOT raise — the documented behaviour the user opted into.
-    """
+    """Under check_same_thread=False, a foreign-thread setter call must not raise."""
     cur = _make_cursor_with_check_same_thread_false()
     result: list[BaseException | None] = []
 
@@ -87,9 +76,7 @@ def test_row_factory_setter_does_not_raise_from_foreign_thread_under_csf_false()
 
 
 def test_arraysize_setter_raises_from_foreign_thread_under_csf_true() -> None:
-    """Regression: under check_same_thread=True (default), a foreign
-    thread setter call DOES raise.
-    """
+    """Regression: under check_same_thread=True (default), the setter raises."""
     import os
 
     from dqlitedbapi.exceptions import ProgrammingError
@@ -125,5 +112,4 @@ def test_arraysize_setter_raises_from_foreign_thread_under_csf_true() -> None:
     )
 
 
-# Suppress unused-pytest lint nag.
-_ = pytest
+_ = pytest  # suppress unused-import lint

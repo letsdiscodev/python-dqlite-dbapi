@@ -20,9 +20,7 @@ def _async_cursor_with_prior_select() -> AsyncCursor:
     import asyncio
 
     conn = MagicMock()
-    # ``AsyncCursor.executemany`` acquires ``op_lock`` across the whole
-    # iteration; the mocked connection must hand back a real asyncio.Lock
-    # so ``async with op_lock:`` works even on the empty-iteration path.
+    # executemany does ``async with op_lock``, so hand back a real asyncio.Lock.
     conn._ensure_locks.return_value = (asyncio.Lock(), asyncio.Lock())
     c = AsyncCursor(conn)
     c._description = [("id", None, None, None, None, None, None)]  # type: ignore[assignment]
@@ -37,51 +35,33 @@ async def _noop(*_a: object, **_kw: object) -> None:
 
 class TestExecutemanyEmpty:
     async def test_empty_executemany_clears_description(self) -> None:
-        """After executemany([]) the cursor must not appear to hold a
-        prior SELECT result."""
+        """After executemany([]) the cursor must not still hold a prior SELECT result."""
         c = _cursor_with_prior_select()
 
-        # ``Cursor`` uses ``__slots__`` so per-instance method override
-        # is not possible; patch the class attribute for the test scope.
+        # Cursor uses __slots__, so patch the class attribute, not the instance.
         with patch.object(Cursor, "_execute_async", new=_noop):
             await c._executemany_async("INSERT INTO t VALUES (?)", [])
 
         assert c.description is None
         assert c._rows == []
-        # stdlib sqlite3 / psycopg2 report 0 for empty executemany;
-        # zero iterations → zero rows affected is deterministic. PEP
-        # 249 also permits -1 ("undetermined") but matching the
-        # stdlib / psycopg2 contract avoids surprising callers doing
-        # ``if cur.rowcount > 0: ...`` checks.
+        # 0, not -1: matches stdlib sqlite3 / psycopg2 for empty executemany.
         assert c.rowcount == 0
 
     async def test_async_cursor_executemany_empty_via_public_surface(self) -> None:
-        """Mirror of the sync test on the async cursor's public
-        ``executemany`` entry point. The existing empty-sequence test
-        exercises the internal ``_executemany_async`` helper on the
-        sync ``Cursor`` class; without a test at the ``AsyncCursor``
-        public surface a future refactor could diverge the two paths
-        silently.
-        """
+        """Mirror of the sync test on AsyncCursor's public executemany surface."""
         c = _async_cursor_with_prior_select()
 
-        # An empty ``seq_of_parameters`` never enters the loop so no
-        # monkey-patch of ``execute`` is required.
+        # Empty seq never enters the loop, so no execute patch needed.
         await c.executemany("INSERT INTO t VALUES (?)", [])
 
         assert c.description is None
         assert list(c._rows) == []
-        # Matches the sync sibling above: stdlib-parity 0, not -1.
         assert c.rowcount == 0
 
 
 class TestExecutemanyEmptyIterableShape:
-    """``executemany`` accepts ``Iterable[Sequence[Any]]``. The
-    empty-list test above pins ``[]``, but an empty iterator (e.g.,
-    ``iter([])``) and an empty generator are structurally distinct
-    and exercise the accumulator's no-yield branch separately. A
-    future refactor that special-cased lists could regress the
-    iterator path silently — pin both shapes here."""
+    """Empty iterator and empty generator exercise the accumulator's no-yield
+    branch distinctly from the empty-list case above."""
 
     async def test_sync_cursor_executemany_empty_iter(self) -> None:
         c = _cursor_with_prior_select()

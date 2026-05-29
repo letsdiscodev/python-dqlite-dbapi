@@ -1,14 +1,5 @@
-"""``_build_and_connect`` must forward the client error code.
-
-sqlalchemy-dqlite's ``is_disconnect`` classifier reads ``exc.code``
-to identify leader-change failures (``SQLITE_IOERR_NOT_LEADER``,
-``SQLITE_IOERR_LEADERSHIP_LOST``). The query path preserves the
-code via ``_classify_operational`` in ``cursor.py``, but the
-connect path catches every exception as a bare ``Exception`` and
-rebuilds the DBAPI ``OperationalError`` carrying the original
-``code=``, so leader-change errors hit the code-based branch of
-``is_disconnect`` rather than the brittle substring matcher.
-"""
+"""``_build_and_connect`` forwards the client error code so sqlalchemy's
+``is_disconnect`` can classify leader-change errors by code, not substring."""
 
 from __future__ import annotations
 
@@ -25,11 +16,6 @@ _SQLITE_IOERR_NOT_LEADER_FALLBACK = 1032  # known constant from dqlite
 
 
 async def test_connect_forwards_operational_error_code() -> None:
-    """A client-layer ``OperationalError(code, message)`` raised during
-    ``conn.connect()`` is re-raised as a dbapi ``OperationalError``
-    with the same ``.code`` — sqlalchemy's ``is_disconnect`` can then
-    classify it via the code-based branch.
-    """
     client_err = _client_exc.OperationalError("not leader", _SQLITE_IOERR_NOT_LEADER_FALLBACK)
 
     async def fake_connect() -> None:
@@ -53,15 +39,11 @@ async def test_connect_forwards_operational_error_code() -> None:
         )
 
     assert exc_info.value.code == _SQLITE_IOERR_NOT_LEADER_FALLBACK
-    # Message prefix "Failed to connect: " is preserved (tests match on it).
     assert str(exc_info.value).startswith("Failed to connect: ")
 
 
 async def test_connect_non_code_exception_yields_code_none() -> None:
-    """Non-client exceptions (e.g. ``OSError``) should still produce a
-    dbapi ``OperationalError`` — but with ``.code is None`` because
-    there is no server error code to forward.
-    """
+    """Non-client exceptions yield ``OperationalError`` with ``.code is None``."""
 
     async def fake_connect_os_error() -> None:
         raise OSError("unreachable")

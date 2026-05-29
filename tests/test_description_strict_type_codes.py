@@ -1,8 +1,5 @@
-"""``Cursor.description[i][1]`` must compare equal to a PEP 249 Type
-Object. A wire response where ``column_types`` is shorter than
-``columns`` used to produce ``description`` rows with ``type_code=None``,
-which silently failed every ``type_code == STRING`` check downstream.
-Raise ``DataError`` instead so the wire anomaly surfaces loudly.
+"""A wire response with fewer ``column_types`` than ``columns`` must raise
+``DataError``, not yield ``type_code=None`` rows that silently fail every check.
 """
 
 from __future__ import annotations
@@ -26,12 +23,9 @@ class _Awaitable:
 
 
 class _ShortTypeCodesClient:
-    """Mock client whose ``query_raw_typed`` returns fewer type codes
-    than columns. No production path produces this, but fuzz / broken
-    peer / future protocol change could."""
+    """Mock client whose ``query_raw_typed`` returns fewer type codes than columns."""
 
     def query_raw_typed(self, sql: str, params):
-        # columns = 2, column_types = 0 — mismatched.
         return _Awaitable(obj=(["a", "b"], [], [[], []], [[1, 2], [3, 4]]))
 
 

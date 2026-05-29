@@ -1,12 +1,7 @@
-"""Pin: Connection / Cursor / AsyncConnection / AsyncCursor refuse
-to pickle with a clear driver-level ``TypeError`` instead of the
-default pickle walk's confusing ``cannot pickle '_thread.lock'``
-message.
+"""Connection/Cursor/AsyncConnection/AsyncCursor refuse to pickle with a clear TypeError.
 
-Stdlib ``sqlite3.Connection`` (C-implemented) raises an explicit
-driver-level TypeError; mirror that shape for our pure-Python
-classes so callers can grep ``cannot pickle 'Connection'`` in
-their logs.
+Mirrors stdlib sqlite3's explicit driver-level error instead of the default pickle walk's
+confusing "cannot pickle '_thread.lock'".
 """
 
 from __future__ import annotations
@@ -50,18 +45,7 @@ class TestPickleGuard:
 
 
 class TestCopyGuard:
-    """Sibling pin for ``copy.copy`` / ``copy.deepcopy``.
-
-    ``copy.copy(c)`` and ``copy.deepcopy(c)`` route through
-    ``__reduce_ex__`` → ``__reduce__`` (the same path pickle uses), so
-    a class that rejects pickle also rejects copy. Pin both copy paths
-    explicitly — without these, a regression that tightens
-    ``__reduce__`` to refuse pickle but accepts copy via a separate
-    ``__copy__`` / ``__deepcopy__`` hook would silently succeed and
-    produce a broken duplicate of a class that holds live transports
-    / asyncio locks. Mirrors the SA-adapter and client-layer pin
-    shape established by prior cycles.
-    """
+    """copy.copy/deepcopy route through __reduce__ (pickle's path), so they reject too."""
 
     @pytest.mark.parametrize("cls", [Connection, Cursor, AsyncConnection, AsyncCursor])
     def test_copy_copy_refuses_with_clear_error(self, cls: type) -> None:

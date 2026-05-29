@@ -1,21 +1,4 @@
-"""Pin: ``retry_async_on_busy`` implements the SQLite-curve BUSY
-retry on the async surface.
-
-These tests drive the module-level helper directly with a controlled
-coroutine factory; the integration with ``AsyncCursor.execute`` /
-``AsyncCursor.executemany`` / ``AsyncConnection.commit`` is pinned at
-the higher-level test files.
-
-Behaviours pinned:
-
-- BUSY retry succeeds after sleep, advancing the SQLite curve.
-- ``busy_timeout=0`` disables retry.
-- Non-BUSY ``OperationalError`` (different code) propagates
-  immediately.
-- ``CancelledError`` during ``asyncio.sleep`` propagates (not caught
-  by the BUSY arm).
-- Budget exhaustion raises the most recent BUSY exception.
-"""
+"""Pin: ``retry_async_on_busy`` implements the SQLite-curve BUSY retry on the async surface."""
 
 from __future__ import annotations
 
@@ -44,8 +27,6 @@ async def test_retry_async_succeeds_after_busy_then_ok() -> None:
     with patch("asyncio.sleep") as sleep_mock:
         sleep_mock.return_value = None
 
-        # asyncio.sleep is async; configure the mock to return an
-        # awaitable.
         async def fake_sleep(*args: Any, **kwargs: Any) -> None:
             return None
 
@@ -142,9 +123,7 @@ async def test_retry_async_zero_budget_no_retry() -> None:
 
 @pytest.mark.asyncio
 async def test_retry_async_cancellederror_propagates() -> None:
-    """CancelledError during await asyncio.sleep must NOT be caught
-    by the ``except OperationalError`` arm — CancelledError is a
-    BaseException subclass."""
+    """CancelledError (a BaseException) must not be caught by the OperationalError arm."""
 
     async def factory() -> str:
         raise OperationalError("locked", code=SQLITE_BUSY)

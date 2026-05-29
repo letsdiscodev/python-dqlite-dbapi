@@ -1,11 +1,5 @@
-"""Pin the DEBUG-log breadcrumb on AsyncConnection.__aexit__ rollback failure.
-
-PEP 249 body-wins ordering is unchanged — the body's exception still
-propagates and the rollback exception is swallowed. But a silent
-swallow leaves no trace of the failed rollback, which an operator
-later needs to diagnose dangling server-side transactions (leader
-flip mid-commit, transport timeout, etc.).
-"""
+"""__aexit__ logs a DEBUG breadcrumb on rollback failure: the body exception still wins (PEP 249),
+but the swallowed rollback error needs a trace to diagnose dangling server-side transactions."""
 
 from __future__ import annotations
 
@@ -52,7 +46,6 @@ def test_aexit_logs_rollback_failure(caplog: pytest.LogCaptureFixture) -> None:
 
     async def run() -> None:
         with caplog.at_level(logging.DEBUG, logger="dqlitedbapi.aio.connection"):
-            # Exercise __aexit__ directly with a body-exception signature.
             await conn.__aexit__(RuntimeError, RuntimeError("body-raised"), None)
 
     asyncio.run(run())
@@ -63,7 +56,6 @@ def test_aexit_logs_rollback_failure(caplog: pytest.LogCaptureFixture) -> None:
         if r.levelno == logging.DEBUG and "rollback failed" in r.getMessage()
     ]
     assert matching, f"expected DEBUG 'rollback failed' record; got {caplog.records!r}"
-    # exc_info should carry the suppressed OperationalError.
     assert matching[0].exc_info is not None
     assert isinstance(matching[0].exc_info[1], OperationalError)
 

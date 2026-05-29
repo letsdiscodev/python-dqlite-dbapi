@@ -1,12 +1,4 @@
-"""``executemany`` rejects pure queries before running the loop.
-
-Summing ``len(rows)`` across N iterations of ``SELECT ?`` produces an
-``N × rows_per_iter`` total that is not a semantically meaningful
-"affected" count. stdlib ``sqlite3.Cursor.executemany`` rejects this
-up front; dqlitedbapi now does the same. DML with or without a
-RETURNING clause (INSERT / UPDATE / DELETE / REPLACE) remains
-admitted.
-"""
+"""``executemany`` rejects pure queries before running the loop; DML stays admitted."""
 
 from __future__ import annotations
 
@@ -69,8 +61,6 @@ class TestSyncExecutemanyRejectsPureQueries:
     )
     def test_admits_dml(self, sql: str) -> None:
         cur = _make_sync_cursor()
-        # Must NOT raise ProgrammingError at the gate. We don't drive
-        # the actual wire call — _run_sync is a MagicMock.
         with patch.object(Cursor, "_executemany_async"):
             cur.executemany(sql, [])  # empty seq — short-circuits
 

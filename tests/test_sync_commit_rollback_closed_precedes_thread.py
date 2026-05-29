@@ -1,12 +1,5 @@
-"""Pin: sync ``Connection.commit`` and ``Connection.rollback`` order
-``_check_thread()`` FIRST, then ``_closed``, then ``messages`` clear.
-Cross-thread call on any connection (closed or open) surfaces the
-thread-affinity ``ProgrammingError`` -- the project-wide reversal
-aligns the sync methods with the async sibling's discipline
-(``aio/connection.py:1576-1582``) so cross-thread misuse cannot
-mutate the owner thread's ``messages`` list before the diagnostic
-fires.
-"""
+"""Sync commit/rollback order ``_check_thread()`` first so cross-thread misuse cannot
+mutate the owner thread's ``messages`` before the thread-affinity diagnostic fires."""
 
 from __future__ import annotations
 
@@ -20,10 +13,8 @@ from dqlitedbapi.exceptions import ProgrammingError
 
 @pytest.mark.parametrize("op", ["commit", "rollback"])
 def test_sync_op_on_closed_from_foreign_thread_raises_thread_affinity(op: str) -> None:
-    """Thread-affinity precedence: foreign-thread commit/rollback even
-    on a closed conn raises ProgrammingError (thread), not
-    InterfaceError (closed). The thread check runs BEFORE the closed
-    check so the cross-thread caller cannot reach the messages-clear."""
+    """Foreign-thread commit/rollback on a closed conn raises ProgrammingError (thread
+    check precedes closed check), not InterfaceError."""
     c = dqlitedbapi.connect("127.0.0.1:9999")
     c._closed = True
     c._closed_flag[0] = True

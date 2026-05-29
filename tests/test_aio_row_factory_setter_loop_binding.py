@@ -1,17 +1,5 @@
-"""Pin: ``AsyncConnection.row_factory`` setter validates loop binding.
-
-The sync sibling ``Connection.row_factory.setter`` at
-``connection.py:1972-1985`` calls ``self._check_thread()`` to enforce
-the "every state-mutating method enforces affinity" claim. The async
-sibling at ``aio/connection.py:1358-1364`` did not check loop binding,
-so a foreign-loop caller could silently mutate ``_row_factory`` and
-affect cursors spawned on the legitimate loop.
-
-The fix adds ``self._check_loop_binding()`` at the top of the async
-setter (sibling of ``_ensure_locks`` that validates without binding
-on first use; raises ``InterfaceError`` / ``ProgrammingError`` on
-mismatch).
-"""
+"""``AsyncConnection.row_factory`` setter checks loop binding so a foreign-loop caller
+cannot silently mutate ``_row_factory`` shared with cursors on the legitimate loop."""
 
 from __future__ import annotations
 
@@ -25,16 +13,11 @@ from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
 
 
 async def test_row_factory_setter_succeeds_on_bound_loop() -> None:
-    """Negative pin: setting from the loop the connection is bound
-    to is the documented happy path; the loop-binding check must
-    not regress this.
-    """
+    """Setting from the bound loop is the happy path; the loop-binding check must not
+    regress it."""
     aconn = AsyncConnection("127.0.0.1:9999")
     try:
-        # Bind the loop by entering an async context that exercises
-        # the lazy-bind path (``_ensure_locks`` is the canonical
-        # binder; here we rely on the setter's ``_check_loop_binding``
-        # which is no-op when not yet bound).
+        # _check_loop_binding is a no-op when not yet bound.
         aconn.row_factory = lambda cur, row: list(row)
         assert aconn._row_factory is not None
     finally:
@@ -42,34 +25,21 @@ async def test_row_factory_setter_succeeds_on_bound_loop() -> None:
 
 
 def test_row_factory_setter_raises_on_foreign_loop() -> None:
-    """Pin: a foreign-loop caller setting ``row_factory`` raises a
-    PEP 249 ``Error`` subclass rather than silently mutating state
-    shared with the legitimate loop.
-
-    The repro: bind the connection on loop A, then attempt to set
-    ``row_factory`` from inside a coroutine running on loop B. Loop
-    A's ``asyncio.run`` closes the loop on exit, so by the time the
-    setter runs the bound loop is closed-or-GC'd — the diagnostic
-    class is ``InterfaceError`` (matches the client-layer sibling's
-    posture for "interface is gone, reconstruct"); a live-but-
-    different bound loop would surface ``ProgrammingError``. Accept
-    either subclass of ``Error`` here so a future refactor that
-    keeps the bound loop alive surfaces the more-specific class.
-    """
+    """A foreign-loop caller setting ``row_factory`` raises a PEP 249 ``Error`` subclass
+    instead of silently mutating shared state."""
+    # Loop A's asyncio.run closes its loop on exit, so the bound loop is closed-or-GC'd
+    # by the time the setter runs -> InterfaceError; a live-but-different loop would give
+    # ProgrammingError. Accept either subclass of Error.
     aconn = AsyncConnection("127.0.0.1:9999")
 
     async def _bind_then_release() -> None:
-        # _ensure_locks lazy-binds to the current loop.
         aconn._ensure_locks()
 
-    # Run the binding on loop A.
     asyncio.run(_bind_then_release())
 
-    # Now from a different loop in a different thread, attempt to
-    # mutate row_factory.
     error_holder: list[BaseException] = []
 
-    def _try_set_from_foreign_loop() -> None:
+    def _try_set_from_foreign_loop() -> None:  # different loop, different thread
         async def _setter() -> None:
             try:
                 aconn.row_factory = lambda cur, row: row
@@ -96,11 +66,8 @@ def test_row_factory_setter_raises_on_foreign_loop() -> None:
 
 
 def test_row_factory_setter_value_validation_still_runs() -> None:
-    """Negative pin: the existing callable-or-None validation must
-    still fire (non-callable, non-None values rejected). The loop-
-    binding check runs FIRST but does not skip the validation on
-    the bound-loop happy path.
-    """
+    """Callable-or-None validation still fires: the loop-binding check runs first but
+    does not skip validation on the bound-loop happy path."""
     aconn = AsyncConnection("127.0.0.1:9999")
     try:
         with pytest.raises(ProgrammingError, match="must be callable or None"):

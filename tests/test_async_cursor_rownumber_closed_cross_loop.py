@@ -1,15 +1,7 @@
-"""Pin: ``AsyncCursor.rownumber`` returns ``None`` on a closed cursor
-regardless of the reading loop's affinity.
+"""``AsyncCursor.rownumber`` returns None on a closed cursor regardless of loop.
 
-The getter's loop-affinity check runs against the bound AsyncConnection
-to prevent a foreign-loop reader from observing a mid-fetch
-``_row_index``. The docstring promises that closed-state read returns
-``None`` (matching stdlib ``sqlite3.Cursor.rownumber`` semantics) —
-but the order put ``_check_loop_only`` BEFORE the closed-state
-short-circuit, so a cross-loop read of a closed cursor raised
-InterfaceError instead of returning None. Cross-driver code that
-probes ``cur.rownumber`` from a shutdown helper on a different loop
-tripped on this.
+The closed-state short-circuit must precede the loop-affinity check, else a
+cross-loop read of a closed cursor raises instead of returning None.
 """
 
 from __future__ import annotations
@@ -23,8 +15,7 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 
 
 def _make_cursor(closed: bool) -> AsyncCursor:
-    """Build a closed/live AsyncCursor whose connection's
-    ``_check_loop_only`` raises (simulating cross-loop access)."""
+    """Build an AsyncCursor whose ``_check_loop_only`` raises (cross-loop access)."""
     cursor = AsyncCursor.__new__(AsyncCursor)
     cursor._closed = closed
     cursor._description = None
@@ -49,20 +40,16 @@ def _make_cursor(closed: bool) -> AsyncCursor:
 
 @pytest.mark.asyncio
 async def test_closed_cursor_rownumber_returns_none_even_cross_loop() -> None:
-    """The closed-state short-circuit must precede the loop check —
-    a foreign-loop read of a closed cursor returns None, not raises."""
     cursor = _make_cursor(closed=True)
     assert cursor.rownumber is None
 
 
 @pytest.mark.asyncio
 async def test_live_cursor_rownumber_still_loop_checked() -> None:
-    """Negative pin: a LIVE cursor's rownumber STILL runs the loop
-    affinity check (it's only short-circuited for closed cursors)."""
+    """Negative pin: a live cursor's rownumber still runs the loop check."""
     cursor = _make_cursor(closed=False)
     with pytest.raises(RuntimeError, match="event-loop mismatch"):
         _ = cursor.rownumber
 
 
-# Sanity: asyncio import quieted by use.
 _ = asyncio

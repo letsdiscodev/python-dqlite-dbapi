@@ -1,28 +1,6 @@
-"""Pin: the async cursor's NULL-rescue type-code resolution for
-``cursor.description`` yields cooperatively on large result sets
-instead of walking every row of an all-NULL column synchronously
-on the user loop.
-
-PEP 249 §6.1.2 requires a real Type Object per column. When a
-column's row-0 tag is ``ValueType.NULL`` the resolver scans
-subsequent rows for the first non-NULL tag, falling back to the
-``UNKNOWN`` sentinel only when EVERY row at that column is NULL.
-A column that is NULL across the whole page (a LEFT JOIN
-right-side with no match, an always-NULL projection) is scanned
-end-to-end — O(n_null_cols × n_rows) of pure-Python iteration
-that ran BEFORE the first ``await`` in the result path, outside
-the cooperative-yield chain (wire read / drain / convert-rows).
-
-The fix extracts the scan into an ``async def`` helper gated by
-``_LARGE_RESULT_ROW_THRESHOLD`` (small fetches keep the
-synchronous path, zero scheduler overhead) that yields
-``await asyncio.sleep(0)`` every ``_CONVERT_ROWS_YIELD_EVERY``
-scanned inner-row steps. The resolved type-code list is
-byte-identical to the prior inline logic; only the all-NULL
-"every row is NULL" fallback walks the full count, and only that
-path benefits from the yields. The sync cursor surface is
-unchanged.
-"""
+"""Pin: the async NULL-rescue type-code scan yields cooperatively on
+large all-NULL columns (gated by ``_LARGE_RESULT_ROW_THRESHOLD``) so the
+O(cols x rows) walk no longer blocks the loop before the first await."""
 
 from __future__ import annotations
 
@@ -69,7 +47,6 @@ async def test_typed_row0_columns_resolve_directly() -> None:
 
 
 async def test_null_first_row_rescued_from_later_row() -> None:
-    # Column 0 is NULL in row 0 but INTEGER in row 2.
     column_types = [ValueType.NULL, ValueType.TEXT]
     row_types = [
         [ValueType.NULL, ValueType.TEXT],
@@ -82,7 +59,6 @@ async def test_null_first_row_rescued_from_later_row() -> None:
 
 
 async def test_all_null_column_falls_back_to_unknown() -> None:
-    # Column 0 is NULL in EVERY row → UNKNOWN sentinel.
     column_types = [ValueType.NULL, ValueType.INTEGER]
     row_types = [[ValueType.NULL, ValueType.INTEGER] for _ in range(50)]
     result = await _resolve_null_rescue_type_codes(column_types, row_types)
@@ -92,8 +68,7 @@ async def test_all_null_column_falls_back_to_unknown() -> None:
 
 
 async def test_ragged_rows_do_not_short_circuit() -> None:
-    # Some rows are shorter than the column count; the scan must
-    # skip them without breaking the all-row contract.
+    # Short rows must be skipped without breaking the all-row contract.
     column_types = [ValueType.NULL, ValueType.NULL]
     row_types = [
         [ValueType.NULL],  # ragged: only 1 col
@@ -101,21 +76,15 @@ async def test_ragged_rows_do_not_short_circuit() -> None:
         [ValueType.NULL, ValueType.FLOAT],
     ]
     result = await _resolve_null_rescue_type_codes(column_types, row_types)
-    assert result[0] is _UNKNOWN_TYPE  # col 0 NULL everywhere
-    assert result[1] == int(ValueType.FLOAT)  # rescued from row 2
+    assert result[0] is _UNKNOWN_TYPE
+    assert result[1] == int(ValueType.FLOAT)
     assert result == _sync_reference(column_types, row_types)
 
 
 async def test_large_all_null_column_yields_cooperatively() -> None:
-    """A wide all-NULL fixture (200k rows, several all-NULL cols)
-    must let a sibling coroutine make progress during the scan —
-    the max inter-tick gap stays small. Pre-fix the scan ran
-    synchronously with no yield, so the sibling never ticked
-    until the entire O(cols × rows) walk finished.
-    """
+    """A wide all-NULL fixture must let a sibling coroutine tick during
+    the scan; pre-fix the synchronous walk blocked it end-to-end."""
     n_rows = 200_000
-    # 3 columns, all NULL in row 0 AND every subsequent row → each
-    # triggers a full-row scan.
     column_types = [ValueType.NULL, ValueType.NULL, ValueType.NULL]
     row_types = [[ValueType.NULL, ValueType.NULL, ValueType.NULL] for _ in range(n_rows)]
 
@@ -143,9 +112,7 @@ async def test_large_all_null_column_yields_cooperatively() -> None:
             await ticker
 
     assert all(rc is _UNKNOWN_TYPE for rc in result)
-    # Drop first/last samples (startup/shutdown); assert no gap
-    # exceeds 200 ms. Pre-fix the single synchronous scan of
-    # 600k cells blocked the ticker for the whole walk.
+    # Drop startup/shutdown samples; no remaining inter-tick gap > 200 ms.
     if len(inter_tick_gaps) > 2:
         worst = max(inter_tick_gaps[1:-1])
         assert worst < 0.200, (
@@ -156,10 +123,8 @@ async def test_large_all_null_column_yields_cooperatively() -> None:
 
 
 async def test_small_result_takes_synchronous_fast_path() -> None:
-    """Below ``_LARGE_RESULT_ROW_THRESHOLD`` the resolver must NOT
-    await ``asyncio.sleep(0)`` — small fetches pay no scheduler
-    overhead. Instrument ``asyncio.sleep`` to confirm zero calls.
-    """
+    """Below ``_LARGE_RESULT_ROW_THRESHOLD`` the resolver must not await
+    ``asyncio.sleep(0)`` (no scheduler overhead on small fetches)."""
     from unittest.mock import patch
 
     column_types = [ValueType.NULL]

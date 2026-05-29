@@ -1,17 +1,6 @@
-"""Pin: aware datetime + microseconds + non-UTC offset round-trip.
-
-Existing tests cover each axis separately:
-- naive + microseconds: round-trips
-- aware + UTC: round-trips
-- aware + non-UTC offset (no microseconds): round-trips
-- encoder-only string-equality with `(microsecond=42, tzinfo=-08:00)`
-
-But no test combined all three — so a hypothetical encoder bug that
-e.g. misorders the offset and microseconds (``+05:30:00.123456`` vs
-``.123456+05:30``) would slip through.
-
-These tests pin the round-trip property on the combined axis.
-"""
+"""Pin the round-trip of the combined axis: aware datetime + microseconds +
+non-UTC offset, which existing per-axis tests miss (e.g. an offset/microseconds
+ordering bug would slip through)."""
 
 from __future__ import annotations
 
@@ -36,8 +25,8 @@ from dqlitedbapi.types import _datetime_from_iso8601, _iso8601_from_datetime
 def test_aware_microseconds_nonzero_offset_round_trip(
     offset: datetime.timedelta,
 ) -> None:
-    """Encoder→decoder round-trip must preserve all three of: aware
-    tzinfo, non-UTC offset, microseconds."""
+    """Round-trip must preserve aware tzinfo, non-UTC offset, and
+    microseconds."""
     tz = datetime.timezone(offset)
     dt = datetime.datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=tz)
 

@@ -8,7 +8,6 @@ from dqlitedbapi import connect
 @pytest.mark.integration
 class TestQueryDetection:
     def test_cte_select(self, cluster_address: str) -> None:
-        """WITH ... SELECT (CTE) should return rows via query path."""
         with connect(cluster_address, database="test_cte_select") as conn:
             cursor = conn.cursor()
             cursor.execute("DROP TABLE IF EXISTS cte_test")
@@ -23,7 +22,6 @@ class TestQueryDetection:
             cursor.execute("DROP TABLE cte_test")
 
     def test_comment_before_select(self, cluster_address: str) -> None:
-        """-- comment before SELECT should still return rows."""
         with connect(cluster_address, database="test_comment_select") as conn:
             cursor = conn.cursor()
             cursor.execute("DROP TABLE IF EXISTS comment_test")
@@ -38,7 +36,6 @@ class TestQueryDetection:
             cursor.execute("DROP TABLE comment_test")
 
     def test_block_comment_before_select(self, cluster_address: str) -> None:
-        """/* block comment */ before SELECT should still return rows."""
         with connect(cluster_address, database="test_block_comment_select") as conn:
             cursor = conn.cursor()
             cursor.execute("DROP TABLE IF EXISTS bcomment_test")
@@ -53,7 +50,6 @@ class TestQueryDetection:
             cursor.execute("DROP TABLE bcomment_test")
 
     def test_recursive_cte(self, cluster_address: str) -> None:
-        """WITH RECURSIVE ... SELECT should return rows."""
         with connect(cluster_address, database="test_recursive_cte_select") as conn:
             cursor = conn.cursor()
             cursor.execute(

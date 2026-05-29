@@ -1,14 +1,5 @@
-"""Unit tests for ``_validate_ticks`` — the guard PEP 249's three
-``*FromTicks`` constructors run before handing ``ticks`` to
-``datetime.fromtimestamp``.
-
-Closes the bool-through-int hole (``bool`` is an ``int`` subclass,
-so ``isinstance(True, float)`` is False and the old guard let
-``TimestampFromTicks(True)`` silently return ``datetime(1970-01-01
-00:00:01)``). Also rejects ``Decimal("NaN")`` and unsupported
-non-numeric types up front so every failure mode surfaces as a
-single DB-API ``DataError``.
-"""
+"""``_validate_ticks`` guards the ``*FromTicks`` constructors: it closes the
+bool-through-int hole and rejects NaN/inf and non-numeric ticks as ``DataError``."""
 
 from __future__ import annotations
 
@@ -81,6 +72,5 @@ class TestValidateTicksHappyPath:
         assert TimestampFromTicks(1700000000.5).microsecond == 500_000
 
     def test_decimal_finite_accepted(self) -> None:
-        # A finite Decimal passes the guard via ``float(ticks)`` coercion.
         result = TimestampFromTicks(Decimal("1700000000"))  # type: ignore[arg-type]
         assert result.year == 2023

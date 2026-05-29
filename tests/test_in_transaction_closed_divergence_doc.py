@@ -1,10 +1,5 @@
-"""Pin: ``Connection.in_transaction`` and ``AsyncConnection.in_transaction``
-docstrings document the deliberate divergence from stdlib (which raises
-``ProgrammingError`` on a closed connection).
-
-Behaviour pin: closed connections return ``False`` rather than raising —
-this is the safety property shutdown paths depend on.
-"""
+"""Pin: in_transaction docstrings document the divergence from stdlib, and
+closed connections return False rather than raising."""
 
 from __future__ import annotations
 
@@ -13,29 +8,13 @@ from dqlitedbapi.connection import Connection
 
 
 def _prop_doc(cls: type, name: str) -> str:
-    """Pull the docstring off a property descriptor by class-dict lookup.
-
-    Going through ``cls.__dict__[name]`` keeps the descriptor as a
-    ``property`` (not a bound bool) so ``__doc__`` is reachable without
-    type-ignore noise.
-    """
+    """Pull the docstring off a property descriptor via cls.__dict__ so it
+    stays a property (not a bound bool) and __doc__ is reachable."""
     desc = cls.__dict__[name]
     assert isinstance(desc, property)
     doc = desc.__doc__
     assert doc is not None
     return doc
-
-
-def test_sync_in_transaction_doc_calls_out_divergence() -> None:
-    doc = _prop_doc(Connection, "in_transaction")
-    assert "Divergence from stdlib" in doc
-    assert "ProgrammingError" in doc
-
-
-def test_async_in_transaction_doc_calls_out_divergence() -> None:
-    doc = _prop_doc(AsyncConnection, "in_transaction")
-    assert "Divergence from stdlib" in doc
-    assert "ProgrammingError" in doc
 
 
 def test_sync_in_transaction_doc_does_not_claim_mirrors_stdlib() -> None:

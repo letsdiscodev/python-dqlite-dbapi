@@ -1,24 +1,6 @@
-"""Pin: PEP 249 §6.1.1's "messages cleared automatically by all standard
-cursor method calls (prior to executing the call)" must hold even on
-the cross-thread-rejection path of the sync cursor's secondary
-methods (``setinputsizes`` / ``setoutputsize`` / ``callproc`` /
-``nextset`` / ``scroll``).
-
-The primary methods (``execute`` / ``executemany`` / ``fetchone`` /
-``fetchmany`` / ``fetchall`` / ``close``) all clear ``messages``
-BEFORE invoking ``_check_thread()`` — so the contract holds even
-when the cross-thread guard rejects the call. Before this fix, the
-five secondary methods invoked ``_check_thread()`` first; the clear
-was reachable only on the well-formed path. Severity is low because
-``messages`` is empty in practice today (no code path on this driver
-appends to it), but a future code path that begins populating
-``messages`` would silently retain stale entries on the rejected
-cross-thread path.
-
-This module pins the ordering symmetry: from a non-creator thread,
-each secondary method must clear ``messages`` BEFORE raising
-``ProgrammingError``.
-"""
+"""Pin: PEP 249 §6.1.1 (messages cleared prior to the call) holds on the cross-thread-rejection
+path of the sync cursor's secondary methods (setinputsizes/setoutputsize/callproc/nextset/scroll)
+— each must clear ``messages`` BEFORE ``_check_thread()`` raises ProgrammingError."""
 
 from __future__ import annotations
 
@@ -35,15 +17,13 @@ _STALE_CONN: tuple[type[Exception], Exception] = (Warning, Warning("stale-conn")
 
 
 def _seed(cur: Any) -> None:
-    """Seed both cursor- and connection-level ``messages`` lists so
-    we can observe the clear."""
+    """Seed both cursor- and connection-level ``messages`` so we can observe the clear."""
     cur.messages.append(_STALE_CURSOR)
     cur._connection.messages.append(_STALE_CONN)
 
 
 def _expect_messages_cleared_after_cross_thread_call(invoke: Callable[[], None], cur: Any) -> None:
-    """Run ``invoke`` from a foreign thread, expect
-    ``ProgrammingError``, then assert messages were cleared."""
+    """Run ``invoke`` from a foreign thread, expect ProgrammingError, assert messages cleared."""
     errors: list[BaseException] = []
 
     def _runner() -> None:
@@ -59,12 +39,8 @@ def _expect_messages_cleared_after_cross_thread_call(invoke: Callable[[], None],
     assert isinstance(errors[0], ProgrammingError), (
         f"expected ProgrammingError, got {type(errors[0]).__name__}"
     )
-    # The PEP 249 §6.1.1 contract: messages cleared "prior to
-    # executing the call" — must hold on the rejected path.
     assert list(cur.messages) == [], "Cursor.messages must be cleared before _check_thread raises"
-    # PEP 249 §6.1.1 / §6.1.2 — Connection.messages and Cursor.messages
-    # are independent surfaces. Cursor methods must NOT clear
-    # Connection.messages.
+    # Connection.messages and Cursor.messages are independent; cursor methods must not touch it.
     assert list(cur._connection.messages) == [_STALE_CONN]
 
 

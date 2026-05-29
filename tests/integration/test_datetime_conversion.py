@@ -1,10 +1,5 @@
-"""Integration tests for the DBAPI datetime conversion layer.
-
-The DBAPI contract is PEP 249: date/time columns return Python ``datetime``
-objects. The wire layer deals only in primitives (ISO8601 → str, UNIXTIME →
-int64); the DBAPI is where that gets turned into real ``datetime`` values.
-These tests exercise the end-to-end path against a live cluster.
-"""
+"""Integration tests for the DBAPI datetime conversion layer: the wire layer
+yields primitives, the DBAPI turns them into Python ``datetime`` values."""
 
 import asyncio
 import datetime
@@ -21,11 +16,7 @@ class TestDateTimeRoundTrip:
     """ISO8601 column round-trips through cursor.execute."""
 
     def test_naive_datetime_stays_naive(self, cluster_address: str) -> None:
-        """A naive datetime written via bind param round-trips as naive.
-
-        The DBAPI must not silently assume UTC on either side — that was
-        the pre-fix wire-layer bug and is explicitly rejected here.
-        """
+        """A naive datetime round-trips as naive; the DBAPI must not assume UTC."""
         dt = datetime.datetime(2024, 1, 15, 10, 30, 45)  # noqa: DTZ001 - naive is the point
         with connect(cluster_address, database="test_dt_naive") as conn:
             cursor = conn.cursor()
@@ -87,13 +78,8 @@ class TestDateTimeRoundTrip:
             cursor.execute("DROP TABLE dt_null")
 
     def test_date_bind_param(self, cluster_address: str) -> None:
-        """A ``datetime.date`` bind param is stringified by the DBAPI.
-
-        The C server tags DATE columns as ISO8601 so the DBAPI returns a
-        ``datetime.datetime``. Narrowing back to ``date`` is the SQLAlchemy
-        dialect's job — at the raw DBAPI level we just verify the value
-        round-trips and contains the expected calendar date.
-        """
+        """A ``datetime.date`` bind param round-trips as a ``datetime`` (server tags
+        DATE as ISO8601); narrowing back to ``date`` is the dialect's job."""
         d = datetime.date(2024, 3, 14)
         with connect(cluster_address, database="test_dt_date") as conn:
             cursor = conn.cursor()
@@ -109,11 +95,8 @@ class TestDateTimeRoundTrip:
 
 @pytest.mark.integration
 class TestTimeBindParam:
-    """``datetime.time`` bind parameters stringify to ISO 8601 so the
-    driver's own ``Time()`` / ``TimeFromTicks()`` constructors round-trip
-    through the wire. The server stores the value as TEXT; readback is
-    the ISO string (the decoder has no TIME affinity).
-    """
+    """``datetime.time`` binds stringify to ISO 8601; readback is the ISO string
+    (server stores TEXT, the decoder has no TIME affinity)."""
 
     def test_naive_time_round_trips_as_string(self, cluster_address: str) -> None:
         import dqlitedbapi
@@ -144,12 +127,8 @@ class TestTimeBindParam:
 
 @pytest.mark.integration
 class TestUnixtimeColumn:
-    """INTEGER values in DATETIME-typed columns come back as datetime.
-
-    The C server (dqlite-upstream/src/query.c) tags INTEGER-valued cells of
-    DATETIME/DATE/TIMESTAMP columns as DQLITE_UNIXTIME. The DBAPI must
-    recognize that tag and convert epoch seconds → UTC-aware datetime.
-    """
+    """INTEGER cells in DATETIME columns are tagged DQLITE_UNIXTIME by the server;
+    the DBAPI converts epoch seconds to a UTC-aware datetime."""
 
     def test_integer_value_in_datetime_column_decodes_as_datetime(
         self, cluster_address: str
@@ -162,8 +141,6 @@ class TestUnixtimeColumn:
                 "CREATE TABLE IF NOT EXISTS ut_test (id INTEGER PRIMARY KEY, ts DATETIME)"
             )
             cursor.execute("DELETE FROM ut_test")
-            # Bind an int — SQLite stores it as INTEGER affinity; server then
-            # tags the column as DQLITE_UNIXTIME on readback.
             cursor.execute("INSERT INTO ut_test (ts) VALUES (?)", [epoch])
             cursor.execute("SELECT ts FROM ut_test")
             (value,) = cursor.fetchone()  # type: ignore[misc]
@@ -222,11 +199,8 @@ class TestAsyncCursorDateTime:
         assert value.tzinfo is None
 
     def test_async_datetime_column_null_first_row_then_datetime(self, cluster_address: str) -> None:
-        """Async mirror of the NULL-first-column case: the AsyncCursor
-        goes through the same rescue-scan + per-row conversion path, so
-        a NULL row 0 followed by a real datetime row 1 must resolve the
-        description type from row 1 and keep row 0 ``None``.
-        """
+        """Async mirror of the NULL-first-column case: description type resolves
+        from row 1's datetime, row 0 stays ``None``."""
 
         async def scenario() -> tuple[object, list[tuple[object, ...]]]:
             async with AsyncConnection(cluster_address, database="test_async_dt_nf") as conn:
@@ -258,22 +232,11 @@ class TestAsyncCursorDateTime:
 
 @pytest.mark.integration
 class TestHeterogeneousPerRowTypes:
-    """SQLite is dynamically typed. When a ``DATETIME`` column stores
-    rows with different underlying storage classes — a TEXT-stored
-    ISO8601 value next to an INTEGER-stored UNIX epoch — the server
-    tags each row with its own wire ``ValueType``. The cursor must
-    dispatch per row, not collapse to row 0's type.
-
-    Without per-row dispatch, row 1 (UNIXTIME-tagged) would be sent
-    through ``_datetime_from_iso8601`` because row 0 was ISO8601 —
-    which either raises ``DataError`` or returns nonsense, depending
-    on the value.
-    """
+    """A DATETIME column may store mixed storage classes per row; the cursor must
+    dispatch conversion per row, not collapse to row 0's type."""
 
     def test_datetime_column_mixes_iso8601_and_unixtime(self, cluster_address: str) -> None:
-        """Row 0 stored as ISO8601 TEXT, row 1 as INTEGER. Each must
-        decode through the converter the server tagged it with.
-        """
+        """Row 0 ISO8601 TEXT, row 1 INTEGER: each decodes via its own server tag."""
         with connect(cluster_address, database="test_per_row_types") as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -288,7 +251,6 @@ class TestHeterogeneousPerRowTypes:
 
             assert len(rows) == 2
 
-            # Row 0: ISO8601 text → naive datetime.
             assert isinstance(rows[0][0], datetime.datetime), (
                 f"row 0 should decode as datetime, got {type(rows[0][0]).__name__}: {rows[0][0]!r}"
             )
@@ -296,9 +258,6 @@ class TestHeterogeneousPerRowTypes:
             assert rows[0][0].tzinfo is None
 
             # Row 1: UNIXTIME integer → UTC-aware datetime at epoch+42s.
-            # With pre-fix first-row dispatch, the cursor would have
-            # tried to parse an int through ``_datetime_from_iso8601``
-            # and raised DataError.
             assert isinstance(rows[1][0], datetime.datetime), (
                 f"row 1 should decode as datetime, got {type(rows[1][0]).__name__}: {rows[1][0]!r}"
             )
@@ -306,10 +265,7 @@ class TestHeterogeneousPerRowTypes:
             assert rows[1][0] == expected
 
     def test_datetime_column_reverse_order(self, cluster_address: str) -> None:
-        """Inverse order: row 0 stored as INTEGER, row 1 as ISO8601
-        TEXT. If the cursor collapsed to row 0's types, row 1 would
-        remain a string instead of becoming a datetime.
-        """
+        """Inverse order: row 0 INTEGER, row 1 ISO8601 TEXT, both decode as datetime."""
         with connect(cluster_address, database="test_per_row_types_inv") as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -323,10 +279,8 @@ class TestHeterogeneousPerRowTypes:
             cursor.execute("DROP TABLE per_row_mix_inv")
 
             assert len(rows) == 2
-            # Row 0: UNIXTIME → aware datetime at epoch+100s.
             assert isinstance(rows[0][0], datetime.datetime)
             assert rows[0][0] == datetime.datetime(1970, 1, 1, 0, 1, 40, tzinfo=datetime.UTC)
-            # Row 1: ISO8601 text → naive datetime.
             assert isinstance(rows[1][0], datetime.datetime), (
                 f"row 1 should decode as datetime, got {type(rows[1][0]).__name__}: {rows[1][0]!r}"
             )
@@ -334,18 +288,8 @@ class TestHeterogeneousPerRowTypes:
             assert rows[1][0].tzinfo is None
 
     def test_datetime_column_null_first_row_then_datetime(self, cluster_address: str) -> None:
-        """Row 0 is NULL, row 1 is a real datetime. The server tags
-        row 0 as NULL and row 1 as ISO8601, so the cursor must (a)
-        resolve the column ``description`` type code from the later
-        non-NULL row rather than collapsing to row 0's NULL, and (b)
-        keep row 0 ``None`` while converting row 1 to a ``datetime``.
-
-        This is the canonical NULL-first-column case (a NULL value in
-        the first row of a typed column): if the description type were
-        taken from row 0 only, ``description[0][1]`` would be NULL/
-        UNKNOWN, and a converter dispatch keyed off row 0 would leave
-        row 1 as a raw string.
-        """
+        """NULL-first column: description type resolves from row 1's ISO8601 tag,
+        row 0 stays ``None`` and row 1 converts to a ``datetime``."""
         with connect(cluster_address, database="test_dt_null_first") as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -359,8 +303,6 @@ class TestHeterogeneousPerRowTypes:
             cursor.execute("SELECT v FROM dt_null_first ORDER BY id")
             rows = cursor.fetchall()
             assert cursor.description is not None
-            # Description type resolved from row 1's ISO8601 tag, not
-            # row 0's NULL.
             assert cursor.description[0][1] == int(ValueType.ISO8601)
             cursor.execute("DROP TABLE dt_null_first")
 

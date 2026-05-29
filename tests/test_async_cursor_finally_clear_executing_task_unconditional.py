@@ -1,12 +1,7 @@
-"""Pin: ``AsyncCursor.execute`` and ``executemany`` finally clauses
-clear ``_executing_task`` UNCONDITIONALLY (no ``is cur_task`` guard).
+"""execute/executemany finally clauses clear ``_executing_task`` unconditionally.
 
-The clear-side bytecode-tight signal window: a BaseException
-delivered between the read of ``self._executing_task`` (the ``is``
-check) and the write ``self._executing_task = None`` would leave
-the slot pinned to a now-completed task. Always-clearing closes
-that window. Safe because ``row_factory`` runs only in fetch* and
-never re-enters execute* from the same task.
+A guarded clear leaves a BaseException window between the ``is`` check and the
+write that would pin the slot to a completed task.
 """
 
 from __future__ import annotations
@@ -19,9 +14,7 @@ from dqlitedbapi.aio import cursor as aio_cursor_mod
 
 
 def _finally_clears_unconditionally(method: object) -> bool:
-    """Return True if the method's finally body unconditionally
-    assigns ``self._executing_task = None`` (no surrounding ``If``).
-    """
+    """True if the finally body unconditionally assigns ``self._executing_task``."""
     src = textwrap.dedent(inspect.getsource(method))  # type: ignore[arg-type]
     tree = ast.parse(src)
     for node in ast.walk(tree):

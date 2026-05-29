@@ -1,15 +1,4 @@
-"""Pin: ``Cursor.fetchmany(-1)`` raises ``ProgrammingError``.
-
-Stdlib reference (current Python):
-- Python 3.13: ``ValueError: value must be positive``
-- Python 3.14: ``ValueError: Cannot convert negative int``
-
-The historical "negative means fetch all" semantic was settled under
-an older stdlib that drained on negative; current stdlib raises. The
-dbapi wraps the rejection in ``ProgrammingError`` to keep it inside
-the dbapi.Error hierarchy per PEP 249 §7 — matching the sibling
-non-int / bool rejection in the same method.
-"""
+"""``Cursor.fetchmany(-1)`` raises ``ProgrammingError`` (current stdlib raises on negative)."""
 
 from __future__ import annotations
 
@@ -70,9 +59,7 @@ def test_sync_fetchmany_large_negative_raises_programmingerror() -> None:
 
 
 def test_sync_fetchmany_zero_still_returns_empty_list() -> None:
-    """Regression guard: the negative-reject must not affect the
-    zero-size path, which by PEP 249 returns ``[]`` (sibling test in
-    ``test_fetchmany_edges.py`` covers the happy path)."""
+    """The negative-reject must not affect the zero-size path, which returns ``[]``."""
     cur = _sync_cursor_with_rows([(1,), (2,), (3,)])
     assert cur.fetchmany(0) == []
 

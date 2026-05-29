@@ -26,8 +26,6 @@ class TestConnectionRepr:
 
 class TestCursorRepr:
     def test_cursor_repr(self) -> None:
-        # Cursor ctor needs a connection-like object; use a real one
-        # and close immediately (no TCP).
         conn = Connection("localhost:19001", timeout=2.0)
         try:
             c = Cursor(conn)
@@ -45,9 +43,7 @@ class TestCursorRepr:
         assert "rowcount" in r
 
     def test_cursor_repr_state_transition(self) -> None:
-        """Repr reports ``open`` before close and ``closed`` after.
-        Debuggers and tracebacks lean on the repr so the state string
-        is a lightweight API worth pinning."""
+        """Repr reports ``open`` before close and ``closed`` after."""
         conn = Connection("localhost:19001", timeout=2.0)
         try:
             c = Cursor(conn)

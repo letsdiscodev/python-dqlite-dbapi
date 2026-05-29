@@ -48,16 +48,11 @@ class TestAsyncConnection:
         """cursor() is intentionally sync for SQLAlchemy compatibility."""
         conn = AsyncConnection("localhost:9001")
         cursor = conn.cursor()
-        # Verify it returns directly, not a coroutine
         assert isinstance(cursor, AsyncCursor)
 
     async def test_aenter_cleans_up_on_connect_failure(self) -> None:
-        """If ``connect()`` raises inside ``__aenter__``, partial state
-        (lazily-constructed locks, loop-ref) must be reset so the object
-        remains reusable. Python does NOT call ``__aexit__`` when
-        ``__aenter__`` itself raises, so cleanup has to run in the
-        ``__aenter__`` error path.
-        """
+        """connect() raising in __aenter__ must reset partial state; Python does
+        not call __aexit__ when __aenter__ raises, so cleanup runs in that path."""
         from unittest.mock import patch
 
         from dqliteclient.exceptions import DqliteConnectionError
@@ -73,10 +68,8 @@ class TestAsyncConnection:
             async with conn:
                 pass
 
-        # Connection object is in its "never connected" resting state.
         assert conn._async_conn is None
-        # Lock primitives were reset so a retry on a fresh event loop
-        # is not blocked by a loop-pinning error.
+        # Locks reset so a retry on a fresh loop is not blocked by loop-pinning.
         assert conn._connect_lock is None
         assert conn._op_lock is None
         assert conn._loop_ref is None

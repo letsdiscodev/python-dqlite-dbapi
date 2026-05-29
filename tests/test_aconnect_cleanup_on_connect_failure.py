@@ -1,15 +1,6 @@
-"""Pin ``aconnect()``'s partial-construct cleanup contract.
+"""aconnect()'s partial-construct cleanup: if connect() raises, the partial conn is closed.
 
-If ``AsyncConnection.connect()`` raises after the constructor
-returned, ``aconnect()``'s except-clause closes the partially-
-constructed connection (with ``contextlib.suppress(Exception)`` so
-the close error doesn't mask the original) and re-raises. Without
-coverage, a refactor that loses the suppress wrapper or the close
-call would silently leak loop-bound locks, transports, and reader
-tasks on a connect failure.
-
-Drives ``aio/__init__.py:198-209`` reported as uncovered by
-``pytest --cov``.
+The close is wrapped in suppress(Exception) so a close error doesn't mask the original.
 """
 
 from __future__ import annotations
@@ -26,9 +17,7 @@ from dqlitedbapi.aio.connection import AsyncConnection
 async def test_aconnect_calls_close_on_connect_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If AsyncConnection.connect() raises an Exception, aconnect()
-    must call close() on the partially-constructed instance and
-    re-raise the original exception."""
+    """A connect() Exception makes aconnect() close the partial conn and re-raise."""
     closed: list[bool] = []
 
     async def _failing_connect(self: AsyncConnection) -> None:
@@ -49,10 +38,7 @@ async def test_aconnect_calls_close_on_connect_failure(
 async def test_aconnect_swallows_close_error_to_preserve_original(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If close() ALSO fails during cleanup, the original connect()
-    exception must still propagate (close failure is secondary).
-    Pin the contextlib.suppress(Exception) wrapper around the
-    cleanup close."""
+    """If close() also fails during cleanup, the original connect() exception still propagates."""
 
     async def _failing_connect(self: AsyncConnection) -> None:
         raise dqlitedbapi.exceptions.OperationalError("primary", code=1)
@@ -70,10 +56,8 @@ async def test_aconnect_swallows_close_error_to_preserve_original(
 async def test_aconnect_propagates_cancellederror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CancelledError during connect() must propagate (BaseException
-    catch covers it, not just Exception) AND the close cleanup must
-    still run. Pin the BaseException-vs-Exception choice — narrowing
-    to Exception would skip cleanup on async cancellation."""
+    """CancelledError during connect() propagates and still runs cleanup (caught as
+    BaseException, not just Exception)."""
     closed: list[bool] = []
 
     async def _cancelled_connect(self: AsyncConnection) -> None:

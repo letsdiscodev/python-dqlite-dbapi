@@ -1,11 +1,5 @@
-"""Pin: ``import dqlitedbapi`` and ``import dqlitedbapi.aio`` each
-trigger ``import dqlitewire`` at module-load time.
-
-See ``python-dqlite-client/tests/test_transitive_wire_import.py``
-for the rationale: the wire-layer free-threading guard is inherited
-transitively, so a future lazification of the wire import would
-silently drop the guard at this entry point.
-"""
+"""Pin eager ``import dqlitewire`` on dbapi load: a lazy wire import would
+silently drop the wire-layer free-threading guard at this entry point."""
 
 from __future__ import annotations
 

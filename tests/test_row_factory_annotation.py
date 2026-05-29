@@ -1,17 +1,5 @@
-"""Pin ``row_factory``'s attribute and property-getter annotation to
-the shared ``RowFactory`` alias.
-
-The setter already validates ``callable(value) or value is None`` at
-runtime, so the public contract is ``RowFactory | None`` (where
-``RowFactory`` is the ``Callable[..., Any]`` alias in
-``dqlitedbapi.types``). The storage attribute and the property getter
-previously used the looser ``Any`` shape, which propagated through the
-row-transform call sites and defeated mypy's ability to catch internal
-mis-assignments.
-
-Regression guard: if anyone re-widens to ``Any`` for ergonomics, this
-test surfaces the contract drift.
-"""
+"""Pin ``row_factory``'s getter annotation to ``RowFactory | None`` so a
+re-widening to ``Any`` (which defeats mypy on the call sites) is caught."""
 
 from __future__ import annotations
 
@@ -53,14 +41,8 @@ def test_async_cursor_row_factory_getter_annotation() -> None:
 
 
 def test_row_factory_alias_resolves_to_callable() -> None:
-    """The alias itself must resolve to a callable shape (``Callable[..., Any]``).
-    Pins the underlying signature: if a future refactor swaps the alias
-    for a tighter ``Callable[[Cursor, tuple], Any]`` shape, callers
-    that relied on the looser arity would break — this test surfaces
-    the change at a single site.
-    """
-    # PEP 695 ``type X = ...`` produces a ``TypeAliasType``; resolve
-    # the underlying expression via ``__value__``.
+    """The alias must resolve to a ``Callable`` shape."""
+    # PEP 695 ``type X = ...`` yields a TypeAliasType; unwrap via __value__.
     underlying = RowFactory.__value__
     assert "Callable" in str(underlying), (
         f"RowFactory alias must resolve to a Callable shape; got {underlying!r}"

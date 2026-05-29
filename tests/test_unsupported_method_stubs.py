@@ -1,24 +1,6 @@
-"""Pin: optional PEP 249 §7 (TPC) and stdlib-sqlite3-parity helpers
-raise ``NotSupportedError`` on both sync and async ``Connection``,
-not ``AttributeError``.
-
-PEP 249 §7 says drivers without two-phase-commit support MUST raise
-``NotSupportedError`` from ``tpc_*`` methods. AttributeError escapes
-the dbapi.Error hierarchy, so a caller's ``except Error:`` skips it
-— users porting from psycopg / asyncpg / stdlib sqlite3 expect the
-PEP 249 surface to be uniform.
-
-Stdlib sqlite3-parity helpers (``load_extension``, ``backup``,
-``iterdump``, ``create_function`` / ``_aggregate`` / ``_collation`` /
-``_window_function``) are not part of PEP 249, but stdlib raises
-``sqlite3.NotSupportedError`` (a PEP 249 ``NotSupportedError``) when
-the underlying SQLite was built without the corresponding feature.
-Mirror that contract so cross-driver code branching on
-``sqlite3.NotSupportedError`` continues to work.
-
-dqlite-server does not implement any of these; the stubs are
-permanent rejections, not "not yet."
-"""
+"""TPC and stdlib-sqlite3-parity helpers raise ``NotSupportedError`` (not
+``AttributeError``, which would escape ``except Error``) on both Connections.
+dqlite-server implements none of these; the stubs are permanent rejections."""
 
 from __future__ import annotations
 
@@ -105,15 +87,7 @@ class TestSyncStdlibParityStubs:
 
 
 class TestSyncStdlibParityStubFamily:
-    """Stubs added alongside the stdlib-parity work
-    (executescript, interrupt, set_authorizer / progress /
-    trace, total_changes, getlimit / setlimit, getconfig /
-    setconfig, serialize / deserialize, blobopen). All return
-    ``NotSupportedError`` rather than escaping ``AttributeError``;
-    pin the behaviour so a future regression to
-    ``AttributeError`` (e.g. accidentally removing the stub)
-    surfaces in the unit suite, not just in cross-driver
-    integration smoke tests."""
+    """Stdlib-parity stubs raise ``NotSupportedError``, not ``AttributeError``."""
 
     def test_executescript(self, conn: dqlitedbapi.Connection) -> None:
         with pytest.raises(NotSupportedError, match="executescript"):
@@ -232,10 +206,7 @@ class TestAsyncStdlibParityStubFamily:
     """Async sibling of ``TestSyncStdlibParityStubFamily``."""
 
     async def test_executescript(self, aconn: AsyncConnection) -> None:
-        # ``executescript`` is plain ``def`` (not ``async def``) so the
-        # NotSupportedError fires on the call line — symmetric with the
-        # sync sibling. See test_async_executescript_stub_raises_on_call
-        # for the call-line-vs-await pin.
+        # ``executescript`` is plain ``def``: the error fires on the call line.
         with pytest.raises(NotSupportedError, match="executescript"):
             aconn.executescript("CREATE TABLE t (id INT);")
 
@@ -300,22 +271,9 @@ _TPC_IDS = ["tpc_begin", "tpc_prepare", "tpc_commit", "tpc_rollback", "tpc_recov
 
 
 class TestTpcStubsRouteThroughHelper:
-    """Pin: the six TPC stubs on both sync and async ``Connection``
-    route through the shared ``_stub_unsupported`` helper, which
-    enforces PEP 249 §6.4 ``messages`` clear and the stdlib precedence
-    of raising ``InterfaceError`` (closed) before ``NotSupportedError``
-    (capability gap).
-
-    The ``_stub_unsupported`` helper consolidates the contract for
-    the eighteen-plus stdlib-parity stubs (``executescript``,
-    ``interrupt``, ``serialize`` / ``deserialize``, ``blobopen``,
-    ``create_function``, ``set_authorizer``, ...). The six TPC stubs
-    must route through the same helper. Without this pin a
-    regression that re-introduces a direct ``raise NotSupportedError``
-    in any TPC stub silently re-opens the contract gap (no
-    ``messages`` clear, no ``InterfaceError``-before-``NotSupported``
-    precedence on a closed connection).
-    """
+    """The TPC stubs route through ``_stub_unsupported``, which clears
+    ``messages`` and raises ``InterfaceError`` (closed) before
+    ``NotSupportedError`` (capability gap)."""
 
     @pytest.mark.parametrize("invoke", _TPC_INVOCATIONS, ids=_TPC_IDS)
     def test_sync_tpc_clears_messages_before_raise(
@@ -323,7 +281,7 @@ class TestTpcStubsRouteThroughHelper:
         conn: dqlitedbapi.Connection,
         invoke: Callable[[dqlitedbapi.Connection], None],
     ) -> None:
-        # Pre-load a stale message so the clear-or-not is observable.
+        # Pre-load a stale message so the clear is observable.
         conn.messages.append((Exception, Exception("stale")))
         with pytest.raises(NotSupportedError):
             invoke(conn)
@@ -338,16 +296,11 @@ class TestTpcStubsRouteThroughHelper:
         invoke: Callable[[dqlitedbapi.Connection], None],
     ) -> None:
         c = dqlitedbapi.connect("127.0.0.1:9999")
-        # Mark closed without invoking close() (which would touch the
-        # event loop / executor). Set the helper-checked attribute
-        # ``_closed`` plus the finalizer-checked ``_closed_flag`` so
-        # the GC suppression at fixture teardown stays consistent.
+        # Mark closed without close() (which touches the event loop); set both
+        # the helper-checked ``_closed`` and finalizer-checked ``_closed_flag``.
         c._closed = True
         c._closed_flag[0] = True
-        # Stdlib precedence: closed-state diagnostic wins over the
-        # capability-gap diagnostic. Without the helper, the stub
-        # raises NotSupportedError regardless of state — masking the
-        # closed-connection signal a cross-driver caller relies on.
+        # Closed-state diagnostic must win over the capability-gap one.
         with pytest.raises(InterfaceError, match="closed"):
             invoke(c)
 
@@ -357,8 +310,7 @@ class TestTpcStubsRouteThroughHelper:
         aconn: AsyncConnection,
         invoke: Callable[[AsyncConnection], None],
     ) -> None:
-        # All six async stubs are plain ``def`` (the call-line raise
-        # discipline) so no ``await`` is needed for the raise.
+        # All six async stubs are plain ``def``, so no ``await`` is needed.
         aconn.messages.append((Exception, Exception("stale")))
         with pytest.raises(NotSupportedError):
             invoke(aconn)
@@ -379,10 +331,7 @@ class TestTpcStubsRouteThroughHelper:
 
 
 def test_close_clears_messages() -> None:
-    """PEP 249 §6.1.1 requires Connection.messages to be cleared on
-    every standard Connection method invocation. The four sibling
-    methods (commit, rollback, cursor) already clear; close() also
-    clears so the contract is uniform."""
+    """close() clears ``messages`` like its siblings (PEP 249 §6.1.1)."""
     import contextlib as _contextlib
 
     c = dqlitedbapi.connect("127.0.0.1:9999")
@@ -393,7 +342,7 @@ def test_close_clears_messages() -> None:
 
 
 async def test_async_close_clears_messages() -> None:
-    """Same as the sync sibling, for AsyncConnection."""
+    """AsyncConnection sibling of the close-clears-messages pin."""
     import contextlib as _contextlib
 
     c = AsyncConnection("127.0.0.1:9999")

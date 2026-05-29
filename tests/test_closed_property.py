@@ -1,11 +1,7 @@
-"""Pin the ``closed`` property exposed on Connection / Cursor /
-AsyncConnection / AsyncCursor.
+"""The read-only ``closed`` property on Connection/Cursor/AsyncConnection/AsyncCursor.
 
-PEP 249 does not require this property and stdlib ``sqlite3``
-does not expose it; psycopg / asyncpg do, and callers porting
-from those drivers expect ``if not conn.closed: conn.close()``
-to work without ``AttributeError``. The property is read-only
-and surfaces the already-maintained internal ``_closed`` flag.
+PEP 249 does not require it, but psycopg/asyncpg expose it and porting callers expect
+``if not conn.closed: conn.close()`` to work without AttributeError.
 """
 
 from __future__ import annotations
@@ -22,9 +18,7 @@ class TestSyncClosedProperty:
     def test_connection_closed_property_starts_false(self) -> None:
         conn = Connection.__new__(Connection)
         conn._closed = False
-        # ``closed`` ORs invalidated; seed _async_conn so the
-        # invalidation arm sees a never-connected state and returns
-        # False. Mirrors the async sibling test.
+        # ``closed`` ORs invalidated; seed _async_conn None so that arm returns False.
         conn._async_conn = None
         assert conn.closed is False
 
@@ -65,9 +59,7 @@ class TestAsyncClosedProperty:
     def test_async_connection_closed_property_starts_false(self) -> None:
         conn = AsyncConnection.__new__(AsyncConnection)
         conn._closed = False
-        # ``closed`` ORs invalidated; seed _async_conn so the
-        # invalidation arm sees a never-connected state and returns
-        # False.
+        # ``closed`` ORs invalidated; seed _async_conn None so that arm returns False.
         conn._async_conn = None
         assert conn.closed is False
 

@@ -1,10 +1,6 @@
-"""PEP 249 §6.1.2 — closed-cursor operations raise InterfaceError.
-
-Also pin that ``close()`` PRESERVES ``rowcount`` and ``lastrowid``
-(matching stdlib ``sqlite3.Cursor``, which leaves both readable after
-close) while clearing ``description`` and the buffered rows, which a
-closed cursor cannot serve.
-"""
+"""Closed-cursor operations raise InterfaceError (PEP 249 §6.1.2);
+close() preserves rowcount/lastrowid (stdlib sqlite3 parity) but clears
+description and buffered rows."""
 
 from __future__ import annotations
 
@@ -25,11 +21,8 @@ def _make_cursor() -> Cursor:
 
 
 class TestSetinputsizesSetoutputsizeClosedCheck:
-    """PEP 249 §6.2 says implementations are "free to have these
-    methods do nothing" — including on closed cursors. Pin the
-    no-raise behavior so a cleanup helper that calls
-    ``setinputsizes`` / ``setoutputsize`` on a closed cursor does
-    not crash."""
+    """setinputsizes/setoutputsize may do nothing (PEP 249 §6.2); pin that
+    they do not raise on a closed cursor."""
 
     def test_setinputsizes_does_not_raise_on_closed_cursor(self) -> None:
         cur = _make_cursor()
@@ -75,8 +68,7 @@ class TestClosePreservesRowcountAndLastrowid:
         cur._description = [("c", 3, None, None, None, None, None)]  # type: ignore[assignment]
         cur._rows = [(1,), (2,)]
         cur.close()
-        # Result-set surface is cleared (a closed cursor cannot fetch)...
         assert cur.description is None
-        # ...but rowcount / lastrowid survive close, matching stdlib.
+        # rowcount / lastrowid survive close, matching stdlib.
         assert cur.rowcount == 5
         assert cur.lastrowid == 42

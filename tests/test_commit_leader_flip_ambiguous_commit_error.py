@@ -1,14 +1,8 @@
-"""Pin: ``Connection.commit()`` / ``AsyncConnection.commit()``
-rewrap a LEADER_ERROR_CODES OperationalError as
-``AmbiguousCommitError`` so retry middleware can branch on the
-in-doubt commit shape.
+"""Pin: commit() rewraps a LEADER_ERROR_CODES OperationalError as AmbiguousCommitError.
 
-The Raft log entry may or may not have been replicated to the new
-leader's quorum before the flip; retrying non-idempotent DML risks
-silent duplicate writes. ``AmbiguousCommitError`` inherits from
-``OperationalError`` so existing ``except OperationalError`` arms
-still catch it; cross-driver retry code can branch on
-``isinstance(exc, AmbiguousCommitError)``.
+The Raft entry may or may not have replicated before the flip; retrying
+non-idempotent DML risks silent duplicate writes. AmbiguousCommitError inherits
+from OperationalError so existing catches still fire.
 """
 
 from __future__ import annotations
@@ -27,11 +21,6 @@ from dqlitewire import LEADER_ERROR_CODES
 async def test_async_commit_leader_flip_rewraps_as_ambiguous_commit_error(
     leader_code: int,
 ) -> None:
-    """A LEADER_ERROR_CODES OperationalError raised by the inner
-    client during COMMIT must be rewrapped as
-    AmbiguousCommitError. Existing OperationalError catches still
-    fire (inheritance); new callers can isinstance-check the
-    in-doubt shape."""
     import asyncio
     import os
     import weakref
@@ -66,17 +55,10 @@ async def test_async_commit_leader_flip_rewraps_as_ambiguous_commit_error(
 
     # Load-bearing: still catches as OperationalError.
     assert isinstance(ei.value, OperationalError)
-    # Code preserved.
     assert ei.value.code == leader_code
-    # Original chained via __cause__.
     assert isinstance(ei.value.__cause__, OperationalError)
 
 
 def test_ambiguous_commit_error_is_exported_at_package_level() -> None:
-    """The AmbiguousCommitError class must be accessible from the
-    top-level ``dqlitedbapi`` namespace so cross-driver retry code
-    can ``isinstance(exc, dqlitedbapi.AmbiguousCommitError)``
-    without reaching into private modules."""
     assert dqlitedbapi.AmbiguousCommitError is AmbiguousCommitError
-    # And it's in __all__.
     assert "AmbiguousCommitError" in dqlitedbapi.__all__

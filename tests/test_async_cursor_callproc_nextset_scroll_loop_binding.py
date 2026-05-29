@@ -1,15 +1,5 @@
-"""Pin: ``AsyncCursor.callproc`` / ``nextset`` / ``scroll`` route
-through ``_ensure_locks()`` so a call from a different event loop
-surfaces the loop-binding mismatch up front rather than reporting
-``NotSupportedError`` (which leaves the caller thinking the cursor
-is still loop-A bound).
-
-Sibling consistency with ``setinputsizes`` / ``setoutputsize`` (see
-``test_async_cursor_setinputsizes_loop_binding.py``). The sync side
-already enforces thread-affinity for all five secondary methods via
-``_check_thread()``; the async side's loop-binding check is the
-parallel invariant.
-"""
+"""``callproc`` / ``nextset`` / ``scroll`` route through ``_ensure_locks()`` so a cross-loop call
+surfaces the loop-binding mismatch up front rather than ``NotSupportedError``."""
 
 from __future__ import annotations
 
@@ -26,9 +16,7 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 
 
 def _drive_other_loop(invoke_async: Callable[[], Any]) -> list[BaseException]:
-    """Run ``invoke_async`` inside a fresh ``asyncio.run`` on a
-    background thread so its loop differs from the outer pytest-asyncio
-    loop. Return any exceptions caught."""
+    """Run ``invoke_async`` in a fresh ``asyncio.run`` on a thread (a different loop)."""
     errors: list[BaseException] = []
 
     def _runner() -> None:
@@ -76,8 +64,7 @@ async def test_scroll_rejects_cross_loop_call() -> None:
 
 
 async def test_callproc_same_loop_raises_not_supported() -> None:
-    """Sanity: same-loop calls still raise ``NotSupportedError`` —
-    the loop-binding check must not change well-formed behaviour."""
+    """Same-loop calls still raise ``NotSupportedError`` — the binding check must not change it."""
     from dqlitedbapi import NotSupportedError
 
     conn = AsyncConnection("127.0.0.1:9001")

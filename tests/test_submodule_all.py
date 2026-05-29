@@ -1,11 +1,4 @@
-"""Each ``dqlitedbapi`` submodule must declare ``__all__`` so
-``from dqlitedbapi.<sub> import *`` does not leak private helpers.
-
-Mirrors the harness in ``dqlitewire`` and ``dqliteclient``. Without
-per-submodule ``__all__``, ``from dqlitedbapi.connection import *``
-leaks ``logging``, ``asyncio``, ``Final``, etc., and breaks the
-discipline of declaring the public surface at the source.
-"""
+"""Each submodule must declare ``__all__`` so ``import *`` does not leak helpers."""
 
 from __future__ import annotations
 

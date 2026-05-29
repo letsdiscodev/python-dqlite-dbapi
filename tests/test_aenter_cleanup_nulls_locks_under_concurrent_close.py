@@ -1,20 +1,5 @@
-"""Pin: ``AsyncConnection.__aenter__``'s cleanup arm and ``aconnect()``'s
-cleanup arm null out ``_connect_lock`` / ``_op_lock`` / ``_loop_ref``
-defensively after the shielded close, so a concurrent close that
-flipped ``self._closed`` first (and made ``close()`` short-circuit at
-its TOP-of-method guard) cannot leave the lazy primitives bound to
-the failed-connect loop. Without the defensive null, subsequent
-reuse on a different loop hit "bound to a different event loop"
-instead of the documented "fresh connect on new loop" path.
-
-Triggered in production by:
-- foreign-thread ``force_close_transport`` that flipped ``_closed``
-  before the scheduled cleanup-close ran;
-- sibling task close inside a TaskGroup racing the cleanup-close.
-
-This test exercises the structural invariant only; the production
-race is rare but recoverable.
-"""
+"""__aenter__ and aconnect() cleanup arms null the lazy locks even when a concurrent
+_closed flip makes close() short-circuit, so reuse on a new loop takes the fresh-connect path."""
 
 from __future__ import annotations
 
@@ -42,15 +27,9 @@ def _make_dummy_conn() -> AsyncConnection:
 
 @pytest.mark.asyncio
 async def test_aenter_cleanup_nulls_locks_when_close_short_circuits() -> None:
-    """A connect failure where close() short-circuits on a concurrent
-    _closed=True flip must still leave _connect_lock / _op_lock /
-    _loop_ref nulled, so a subsequent reuse on a different loop sees
-    the documented fresh-connect path.
-    """
     conn = _make_dummy_conn()
 
-    # Simulate the lazy locks bound to *this* loop, as _ensure_locks
-    # would have done before connect() failed.
+    # Lazy locks bound to this loop, as _ensure_locks would have done before connect() failed.
     loop = asyncio.get_running_loop()
     conn._connect_lock = asyncio.Lock()
     conn._op_lock = asyncio.Lock()
@@ -59,14 +38,12 @@ async def test_aenter_cleanup_nulls_locks_when_close_short_circuits() -> None:
     original_error = RuntimeError("simulated connect failure")
 
     async def fail_connect() -> None:
-        # Simulate a concurrent close having flipped _closed=True
-        # while this connect attempt was in flight.
+        # Concurrent close flipped _closed=True while this connect was in flight.
         conn._closed = True
         raise original_error
 
     async def short_circuit_close() -> None:
-        # Mimic ``close()``'s TOP-of-method short-circuit on _closed:
-        # returns immediately without nulling the lazy locks.
+        # Mimic close()'s top-of-method short-circuit: returns without nulling the locks.
         if conn._closed:
             return
 
@@ -78,8 +55,6 @@ async def test_aenter_cleanup_nulls_locks_when_close_short_circuits() -> None:
             pytest.fail("__aenter__ must raise; we never reach this")
     assert ei.value is original_error
 
-    # Defensive null-out invariant: the lazy primitives must be nulled
-    # even though close() short-circuited.
     assert conn._connect_lock is None, "leftover _connect_lock leaks loop binding"
     assert conn._op_lock is None, "leftover _op_lock leaks loop binding"
     assert conn._loop_ref is None, "leftover _loop_ref leaks loop binding"
@@ -89,10 +64,6 @@ async def test_aenter_cleanup_nulls_locks_when_close_short_circuits() -> None:
 async def test_aconnect_cleanup_nulls_locks_when_close_short_circuits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Sibling pin: aconnect()'s cleanup arm must null the lazy locks
-    when its scheduled close short-circuits on a concurrent _closed
-    flip. Mirrors the __aenter__ invariant above.
-    """
     from dqlitedbapi import aio as aio_pkg
 
     captured: dict[str, AsyncConnection] = {}

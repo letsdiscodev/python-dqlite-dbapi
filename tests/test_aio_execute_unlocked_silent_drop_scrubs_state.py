@@ -1,17 +1,6 @@
-"""Pin: ``AsyncCursor._execute_unlocked``'s post-await close-race
-silent-drop arm must scrub the introspection-surface fields
-(``description`` / ``rows`` / ``rowcount`` / ``row_index``) so a
-sibling-task ``close()`` mid-execute does NOT leave the cursor
-advertising the PRIOR query's result set as the fresh execute's
-outcome.
-
-The closed-cursor gate at ``_check_closed`` blocks the fetch
-methods but does NOT block ``description`` / ``rowcount`` /
-``lastrowid`` property reads (PEP 249 §6.2.* properties intended
-to survive on closed cursors per stdlib-parity for the read-only
-introspection slots). Without this scrub, ``await cur.execute(
-"SELECT new")`` could return while ``cur.description`` reports the
-PRIOR query's tuple — a misleading silent surface.
+"""A sibling-task close mid-execute scrubs description/rows/rowcount/row_index,
+so the cursor never advertises the prior query's result set as the fresh outcome.
+(description/rowcount/lastrowid property reads survive _check_closed per stdlib parity.)
 """
 
 from __future__ import annotations
@@ -45,19 +34,12 @@ def _make_async_cursor() -> AsyncCursor:
 async def test_query_branch_silent_drop_scrubs_prior_description(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A sibling-task close() that fires between the wire return and
-    the post-await guard must leave the cursor reporting "no result
-    set" — NOT the PRIOR query's description.
-    """
     cur = _make_async_cursor()
-    # Pretend a previous query populated state we want to verify gets
-    # scrubbed.
     cur._description = (("prior_col", 1, None, None, None, None, None),)
     cur._rows = [("prior_row",)]
     cur._rowcount = 1
     cur._row_index = 0
 
-    # Stub the connection wire layer.
     inner = MagicMock()
     inner.query_raw_typed = MagicMock(return_value="fake_coro")
     parent_conn = MagicMock()
@@ -65,8 +47,7 @@ async def test_query_branch_silent_drop_scrubs_prior_description(
     cur._connection = parent_conn
 
     async def fake_call_client(_coro: Any) -> Any:
-        # Sibling close ran while we awaited the wire.
-        cur._closed = True
+        cur._closed = True  # sibling close ran while we awaited the wire
         return (["new_col"], [1], [[1]], [[42]])
 
     from dqlitedbapi.aio import cursor as cursor_mod
@@ -74,8 +55,6 @@ async def test_query_branch_silent_drop_scrubs_prior_description(
     monkeypatch.setattr(cursor_mod, "_call_client", fake_call_client)
     await cur._execute_unlocked("SELECT 1", None)
 
-    # After the silent-drop, the introspection surface must reflect
-    # "no result set", not the prior query's state.
     assert cur._description is None, (
         f"silent-drop must scrub _description; got {cur._description!r}"
     )
@@ -88,10 +67,7 @@ async def test_query_branch_silent_drop_scrubs_prior_description(
 async def test_dml_branch_silent_drop_scrubs_prior_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DML mirror: a sibling close mid-await must scrub the
-    introspection surface. ``_lastrowid`` is intentionally PRESERVED
-    (stdlib sqlite3.Cursor.lastrowid persists across the boundary).
-    """
+    """DML mirror: scrub the introspection surface but preserve _lastrowid (stdlib parity)."""
     cur = _make_async_cursor()
     cur._description = (("prior_col", 1, None, None, None, None, None),)
     cur._rows = [("prior_row",)]

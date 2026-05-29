@@ -1,19 +1,6 @@
-"""Pin: ``executemany``'s ``_completed_iterations`` snapshot is
-conditionally restored on the BaseException arm — input-validation
-raises restore the pre-batch count; mid-batch raises preserve the
-in-batch partial-progress count.
-
-Three cases per the reviewer's sketch (snapshot=2 before each call):
-
-a) executemany raises in ``_classify_caller_sql`` (input-validation)
-   → counter restored to 2.
-b) executemany completes iteration 0 then raises (mid-batch)
-   → counter preserved at the in-batch 1.
-c) executemany succeeds with N iterations
-   → counter == N (unchanged-by-fix path).
-
-Sync and aio siblings both pinned.
-"""
+"""``executemany`` conditionally restores ``_completed_iterations`` on the BaseException
+arm: input-validation raises restore the pre-batch count, mid-batch raises preserve
+the in-batch partial-progress count, success leaves it at N."""
 
 from __future__ import annotations
 
@@ -65,9 +52,7 @@ def _make_async_cursor_with_completed(n: int) -> AsyncCursor:
 
 
 async def test_sync_input_validation_raise_restores_pre_batch_completed_iterations() -> None:
-    """Case (a): _classify_caller_sql raises on empty SQL — counter
-    restored to pre-batch.
-    """
+    """Case (a): empty-SQL validation raise restores the counter to pre-batch."""
     from dqlitedbapi.exceptions import ProgrammingError
 
     cur = _make_sync_cursor_with_completed(2)
@@ -77,9 +62,7 @@ async def test_sync_input_validation_raise_restores_pre_batch_completed_iteratio
 
 
 async def test_sync_mid_batch_raise_preserves_in_batch_completed_iterations() -> None:
-    """Case (b): iteration 0 succeeds, iteration 1 raises — counter
-    preserves the in-batch progress (1), NOT restored to pre-batch (2).
-    """
+    """Case (b): iter 0 succeeds, iter 1 raises — counter preserves in-batch 1, not 2."""
     cur = _make_sync_cursor_with_completed(2)
 
     calls = {"n": 0}
@@ -95,16 +78,11 @@ async def test_sync_mid_batch_raise_preserves_in_batch_completed_iterations() ->
     ):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
-    # iteration 0 incremented counter to 1; iteration 1 raised
-    # before increment. Mid-batch raises preserve the in-batch
-    # progress (1), NOT restore to the pre-batch (2).
     assert cur._completed_iterations == 1
 
 
 async def test_sync_success_path_counter_equals_iterations() -> None:
-    """Case (c): executemany succeeds with N iterations — counter
-    equals N (unchanged-by-fix sanity).
-    """
+    """Case (c): success with N iterations leaves the counter at N."""
     cur = _make_sync_cursor_with_completed(2)
 
     async def fake_execute_async(self_inner: Cursor, operation: str, params: object) -> None:
@@ -113,23 +91,13 @@ async def test_sync_success_path_counter_equals_iterations() -> None:
     with patch.object(Cursor, "_execute_async", fake_execute_async):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-    # 3 iterations succeeded; the post-loop reset zeroes counter for
-    # the success path (matching the existing "clear after success"
-    # discipline at cursor.py:1546 zeroes it via _reset_execute_state
-    # on the NEXT executemany; the success path itself doesn't
-    # touch the counter after the loop). The exact post-success
-    # value here is 3 (loop incremented it from the reset baseline of
-    # 0).
+    # Loop incremented from the reset baseline of 0 to 3.
     assert cur._completed_iterations == 3
 
 
 async def test_async_input_validation_raise_before_reset_preserves_pre_batch() -> None:
-    """Aio sibling case (a) shape: validation raises BEFORE
-    ``_reset_execute_state()`` runs (None / bad-shape / non-str
-    operation are checked at lines 576-591, the reset is at line
-    614). So the counter is naturally preserved without needing
-    the snapshot/restore arm. Pin the documented behaviour.
-    """
+    """Aio case (a): validation raises before _reset_execute_state runs, so the
+    counter is preserved naturally without the snapshot/restore arm."""
     from dqlitedbapi.exceptions import ProgrammingError
 
     cur = _make_async_cursor_with_completed(2)

@@ -1,48 +1,8 @@
-"""Pin: ``Cursor.execute`` / ``AsyncCursor.execute`` distinguish two
-classes of rejection, matching stdlib ``sqlite3``:
+"""Pin: execute distinguishes two rejection classes, matching stdlib sqlite3.
 
-1. **Input-validation rejection** (non-str ``operation``, cross-task
-   slot mismatch). These are caller-shape misuses fired before any
-   SQL parser touches the bytes. Stdlib `sqlite3` preserves prior
-   cursor state on the TypeError path — verified empirically:
-
-       >>> import sqlite3
-       >>> con = sqlite3.connect(":memory:")
-       >>> cur = con.cursor()
-       >>> cur.execute("CREATE TABLE t(a)")
-       ... cur.execute("SELECT * FROM t")
-       >>> prior_desc = cur.description
-       >>> try:
-       ...     cur.execute(123)
-       ... except TypeError:
-       ...     pass
-       >>> cur.description == prior_desc
-       True
-
-   The dqlite driver matches: input-validation rejections leave
-   ``description`` / ``rowcount`` / ``rows`` / ``row_index`` intact
-   so a retry-with-coerce idiom can inspect them.
-
-2. **Prepare-stage rejection** (empty SQL, multi-statement, NUL byte,
-   wrong ``?``-count). Stdlib SCRUBS prior state on these — verified:
-
-       >>> cur.execute("SELECT * FROM t")
-       >>> try:
-       ...     cur.execute("")
-       ... except sqlite3.ProgrammingError:
-       ...     pass
-       >>> cur.description is None
-       True
-
-   The dqlite driver matches: prepare-stage rejections reset state.
-
-Sibling pattern: ``test_executemany_reject_scrubs_prior_result_state.py``
-pins the same shape on the ``executemany`` entry point.
-
-``_lastrowid`` is the documented exception: it is cursor-scoped and
-intentionally preserved across BOTH classes of rejection.
-``_reset_execute_state`` deliberately does not touch ``_lastrowid``
-or ``_executing_task``.
+Input-validation rejections (non-str operation, cross-task slot) PRESERVE prior cursor
+state; prepare-stage rejections (empty SQL, multi-statement, NUL byte, bind-count) SCRUB it.
+``_lastrowid`` is cursor-scoped and intentionally preserved across BOTH classes.
 """
 
 from __future__ import annotations
@@ -67,8 +27,7 @@ _PRIOR_ROWS = [(1, 2), (3, 4), (5, 6)]
 
 
 def _seed_prior_select_state(cur: Cursor | AsyncCursor) -> None:
-    """Mimic state that a prior ``SELECT ... fetchall()`` would have
-    left on the cursor."""
+    """Mimic state a prior ``SELECT ... fetchall()`` would have left on the cursor."""
     cur._description = _PRIOR_DESCRIPTION
     cur._rowcount = 7
     cur._rows = list(_PRIOR_ROWS)
@@ -79,7 +38,7 @@ def _seed_prior_select_state(cur: Cursor | AsyncCursor) -> None:
 
 
 def _assert_state_preserved(cur: Cursor | AsyncCursor) -> None:
-    """Input-validation reject: stdlib preserves prior cursor state."""
+    """Input-validation reject preserves prior cursor state."""
     assert cur._description == _PRIOR_DESCRIPTION, (
         f"description must be PRESERVED on input-validation reject; got {cur._description!r}"
     )
@@ -90,13 +49,12 @@ def _assert_state_preserved(cur: Cursor | AsyncCursor) -> None:
     assert cur._row_index == 3, f"row_index must be PRESERVED; got {cur._row_index}"
     assert cur._lastrowid == 4242, f"lastrowid must survive; got {cur._lastrowid}"
     if hasattr(cur, "_completed_iterations"):
-        # _completed_iterations is also part of result state; preserve.
         assert cur._completed_iterations == 17
 
 
 def _assert_state_scrubbed(cur: Cursor | AsyncCursor) -> None:
-    """Prepare-stage reject: stdlib scrubs prior cursor state to
-    the "no result set" baseline. lastrowid is preserved."""
+    """Prepare-stage reject scrubs cursor state to the "no result set" baseline; lastrowid
+    survives."""
     assert cur._description is None, (
         f"description must SCRUB on prepare-stage reject; got {cur._description!r}"
     )
@@ -146,13 +104,7 @@ def _make_async_cursor() -> AsyncCursor:
     return cursor
 
 
-# ---------------- Input-validation: PRESERVE ----------------
-
-
 def test_sync_execute_non_str_operation_preserves_prior_result_state() -> None:
-    """Stdlib parity: ``cur.execute(123)`` raises TypeError (we surface
-    ProgrammingError) and PRESERVES ``cur.description`` / rowcount /
-    rows. Verified against CPython 3.x stdlib `sqlite3` directly."""
     cursor = _make_sync_cursor()
     _seed_prior_select_state(cursor)
     with pytest.raises(ProgrammingError, match="operation must be a str SQL statement"):
@@ -169,10 +121,7 @@ async def test_async_execute_non_str_operation_preserves_prior_result_state() ->
 
 
 async def test_async_execute_cross_task_slot_rejection_preserves_prior_result_state() -> None:
-    """The cross-task slot reject is a project-specific misuse-rejection
-    (no stdlib analog because sqlite3 is sync-only). It follows the
-    input-validation pattern: PRESERVE prior cursor state, leave the
-    foreign task's slot intact."""
+    """Cross-task slot reject (no stdlib analog) preserves state and the foreign task's slot."""
     cursor = _make_async_cursor()
     _seed_prior_select_state(cursor)
     other_task = asyncio.create_task(asyncio.sleep(60))
@@ -190,13 +139,8 @@ async def test_async_execute_cross_task_slot_rejection_preserves_prior_result_st
             await other_task
 
 
-# ---------------- Prepare-stage: SCRUB ----------------
-
-
 def test_sync_execute_empty_sql_rejection_scrubs_prior_result_state() -> None:
-    """Stdlib parity: ``cur.execute("")`` raises ProgrammingError AND
-    clears ``cur.description`` because empty SQL is a prepare-stage
-    rejection (the parser saw nothing to compile)."""
+    """Empty SQL is a prepare-stage rejection, so it clears ``cur.description``."""
     cursor = _make_sync_cursor()
     _seed_prior_select_state(cursor)
     with pytest.raises(ProgrammingError):

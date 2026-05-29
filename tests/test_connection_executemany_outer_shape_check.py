@@ -1,22 +1,6 @@
-"""Pin: ``Connection.executemany`` and ``AsyncConnection.executemany``
-shortcuts reject ``dict`` / ``str`` / ``bytes`` / ``bytearray`` /
-``memoryview`` / ``set`` / ``frozenset`` outer ``seq_of_parameters``
-with ``ProgrammingError``.
-
-Without this pin a caller passing a single mapping or a string would
-silently iterate over keys / characters, treating each as a parameter
-set — almost certainly a caller bug. ``set`` and ``frozenset`` iterate
-in non-deterministic order, so e.g. ``executemany({(1,), (2,)}, ...)``
-would produce non-deterministic insert order. Stdlib has the same
-hazard; this driver is stricter than stdlib at the connection-shortcut
-layer (matching the existing ``_reject_non_sequence_params`` precedent
-at the inner level).
-
-The Mapping ABC at large is NOT rejected so a future user passing
-``OrderedDict([(0, params0), (1, params1)])`` to iterate over values
-is left alone — only ``dict``-typed values that look like a single
-parameter set are denied.
-"""
+"""executemany shortcuts reject dict/str/bytes/bytearray/memoryview/set/frozenset outer
+seq_of_parameters with ProgrammingError (set/frozenset iterate in non-deterministic order;
+the Mapping ABC at large is left alone, only dict is denied)."""
 
 from __future__ import annotations
 
@@ -29,13 +13,7 @@ from dqlitedbapi.aio import AsyncConnection
 
 
 def _exec(conn: dqlitedbapi.Connection, sql: str) -> None:
-    """Run ``sql`` on a fresh cursor that is closed before return.
-
-    Avoids the ``conn.cursor().execute(sql)`` cursor-leak pattern
-    (closed-cursor reaping happens via the connection cascade, but
-    a per-cursor finalize emits ResourceWarning under
-    ``-W error::ResourceWarning``).
-    """
+    """Run ``sql`` on a fresh cursor, closed before return to avoid a ResourceWarning."""
     with conn.cursor() as cur:
         cur.execute(sql)
 

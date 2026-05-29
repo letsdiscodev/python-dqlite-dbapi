@@ -1,20 +1,6 @@
-"""Pin: ``_RESOLVE_LEADER_CACHE`` must isolate `ClusterClient`
-instances by event loop AND must serialise concurrent
-construction across threads.
-
-Without loop isolation, two `dqlitedbapi.Connection` instances
-running on different event-loop threads share a `ClusterClient`
-whose `_find_leader_tasks` are bound to whichever loop made the
-first call. The second loop's `await asyncio.shield(<foreign-loop
-task>)` raises `RuntimeError("attached to a different loop")`,
-which is NOT a `dbapi.Error` and escapes SA's `is_disconnect`.
-
-Without thread synchronisation, concurrent first-time inserts can
-both observe `cluster is None`, each construct a fresh
-`ClusterClient`, and race on the dict insert — orphaning whichever
-client loses the race and defeating the single-flight collapse the
-cache was designed to provide.
-"""
+"""``_RESOLVE_LEADER_CACHE`` isolates `ClusterClient` instances by event loop
+(a foreign-loop task raises a non-`dbapi.Error` `RuntimeError`) and serialises
+concurrent construction across threads."""
 
 import asyncio
 import os
@@ -31,8 +17,6 @@ from dqlitedbapi.connection import _get_resolve_leader_cluster
 
 @pytest.fixture(autouse=True)
 def _clear_cache() -> Iterator[None]:
-    """The autouse fixture in conftest already clears the cache;
-    keep this here for explicit local override."""
     _conn_mod._RESOLVE_LEADER_CACHE.clear()
     yield
     _conn_mod._RESOLVE_LEADER_CACHE.clear()
@@ -49,22 +33,14 @@ def _make_cluster_kwargs() -> dict[str, Any]:
 
 
 def test_resolve_leader_outside_running_loop_raises() -> None:
-    """The function is async-only by design; calling it from sync
-    context fails loud rather than silently caching against a None
-    loop_id. Raises bare ``RuntimeError`` (matching what
-    ``asyncio.get_running_loop`` itself raises) rather than the
-    misclassified ``InterfaceError`` — the helper is structurally
-    private and a missing event loop is a programmer-invariant
-    violation, not a database-interface problem."""
+    """Async-only: calling from sync context raises bare ``RuntimeError`` (a
+    programmer-invariant violation, not a misclassified ``InterfaceError``)."""
     with pytest.raises(RuntimeError, match="running event loop"):
         _get_resolve_leader_cluster(**_make_cluster_kwargs())
 
 
 def test_two_event_loops_get_distinct_cluster_clients() -> None:
-    """Pin: same args, two different loops → two different cached
-    `ClusterClient` instances. Without loop isolation the second
-    loop reuses the first's cluster whose `_find_leader_tasks` are
-    loop-bound."""
+    """Same args, two different loops -> two distinct cached `ClusterClient`s."""
     results: list[object] = []
 
     def thread_target() -> None:
@@ -88,13 +64,11 @@ def test_two_event_loops_get_distinct_cluster_clients() -> None:
     t2.join()
 
     assert len(results) == 2
-    # Distinct loops must yield distinct cluster instances.
     assert results[0] is not results[1]
 
 
 async def test_same_loop_returns_same_cluster_client() -> None:
-    """Positive regression — single loop, two calls, same args →
-    same cluster (single-flight contract preserved)."""
+    """Single loop, two calls, same args -> same cluster (single-flight)."""
     with patch("dqlitedbapi.connection.ClusterClient") as MockCluster:
         MockCluster.side_effect = lambda *_a, **_kw: MagicMock()
         c1 = _get_resolve_leader_cluster(**_make_cluster_kwargs())
@@ -103,19 +77,13 @@ async def test_same_loop_returns_same_cluster_client() -> None:
 
 
 def test_concurrent_first_inserts_yield_one_cluster_per_loop() -> None:
-    """Pin: N threads each driving their OWN loops, all calling
-    with the same address+governors, must produce N distinct
-    cluster instances (one per loop). Loops are kept alive
-    concurrently via a barrier so CPython does NOT recycle their
-    ``id()`` between thread executions — without that, the cache
-    key would silently collide on recycled ids and over-share."""
+    """N threads on their own loops, same args -> N distinct clusters. Loops are
+    held alive via a barrier so CPython does not recycle their ``id()``."""
     n = 8
     construct_count = [0]
     construct_lock = threading.Lock()
     results: list[object] = []
     results_lock = threading.Lock()
-    # Each thread sets ``acquired`` after capturing its cluster.
-    # Main thread waits for all to acquire, then signals release.
     barrier = threading.Barrier(n + 1)
     release = threading.Event()
 
@@ -141,8 +109,6 @@ def test_concurrent_first_inserts_yield_one_cluster_per_loop() -> None:
                     await asyncio.sleep(0.005)
                 return r
 
-            # Synchronise all threads at the start so all loops are
-            # alive concurrently (no id-recycling).
             barrier.wait(timeout=10.0)
             r = loop.run_until_complete(_call_and_hold())
             with results_lock:
@@ -154,7 +120,6 @@ def test_concurrent_first_inserts_yield_one_cluster_per_loop() -> None:
     for t in threads:
         t.start()
     barrier.wait(timeout=10.0)
-    # Give every thread a moment inside its loop with the cache call done.
     import time as _time
 
     _time.sleep(0.2)
@@ -163,19 +128,12 @@ def test_concurrent_first_inserts_yield_one_cluster_per_loop() -> None:
         t.join(timeout=10.0)
 
     assert len(results) == n
-    # N distinct loops kept alive concurrently → N distinct keys
-    # → N distinct constructions. (Lock prevents two threads
-    # under the SAME loop_id from racing the dict insert.)
     assert construct_count[0] == n, f"expected {n} constructions, got {construct_count[0]}"
     assert len({id(r) for r in results}) == n
 
 
 def test_concurrent_same_loop_inserts_serialised_to_one_construct() -> None:
-    """Pin: many concurrent callers on the SAME loop must collapse
-    to a single ClusterClient construction. Without thread sync on
-    the dict, the read-check-construct-insert can race and orphan
-    a client. Drive concurrency via run_coroutine_threadsafe against
-    a single shared loop."""
+    """Many concurrent callers on the same loop collapse to one construction."""
     construct_count = [0]
     construct_lock = threading.Lock()
 
@@ -203,9 +161,7 @@ def test_concurrent_same_loop_inserts_serialised_to_one_construct() -> None:
             for f in futures:
                 results.append(f.result(timeout=5.0))
 
-        # All 16 returns are the same instance (single-flight per loop).
         assert len({id(r) for r in results}) == 1
-        # Exactly one construction.
         assert construct_count[0] == 1
     finally:
         loop.call_soon_threadsafe(loop.stop)
@@ -214,8 +170,7 @@ def test_concurrent_same_loop_inserts_serialised_to_one_construct() -> None:
 
 
 async def test_fork_pid_change_invalidates_cache() -> None:
-    """Regression pin: the existing fork-pid invalidation still
-    works under the new loop-keyed and thread-locked code path."""
+    """Fork-pid invalidation still works under the loop-keyed, locked path."""
     construct_count = [0]
 
     def fake_cluster_client(*_a: object, **_kw: object) -> MagicMock:
@@ -229,5 +184,4 @@ async def test_fork_pid_change_invalidates_cache() -> None:
         with patch("dqliteclient.connection.os.getpid", return_value=os.getpid() + 1):
             _get_resolve_leader_cluster(**_make_cluster_kwargs())
 
-    # Two constructions: pre-fork and post-fork.
     assert construct_count[0] == 2

@@ -6,11 +6,7 @@ from dqlitedbapi.cursor import Cursor
 
 
 def _seeded_cursor(rows: list[tuple[int, ...]]) -> Cursor:
-    """Build a Cursor with ``rows`` already materialised as a result set.
-
-    Bypasses the event-loop layer — these are pure fetch-path edge
-    cases that don't need a live cluster.
-    """
+    """Build a Cursor with ``rows`` already materialised as a result set."""
     conn = MagicMock()
     conn._get_async_connection = AsyncMock()
     conn._run_sync = MagicMock()
@@ -27,7 +23,6 @@ class TestFetchmanyEdges:
     def test_fetchmany_zero_returns_empty(self) -> None:
         c = _seeded_cursor([(1,), (2,), (3,)])
         assert c.fetchmany(0) == []
-        # didn't advance
         assert c._row_index == 0
 
     def test_fetchmany_larger_than_remaining_returns_all_remaining(self) -> None:
@@ -56,18 +51,13 @@ class TestFetchmanyEdges:
         assert c.fetchall() == [(2,), (3,)]
 
     def test_fetchone_on_no_result_set_returns_none(self) -> None:
-        """Stdlib parity: fetchone on a never-executed / DML-only
-        cursor returns None. fetchmany / fetchall return ``[]`` on
-        the same path (also stdlib-parity)."""
+        """Stdlib parity: fetchone on a never-executed / DML-only cursor returns None."""
         conn = MagicMock()
         c = Cursor(conn)
-        # No execute called → description is None.
         assert c.fetchone() is None
 
     def test_fetchmany_on_no_result_set_returns_empty_list(self) -> None:
-        """Stdlib parity: fetchmany on a never-executed / DML-only
-        cursor returns ``[]``. Symmetric with ``fetchone``
-        returning ``None``."""
+        """Stdlib parity: fetchmany on a never-executed / DML-only cursor returns ``[]``."""
         conn = MagicMock()
         c = Cursor(conn)
         assert c.fetchmany(5) == []

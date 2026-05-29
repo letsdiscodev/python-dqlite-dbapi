@@ -1,18 +1,6 @@
-"""Pin: sync ``Connection.force_close_transport`` reaps any pending
-``inner._pending_drain`` task before calling ``loop.stop()`` and
-``loop.close()``.
-
-Without the reap, a prior ``_invalidate`` (e.g. one scheduled by
-``_run_sync`` on a sync timeout) leaves a Task on the inner conn
-that is still in flight when the loop closes — ``Task.__del__``
-then emits "Task was destroyed but it is pending" via asyncio's
-exception handler, and the coroutine frame keeps the
-StreamReader/StreamWriter referenced.
-
-The async sibling ``AsyncConnection.force_close_transport`` already
-has the bounded re-snapshot reap; this restores
-sync-vs-async parity.
-"""
+"""Sync ``force_close_transport`` reaps any pending ``inner._pending_drain`` task before
+``loop.stop()``/``loop.close()``; otherwise ``Task.__del__`` emits "Task was destroyed but
+it is pending" and the frame keeps the StreamReader/StreamWriter alive."""
 
 from __future__ import annotations
 
@@ -27,10 +15,8 @@ from dqlitedbapi.connection import Connection
 def _build_conn_with_pending_drain_on_inner() -> tuple[
     Connection, MagicMock, asyncio.AbstractEventLoop, list[Any]
 ]:
-    """Build a Connection wired to a live loop+inner where
-    ``inner._pending_drain`` is a real ``asyncio.Task`` parked on a
-    long sleep — exactly the shape an ``_invalidate``-scheduled
-    drain takes."""
+    """Connection wired to a live loop+inner where ``inner._pending_drain`` is a real
+    ``asyncio.Task`` parked on a long sleep — the shape an ``_invalidate`` drain takes."""
     conn = Connection("localhost:9001", database="x")
     loop = conn._ensure_loop()
     assert loop is not None
@@ -41,10 +27,8 @@ def _build_conn_with_pending_drain_on_inner() -> tuple[
     proto._writer = writer
     inner._protocol = proto
 
-    # Park a real asyncio.Task on the loop thread that simulates the
-    # invalidate-scheduled drain. ``call_soon_threadsafe`` is used to
-    # create the Task on the loop thread (Tasks must be constructed
-    # on their owning loop).
+    # Tasks must be constructed on their owning loop, so create it via
+    # call_soon_threadsafe on the loop thread.
     drain_holder: list[Any] = []
     created = asyncio.Event()
 
@@ -59,7 +43,6 @@ def _build_conn_with_pending_drain_on_inner() -> tuple[
         loop.call_soon_threadsafe(created.set)
 
     loop.call_soon_threadsafe(_make_task)
-    # Wait briefly for the task creation to land.
     deadline = time.monotonic() + 1.0
     while not drain_holder and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -71,21 +54,12 @@ def _build_conn_with_pending_drain_on_inner() -> tuple[
 
 
 def test_force_close_transport_cancels_inner_pending_drain() -> None:
-    """``force_close_transport`` must drive ``inner._pending_drain``
-    toward cancellation before stopping the loop. The Task may end
-    up in ``cancelling`` (cancel was requested but the task hasn't
-    yet stepped through asyncio.sleep's checkpoint to fully
-    transition) or in ``cancelled`` / ``done`` (the loop processed
-    the step before stop). Both are acceptable: the cancel-and-observe
-    done-callback registered in the production code suppresses the
-    ``Task exception was never retrieved`` diagnostic regardless of
-    which state the task ends in. What we MUST NOT see is a Task in
-    plain ``pending`` state with no cancel armed."""
+    """``force_close_transport`` drives ``inner._pending_drain`` toward cancellation before
+    stopping the loop. Acceptable end-states: cancelling, cancelled, or done — but never plain
+    ``pending`` with no cancel armed."""
     conn, inner, loop, drain_holder = _build_conn_with_pending_drain_on_inner()
     drain_task = drain_holder[0]
     conn.force_close_transport()
-    # Acceptable end-states: cancelling (cancel requested, step not
-    # yet processed), cancelled, or done.
     cancelling = (
         getattr(drain_task, "_must_cancel", False) or "cancelling" in repr(drain_task).lower()
     )
@@ -94,13 +68,11 @@ def test_force_close_transport_cancels_inner_pending_drain() -> None:
         f"state: cancelled={drain_task.cancelled()}, done={drain_task.done()}, "
         f"repr={drain_task!r}"
     )
-    # The slot was nulled.
     assert inner._pending_drain is None
 
 
 def test_force_close_transport_no_pending_drain_is_noop() -> None:
-    """Sanity: when ``inner._pending_drain`` is None, the reap is a
-    no-op (no exception, normal path proceeds)."""
+    """When ``inner._pending_drain`` is None the reap is a no-op."""
     conn = Connection("localhost:9001", database="x")
     loop = conn._ensure_loop()
     assert loop is not None
@@ -118,17 +90,8 @@ def test_force_close_transport_no_pending_drain_is_noop() -> None:
 
 
 def test_force_close_transport_resnapshot_loop_handles_concurrent_invalidate() -> None:
-    """Pin: the bounded re-snapshot loop iterates up to 3 times when a
-    concurrent ``_invalidate`` keeps publishing fresh
-    ``_pending_drain`` tasks between the snapshot and the null. This
-    matches the async sibling's cap-and-fail-loud discipline at
-    ``aio/connection.py:842-911``.
-
-    Driven by a fake inner whose ``_pending_drain`` getter returns a
-    sequence of distinct task-shaped objects on each read, simulating
-    the foreign-thread ``_invalidate`` that publishes a fresh task
-    between our snapshot and null. With the bounded loop, each fresh
-    task is observed and cancelled (up to the cap)."""
+    """The bounded re-snapshot loop iterates up to 3 times when a concurrent ``_invalidate``
+    keeps publishing fresh ``_pending_drain`` tasks between the snapshot and the null."""
     conn = Connection("localhost:9001", database="x")
     loop = conn._ensure_loop()
     assert loop is not None
@@ -141,8 +104,7 @@ def test_force_close_transport_resnapshot_loop_handles_concurrent_invalidate() -
             self._cancelled = False
 
         def done(self) -> bool:
-            # Always not-done so the loop tries to cancel each one.
-            return False
+            return False  # never done, so the loop tries to cancel each one
 
         def cancel(self) -> bool:
             self._cancelled = True
@@ -167,10 +129,9 @@ def test_force_close_transport_resnapshot_loop_handles_concurrent_invalidate() -
 
         @_pending_drain.setter
         def _pending_drain(self, _value: object) -> None:
-            # The null-out is a no-op for the test fake — the next read
-            # auto-yields the next task in the sequence (simulating a
-            # concurrent _invalidate publishing a fresh task between
-            # our snapshot and our null).
+            # No-op null-out: the next read auto-yields the next task,
+            # simulating a concurrent _invalidate publishing between
+            # snapshot and null.
             pass
 
     inner = _SequencingInner()
@@ -178,7 +139,6 @@ def test_force_close_transport_resnapshot_loop_handles_concurrent_invalidate() -
 
     conn.force_close_transport()
 
-    # The cap is 3 → up to 3 cancellations attempted.
     assert len(cancel_calls) <= 3, (
         f"resnapshot cap should bound to 3 iterations; got {len(cancel_calls)} cancels"
     )

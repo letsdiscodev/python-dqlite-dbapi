@@ -1,31 +1,7 @@
-"""Pin: ``_async_unclosed_warning`` survives ``Py_FinalizeEx``
-phase-3 module-globals-set-to-None teardown without raising into
-the calling ``weakref.finalize`` machinery.
-
-During interpreter shutdown ``PyImport_Cleanup`` walks
-``sys.modules`` and sets module globals to ``None``. Without
-defensive capture, a finalize body that re-reads those globals at
-call time would raise ``TypeError: 'NoneType' object is not
-callable`` and surface as an unraisable-hook traceback at
-shutdown, drowning out the real cause.
-
-The fix captures each module global as a kwarg-default at function-
-definition time, mirroring ``_cleanup_loop_thread``'s discipline.
-
-These tests verify the fix on two axes:
-
-1. The body USES the captured kwarg-defaults (not re-read module
-   globals): we replace the module global with a sentinel that
-   raises on call, then invoke the finalize body with no explicit
-   kwarg overrides. If the fix is wrong (body re-reads the
-   global), the sentinel fires; if the fix is right, the captured
-   default fires and the body emits normally.
-
-2. The defensive early-bail branch handles the (hypothetical)
-   case where the captured default itself is somehow nulled:
-   pass ``_get_current_pid=None`` explicitly and assert the body
-   bails silently with no warning.
-"""
+"""Pin: ``_async_unclosed_warning`` survives ``Py_FinalizeEx`` phase-3
+module-globals-set-to-None teardown without raising into ``weakref.finalize``.
+The fix captures each module global as a kwarg-default at definition time
+(mirroring ``_cleanup_loop_thread``), plus a defensive early-bail on None."""
 
 from __future__ import annotations
 
@@ -45,9 +21,7 @@ def _invoke_finalizer(
     connected: bool = True,
     **kwargs: object,
 ) -> None:
-    """Helper that exercises the finalize body. ``kwargs`` forwards
-    explicit overrides to the kwarg-only capture parameters so a
-    test can simulate "captured default is None"."""
+    """Exercise the finalize body; ``kwargs`` overrides capture params (None sim)."""
     _aio_conn_mod._async_unclosed_warning(
         closed_flag=[closed],
         connected_flag=[connected],
@@ -55,9 +29,6 @@ def _invoke_finalizer(
         creator_pid=_CREATOR_PID_SNAPSHOT,
         **kwargs,
     )
-
-
-# --- Axis 1: body uses captured kwarg-defaults, NOT module globals ---
 
 
 class _RaisingSentinel:
@@ -83,23 +54,18 @@ class _RaisingSentinel:
 def test_body_survives_get_current_pid_set_to_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``get_current_pid`` is intentionally re-read at call time so
-    the existing fork-pid tests' ``unittest.mock.patch`` shim works.
-    The shutdown-safety guarantee comes from the broad ``except``
-    around the call site — verify it actually absorbs the
-    phase-3 ``None`` shape.
-    """
+    """``get_current_pid`` is re-read at call time (for the fork-pid mock shim);
+    the broad ``except`` around it absorbs the phase-3 ``None`` shape."""
     monkeypatch.setattr(_aio_conn_mod, "get_current_pid", None)
     with _stdlib_warnings.catch_warnings():
         _stdlib_warnings.simplefilter("error", ResourceWarning)
-        _invoke_finalizer()  # must bail silently, must not raise
+        _invoke_finalizer()
 
 
 def test_body_survives_get_current_pid_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The broad ``except`` around the ``get_current_pid()`` call
-    must catch any exception class, not only ``TypeError``."""
+    """The broad ``except`` around ``get_current_pid()`` catches any class."""
 
     def _raising() -> int:
         raise RuntimeError("phase-3 teardown sentinel")
@@ -134,9 +100,6 @@ def test_body_uses_captured_sanitize_for_log_default_not_module_global(
         _invoke_finalizer()
 
 
-# --- Axis 2: defensive early-bail when an explicit None is passed ---
-
-
 def test_bail_silently_when_warnings_kwarg_is_none() -> None:
     with _stdlib_warnings.catch_warnings():
         _stdlib_warnings.simplefilter("error", ResourceWarning)
@@ -153,9 +116,6 @@ def test_bail_silently_when_sanitize_for_log_kwarg_is_none() -> None:
     with _stdlib_warnings.catch_warnings():
         _stdlib_warnings.simplefilter("error", ResourceWarning)
         _invoke_finalizer(_sanitize_for_log=None)
-
-
-# --- Positive emit + behaviour pins (regression guard) ---
 
 
 def test_emit_when_globals_intact() -> None:

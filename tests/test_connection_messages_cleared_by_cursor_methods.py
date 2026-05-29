@@ -1,17 +1,5 @@
-"""Pin: cursor methods do NOT clear ``Connection.messages``. PEP 249
-§6.1.1 says ``Connection.messages`` is cleared by *connection*
-methods (cursor() / commit() / rollback() / close()); §6.1.2 says
-``Cursor.messages`` is cleared by *cursor* methods. The two surfaces
-are independent.
-
-Previously cursor methods over-cleared ``Connection.messages`` from
-inside ``fetchone`` / ``fetchmany`` / ``fetchall`` / ``nextset`` /
-``setinputsizes`` / ``setoutputsize`` / ``callproc`` / ``scroll``.
-That violated PEP 249's independent-surface contract — a sibling-
-cursor / direct-connection inspection of ``connection.messages``
-after a cursor call always saw ``[]``. Pin the corrected behaviour:
-cursor methods leave ``Connection.messages`` untouched.
-"""
+"""Cursor methods leave Connection.messages untouched: PEP 249 §6.1.1/§6.1.2 make the
+connection and cursor message surfaces independent."""
 
 from __future__ import annotations
 

@@ -9,10 +9,8 @@ from typing import Any, Final, final
 from dqlitedbapi.exceptions import AdapterLookupError, DataError, ProgrammingError
 from dqlitewire import ValueType
 
-# PEP 249 §3: type objects + constructors. ``DescriptionTuple`` is
-# the public alias for the cursor.description row shape — exported so
-# downstream typed wrappers (``sqlalchemy-dqlite``) don't have to
-# import the underscore-prefixed alias across a package boundary.
+# ``DescriptionTuple`` is exported so typed wrappers don't import an
+# underscore-prefixed alias across a package boundary.
 __all__ = [
     "BINARY",
     "DATETIME",
@@ -34,62 +32,26 @@ __all__ = [
     "unregister_adapter",
 ]
 
-# Shape of ``cursor.description`` per PEP 249 §6.1.2: a sequence of
-# 7-tuples ``(name, type_code, display_size, internal_size, precision,
-# scale, null_ok)``. dqlite populates only ``name`` and ``type_code``
-# (the wire ``ValueType`` int); the other five are always ``None``.
-# Live here so sync/async cursors and the sqlalchemy adapter share one
-# shape instead of repeating the inline tuple at every site.
-# PEP 695 ``type X = ...`` syntax matches the rest of the workspace's
-# public type-alias declarations (wire/types.py, client/_dial.py,
-# client/cluster.py, sqlalchemydqlite/aio.py).
-# ``type_code`` is normally a wire-level ``ValueType`` int; the
-# ``UNKNOWN`` sentinel (a ``_DBAPIType`` instance) is emitted when
-# the wire layer cannot resolve a column's type (empty result sets
-# / NULL-only columns). PEP 249 §6.1.2 requires equality against a
-# Type Object; ``UNKNOWN`` satisfies that contract while still being
-# distinguishable from the real Type Objects (its ``values`` set is
-# empty, so equality against STRING / NUMBER / etc. cleanly returns
-# False). The ``int`` arm covers ``int(ValueType.X)``.
+# ``cursor.description`` 7-tuple (PEP 249 §6.1.2); dqlite populates only
+# name + type_code (wire ``ValueType`` int, or the ``UNKNOWN`` sentinel
+# when the type can't be resolved), the rest are always None.
 type DescriptionTuple = tuple[str, int | _DBAPIType | None, None, None, None, None, None]
 type _Description = tuple[DescriptionTuple, ...] | None
 
-# stdlib ``sqlite3``-style row factory callable. Invoked as
-# ``factory(cursor, row_tuple)`` (see ``Connection.row_factory`` /
-# ``Cursor.row_factory`` docstrings) and may return any object — the
-# value replaces the raw tuple in the cursor's result stream.
-# ``Callable[..., Any]`` avoids the forward-reference circularity
-# between the cursor and connection types; the setter on both
-# ``Connection.row_factory`` and ``Cursor.row_factory`` validates
-# ``callable(value)`` at runtime, so the call shape is enforced
-# operationally. Used as the canonical type across the four mirror
-# sites (sync/async × connection/cursor).
+# stdlib ``sqlite3``-style row factory, invoked as ``factory(cursor,
+# row_tuple)``. ``Callable[..., Any]`` (not the precise shape) avoids
+# forward-reference circularity with the cursor/connection types.
 type RowFactory = Callable[..., Any]
 
 
-# Type constructors
-#
-# PEP 249 §7 mandates every error from a driver call subclass ``Error``.
-# Stdlib's ``datetime.{date,time,datetime}.__init__`` raise bare
-# ``ValueError`` / ``TypeError`` on invalid inputs (month=13, hour=25,
-# non-numeric arguments). Wrap each constructor to translate those into
-# ``DataError`` so cross-driver code patterns
-# (``try: dqlitedbapi.Date(...) except dqlitedbapi.Error: ...``) are
-# closed-form. Mirrors the discipline already in ``DateFromTicks`` /
-# ``TimeFromTicks`` / ``TimestampFromTicks``.
+# Type constructors are functions (not class aliases as in stdlib
+# sqlite3) so out-of-range inputs raise PEP 249 ``DataError`` instead of
+# bare ``ValueError`` / ``TypeError``. Consequence: ``isinstance(v,
+# Date)`` raises; cross-driver code must use ``isinstance(v,
+# datetime.date)`` etc.
 
 
 def Date(year: int, month: int, day: int) -> datetime.date:
-    """Construct a date value.
-
-    Note: this is a function wrapper (not a class alias as in stdlib
-    ``sqlite3.dbapi2``); ``isinstance(v, dqlitedbapi.Date)`` therefore
-    raises ``TypeError`` because functions are not classes. Use
-    ``isinstance(v, datetime.date)`` for cross-driver code that runs
-    against both stdlib ``sqlite3`` and ``dqlitedbapi``. The wrapper
-    exists so out-of-range inputs raise PEP 249 ``DataError`` rather
-    than bare ``ValueError``.
-    """
     try:
         return datetime.date(year, month, day)
     except (TypeError, ValueError) as e:
@@ -105,14 +67,8 @@ def Time(
 ) -> datetime.time:
     """Construct a time value.
 
-    Accepts optional ``microsecond`` and ``tzinfo`` for parity with
-    stdlib ``datetime.time``. PEP 249 does not require this,
-    but mixing the driver's ``Time()`` with ``datetime.time`` would
-    otherwise drop sub-second precision silently.
-
-    Note: this is a function wrapper (not a class alias);
-    ``isinstance(v, dqlitedbapi.Time)`` raises ``TypeError``. Use
-    ``isinstance(v, datetime.time)`` for cross-driver porting code.
+    ``microsecond`` / ``tzinfo`` are accepted (beyond PEP 249) so mixing
+    with ``datetime.time`` doesn't silently drop sub-second precision.
     """
     try:
         return datetime.time(hour, minute, second, microsecond, tzinfo=tzinfo)
@@ -132,12 +88,7 @@ def Timestamp(
     microsecond: int = 0,
     tzinfo: datetime.tzinfo | None = None,
 ) -> datetime.datetime:
-    """Construct a timestamp value.
-
-    Note: this is a function wrapper (not a class alias);
-    ``isinstance(v, dqlitedbapi.Timestamp)`` raises ``TypeError``. Use
-    ``isinstance(v, datetime.datetime)`` for cross-driver porting code.
-    """
+    """Construct a timestamp value."""
     try:
         return datetime.datetime(year, month, day, hour, minute, second, microsecond, tzinfo=tzinfo)
     except (TypeError, ValueError) as e:
@@ -150,56 +101,20 @@ def Timestamp(
 def _validate_ticks(ticks: float) -> float:
     """Normalize ``ticks`` to a finite float or raise ``DataError``.
 
-    ``fromtimestamp`` raises different stdlib exceptions depending on
-    the failure mode (``ValueError`` for NaN on some platforms,
-    ``OverflowError`` / ``OSError`` for out-of-range, ``TypeError`` for
-    unsupported argument types like ``Decimal``). Normalize every
-    failure mode up front so the caller always sees a single DB-API
-    ``DataError``.
-
-    ``bool`` is an ``int`` subclass, but coercing ``True`` / ``False``
-    to 1.0 / 0.0 silently produces a Unix-epoch timestamp — a caller-
-    bug trap. Mirror ``arraysize.setter`` and reject explicitly.
-    Strings are rejected even though ``float("1.5")`` succeeds: PEP
-    249's ``*FromTicks`` API takes a numeric tick value, and accepting
-    a string would silently encourage a buggy caller who passed an
-    unconverted wire value.
-
-    Returns the coerced ``float`` so callers can pass a value
-    ``datetime.fromtimestamp`` accepts (it rejects ``Decimal``).
+    Returns float because ``datetime.fromtimestamp`` rejects ``Decimal``.
     """
-    # Mirror ``arraysize.setter`` (cursor.py): bool is an int subclass,
-    # but silent coercion to 0/1 is a footgun.
+    # bool / str silently coerce to a valid timestamp (epoch, float("1.5"))
+    # -- reject explicitly so a buggy unconverted caller value isn't masked.
     if isinstance(ticks, bool):
         raise DataError(f"Invalid timestamp ticks: {ticks!r} (bool)")
     if isinstance(ticks, str):
         raise DataError(f"Invalid timestamp ticks: {ticks!r} (str)")
-    # Reject non-numeric types (numpy.bool_, custom ``__index__`` /
-    # ``__float__`` types, etc.) explicitly. The plain ``isinstance``
-    # check covers Python int / float / Decimal (the practical
-    # numeric types callers pass for ticks) and their subclasses, but
-    # DOES NOT cover ``numpy.bool_(True)`` which slips past the bool
-    # guard (numpy bools are not Python bool subclasses on most
-    # versions) and silently coerces to ``1.0`` -- yielding an
-    # epoch+1-second date. Mirror the wire-layer ``encode_double``
-    # discipline that rejects numpy bool at the same boundary.
-    # Decimal is included so historical callers passing
-    # ``Decimal(timestamp_str)`` continue to round-trip without
-    # change.
+    # numpy.bool_ slips past the bool guard (not a Python bool subclass) and
+    # coerces to 1.0; reject anything outside the real numeric types.
     if not isinstance(ticks, (int, float, Decimal)):
         raise DataError(f"Invalid timestamp ticks: {ticks!r} ({type(ticks).__name__})")
-    # ``OverflowError`` covers two known shapes today's CPython
-    # currently shields (saturation-to-inf at line below) but that
-    # an isfinite guard alone cannot catch: (1) a future CPython
-    # release that flips ``float(Decimal('1e1000000'))`` from
-    # saturation to a raise, and (2) custom numeric subclasses
-    # whose ``__float__`` raises ``OverflowError`` directly (e.g. a
-    # caller's ``BigDecimal`` shim that propagates the precision
-    # context). Symmetric with the downstream ``*FromTicks``
-    # constructors, which already include ``OverflowError`` in
-    # their ``fromtimestamp`` catch tuples; the upstream coercion
-    # had a narrower catch and would leak a bare ``OverflowError``
-    # past ``except dbapi.Error:``.
+    # Catch OverflowError: a future CPython may raise (not saturate) on huge
+    # Decimals, and custom __float__ may raise it directly.
     try:
         coerced = float(ticks)
     except (TypeError, ValueError, OverflowError) as exc:
@@ -210,22 +125,11 @@ def _validate_ticks(ticks: float) -> float:
 
 
 def DateFromTicks(ticks: float) -> datetime.date:
-    """Construct a date from a Unix timestamp.
+    """Construct a date from a Unix timestamp (naive, host-local tz).
 
-    Returns a naive date interpreted as the host's **local** time zone,
-    like stdlib ``sqlite3.dbapi2.DateFromTicks``. For an explicit UTC
-    interpretation, call ``datetime.datetime.fromtimestamp(ticks,
-    tz=datetime.UTC).date()`` directly.
-
-    Implementation uses ``datetime.date.fromtimestamp`` rather than
-    stdlib's ``time.localtime(ticks)[:3]``; sub-second precision in
-    ``ticks`` is dropped because the return type is date-only.
-
-    Note that the wire layer's UNIXTIME decoder
-    (``_datetime_from_unixtime``) returns UTC-aware datetimes; storing
-    a value produced by this constructor on a UNIXTIME-typed column
-    and reading it back will shift by the host's UTC offset. Use
-    ISO8601 (TEXT) columns for faithful round-trip of naive values.
+    The UNIXTIME decoder returns UTC-aware datetimes, so round-tripping
+    this value through a UNIXTIME column shifts by the host's UTC offset;
+    use ISO8601 (TEXT) columns for faithful round-trip of naive values.
     """
     coerced = _validate_ticks(ticks)
     try:
@@ -235,21 +139,10 @@ def DateFromTicks(ticks: float) -> datetime.date:
 
 
 def TimeFromTicks(ticks: float) -> datetime.time:
-    """Construct a time from a Unix timestamp.
+    """Construct a time from a Unix timestamp (naive, host-local tz).
 
-    Returns a naive time interpreted as the host's **local** time zone,
-    like stdlib ``sqlite3.dbapi2.TimeFromTicks``. Near midnight in
-    non-UTC locales the wall-clock time differs from the UTC time;
-    callers that need UTC should use
-    ``datetime.datetime.fromtimestamp(ticks, tz=datetime.UTC).time()``.
-
-    Implementation uses ``datetime.datetime.fromtimestamp(ticks).time()``;
-    unlike stdlib's ``time.localtime(ticks)[3:6]`` (which truncates
-    sub-second precision), this **preserves** the microsecond component
-    of fractional ``ticks``.
-
-    See ``DateFromTicks`` for the tz asymmetry with the UNIXTIME
-    decoder on readback.
+    Unlike stdlib, preserves the microsecond component of fractional
+    ``ticks``. See ``DateFromTicks`` for the UNIXTIME tz asymmetry.
     """
     coerced = _validate_ticks(ticks)
     try:
@@ -259,23 +152,10 @@ def TimeFromTicks(ticks: float) -> datetime.time:
 
 
 def TimestampFromTicks(ticks: float) -> datetime.datetime:
-    """Construct a timestamp from a Unix timestamp.
+    """Construct a timestamp from a Unix timestamp (naive, host-local tz).
 
-    Returns a naive datetime interpreted as the host's **local** time
-    zone, like stdlib ``sqlite3.dbapi2.TimestampFromTicks`` (and
-    PEP 249's own convention). For UTC-aware values, call
-    ``datetime.datetime.fromtimestamp(ticks, tz=datetime.UTC)``
-    directly.
-
-    Implementation uses ``datetime.datetime.fromtimestamp(ticks)``;
-    unlike stdlib's ``time.localtime(ticks)[:6]`` (which truncates
-    sub-second precision), this **preserves** the microsecond component
-    of fractional ``ticks`` — e.g. ``TimestampFromTicks(1700000000.5)``
-    returns ``datetime(..., microsecond=500_000)`` whereas stdlib
-    returns ``microsecond=0``.
-
-    See ``DateFromTicks`` for the tz asymmetry with the UNIXTIME
-    decoder on readback.
+    Unlike stdlib, preserves the microsecond component of fractional
+    ``ticks``. See ``DateFromTicks`` for the UNIXTIME tz asymmetry.
     """
     coerced = _validate_ticks(ticks)
     try:
@@ -284,75 +164,22 @@ def TimestampFromTicks(ticks: float) -> datetime.datetime:
         raise DataError(f"Invalid timestamp ticks {ticks}: {e}") from e
 
 
-# PEP 249 §3 "Binary(string) — construct an object capable of holding
-# a binary (long) string value." Stdlib ``sqlite3.Binary = memoryview``
-# (Python 3.13); aiosqlite inherits. Alias directly so ports from
-# stdlib sqlite3 stay drop-in (``isinstance(Binary(b), memoryview)``
-# holds on both, zero-copy wrap on both). The wire encoder accepts
-# memoryview for BLOB columns, so no conversion is needed on the
-# bind path.
-#
-# **Limitation vs sibling type-constructors**: ``Date`` / ``Time`` /
-# ``Timestamp`` / ``*FromTicks`` wrap stdlib ``TypeError`` /
-# ``ValueError`` on bad input as ``DataError`` (per project
-# discipline that PEP 249 §3 type-constructors stay inside the
-# ``dbapi.Error`` hierarchy). ``Binary`` does NOT — bad input
-# (``Binary("not bytes")``, ``Binary(123)``, ``Binary(None)``)
-# leaks bare ``TypeError`` from the underlying ``memoryview``
-# constructor, *outside* the dbapi error hierarchy. This is a
-# **deliberate stdlib-parity tradeoff**: wrapping ``Binary`` in a
-# function would break ``isinstance(Binary(b), memoryview)``,
-# which cross-driver porting code from stdlib ``sqlite3`` and
-# aiosqlite relies on. Callers who want PEP 249 §7 hierarchy
-# purity for binary input should wrap their own ``try`` /
-# ``except (TypeError, ValueError)`` and re-raise as
-# ``dqlitedbapi.DataError``.
+# Aliased directly to ``memoryview`` (matching stdlib sqlite3 3.13) so
+# ``isinstance(Binary(b), memoryview)`` holds for cross-driver ports.
+# Unlike the sibling constructors, bad input leaks bare ``TypeError``
+# (not ``DataError``): wrapping in a function would break that isinstance.
 Binary = memoryview
 
 
-# Type objects for column type checking.
-#
-# PEP 249: "These objects represent a data type as represented in the
-# database. The module exports these objects: STRING, BINARY, NUMBER,
-# DATETIME, ROWID. The module should export a comparison for these types
-# and the object returned in Cursor.description[i][1]."
-#
-# Cursor.description[i][1] here is a wire-level ``ValueType`` integer
-# (e.g. 10 for ISO8601). The type objects below compare equal to both
-# the uppercase SQL type name strings (for declared-type matching) and
-# the matching ``ValueType`` ints.
 @final
 class _DBAPIType:
-    """Base type for DB-API type objects. Compares equal to matching
-    uppercase SQL type names (str) and wire-level ``ValueType`` codes
-    (int).
+    """DB-API type object: compares equal to matching uppercase SQL type
+    names (str) and wire-level ``ValueType`` codes (int).
 
-    These objects ARE hashable (hashed by their singleton name), so
-    they can be used as dict keys / set members — SQLAlchemy's
-    dialect-level type-memo keys ``cursor.description``'s ``type_code``,
-    which can be ``UNKNOWN`` (itself a ``_DBAPIType``), so they must be
-    hashable. But the hash-eq invariant is intentionally relaxed for the
-    multi-wire-code ``__eq__``: ``NUMBER`` / ``DATETIME`` wrap several
-    codes (e.g. INTEGER + FLOAT + BOOLEAN) yet hash by name, so a bare
-    wire-level ``int`` ``type_code`` hashes differently than the type
-    object. Set/dict membership of such an ``int`` therefore **silently
-    returns ``False`` — it does NOT raise**: e.g. ``1 in {NUMBER}`` is
-    ``False`` even though ``NUMBER == 1`` (the INTEGER code) is ``True``,
-    because the hash lookup never reaches the ``__eq__`` comparison.
-
-    **Caller idiom** — introspecting ``description[i][1]`` against
-    type sentinels: use chained equality, NOT set membership::
-
-        type_code = cur.description[i][1]
-        if type_code == STRING or type_code == NUMBER:
-            ...
-
-    Set/dict membership (``type_code in {STRING, NUMBER}``) silently
-    misses for a bare wire-int ``type_code`` (returns ``False``, does
-    not raise), so it is NOT a safe introspection idiom. The
-    chained-``==`` form is the PEP 249 idiom and works against this
-    driver and stdlib ``sqlite3`` (which does not export these
-    sentinels at all).
+    Hashable (by name) for use as dict keys, but the hash-eq invariant is
+    relaxed: multi-code objects hash by name while a bare wire int hashes
+    to itself, so ``1 in {NUMBER}`` silently returns False even though
+    ``NUMBER == 1`` is True. Introspect via chained ``==``, not ``in``.
     """
 
     def __init__(self, *values: str | int | ValueType, _name: str = "") -> None:
@@ -376,22 +203,6 @@ class _DBAPIType:
             return other in self.values
         return NotImplemented
 
-    # Hash by the singleton's class-level identifier name. Each
-    # _DBAPIType instance exposed at module level (STRING, BINARY,
-    # NUMBER, DATETIME, ROWID, UNKNOWN) carries a unique ``_name``;
-    # hashing on that name makes the instances usable as dict keys
-    # and set members. SQLAlchemy's dialect-level type-memo dict
-    # keys ``cursor.description``'s ``type_code`` (which can now be
-    # ``UNKNOWN`` — itself a _DBAPIType — when the wire layer cannot
-    # resolve a column's type from row 0), so the type objects MUST
-    # be hashable. The hash-eq invariant with multi-value ``__eq__``
-    # against ``int`` / ``ValueType`` / ``str`` is intentionally
-    # relaxed: those comparands hash to different values than the
-    # type object, so cross-type set / dict membership against a
-    # bare wire-type int silently misses the type-object match. The
-    # cross-driver idiom for "is this column a string-y type" is
-    # ``type_code == STRING`` (linear comparison, never a hash
-    # lookup), and that path remains correct.
     def __hash__(self) -> int:
         return hash(("_DBAPIType", self._name))
 
@@ -402,39 +213,15 @@ class _DBAPIType:
 STRING: Final[_DBAPIType] = _DBAPIType(
     "TEXT", "VARCHAR", "CHAR", "CLOB", ValueType.TEXT, _name="STRING"
 )
-# NOTE: ``ValueType.ISO8601`` is intentionally NOT in ``STRING`` — even
-# though the wire cell IS text-encoded, the dbapi layer converts it to
-# ``datetime.datetime`` / ``datetime.time`` before the user sees the
-# result. Type-code introspection against ``STRING`` for an ISO8601
-# column returns False (the right answer post-conversion); against
-# ``DATETIME`` it returns True. The wire-level text-encoding is an
-# implementation detail invisible at the dbapi surface. The
-# declared-type-name vocabulary (``"TEXT"``, ``"VARCHAR"``, ``"CHAR"``,
-# ``"CLOB"``) is a separate matching surface for ``description[i][1]``
-# decltype strings — independent of the wire ``ValueType`` matching.
-# psycopg2/3 use the same partition (timestamp types match DATETIME,
-# not STRING).
+# ``ValueType.ISO8601`` is deliberately NOT in STRING: the dbapi layer
+# converts it to datetime before the user sees it, so it matches DATETIME
+# (matching psycopg2/3), not STRING.
 BINARY: Final[_DBAPIType] = _DBAPIType(
     "BLOB", "BINARY", "VARBINARY", ValueType.BLOB, _name="BINARY"
 )
-# NOTE: ``NUMBER.values`` deliberately includes
-# ``ValueType.BOOLEAN``. SQLite's loose typing stores BOOLEAN
-# values with INTEGER affinity (the storage layer has no
-# dedicated BOOL column type — ``CREATE TABLE t (b BOOL)`` yields
-# a column with NUMERIC affinity per the SQLite type-affinity
-# rules), so treating BOOLEAN as a NUMBER subkind matches the
-# storage layer. psycopg2 ships a separate ``BOOLEAN`` Type
-# Object disjoint from ``NUMBER`` (Postgres has a true BOOL
-# type); cross-driver code that dispatches on
-# ``description[i][1] == NUMBER`` will route BOOLEAN columns to
-# the numeric arm under dqlite but to the fallback /
-# BOOLEAN-explicit arm under psycopg2. PEP 249 §3 does not outlaw
-# overlap between Type Objects; the choice here matches SQLite
-# semantics rather than Postgres. Operators needing the BOOLEAN
-# distinction can branch on the wire-level
-# ``ValueType.BOOLEAN`` int directly, or consult
-# ``description[i][0]`` against a server-side decltype string.
-# Mirrors the ROWID/INTEGER overlap precedent below.
+# NUMBER deliberately includes BOOLEAN: SQLite stores BOOL with numeric
+# affinity (no dedicated BOOL type). Differs from psycopg2 (separate
+# BOOLEAN object); branch on the wire ``ValueType.BOOLEAN`` int if needed.
 NUMBER: Final[_DBAPIType] = _DBAPIType(
     "INTEGER",
     "INT",
@@ -458,77 +245,32 @@ DATETIME: Final[_DBAPIType] = _DBAPIType(
     ValueType.UNIXTIME,
     _name="DATETIME",
 )
-# NOTE: ``ROWID.values`` deliberately overlaps ``NUMBER.values`` on the
-# wire-level ``ValueType.INTEGER`` code. For any INTEGER column ``i``,
-# BOTH ``cur.description[i][1] == NUMBER`` AND
-# ``cur.description[i][1] == ROWID`` return ``True``. The wire protocol
-# carries no "this column is a rowid alias" hint, so the dbapi cannot
-# distinguish a generic INTEGER column from a rowid; the type sentinels
-# advertise the union. PEP 249 §3 does not outlaw overlap between Type
-# Objects. Cross-driver callers iterating type sentinels with the
-# chained-``==`` idiom (the documented PEP 249 form) get both
-# predicates true for INTEGER columns; psycopg2 and stdlib ``sqlite3``
-# treat ``ROWID`` / ``NUMBER`` disjointly (sqlite3 does not export
-# ``ROWID`` at all), so this is a deliberate cross-driver portability
-# caveat. Match in order (``ROWID`` first if the distinction matters)
-# or consult the decltype string via ``description[i][0]`` against the
-# declared-type vocabulary.
+# ROWID deliberately overlaps NUMBER on ``ValueType.INTEGER``: the wire
+# carries no rowid hint, so any INTEGER column matches both. Differs from
+# psycopg2 (disjoint); match ROWID first if the distinction matters.
 ROWID: Final[_DBAPIType] = _DBAPIType(
     "ROWID", "INTEGER PRIMARY KEY", ValueType.INTEGER, _name="ROWID"
 )
-# ``UNKNOWN`` is the sentinel emitted in ``description[i][1]`` when
-# the wire layer cannot resolve a column's type — empty result sets
-# (no rows to scan + no per-column declared type) and NULL-only
-# columns (rescue scan exhausted, every row at that column index is
-# NULL). PEP 249 §6.1.2 requires the type_code to compare equal to
-# a Type Object; emitting ``None`` (the prior behaviour) violated
-# that contract — ``None`` compares equal to no Type Object and
-# silently took the False arm under the canonical
-# ``type_code == STRING`` introspection idiom. ``UNKNOWN``'s
-# ``values`` is empty so equality against ``STRING`` / ``BINARY`` /
-# ``NUMBER`` / ``DATETIME`` / ``ROWID`` cleanly returns False (no
-# TypeError, no spurious True). Callers that want to detect the
-# wire-can't-resolve case explicitly can write
-# ``type_code == UNKNOWN``.
+# Sentinel for ``description[i][1]`` when the wire can't resolve a column
+# type (empty result sets, NULL-only columns). Emitting None would violate
+# PEP 249 §6.1.2 (must compare equal to a Type Object); UNKNOWN has an
+# empty ``values`` so it compares False against all real Type Objects.
 UNKNOWN: Final[_DBAPIType] = _DBAPIType(_name="UNKNOWN")
 
 
-# Internal conversion helpers.
-#
-# The wire codec deals only in primitives (ISO8601 → str, UNIXTIME → int64).
-# PEP 249 specifies that drivers SHOULD return datetime objects for date/time
-# columns — and every major Python driver (psycopg, mysqlclient, asyncpg, ...)
-# does. These helpers implement that conversion at the driver (DBAPI) layer,
-# matching Go's database/sql driver split.
+# Internal conversion helpers: the wire codec deals only in primitives,
+# so these implement the PEP 249 date/time <-> datetime conversion at the
+# driver layer.
 
 
-# Display cap on server-controlled text embedded into exception
-# messages. Wire ``decode_text`` accepts up to
-# ``_MAX_TEXT_VALUE_SIZE`` (64 MiB); without truncation, an
-# unparseable ISO8601 cell from a hostile or compromised server
-# would inflate every ``DataError`` by ~2× via ``{text!r}`` quoting,
-# AND be preserved across pickle / structured logging via
-# ``Error.__reduce__``. Mirrors ``sqlalchemy-dqlite/base.py`` which
-# truncates server-controlled strings before logging.
+# Cap on server-controlled text in exception messages: a 64 MiB hostile
+# ISO8601 cell would otherwise inflate every DataError (and persist across
+# pickle / logging via ``Error.__reduce__``).
 _MAX_DATA_ERROR_TEXT_DISPLAY: Final[int] = 200
 
 
 def _truncate_for_message(text: str) -> str:
-    """Bound a server-controlled string before interpolating into a
-    DataError message. The truncation marker carries the OVERFLOW
-    codepoint count (number of characters dropped past the cap) so a
-    triaging operator knows the size class without exposing the full
-    payload.
-
-    Local re-implementation of the wire-layer ``_cap_raw_message``
-    SSOT shape (overflow-count suffix vocabulary). Kept independent
-    because the suffix wording here (``"... [truncated, N chars]"``)
-    differs from the wire SSOT's ``"... [raw_message truncated, N
-    codepoints]"`` — both report the same CPython quantity
-    (``len(str)`` counts codepoints), and the divergence is intentional
-    context-specific wording. See the cross-package divergence index
-    in ``dqlitewire/_truncate.py``.
-    """
+    """Bound a server-controlled string before interpolating into a message."""
     if len(text) <= _MAX_DATA_ERROR_TEXT_DISPLAY:
         return text
     return (
@@ -538,36 +280,12 @@ def _truncate_for_message(text: str) -> str:
 
 
 def _format_utc_offset(offset: datetime.timedelta) -> str:
-    """Format a UTC offset as ``±HH:MM`` (common) or ``±HH:MM:SS``.
+    """Format a UTC offset as ``±HH:MM`` or ``±HH:MM:SS`` for sub-minute
+    offsets (historical IANA LMT zones), which 3.11+ fromisoformat round-trips.
 
-    Historical IANA LMT entries (Europe/Dublin pre-1916, Africa/Lagos
-    pre-1914, several Pacific zones) carry sub-minute offsets.
-    ``datetime.fromisoformat`` / ``time.fromisoformat`` on Python 3.11+
-    round-trip ``±HH:MM:SS`` so emitting the seconds component keeps
-    the round-trip through a TEXT column exact. Common whole-minute
-    offsets stay in the narrower ``±HH:MM`` form byte-identical with
-    the pre-sub-minute encoder output.
-
-    Rejects two broken-tzinfo inputs (CPython's own ``timezone()``
-    constructor rejects the same conditions — these paths are only
-    reachable through hand-rolled tzinfo subclasses that bypass the
-    stdlib's input validation):
-
-    - ``|offset| >= 24h`` — would emit an out-of-range ``±HH:MM:SS``
-      token that ``datetime.fromisoformat`` / peer decoders reject.
-    - Sub-second precision — ``int(offset.total_seconds())`` truncates
-      toward zero, so a negative fractional offset flips sign and
-      zeros magnitude. Round to whole-second and require the result
-      match the input.
-
-    Also rejects non-``timedelta`` offsets up front. CPython's
-    ``tzinfo.utcoffset()`` is documented to return ``timedelta`` or
-    ``None``, but custom ``tzinfo`` subclasses (common porting
-    mistake from Java/JodaTime returning an int seconds count) and
-    ``MagicMock``-based test fixtures may violate that contract.
-    Without this guard ``offset.total_seconds()`` raises bare
-    ``AttributeError`` outside the caller's try/except and escapes
-    the ``dbapi.Error`` tree.
+    Rejects (broken hand-rolled tzinfo only): non-timedelta offsets,
+    |offset| >= 24h, and sub-second precision -- each would either escape
+    ``dbapi.Error`` or emit a token peer decoders reject.
     """
     if not isinstance(offset, datetime.timedelta):
         raise DataError(
@@ -595,20 +313,9 @@ def _format_utc_offset(offset: datetime.timedelta) -> str:
 def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
     """Format a datetime/date as an ISO 8601 string for wire transmission.
 
-    Uses the space-separated layout so values are byte-for-byte comparable
-    with what Go and the C client produce. Accepts both naive and
-    timezone-aware datetimes — naive values round-trip as naive (matching
-    pysqlite semantics), aware values preserve the offset.
-
-    Known limitations:
-
-    - ``datetime.fold`` is **not** encoded. ISO 8601 has no fold
-      notation, so a round-trip of ``datetime(..., fold=1, tzinfo=...)``
-      at the DST "fall back" hour silently produces ``fold=0`` on
-      decode. Applications that straddle DST transitions should store
-      UTC instants (or a UTC-relative marker column) rather than
-      wall-clock datetimes. This matches stdlib ``sqlite3``'s datetime
-      adapter; any change here would diverge from that reference.
+    Space-separated layout for byte-compatibility with Go / the C client.
+    ``datetime.fold`` is NOT encoded (ISO 8601 has no notation), so DST
+    "fall back" datetimes decode as fold=0 -- matching stdlib sqlite3.
     """
     if isinstance(value, datetime.datetime):
         base = f"{value.year:04d}" + value.strftime("-%m-%d %H:%M:%S")
@@ -616,20 +323,10 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
             base += f".{value.microsecond:06d}"
         if value.tzinfo is None:
             return base
-        # tzinfo is set (checked above), so utcoffset() returns timedelta.
-        # A None here means the tzinfo subclass declared itself but
-        # cannot resolve an offset for this datetime — be explicit
-        # and reject rather than silently demoting to naive (which
-        # would lose the user's tz-awareness intent without warning).
-        # A raising tzinfo (custom subclass with a buggy utcoffset)
-        # must surface as DataError too — symmetric with the
-        # ``_validate_ticks`` and ``_datetime_from_unixtime`` discipline,
-        # so every plausible tzinfo failure stays inside the
-        # ``dbapi.Error`` hierarchy. Catch ``Exception`` (NOT
-        # ``BaseException`` — that would swallow ``CancelledError`` /
-        # ``KeyboardInterrupt``) so KeyError / AttributeError / OSError
-        # / OverflowError raised by zoneinfo lookups or custom subclasses
-        # are uniformly wrapped.
+        # Wrap a raising utcoffset() as DataError (keeping tzinfo failures
+        # in dbapi.Error); Exception not BaseException so cancellation isn't
+        # swallowed. A None offset (declared-aware but unresolvable) is
+        # rejected below rather than silently demoted to naive.
         try:
             offset = value.utcoffset()
         except Exception as exc:
@@ -642,30 +339,18 @@ def _iso8601_from_datetime(value: datetime.datetime | datetime.date) -> str:
                 f"{value!r}; cannot encode without a resolvable UTC offset"
             )
         return base + _format_utc_offset(offset)
-    # datetime.date (must come after datetime check — datetime is a subclass).
+    # datetime.date (must come after the datetime check — datetime subclasses it).
     return value.isoformat()
 
 
 def _iso8601_from_time(value: datetime.time) -> str:
-    """Format a ``datetime.time`` as an ISO 8601 string.
-
-    Symmetric with the datetime/date encoder so the PEP 249 ``Time()``
-    and ``TimeFromTicks()`` constructors — which return
-    ``datetime.time`` — produce values the DB-API bind path can
-    consume. Naive times emit ``HH:MM:SS[.ffffff]``; aware times
-    append the ``±HH:MM`` (or ``±HH:MM:SS`` for sub-minute offsets)
-    suffix shared with the datetime encoder.
-    """
+    """Format a ``datetime.time`` as an ISO 8601 string."""
     base = f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}"
     if value.microsecond:
         base += f".{value.microsecond:06d}"
     if value.tzinfo is None:
         return base
-    # See ``_iso8601_from_datetime`` for the wrap rationale: a raising
-    # custom tzinfo must surface as DataError, not bare exception class.
-    # Catch ``Exception`` (NOT ``BaseException``) so KeyError /
-    # AttributeError / OSError / OverflowError raised by zoneinfo
-    # lookups or custom subclasses are uniformly wrapped.
+    # See ``_iso8601_from_datetime`` for the wrap rationale.
     try:
         offset = value.utcoffset()
     except Exception as exc:
@@ -683,86 +368,19 @@ def _iso8601_from_time(value: datetime.time) -> str:
 def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | None:
     """Parse an ISO 8601 string into ``datetime.datetime`` / ``.time``.
 
-    Returns ``None`` for the empty string — pre-null-patch dqlite servers
-    sometimes emit empty text for NULL datetime cells, and the modern
-    server still tolerates empty ISO8601 values. Returning None matches
-    PEP 249 NULL semantics.
+    Returns None for the empty string (pre-null-patch servers emit it for
+    NULL datetime cells). Caveat: an empty-string projection on an
+    ISO8601-tagged column also decodes to None, indistinguishable from
+    NULL -- use ``CAST(... AS TEXT)`` to keep the distinction.
 
-    **Silent NULL collision.** An empty ISO8601 cell ``""`` decodes to
-    ``None`` — indistinguishable from a wire NULL. This is a deliberate
-    tolerance for pre-null-patch dqlite servers, but the same empty
-    decoding fires for legitimate empty-string projections on the modern
-    server: a ``COALESCE(date_col, '')`` projection where the NULL
-    branch is taken, or a ``CASE WHEN x THEN '' ELSE date_col END``
-    expression on a column the server tags as ISO8601, both decode to
-    ``None`` here. The wire-layer TEXT decoder distinguishes NULL from
-    the empty string by tagging the cell type, but ISO8601-tagged cells
-    go through this decoder and lose that distinction (flattened to
-    ``None``). Callers needing to distinguish "the
-    column was NULL" from "the projection produced an empty string"
-    must avoid ISO8601-tagged columns for that pattern (e.g. use a
-    ``CAST(... AS TEXT)`` projection so the cell carries ``TEXT`` on
-    the wire instead).
+    Tries datetime.fromisoformat then time.fromisoformat (matching the
+    ``_iso8601_from_time`` encoder); no date arm because 3.11+
+    datetime.fromisoformat already covers bare ``YYYY-MM-DD``. A bare
+    date therefore widens to a midnight datetime (matching pysqlite);
+    time does not widen. Sub-microsecond fractional seconds are truncated
+    (CPython drops digits past the sixth without rounding).
 
-    Two-step fallback (in order):
-
-    1. ``datetime.datetime.fromisoformat`` — covers full
-       ``YYYY-MM-DD HH:MM:SS[.ffffff][±HH:MM]`` plus bare
-       ``YYYY-MM-DD``. On Python 3.11+ ``datetime.fromisoformat``
-       widened to accept every shape ``date.fromisoformat`` accepts,
-       so a bare-date input lands here (returning midnight datetime
-       — see the date-widens paragraph below).
-    2. ``datetime.time.fromisoformat`` — ``HH:MM:SS[.ffffff][±HH:MM]``,
-       matching the ``_iso8601_from_time`` bind-path encoder so a
-       ``datetime.time`` bound via the driver round-trips as
-       ``datetime.time`` on readback rather than raising ``DataError``.
-
-    There is intentionally NO third ``date.fromisoformat`` arm — step 1
-    already covers bare ``YYYY-MM-DD`` on every supported Python.
-    Ordinal-date form ``YYYY-OOO`` (which ``date.fromisoformat``
-    accepts but ``datetime.fromisoformat`` rejects) is therefore
-    rejected here too; no upstream emits ordinal dates today, so the
-    asymmetry is benign.
-
-    Naive input round-trips as naive; aware input preserves the offset.
-    Python 3.11+ ``datetime.fromisoformat`` accepts a trailing ``Z``
-    natively; no pre-substitution is needed.
-
-    **``date`` widens to ``datetime`` on round-trip.** A ``datetime.date``
-    passed to PEP 249 ``Date()`` serializes via ``isoformat()`` as
-    ``"YYYY-MM-DD"`` (no time component). Step 1 above parses that
-    bare-date string and returns ``datetime.datetime(year, month, day)``
-    at midnight — the value widens from date to datetime. This matches
-    pysqlite's default behaviour (stdlib ``sqlite3`` with
-    ``detect_types`` does the same widen). Callers who need a strict
-    ``date`` on readback should narrow via ``.date()`` or use the
-    SQLAlchemy ``_DqliteDate`` type that does the narrowing at the
-    ORM layer.
-
-    ``datetime.time`` does NOT widen — ``HH:MM:SS`` has no date
-    component so widening would require an arbitrary sentinel date.
-
-    **Sub-microsecond fractional seconds are silently truncated.**
-    CPython's ``datetime.fromisoformat`` (widened in 3.11 via gh-80010
-    to accept any fractional-digit count) drops digits beyond the
-    sixth without rounding — e.g. ``"2026-05-21 12:34:56.123456789"``
-    decodes to ``datetime(2026, 5, 21, 12, 34, 56, 123456)`` and
-    ``".999999999"`` decodes to ``...microsecond=999999`` (NOT
-    1_000_000 — truncation does NOT carry into the second). Peer
-    encoders that emit nanosecond-precision text (Go
-    ``time.RFC3339Nano``, Litestream-style millisecond triggers
-    widened with extra zeros, custom SQLite triggers via loadable
-    extensions, mixed-source clusters that round-trip through other
-    drivers) therefore do not round-trip byte-identically through
-    this decoder: the companion encoder ``_iso8601_from_datetime``
-    emits exactly six fractional digits, so a peer-written 9-digit
-    value read here and re-written becomes a 6-digit value on the
-    wire. Callers needing sub-microsecond precision must store the
-    raw text via a non-ISO8601 ``TEXT`` cell and parse client-side.
-
-    A malformed string from the server (bug, corruption, or MitM) would
-    otherwise escape as a raw ``ValueError``; wrap as ``DataError`` to
-    satisfy PEP 249's "all DB errors funnel through Error" contract.
+    Wraps a malformed-string ValueError as DataError (PEP 249 contract).
     """
     if not text:
         return None
@@ -773,31 +391,16 @@ def _datetime_from_iso8601(text: str) -> datetime.datetime | datetime.time | Non
     try:
         return datetime.time.fromisoformat(text)
     except ValueError as exc:
-        # ``datetime.fromisoformat`` on Python 3.11+ accepts every
-        # form ``date.fromisoformat`` accepts (bare ``YYYY-MM-DD``,
-        # ISO week dates), so the only remaining failure shape is
-        # input that ``time.fromisoformat`` also rejects — i.e.
-        # genuine garbage. Surface as ``DataError``.
-        #
-        # Truncate the offending text before interpolation. A hostile
-        # peer can return a wire TEXT cell up to ``_MAX_TEXT_VALUE_SIZE``
-        # (64 MiB); embedding the full payload in the exception message
-        # — which is then preserved across pickle, logged, and copied
-        # into ``raw_message`` — produces a ~128 MiB payload per
-        # malformed cell. The SA result_processor sites already truncate
-        # via ``_truncate_for_log``; this is the dbapi-layer twin that
-        # surfaces when SA is bypassed.
+        # Genuine garbage. Truncate before interpolation: a 64 MiB hostile
+        # cell would otherwise persist across pickle / logging / raw_message.
         raise DataError(
             f"Cannot parse ISO 8601 datetime from server: {_truncate_for_message(text)!r}"
         ) from exc
 
 
-# Maximum UNIXTIME value that ``datetime.fromtimestamp(..., tz=UTC)``
-# accepts on every supported platform (year 9999-12-31T23:59:59Z, the
-# upper boundary of ``datetime.MAX``). Computed as a literal so import
-# does not depend on the host's libc behavior at module-load time —
-# 32-bit Windows would otherwise OverflowError on the
-# ``datetime.MAX.timestamp()`` round-trip.
+# Max UNIXTIME ``fromtimestamp(tz=UTC)`` accepts everywhere (datetime.MAX,
+# year 9999). A literal, not computed, so import doesn't OverflowError on
+# 32-bit Windows libc.
 _MAX_UNIXTIME_SECONDS: Final[int] = (
     253402300799  # = datetime(9999,12,31,23,59,59,tz=UTC).timestamp()
 )
@@ -806,41 +409,17 @@ _MAX_UNIXTIME_SECONDS: Final[int] = (
 def _datetime_from_unixtime(value: int) -> datetime.datetime:
     """Decode a UNIXTIME int64 into a UTC-aware ``datetime.datetime``.
 
-    UNIXTIME is unambiguously seconds-since-epoch in UTC, so returning a
-    UTC-aware value is faithful. Callers that want local time can convert.
+    UTC-aware (UNIXTIME is seconds-since-epoch in UTC), which is asymmetric
+    with the naive-local ``*FromTicks`` constructors -- round-tripping one
+    through a UNIXTIME column shifts by the host offset; use ISO8601 (TEXT)
+    for naive round-trip. Integer seconds only (no subsecond precision).
 
-    Subsecond precision is structurally absent at this wire layer
-    (UNIXTIME is integer seconds — see ``ValueType.UNIXTIME`` in
-    ``dqlitewire.constants``). Callers needing microsecond precision
-    should ensure the server emits ISO8601 (TEXT-storage DATETIME)
-    instead.
-
-    This UTC-aware result is asymmetric with the PEP 249 ``*FromTicks``
-    constructors, which return naive local time (matching stdlib
-    sqlite3). Storing a ``TimestampFromTicks`` value on a UNIXTIME
-    column and reading it back shifts by the host's UTC offset; use
-    an ISO8601 (TEXT) column for faithful round-trip of naive values.
-
-    Range: ``0 <= value <= _MAX_UNIXTIME_SECONDS``. Negative values
-    (pre-1970) and values past year 9999 are rejected uniformly with
-    ``DataError``. The wire allows int64 (so negatives are
-    spec-compliant), but ``datetime.fromtimestamp`` is platform-
-    inconsistent on negatives — Linux glibc accepts, Windows
-    ``_gmtime64_s`` rejects — so the same byte stream behaves
-    differently depending on host. Forcing a uniform rejection
-    eliminates that surprise. dqlite servers do not emit pre-1970
-    UNIXTIME today.
-
-    A corrupt server or MitM-modified bytes could deliver a non-integer
-    or in-range value that still trips the underlying stdlib; wrap any
-    surviving stdlib exception as ``DataError``.
+    Rejects ``value`` outside 0..MAX with DataError: the wire allows int64
+    but ``fromtimestamp`` is platform-inconsistent on negatives (glibc
+    accepts, Windows rejects), so reject uniformly.
     """
-    # Guard-first ordering: reject bool / non-int / out-of-range
-    # uniformly before reaching ``fromtimestamp``. Bool is an int
-    # subclass but silent coercion (True → epoch+1 second, False →
-    # epoch) is a footgun mirror of the ``_validate_ticks`` discipline
-    # — the wire path always delivers plain int here, but this helper
-    # is also reachable via ``register_converter`` direct calls.
+    # Reject bool (silently coerces to epoch/epoch+1) before fromtimestamp;
+    # reachable with non-int via direct register_converter calls.
     if isinstance(value, bool):
         raise DataError(f"UNIXTIME value {value!r} must not be bool")
     if not isinstance(value, int):
@@ -856,21 +435,13 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
         raise DataError(f"Invalid UNIXTIME from server: {value!r}") from e
 
 
-# Stdlib-parity ``register_adapter`` registry: maps Python type →
-# adapter callable. Consulted by ``_convert_bind_param`` BEFORE the
-# built-in datetime branches so a caller-supplied adapter can override
-# even datetime handling. Module-scope per stdlib pre-3.12 sqlite3
-# semantics (per-Connection scope was added in stdlib 3.12 but
-# requires more state plumbing — the module-scope shape is the more
-# common ergonomic on the existing ecosystem).
+# register_adapter registry, consulted before the built-in datetime
+# branches so a caller adapter can override them. Module-scope per stdlib
+# pre-3.12 sqlite3.
 _ADAPTERS: dict[type, Callable[[Any], Any]] = {}
 
 # Wire-primitive types the codec accepts after adapter / __conform__
-# chaining. The post-chain validation in ``_convert_bind_param``
-# rejects any non-primitive output so the diagnostic names the
-# registered adapter site rather than the opaque wire-layer
-# ``EncodeError``. ``bool`` is included explicitly even though it's
-# an ``int`` subclass, to make the wire-acceptable set greppable.
+# chaining. ``bool`` listed explicitly (it's an int subclass) for greppability.
 _WIRE_PRIMITIVES: tuple[type, ...] = (
     int,
     float,
@@ -886,12 +457,8 @@ _WIRE_PRIMITIVES: tuple[type, ...] = (
 class PrepareProtocol:
     """Stdlib ``sqlite3.PrepareProtocol`` parity sentinel.
 
-    A value's ``__conform__(self, protocol)`` hook is consulted with
-    this class as the second argument when ``_convert_bind_param``
-    cannot find a matching ``register_adapter`` entry. Mirrors the
-    stdlib lookup order: explicit registration first, then the value's
-    own ``__conform__``. The class itself carries no behaviour; it is
-    used purely as the protocol identity object.
+    Passed to a value's ``__conform__`` hook when no ``register_adapter``
+    entry matches; carries no behaviour, used only as protocol identity.
     """
 
     pass
@@ -900,47 +467,19 @@ class PrepareProtocol:
 def register_adapter(type_: type, adapter: Callable[[Any], Any], /) -> None:
     """Register a Python-side adapter callable for ``type_``.
 
-    Mirrors stdlib ``sqlite3.register_adapter``'s positional-only
-    signature: stdlib is implemented in C with positional-only
-    parameters, so cross-driver code that calls
-    ``register_adapter(type_=..., adapter=...)`` against dqlite
-    succeeded but crashed with ``TypeError`` against stdlib. Take
-    the same positional-only shape so the surface is identical.
+    ``adapter(value)`` runs before the wire encode for params of exactly
+    ``type_`` (e.g. ``register_adapter(uuid.UUID, lambda u: u.bytes)``).
+    Positional-only to match stdlib's C signature.
 
-    When a parameter of type ``type_`` reaches the bind layer,
-    ``adapter(value)`` runs in the driver before the wire encode.
-    Common uses:
+    No ``register_converter`` counterpart: the wire carries no declared
+    column types, so use ``row_factory`` for per-row decoding.
 
-    - ``register_adapter(decimal.Decimal, str)`` — bind ``Decimal``
-      via TEXT.
-    - ``register_adapter(uuid.UUID, lambda u: u.bytes)`` — bind
-      UUID via BLOB.
-    - ``register_adapter(pathlib.Path, str)``,
-      ``register_adapter(MyEnum, lambda e: e.value)``, etc.
-
-    Symmetric with stdlib's ``register_converter`` is NOT
-    implemented: dqlite's wire protocol does not carry declared
-    column types, so type-name-keyed converters cannot be
-    dispatched on read. Callers wanting per-row decoding can use
-    ``Cursor.row_factory`` (or inherit from
-    ``Connection.row_factory``) or post-fetch coercion in user code.
-
-    **Scope: process-global.** Adapters live in a single module-
-    level dict shared by every sync and async connection in the
-    process — registering on either ``dqlitedbapi`` or
-    ``dqlitedbapi.aio`` mutates the same dict. This matches stdlib
-    ``sqlite3.register_adapter`` pre-3.12 semantics. psycopg3-style
-    per-connection scoping (``Connection.adapters``) is NOT
-    supported: registering here affects every connection in the
-    process. Tests that register adapters should clean up via
+    Scope is process-global (a single module dict shared by sync and async
+    connections, matching pre-3.12 sqlite3); tests should clean up via
     :func:`unregister_adapter`.
     """
-    # PEP 249 §3 / §7: errors raised by the module subclass ``Error``
-    # so cross-driver code's ``except dbapi.Error:`` catches uniformly.
-    # Stdlib's ``sqlite3.register_adapter`` accepts anything silently;
-    # this driver tightens validation but keeps the rejection inside
-    # the PEP 249 hierarchy via ``ProgrammingError`` (the canonical
-    # class for "wrong argument shape").
+    # Stdlib accepts anything silently; tighten validation but keep the
+    # rejection in the PEP 249 hierarchy.
     if not callable(adapter):
         raise ProgrammingError(
             f"adapter must be callable, got {type(adapter).__name__}",
@@ -957,31 +496,10 @@ def register_adapter(type_: type, adapter: Callable[[Any], Any], /) -> None:
 def unregister_adapter(type_: type, /) -> None:
     """Remove a previously-registered adapter for ``type_``.
 
-    Counterpart to :func:`register_adapter`. Positional-only to
-    mirror :func:`register_adapter`'s stdlib-parity shape (stdlib
-    ``sqlite3`` is C-implemented and rejects keyword args). Module-
-    scoped, mirroring the registration side. Removes a user-installed
-    override; the underlying built-in default (ISO 8601 stringification
-    for ``datetime.date`` / ``datetime.datetime`` / ``datetime.time``)
-    is hardcoded inside ``_convert_bind_param`` and is unaffected.
-
-    Asymmetric semantics fix: ``register_adapter`` accepts overrides
-    for built-in types (the registry consult wins over the hardcoded
-    isinstance branch), so ``unregister_adapter`` must also accept
-    them — removing the override restores the built-in default. The
-    prior unconditional rejection left user-installed overrides
-    permanently installed with no public removal path. Matches stdlib
-    ``sqlite3.unregister_adapter`` (Python 3.13+) which accepts any
-    previously-registered type.
-
-    Raises :class:`~dqlitedbapi.exceptions.AdapterLookupError` if
-    ``type_`` has no entry in the registry. The exception multiple-
-    inherits from both :class:`~dqlitedbapi.exceptions.ProgrammingError`
-    (PEP 249 hierarchy purity, ``except dqlitedbapi.Error:`` catches)
-    and stdlib :class:`LookupError` (parity with stdlib
-    ``sqlite3.unregister_adapter`` which raises ``KeyError``), so
-    cross-driver code that catches either lineage handles the case
-    uniformly.
+    The built-in datetime defaults (hardcoded in ``_convert_bind_param``)
+    are unaffected; removing an override of a built-in type restores them.
+    Raises :class:`~dqlitedbapi.exceptions.AdapterLookupError` (subclass of
+    both ProgrammingError and LookupError) if no entry exists.
     """
     if type_ not in _ADAPTERS:
         raise AdapterLookupError(
@@ -994,182 +512,70 @@ def unregister_adapter(type_: type, /) -> None:
 def _convert_bind_param(value: Any) -> Any:
     """Map driver-level Python types to wire primitives.
 
-    The wire codec accepts only bool/int/float/str/bytes/None; datetime,
-    date, and time are driver-level conveniences that we stringify to
-    ISO 8601 before handing off. Everything else passes through
-    unchanged.
+    Stringifies datetime/date/time to ISO 8601; everything else passes
+    through. A ``register_adapter`` adapter takes precedence and can
+    override even the datetime handling.
 
-    A user-registered adapter (via ``register_adapter``) takes
-    precedence — it can override the built-in datetime / date / time
-    handlers and is the canonical hook for binding Decimal, UUID,
-    Path, Enum, etc.
+    Two deliberate divergences from stdlib sqlite3: adapter/``__conform__``
+    output that is itself a datetime chains into the ISO 8601 arm (stdlib
+    is single-pass), and datetime/date/time *subclasses* bind via
+    isinstance (stdlib requires an exact-type adapter).
 
-    **Adapter output chains into the built-in datetime arm.** A
-    user-registered adapter (or a ``__conform__`` hook) that returns
-    a ``datetime.datetime`` / ``datetime.date`` / ``datetime.time``
-    is further processed by the built-in ISO 8601 stringifier below.
-    Diverges from stdlib ``sqlite3.register_adapter``, which performs
-    a single pass and rejects non-primitive adapter output with
-    ``ProgrammingError("type 'X' is not supported")``. To match
-    stdlib semantics, ensure adapters return a wire primitive
-    (``int`` / ``float`` / ``str`` / ``bytes`` / ``None``) directly;
-    the dqlite leniency is a deliberate convenience (a
-    ``register_adapter(Money, money_to_aware_datetime)`` is the
-    natural shape on this driver) but cross-driver code is
-    silently driver-specific.
-
-    **datetime / date / time subclasses match via isinstance.** The
-    built-in arms below use ``isinstance(value, datetime.datetime |
-    datetime.date)`` (not exact-type), so a user-defined
-    ``class MyDate(datetime.date): pass`` binds silently via ISO 8601
-    encoding. Diverges from stdlib's exact-type adapter lookup, which
-    raises ``ProgrammingError`` for subclasses with no exact-type
-    adapter registered. To get stdlib-parity rejection, register a
-    no-op adapter for the subclass that raises ``DataError``
-    explicitly. To get a custom encoding for ``MyDate``, register an
-    adapter for the **exact** subclass via
-    ``register_adapter(MyDate, ...)`` — adapter lookup at the
-    registry is exact-type-keyed (matches stdlib), so a parent-class
-    registration does NOT cover subclasses. Two leniencies stack:
-    the isinstance built-in arm fires when no exact-type adapter
-    matches, then chains the result (the adapter-output chain above)
-    if the produced value is itself a datetime/date/time.
-
-    **TEXT binds with embedded NUL bytes are rejected.** dqlite's
-    wire protocol encodes TEXT as NUL-terminated UTF-8, so an
-    embedded ``"\\x00"`` cannot round-trip. The dbapi layer raises
-    :class:`~dqlitedbapi.exceptions.DataError` (in the ``dbapi.Error``
-    hierarchy) BEFORE handing the value to the wire encoder, with a
-    diagnostic naming the BLOB workaround. Diverges from stdlib
-    ``sqlite3``, whose ``sqlite3_bind_text`` accepts embedded NULs
-    (TEXT readback via ``sqlite3_column_text`` truncates at the
-    first NUL, but the value round-trips faithfully via
-    ``sqlite3_column_blob``). Cross-driver code targeting both
-    stdlib and dqlite must bind NUL-containing payloads as
-    ``bytes`` / ``memoryview`` on a BLOB column.
+    Rejects embedded-NUL TEXT binds with DataError (wire TEXT is
+    NUL-terminated UTF-8); stdlib stores them. Use a BLOB column instead.
     """
-    # User-registered adapter takes precedence. ``type(value)`` not
-    # isinstance: stdlib's contract is exact-class match (subclasses
-    # do not inherit the parent class's adapter unless explicitly
-    # registered). This keeps the contract predictable and matches
-    # ``sqlite3.register_adapter``.
+    # type(value) not isinstance: adapter lookup is exact-class match
+    # (stdlib contract; subclasses don't inherit the parent's adapter).
     original_type = type(value)
     adapter = _ADAPTERS.get(original_type)
-    # Track whether an adapter or ``__conform__`` actually transformed the
-    # value, so the post-chain validation below can tell "a registered
-    # adapter returned a non-primitive" apart from "no adapter exists for
-    # this type" and emit an accurate diagnostic for each.
+    # Distinguish "adapter returned a non-primitive" from "no adapter" for
+    # the post-chain validation diagnostic.
     transformed = False
     if adapter is not None:
         value = adapter(value)
         transformed = True
     else:
-        # Stdlib parity: fall back to the value's ``__conform__``
-        # hook with ``PrepareProtocol`` as the requested protocol
-        # (CPython ``Modules/_sqlite/microprotocols.c`` calls
-        # ``PyObject_GetAttrString(obj, "__conform__")``, which
-        # consults the instance first and then walks the class via
-        # the descriptor protocol). Use ``getattr(value, ...)`` so
-        # an instance-bound ``__conform__`` is honoured (matches
-        # stdlib). ``__conform__`` may legitimately return ``None``
-        # to decline; in that case the value is left unchanged so
-        # the wire encoder's normal type rejection runs.
-        #
-        # A raising ``__conform__`` propagates to the caller —
-        # matching stdlib `sqlite3.Cursor.execute`'s behaviour:
-        #
-        #     >>> class Bad:
-        #     ...     def __conform__(self, protocol):
-        #     ...         raise RuntimeError("boom")
-        #     >>> import sqlite3
-        #     >>> sqlite3.connect(":memory:").execute("SELECT ?", (Bad(),))
-        #     Traceback (most recent call last):
-        #       ...
-        #     RuntimeError: boom
-        #
-        # Verified against CPython's
-        # ``Modules/_sqlite/microprotocols.c::_pysqlite_microprotocols_adapt``:
-        # a NULL return with an exception set returns NULL to the
-        # bind-param machinery, which propagates the exception
-        # unwrapped. The previous silent-swallow disposition diverged
-        # from stdlib AND hid programmer bugs in user-defined
-        # ``__conform__`` implementations behind a wire-encode error.
+        # Stdlib parity: fall back to the value's ``__conform__`` hook
+        # (getattr so instance-bound hooks are honoured). None declines.
         proto_method = getattr(value, "__conform__", None)
         if proto_method is not None:
             try:
                 adapted = proto_method(PrepareProtocol)
             except BaseException as e:
-                # Stdlib parity (citation above): a raising
-                # ``__conform__`` propagates UNWRAPPED. Tag the
-                # exception with a marker attribute so the outer
-                # ``_convert_params`` wrap arm distinguishes
-                # user-method raises (propagate unchanged) from
-                # ``register_adapter`` raises (wrap as DataError
-                # per the existing pin). Using a marker attribute
-                # rather than a sentinel wrapper class preserves
-                # the exception identity / type for callers that
-                # invoke ``_convert_bind_param`` directly (e.g.
-                # tests pinning the unwrapped-propagation contract).
+                # Stdlib parity: a raising ``__conform__`` propagates
+                # UNWRAPPED. Tag it so the outer ``_convert_params`` wrap arm
+                # distinguishes this from register_adapter raises (which it
+                # wraps as DataError); a marker attr keeps the exception type
+                # intact for tests pinning the unwrapped-propagation contract.
                 e._dqlite_conform_propagate = True  # type: ignore[attr-defined]
                 raise
             if adapted is not None:
                 value = adapted
                 transformed = True
-    # ``datetime.datetime`` is a subclass of ``datetime.date`` but not
-    # of ``datetime.time``, so the datetime/date check must fire first
-    # for datetime inputs. ``datetime.time`` falls through to its own
-    # branch.
+    # datetime subclasses date (not time), so check datetime/date first.
     if isinstance(value, datetime.datetime | datetime.date):
         return _iso8601_from_datetime(value)
     if isinstance(value, datetime.time):
         return _iso8601_from_time(value)
-    # Post-chain validation: an adapter (or ``__conform__``) that
-    # returned a non-wire-primitive would otherwise reach the wire
-    # encoder and surface as ``EncodeError`` → ``DataError`` naming
-    # the post-chain type, hiding the actual registration site from
-    # the operator. Validate explicitly so the diagnostic names the
-    # original input type AND the adapter-produced type, pointing
-    # operators back at the ``register_adapter`` / ``__conform__``
-    # site that returned the invalid value. Raise ``DataError`` to
-    # preserve the existing wire-layer mapping that consumers
-    # (TestUnsupportedBindParameterTypes integration tests, PEP 249
-    # §7 "errors due to problems with the processed data") rely on;
-    # the diagnostic clarity is the substantive improvement, not the
-    # class flip.
+    # Validate adapter/__conform__ output here so the diagnostic names the
+    # registration site, rather than letting it surface as a wire EncodeError.
     if not isinstance(value, _WIRE_PRIMITIVES):
         if transformed:
-            # A registered adapter (or ``__conform__``) ran and returned a
-            # non-wire-primitive — name both the input type and the
-            # adapter-produced type so the operator can fix the adapter.
             raise DataError(
                 f"adapter for {original_type.__name__} produced "
                 f"non-primitive {type(value).__name__}; wire layer accepts "
                 f"only int / float / str / bytes / bytearray / memoryview / "
                 f"bool / None. Register an adapter that returns one of those."
             )
-        # No adapter / ``__conform__`` for this type — the value was never
-        # transformed. Say so plainly (mirroring stdlib's "type X is not
-        # supported") rather than blaming a non-existent adapter.
         raise DataError(
             f"type {original_type.__name__} is not supported; wire layer "
             f"accepts only int / float / str / bytes / bytearray / "
             f"memoryview / bool / None. Register an adapter that returns "
             f"one of those."
         )
-    # Pre-wire NUL guard: dqlite's wire TEXT is NUL-terminated UTF-8
-    # (see ``dqlitewire.encode_text``), so embedded NULs cannot
-    # round-trip. The wire encoder already rejects with
-    # ``EncodeError``, which ``cursor._call_client`` wraps as
-    # ``DataError`` — but the wire-layer diagnostic mentions the
-    # null-terminated-encoding internal mechanic, not the canonical
-    # workaround. Reject at the dbapi layer with a message naming
-    # the BLOB workaround so cross-driver operators porting from
-    # stdlib ``sqlite3`` (which stores embedded NULs in TEXT
-    # faithfully via ``sqlite3_bind_text``) see the actionable hint
-    # rather than the wire-internal message. Defence-in-depth: the
-    # wire-layer rejection stays in place. Runs AFTER the adapter /
-    # ``__conform__`` chain so an adapter that produces a NUL-bearing
-    # ``str`` is also caught.
+    # Reject embedded-NUL TEXT here (after the adapter chain) so the message
+    # names the BLOB workaround; the wire encoder also rejects but with an
+    # internal-mechanic diagnostic. See the docstring for the stdlib divergence.
     if isinstance(value, str) and "\x00" in value:
         raise DataError(
             f"TEXT bind with embedded NUL at offset "

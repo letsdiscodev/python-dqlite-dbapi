@@ -61,88 +61,35 @@ __all__ = ["Connection"]
 
 logger = logging.getLogger(__name__)
 
-# SQLite result code for "you tried to COMMIT/ROLLBACK but there's no
-# transaction active." The dqlite C server's gateway path
-# (``dqlite-upstream/src/gateway.c``) propagates the SQLite engine's
-# ``sqlite3_errcode``, which for stray COMMIT/ROLLBACK is
-# ``SQLITE_ERROR`` (1) only — ``SQLITE_MISUSE`` (21) is used for an
-# unrelated VFS file-control path (``vfs.c::vfsFileControlPersistWal``)
-# but never for transaction-state misuse on the wire. Pinned by the
-# integration test ``test_no_transaction_error_wording.py``. We
-# deliberately do NOT include 21 in the whitelist so a real misuse
-# error always surfaces. Check the numeric code first so a malicious
-# or impostor server cannot silence unrelated errors just by crafting
-# a message string that contains the magic substring. The substring
-# remains as a secondary filter because SQLite has many uses of code=1.
-#
-# We also deliberately do NOT include code=0. Upstream emits
-# ``failure(req, 0, "empty statement")`` from
-# ``gateway.c::handle_prepare_done_cb`` when the SQL parses to no
-# statement (empty / comment-only / whitespace-only). The wire layer
-# accepts ``code=0`` as a legal ``FailureResponse`` (see the wire-side
-# ``code=0`` round-trip pin), and the dbapi must surface that as a
-# normal ``OperationalError`` rather than silently swallow it at the
-# commit/rollback boundary — masking it would hide a real diagnostic
-# from callers who issued an empty COMMIT/ROLLBACK by accident.
+# SQLite codes for a stray COMMIT/ROLLBACK with no active transaction.
+# Deliberately excludes 21 (SQLITE_MISUSE, unrelated VFS path) and 0
+# (empty-statement failure, which must surface as a normal error). The
+# numeric gate runs before the substring filter so a hostile server
+# cannot silence unrelated errors via a crafted message.
 _NO_TX_PRIMARY_CODES: Final[frozenset[int]] = frozenset({1})
-# Type guard: all members must be primary SQLite codes (< 256)
-# because the lookup site below masks the incoming code with
-# ``primary_sqlite_code(...)`` before set membership. Adding an
-# extended code (e.g. a hypothetical ``SQLITE_ERROR_RETRY = 513``)
-# directly here would silently never match — ``513 & 0xFF == 1``,
-# set holds ``513``, no match.
-#
-# Wrapped in ``if __debug__:`` so the strip-under-``-O`` posture is
-# explicit to the reader (bare ``assert`` strips silently). The
-# runtime enforcement is the ride-along test
-# ``tests/test_no_tx_primary_codes_invariant.py`` which asserts the
-# same invariant under any Python invocation; this guard is
-# documentation for contributors editing the constant.
+# Members must be primary codes (< 256); the lookup site masks via
+# primary_sqlite_code() before set membership, so an extended code
+# (e.g. 513) would never match. ``if __debug__:`` makes the -O strip
+# explicit; runtime enforcement is test_no_tx_primary_codes_invariant.
 if __debug__:
     assert all(0 <= c < 256 for c in _NO_TX_PRIMARY_CODES), (
         "_NO_TX_PRIMARY_CODES must hold primary SQLite codes (< 256); "
         "use primary_sqlite_code(extended) at the lookup site instead."
     )
-# Substrings that mark a benign "no transaction was active" reply.
-# Imported from ``dqlitewire`` so the dbapi recogniser and the
-# client-layer ``_is_no_tx_rollback_error`` share one source of
-# truth — a wording drift in the server (or in the embedded SQLite
-# version) that drops one of these clauses cannot produce silent
-# layer divergence (client suppressing while the dbapi raises).
+# Shared with the client-layer recogniser so a server/SQLite wording
+# drift cannot make one layer suppress while the other raises.
 _NO_TX_SUBSTRINGS: Final[tuple[str, ...]] = NO_TRANSACTION_MESSAGE_SUBSTRINGS
 
-# Minimum bound (in seconds) for joining the background event-loop
-# thread on teardown. Both ``Connection.close()`` and
-# ``force_close_transport()`` consult the operator's
-# ``self._close_timeout`` for the join, but ``_close_timeout`` has a
-# 0.01 s floor (``_CLOSE_TIMEOUT_FLOOR``) — too tight in practice for
-# the queued ``loop.stop`` callback to land and the daemon thread to
-# observe the stop and exit cleanly on a non-stuck loop. Floor the
-# join at 0.1 s so the operator's tight close budgets do not race the
-# scheduling latency of the stop dispatch itself; a stuck loop still
-# bottoms out at this floor (matching the prior hard-coded behaviour
-# under tight tuning) while WAN-tuned operators set
-# ``close_timeout >> 0.1`` and get the full configured window.
+# Floor for the background-loop-thread join on teardown. close_timeout
+# can be as low as 0.01 s, too tight for the queued ``loop.stop`` to
+# land and the daemon thread to exit on a non-stuck loop.
 _LOOP_THREAD_JOIN_MIN_SECONDS: Final[float] = 0.1
 
-# Shortened join budget when the finalizer / force-close path fires on
-# a thread that ALSO hosts a running asyncio event loop. The sync
-# ``Connection`` is documented for sync-only callers, but mixed
-# deployments (test fixtures inside ``asyncio.run(...)``; SA sync
-# engines driven via greenlet from an async context) can drop the
-# last reference on the user's loop thread. ``threading.Thread.join``
-# parks the calling thread, so a full-budget join freezes every
-# coroutine on the user loop for up to ``close_timeout`` seconds.
-#
-# Detect that case via ``asyncio.get_running_loop()`` and shorten the
-# join to a perceptually-imperceptible window (~20 ms, one frame at
-# 50 fps). The daemon-thread loop processes its queued ``loop.stop``
-# independently; the daemon thread is registered ``daemon=True`` so
-# any residual lifetime past the shortened join still ends at
-# interpreter exit. The shortened budget trades a tighter foreign-
-# loop-thread join for a marginally longer daemon-thread lifetime
-# on pathological shutdowns — the right call when the alternative
-# is parking the user's event loop.
+# Shortened join budget when the finalizer / force-close runs on a
+# thread that itself hosts a running loop (mixed deployments): a
+# full-budget ``thread.join`` would park the user's loop for up to
+# close_timeout. ~20 ms instead; the daemon loop drains independently
+# and ``daemon=True`` bounds any residual lifetime to interpreter exit.
 _LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS: Final[float] = 0.02
 
 
@@ -153,36 +100,13 @@ def _join_budget_for_current_thread(
     _join_min: float = _LOOP_THREAD_JOIN_MIN_SECONDS,
     _foreign_floor: float = _LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS,
 ) -> float:
-    """Pick the daemon-thread join budget for the finalizer / force-
-    close path based on whether the calling thread hosts an asyncio
-    event loop.
+    """Join budget for the finalizer / force-close path: foreign-floor
+    when the calling thread hosts a loop, else max(close_timeout, min).
 
-    On a thread WITHOUT a running loop (sync-only deployment, normal
-    case), return ``max(close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)``
-    — the full configured budget plus the historical floor that
-    gives a non-stuck loop time to observe its queued ``loop.stop``.
-
-    On a thread WITH a running loop (mixed-deployment finalize or
-    SA sync-do_close called from a greenlet on the user loop),
-    return ``_LOOP_THREAD_JOIN_FOREIGN_FLOOR_SECONDS`` so the user
-    loop is parked for a perceptually-imperceptible window. The
-    daemon-thread loop drains independently; ``daemon=True`` ensures
-    no inherited thread leaks past interpreter exit.
-
-    Shutdown-safety capture: ``asyncio`` and the two floor constants
-    are captured as kwarg defaults at function-definition time so
-    that ``Py_FinalizeEx`` phase 3 — which sets module-level globals
-    to ``None`` via ``PyImport_Cleanup`` — cannot turn the loop
-    probe into an unraisable-hook traceback. Without this discipline
-    a finalize callback that calls into this helper after the
-    ``asyncio`` global has been cleared raises ``AttributeError``
-    out of ``get_running_loop``; the existing
-    ``contextlib.suppress(RuntimeError)`` at the
-    ``_cleanup_loop_thread`` call site does NOT catch
-    ``AttributeError``, and the ``force_close_transport`` call site
-    has no suppression at all. Mirrors the same discipline
-    ``_cleanup_loop_thread`` already applies to ``warnings`` /
-    ``logger`` / ``contextlib`` / ``sanitize_for_log``.
+    ``asyncio`` and the floor constants are captured as kwarg defaults
+    so a ``Py_FinalizeEx`` phase-3 globals-None-set cannot turn the
+    loop probe into an unraisable-hook traceback (the call sites'
+    RuntimeError suppression would not catch the AttributeError).
     """
     try:
         if _asyncio is None:
@@ -193,99 +117,46 @@ def _join_budget_for_current_thread(
     except RuntimeError:
         on_loop_thread = False
     except Exception:
-        # Phase-3 teardown can leave ``_asyncio`` referencing a
-        # partially-cleared module object whose attribute access
-        # raises non-RuntimeError exceptions. Fall back to the
-        # off-loop budget so the surrounding ``thread.join`` still
-        # runs with the configured close_timeout.
+        # Phase-3 teardown can leave ``_asyncio`` partially cleared;
+        # fall back to the off-loop budget.
         on_loop_thread = False
     if on_loop_thread:
         return _foreign_floor
     return max(close_timeout, _join_min)
 
 
-# Maximum number of per-RPC phases a single high-level sync call can
-# stack end-to-end. ``self._timeout`` is documented as a PER-PHASE
-# budget — the async surface honours this by wrapping each individual
-# RPC in ``asyncio.timeout(self._timeout)``, so a single
-# ``await execute(...)`` can legitimately take up to N × ``timeout``
-# wall-clock without any phase exceeding its budget. The sync wrapper
-# bridges the same async coroutine via ``Future.result(timeout=...)``
-# from a calling thread, so its single timeout window must absorb all
-# N phases — otherwise the sync surface fails on benign latency the
-# async surface tolerates (silent sync/async contract drift; see the
-# ``DqliteConnection.__init__`` and ``_operation_deadline`` docstrings
-# for the client-layer source of the per-phase contract).
-#
-# N = 4 covers the worst-case first-call-after-connect:
-#   1. handshake (Raft endpoint version negotiation),
-#   2. open_database (database-id allocation),
-#   3. query_sql send (request frame),
-#   4. read+drain (response + any continuation frames).
-# Steady-state calls (handshake + open already amortised) bottom out
-# at N = 2 (send + read+drain), so the multiplier is conservative for
-# the common case and authoritative for the worst case. Document each
-# phase here so a future protocol change that adds a phase updates
-# the multiplier; the per-phase budget itself stays the operator's
-# ``timeout`` knob.
+# ``self._timeout`` is a PER-PHASE budget; the async surface wraps
+# each RPC in its own ``asyncio.timeout(timeout)``, so a single sync
+# call (bridged via one ``Future.result(timeout=...)``) must absorb
+# all phases or it fails on benign latency the async surface tolerates.
+# N=4 covers the worst case: handshake + open_database + send +
+# read+drain. Steady-state bottoms out at N=2.
 _SYNC_PHASES_MULTIPLIER: Final[int] = 4
 
-# Fallback bound (in seconds) used by the ``weakref.finalize``-backed
-# cleanup path (``_cleanup_loop_thread``) when invoked without an
-# explicit close_timeout. The finalizer is captured at loop-creation
-# time and ordinarily receives the operator's ``self._close_timeout``
-# as a positional argument so its budget matches the graceful close
-# path; this constant is the conservative cap retained for the rare
-# case where the captured value is missing or invalid.
+# Fallback join budget for ``_cleanup_loop_thread`` when the captured
+# ``close_timeout`` is missing or invalid.
 _LOOP_THREAD_JOIN_FALLBACK_SECONDS: Final[float] = 5.0
 
 
 def _validate_timeout(timeout: float) -> None:
-    """Raise ProgrammingError if ``timeout`` is not a positive finite number.
-
-    Delegates to the client layer's public ``validate_timeout`` (the
-    source of truth for the bool/finite/positive predicate) and
-    translates its ``TypeError`` / ``ValueError`` to PEP 249
-    ``ProgrammingError``. Sibling pattern to ``_wrap_positive_int``
-    below — both wrap client-layer validators that deliberately use
-    Python-convention exceptions for the client-only path.
-
-    Previously this function re-implemented the predicate, which
-    risked silent drift from the client layer (e.g. accepting
-    ``Decimal`` in one but not the other). The shared validator
-    keeps the contract single-source-of-truth.
-    """
+    """Raise ProgrammingError if ``timeout`` is not a positive finite number."""
     from dqliteclient import validate_timeout as _client_validate_timeout
 
     try:
         _client_validate_timeout(timeout)
     except (TypeError, ValueError) as e:
-        # Preserve the established error wording for tests that
-        # match on ``"timeout must be a positive finite number"``.
         raise ProgrammingError(str(e)) from e
 
 
-# Upper bound for ``max_continuation_frames`` enforced at the dbapi
-# boundary. Mirror of the SA URL/connect_args cap (which uses the same
-# 10x factor over the wire-default ``_DEFAULT_MAX_CONTINUATION_FRAMES``)
-# so the same input that SA rejects above-cap is also rejected by
-# direct dbapi callers — defence-in-depth against operator typos that
-# would otherwise propagate to the wire layer and grant an attacker /
-# misconfiguration ten-million-frame continuation budgets. Tightly
-# paired with the SA-side ``_CONNECT_KWARG_ALLOWED`` cap that uses
-# the same factor.
+# Mirrors the SA URL/connect_args cap (same 10x factor) so direct
+# dbapi callers reject the same above-cap typos — defence against
+# granting a hostile/misconfigured server a huge decode budget.
 MAX_CONTINUATION_FRAMES_UPPER_BOUND: Final[int] = _DEFAULT_MAX_CONTINUATION_FRAMES * 10
 
 
-# Stdlib ``sqlite3.Connection.isolation_level`` pre-3.12 accept-set
-# (less ``None``). The empty string ``""`` is the stdlib DEFAULT value
-# of the property; cross-driver round-trip code (``dst.isolation_level
-# = src.isolation_level`` against a stdlib ``sqlite3.Connection``)
-# silently broke on this driver because the setter only accepted
-# ``None``. dqlite is fixed-mode autocommit at the wire layer; these
-# five values collapse to the same behaviour, so accepting them as
-# no-ops preserves cross-driver portability without changing wire
-# behaviour.
+# Stdlib ``isolation_level`` pre-3.12 accept-set (less ``None``).
+# dqlite is fixed-mode autocommit so these collapse to no-ops;
+# accepting them preserves the cross-driver round-trip idiom.
 _STDLIB_IMPLICIT_TX_VALUES: Final[frozenset[str]] = frozenset(
     {"", "DEFERRED", "IMMEDIATE", "EXCLUSIVE"}
 )
@@ -297,22 +168,10 @@ def _wrap_positive_int(
     *,
     upper: int | None = None,
 ) -> int | None:
-    """Wrap the client-layer ``validate_positive_int_or_none``'s
-    ``TypeError`` / ``ValueError`` into PEP 249 ``ProgrammingError``.
+    """Wrap ``validate_positive_int_or_none``'s errors as ProgrammingError.
 
-    PEP 249 §7 requires every error originating from the driver to be
-    a subclass of ``Error``. The client-layer validator deliberately
-    raises Python-convention exceptions — correct for client-only
-    consumers; the dbapi entry points are the boundary
-    that translates to PEP 249 shapes. Sibling pattern to the
-    ``_client_parse_address`` ``ValueError → InterfaceError`` wrap and
-    to ``_validate_timeout``'s direct ``ProgrammingError``.
-
-    ``upper`` (if given) caps the accepted value. Mirrors the SA URL/
-    connect_args validator's upper bound so direct dbapi callers get
-    the same defence-in-depth that SA already provides for the
-    ``?max_continuation_frames=N`` URL form and the
-    ``connect_args={"max_continuation_frames": N}`` form.
+    ``upper`` (if given) caps the accepted value, mirroring the SA
+    URL/connect_args bound for direct dbapi callers.
     """
     try:
         validated = validate_positive_int_or_none(value, name)
@@ -329,47 +188,25 @@ def _wrap_positive_int(
     return validated
 
 
-# Re-export the client-layer public constant under the established
-# underscore-private name so existing references (the validator below,
-# test fixtures, and the docstring at the top of this module) keep
-# working without churn. The single-source-of-truth lives in
-# ``dqliteclient.CLOSE_TIMEOUT_FLOOR``; a future tuning is a one-place
-# change in the client layer.
+# SSOT lives in ``dqliteclient.CLOSE_TIMEOUT_FLOOR``; re-exported here
+# under the established private name to avoid reference churn.
 _CLOSE_TIMEOUT_FLOOR: Final[float] = _client_close_timeout_floor
 
 
-# Canonical prefix for the wrap-as-OperationalError diagnostic emitted
-# by every connect-time arm in this module — eight raises across
-# ``_build_and_connect``'s post-construct exception branches. The SA
-# dialect's ``is_disconnect`` substring matcher reads the lowercase
-# truncation of this prefix; the dbapi-side assertion tests read the
-# full prefix verbatim. Single-source-of-truth so a future wording
-# change is a one-place edit and the SA matcher updates in lockstep.
+# Prefix on every connect-time OperationalError wrap. SA's is_disconnect
+# matches a lowercase truncation of it; dbapi tests match it verbatim.
+# Keep as SSOT so a wording change updates both in lockstep.
 FAILED_TO_CONNECT_PREFIX: Final[str] = "Failed to connect: "
 
 
-# Re-export the cluster-policy-rejection prefix + helper from the
-# shared ``_constants`` module so the cursor-side rewrap site can
-# share the SSOT without a circular import.
+# Shared with the cursor-side rewrap site (avoids a circular import).
 from dqlitedbapi._constants import (  # noqa: E402
     cluster_policy_rejection_message,
 )
 
 
 def _validate_close_timeout(close_timeout: float) -> None:
-    """Raise ProgrammingError if ``close_timeout`` is not a positive finite number ≥ 0.01.
-
-    Delegates to the client layer's public ``validate_timeout`` with
-    ``min_value=_CLOSE_TIMEOUT_FLOOR`` so the floor is enforced
-    uniformly across direct dqliteclient callers, the dbapi entry
-    points, and the SA URL parser. Translates the client's
-    ``TypeError`` / ``ValueError`` to PEP 249 ``ProgrammingError``.
-
-    Forwards the close-timeout-specific FIN-flush rationale to the
-    validator so dbapi-layer / SA-URL operators see the same
-    operator-facing explanation as direct ``DqliteConnection`` /
-    ``ConnectionPool`` callers when the floor trips.
-    """
+    """Raise ProgrammingError if close_timeout is not a positive finite number >= floor."""
     from dqliteclient import CLOSE_TIMEOUT_FLOOR_RATIONALE
     from dqliteclient import validate_timeout as _client_validate_timeout
 
@@ -384,70 +221,31 @@ def _validate_close_timeout(close_timeout: float) -> None:
         raise ProgrammingError(str(e)) from e
 
 
-# Process-wide ``ClusterClient`` cache for the leader-discovery probe.
-# Keyed by the full ``(address, governor)`` tuple so two configurations
-# never share state. Without the cache, every dbapi ``connect()`` /
-# every SA pool slot warm-up constructs a fresh ``ClusterClient`` —
-# discarding both the single-flight ``_find_leader_tasks`` slot map
-# AND the ``_last_known_leader`` fast-path cache. Under N concurrent
-# SA pool checkouts after a leader flip, the cluster sees N
-# independent leader-discovery sweeps where one would suffice.
-#
-# Fork-safety: the cache is wholesale-invalidated on fork via the same
-# ``_current_pid`` token that ``DqliteConnection`` uses (see
-# ``dqliteclient.connection`` lines 45-78). The first ``_resolve_leader``
-# call in a child process observes the pid mismatch and clears the
-# inherited cache; the parent's ``ClusterClient`` instances would
-# otherwise carry parent-allocated ``asyncio.Lock`` / ``asyncio.Task``
-# references that the child's event loop cannot make progress on.
-#
-# Strong-reference (``dict``, not ``WeakValueDictionary``): the
-# ClusterClient must outlive a single ``find_leader`` call so the
-# fast-path cache survives across calls; nothing else holds a
-# reference. The cap (``_RESOLVE_LEADER_CACHE_MAX``) bounds the worst
-# case to a single distinct configuration per dbapi ``connect()`` call;
-# typical SA deployments use one config per Engine, so the cap is
-# only reached by adversarial / highly-fragmented usage.
+# Process-wide ``ClusterClient`` cache for the leader-discovery probe,
+# keyed by the full config tuple. Without it every connect()/pool
+# warm-up builds a fresh client, discarding the single-flight slot map
+# and ``_last_known_leader`` fast-path (N parallel sweeps after a flip
+# where one would do). Invalidated wholesale on fork (parent-loop-bound
+# Lock/Task refs cannot progress in the child). Strong dict so the
+# client outlives a single ``find_leader`` call; cap bounds the worst
+# case.
 _RESOLVE_LEADER_CACHE: dict[tuple[object, ...], ClusterClient] = {}
 _RESOLVE_LEADER_CACHE_PID: int = os.getpid()
 _RESOLVE_LEADER_CACHE_MAX: Final[int] = 32
-# Module-level lock serialising the read-check-construct-insert
-# composite. Each individual dict op is GIL-atomic on CPython, but
-# the composite is not — without serialisation, two threads that
-# both observe ``cluster is None`` for the same key construct
-# distinct ClusterClient instances and race on the dict insert,
-# orphaning whichever loses (and defeating the single-flight
-# collapse the cache is for). The lock is held across
-# ``ClusterClient.__init__``; that constructor must NOT block on
-# async I/O (it doesn't today — wire I/O happens lazily inside
-# ``find_leader``). If a future change adds async work to the
-# ``__init__`` path, the lock-while-awaiting becomes a deadlock
-# risk and this gate must be reshaped (e.g. construct outside the
-# lock, then check-and-insert under the lock).
-#
-# Not ``Final`` because the after-fork hook below replaces this with
-# a fresh lock so a child that inherited the lock in a held state
-# (e.g. parent forked while another thread held it) cannot deadlock.
-# A multi-threaded parent forking is uncommon (and discouraged), but
-# the dbapi sync layer DOES start a daemon ``_loop_thread`` per
-# Connection — so any process that opens a sync connection then
-# forks is multi-threaded by definition.
+# Serialises the read-check-construct-insert composite (the individual
+# dict ops are GIL-atomic but the composite is not). Held across
+# ``ClusterClient.__init__``, which must NOT do async I/O (it doesn't
+# today); if that changes, reshape to construct outside the lock.
+# Not Final: the after-fork hook replaces it so a child inheriting a
+# held lock cannot deadlock (the sync layer starts a daemon thread per
+# Connection, so a forking process is multi-threaded by definition).
 _RESOLVE_LEADER_CACHE_LOCK: threading.Lock = threading.Lock()
 
 
 def _at_fork_replace_resolve_leader_cache_lock() -> None:
-    """Replace the module-level cache lock with a fresh instance in
-    the child process so a parent that forked while a thread held
-    the lock does not leave the child with a permanently-held
-    inherited lock (deadlock on first cache access).
-
-    The cache itself is cleared inside the lock-protected composite
-    on a pid mismatch (see ``_get_resolve_leader_cluster``); this
-    callback complements that path by ensuring the lock is grabbable
-    in the first place. Without this hook, a child that inherits a
-    held lock would block forever on ``acquire`` and the pid
-    mismatch path would never run.
-    """
+    """Replace the cache lock in the child so an inherited held lock
+    cannot deadlock first cache access (the pid-mismatch clear inside
+    ``_get_resolve_leader_cluster`` needs the lock grabbable first)."""
     global _RESOLVE_LEADER_CACHE_LOCK
     _RESOLVE_LEADER_CACHE_LOCK = threading.Lock()
 
@@ -466,48 +264,17 @@ def _get_resolve_leader_cluster(
     dial_func: DialFunc | None = None,
     max_message_size: int | None = None,
 ) -> ClusterClient:
-    """Return a process-shared :class:`ClusterClient` for the
-    leader-discovery probe, keyed by the (loop, address, governor)
-    tuple.
+    """Process-shared :class:`ClusterClient` for the leader probe, keyed
+    by ``(loop_id, address, governors, dial_func)``.
 
-    The single-flight collapse and ``_last_known_leader`` fast-path
-    inside ``ClusterClient`` only amortise across callers of the
-    *same* instance. Constructing a fresh client per ``connect()``
-    defeats both. A process-wide cache restores the invariant.
+    Keyed by ``id(running_loop)`` so a worker-thread loop never reuses a
+    client whose ``_find_leader_tasks`` were created on another loop
+    (``asyncio.shield`` of a foreign-loop task raises RuntimeError,
+    escaping the dbapi.Error tree). LRU-evicted at cap so closed loops
+    don't leak; id-recycle after GC is bounded by the cap.
 
-    **Loop isolation**: keyed additionally by ``id(running_loop)``
-    so a sync ``Connection`` running on a worker-thread loop does
-    not reuse a ``ClusterClient`` whose ``_find_leader_tasks`` were
-    created on a different loop. ``await asyncio.shield(<foreign-
-    loop task>)`` raises ``RuntimeError`` which escapes the
-    ``dbapi.Error`` hierarchy and SA's ``is_disconnect``
-    classifier; without per-loop keying, multi-thread sync dbapi
-    callers (Flask/Django handlers each opening their own
-    Connection) would non-deterministically hit that path. The
-    ``id(loop)`` key is paired with LRU eviction at cap so closed
-    loops do not leak entries indefinitely; under churn, stale
-    entries get evicted naturally. ``id`` recycling after loop GC
-    is a residual risk bounded by the 32-slot cap — the recycled
-    loop's predecessor's tasks would already be GC-eligible by
-    that point.
-
-    Cleared wholesale on fork: ``ClusterClient`` instances inherit
-    parent ``asyncio.Lock`` / pending ``asyncio.Task`` references
-    that are bound to the parent's event loop and cannot make
-    progress in the child. The pid check is cheap (Python int
-    equality) and runs only on the cache-lookup path.
-
-    Async-only: must be called from inside a running event loop.
-    The function raises ``RuntimeError`` if no running loop is
-    found — fail loud rather than silently caching against a
-    sentinel ``loop_id``. Today the only callers are
-    ``_resolve_leader`` (async) and the cross-loop test fixtures.
-    Reaching this branch is a programmer-invariant violation on a
-    structurally private helper (``_``-prefixed); ``RuntimeError``
-    matches what ``asyncio.get_running_loop()`` itself raises and is
-    PEP 249 §7-correct (``InterfaceError`` is reserved for
-    "problems with the database interface rather than the database
-    itself", neither of which describes a missing loop).
+    Async-only: raises RuntimeError if there's no running loop (fail
+    loud rather than cache against a sentinel loop_id).
     """
     global _RESOLVE_LEADER_CACHE_PID
     try:
@@ -518,30 +285,11 @@ def _get_resolve_leader_cluster(
             "running event loop (via _run_sync)."
         ) from e
 
-    # ``dial_func`` is keyed by callable identity — operators
-    # constructing a single module-level dialer get a single cache
-    # entry (the common case); operators constructing a fresh
-    # lambda per request degrade to one cache entry per identity
-    # (wasteful but correct, bounded by ``_RESOLVE_LEADER_CACHE_MAX``).
-    # Distinct dialers MUST NOT share a ``ClusterClient`` because
-    # they carry different transport contracts (TLS vs plaintext,
-    # AF_UNIX vs TCP, custom KEEPALIVE, etc.) — sharing would let
-    # the first dialer's connection serve a request that should
-    # have used the second's.
-    #
-    # The callable itself goes in the key (NOT ``id(dial_func)``):
-    # CPython's ``id()`` is the memory address of the object and is
-    # recycled as soon as the object is GC'd. Function / lambda /
-    # ``functools.partial`` / bound-method objects all hash by
-    # identity and compare equal only to themselves, so using the
-    # callable directly yields the same effective key while pinning
-    # the dial_func for the lifetime of the cache entry — eliminating
-    # the post-eviction id-recycle window where a freshly-allocated
-    # lambda with a different transport contract could land at the
-    # same memory address. Cost: the cache pins the dial_func until
-    # the entry evicts (bounded by ``_RESOLVE_LEADER_CACHE_MAX=32``).
-    # The ``id(loop)`` pairing above is the analogous bounded-
-    # acceptable hazard documented at lines 398-403.
+    # Distinct dialers MUST NOT share a client (different transport
+    # contracts: TLS/plaintext, AF_UNIX/TCP, etc.). The callable itself
+    # goes in the key (not ``id(dial_func)``) so it hashes by identity
+    # and is pinned for the entry's lifetime — closes the id-recycle
+    # window where a fresh lambda lands at the same address.
     key: tuple[object, ...] = (
         loop_id,
         address,
@@ -553,17 +301,9 @@ def _get_resolve_leader_cluster(
         dial_func,
     )
 
-    # Double-checked init: look up under the lock, drop the lock to
-    # construct, retake the lock to register. The previous shape held
-    # the lock across ``ClusterClient.__init__`` — sound today because
-    # the constructor does no ``await`` and no I/O, but a future
-    # refactor that adds either would turn the held-across-init shape
-    # into a deadlock trap (the loop thread yields at the await,
-    # any sibling coroutine that also calls this helper synchronously
-    # parks on ``threading.Lock.acquire()`` with no way to resume).
-    # Constructing outside the lock costs one wasted ``ClusterClient``
-    # per lost concurrent race — bounded by the cache hit rate; in
-    # steady state the racy path almost never fires.
+    # Double-checked init: look up under the lock, construct outside it,
+    # retake to register. Holding the lock across ``__init__`` would
+    # deadlock if a future refactor adds an await/I/O there.
     with _RESOLVE_LEADER_CACHE_LOCK:
         pid = get_current_pid()
         if pid != _RESOLVE_LEADER_CACHE_PID:
@@ -573,18 +313,10 @@ def _get_resolve_leader_cluster(
         if cluster is not None:
             return cluster
 
-    # Construct OUTSIDE the lock. ``max_message_size`` is intentionally
-    # NOT forwarded to ``ClusterClient.__init__``: ClusterClient lacks
-    # the constructor kwarg today (only its per-call ``connect()``
-    # method accepts it). The leader-probe RPC returns
-    # ``LeaderResponse`` which is bounded well below the wire-default
-    # 64 MiB; the operator's larger cap matters only for the eventual
-    # ``DqliteConnection`` data session, which IS built with
-    # ``max_message_size`` at the call site below in
-    # ``_build_and_connect``. Cache-key membership is still kept on
-    # ``max_message_size`` so the dbapi connect() variant produces
-    # independent cache entries — avoids cross-contamination if
-    # ``ClusterClient`` ever grows the kwarg.
+    # ``max_message_size`` is intentionally NOT forwarded: ClusterClient
+    # lacks the ctor kwarg, and the leader-probe LeaderResponse is well
+    # below the wire default. Still in the cache key so connect()
+    # variants stay independent if ClusterClient ever grows the kwarg.
     new_cluster = ClusterClient(
         MemoryNodeStore([address]),
         timeout=timeout,
@@ -595,10 +327,9 @@ def _get_resolve_leader_cluster(
     )
 
     with _RESOLVE_LEADER_CACHE_LOCK:
-        # Recheck — a concurrent caller may have inserted while we
-        # were constructing. The first writer wins; ``new_cluster``
-        # is discarded on the lost race. Re-validate the PID too in
-        # case a fork happened during the unlocked construction.
+        # Recheck: a concurrent caller may have inserted while we
+        # constructed (first writer wins). Re-validate PID in case a
+        # fork happened during the unlocked construction.
         pid = get_current_pid()
         if pid != _RESOLVE_LEADER_CACHE_PID:
             _RESOLVE_LEADER_CACHE.clear()
@@ -607,24 +338,9 @@ def _get_resolve_leader_cluster(
         if existing is not None:
             return existing
         if len(_RESOLVE_LEADER_CACHE) >= _RESOLVE_LEADER_CACHE_MAX:
-            # FIFO eviction: drop the oldest entry. Two effects,
-            # both acceptable for this cache's intended use:
-            # 1. Fast-path lookup for that key is lost — the next
-            #    ``find_leader`` against the evicted key
-            #    rediscovers in one sweep.
-            # 2. Single-flight collapse is temporarily violated:
-            #    if a concurrent caller arrives on the evicted
-            #    key while the prior awaiter still holds a
-            #    reference to the in-flight task, the new caller
-            #    constructs a brand-new ClusterClient (fresh
-            #    ``_find_leader_tasks`` slot map) and runs ITS
-            #    own parallel sweep against the same cluster.
-            # Both effects self-heal — the cache backfills on the
-            # next successful resolve, and the original in-flight
-            # sweep completes independently. Cost: one wasted
-            # sweep per evicted key with concurrent demand. The
-            # cache size cap (_RESOLVE_LEADER_CACHE_MAX) bounds
-            # the per-loop memory pressure.
+            # FIFO eviction of the oldest entry. Costs at most one
+            # wasted sweep per evicted key with concurrent demand;
+            # self-heals on the next resolve.
             _RESOLVE_LEADER_CACHE.pop(next(iter(_RESOLVE_LEADER_CACHE)))
         _RESOLVE_LEADER_CACHE[key] = new_cluster
         return new_cluster
@@ -640,43 +356,15 @@ async def _resolve_leader(
     trust_server_heartbeat: bool = False,
     dial_func: DialFunc | None = None,
 ) -> str:
-    """Resolve the cluster's current leader address from a seed.
+    """Follow the leader-redirect chain from a seed address; return the
+    leader's address.
 
-    Bootstraps from the user-supplied ``address`` (the URL host:port
-    in the SA dialect's case) and uses :class:`ClusterClient` to
-    follow the leader-redirect chain — same pattern go-dqlite's
-    ``database/sql`` driver implements via
-    ``client.NewLeaderConnector(store)``. Without this step,
-    connecting to a demoted-leader address surfaces
-    ``SQLITE_IOERR_NOT_LEADER`` from the server even though the
-    cluster has a healthy leader at a different address; the SA
-    pool's reconnect-after-pre-ping path cannot recover.
-
-    Threads the governor set used by the subsequent
-    :class:`DqliteConnection` so the leader-discovery probe runs
-    with the same configuration as the eventual data session. Without
-    forwarding, an operator who set ``trust_server_heartbeat=True``
-    finds the *first* round-trip — leader discovery — running with
-    the default opt-out, defeating the very setting they enabled.
-    Likewise ``max_total_rows`` / ``max_continuation_frames`` matter
-    for admin paths (``cluster_info`` / ``dump``) reachable through
-    the resolved client.
-
-    ``dial_func`` is threaded for the same reason: an operator
-    requiring a TLS/AF_UNIX/custom-KEEPALIVE dialer must see it
-    honoured on the leader-discovery probe (the FIRST round-trip),
-    not just the post-resolve data session. Without forwarding, a
-    TLS-required deployment opens a plaintext leader-probe socket
-    against the seed — either failing the TLS-only listener with an
-    unhelpful "connection reset" diagnostic or (worse) succeeding
-    against a TLS-terminating proxy that tolerates plaintext, making
-    the first round-trip silently unencrypted.
-
-    Wraps the seed in a single-node :class:`MemoryNodeStore` and
-    delegates to :meth:`ClusterClient.find_leader`. Returns the
-    leader's address on success; raises the underlying
-    ``ClusterError`` / ``ClusterPolicyError`` for the surrounding
-    error-translation arms in :func:`_build_and_connect` to handle.
+    Without this, connecting to a demoted-leader address surfaces
+    SQLITE_IOERR_NOT_LEADER even though a healthy leader exists
+    elsewhere. The governors and ``dial_func`` are threaded so the
+    probe (the FIRST round-trip) runs with the same config as the data
+    session — notably so a TLS/AF_UNIX dialer isn't bypassed by a
+    plaintext probe socket.
     """
     cluster = _get_resolve_leader_cluster(
         address=address,
@@ -705,25 +393,11 @@ async def _build_and_connect(
     max_message_size: int | None = None,
     session_mode: str = "immediate",
 ) -> DqliteConnection:
-    """Build a DqliteConnection with the given governors and connect it.
+    """Resolve the leader, then construct and connect a DqliteConnection
+    against it.
 
-    Performs the dqlite production-grade connect sequence:
-
-    1. Resolve the current leader via :func:`_resolve_leader` (one
-       round-trip against the seed; if the seed is the leader, the
-       leader-info reply is its own address).
-    2. Construct + connect a :class:`DqliteConnection` against the
-       leader address.
-
-    Wraps the sequence that both the sync and async Connection
-    flavours execute under their respective locks. The
-    ``OperationalError`` message phrasing ("Failed to connect: ...")
-    is intentionally verbatim so test assertions that match on the
-    prefix continue to pass.
-
-    Mirrors the canonical go-dqlite/driver layering — applications
-    should not need to special-case leader-flips between
-    connections; the dbapi handles the redirect transparently.
+    The "Failed to connect: ..." OperationalError phrasing is verbatim
+    so prefix-matching tests keep passing.
     """
     try:
         leader_address = await _resolve_leader(
@@ -736,9 +410,8 @@ async def _build_and_connect(
             dial_func=dial_func,
         )
     except _client_exc.ClusterPolicyError as e:
-        # Operator allowlist rejected a redirect target. Surface as
-        # InterfaceError with the canonical prefix — symmetric with
-        # the post-construct ClusterPolicyError arm below.
+        # Allowlist rejected a redirect target; symmetric with the
+        # post-construct ClusterPolicyError arm below.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(
             cluster_policy_rejection_message("during leader discovery", str(e)),
@@ -746,13 +419,9 @@ async def _build_and_connect(
             raw_message=raw_msg,
         ) from e
     except _client_exc.ClusterError as e:
-        # All nodes in the seed's resolved store rejected the leader
-        # query (no node is currently leader, all unreachable, etc.).
-        # Surface as OperationalError so the SA pool's retry loop
-        # classifies it correctly. Different from the post-construct
-        # ClusterError arm only in the message prefix — operators
-        # reading logs need to tell "couldn't find leader" from
-        # "found leader but couldn't connect".
+        # No leader / all nodes unreachable. OperationalError for the
+        # SA pool retry loop; distinct prefix from the post-construct
+        # arm so logs tell "no leader" from "found but couldn't connect".
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise OperationalError(
             f"Failed to find leader from {address}: {e}",
@@ -760,46 +429,26 @@ async def _build_and_connect(
             raw_message=raw_msg,
         ) from e
     except OSError as e:
-        # Defence-in-depth, symmetric with the post-construct
-        # ``conn.connect()`` block's ``OSError`` arm. The in-tree
-        # ``find_leader`` wraps every per-probe ``OSError`` in
-        # ``_ProbeMiss`` and aggregates them into ``ClusterError`` —
-        # so on the happy path this arm is unreached. The arm exists
-        # for: (a) custom ``NodeStore``s that raise ``OSError`` from
-        # ``get_nodes()`` (e.g. a file-backed YAML store with a
-        # missing file); (b) ``socket.gaierror`` from future DNS
-        # paths; (c) ``TimeoutError`` (an ``OSError`` subclass since
-        # Python 3.11) leaked from a misconfigured ``asyncio.wait_for``
-        # inside a third-party ``cluster_factory``. PEP 249 §7
-        # requires Error-class surface; ``OperationalError`` is the
-        # right shape for transport-class faults.
+        # Unreached on the happy path (find_leader aggregates per-probe
+        # OSErrors into ClusterError); catches custom NodeStore OSError,
+        # future gaierror, or a leaked TimeoutError. PEP 249 §7 surface.
         raise OperationalError(
             f"Failed to find leader from {address}: {e}",
             code=None,
             raw_message=str(e),
         ) from e
     except BaseExceptionGroup as eg:
-        # PEP 249 §7 mandates Error-class surface. ``BaseExceptionGroup``
-        # does not inherit from ``Exception`` so ``except Exception:``
-        # blocks miss it; no client class matches it either. The
-        # in-tree primary raise path is ``ConnectionPool.initialize``;
-        # a future dbapi-side pool or third-party retry middleware
-        # wrapping the connect coro could route a group here. Mirror
-        # the ``_call_client`` discipline. See
-        # ``cursor.py::_call_client`` for the full rationale —
-        # including the PEP 654 cancel-class split that re-raises any
-        # ``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit``
-        # children rather than silently wrapping them as
-        # ``OperationalError``.
+        # BaseExceptionGroup bypasses every per-class arm (not an
+        # Exception). PEP 654 cancel-class split re-raises cancel/KI/
+        # SystemExit children rather than wrapping them. See
+        # cursor.py::_call_client for the full rationale.
         cancel_group, remainder = eg.split(
             lambda e: isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit))
         )
         if cancel_group is not None:
             raise cancel_group from None
-        # Defensive narrowing via ``if`` instead of ``assert`` so the
-        # subsequent ``remainder.exceptions`` access doesn't surface
-        # ``AttributeError`` under ``python -O``. Logically
-        # unreachable under the BaseExceptionGroup.split contract.
+        # ``if`` not ``assert`` so the .exceptions access below doesn't
+        # raise AttributeError under -O. Unreachable per the split contract.
         if remainder is None:
             raise eg
         child_classes = {type(c).__name__ for c in remainder.exceptions}
@@ -827,29 +476,14 @@ async def _build_and_connect(
     try:
         await conn.connect()
     except _client_exc.OperationalError as e:
-        # Preserve the server-supplied code so sqlalchemy-dqlite's
-        # is_disconnect classifier can recognise leader-change codes
-        # (SQLITE_IOERR_NOT_LEADER / _LEADERSHIP_LOST) on the connect
-        # path via the code-based branch, matching the query path.
-        # Plumb raw_message so callers that want the un-truncated
-        # server text don't have to walk __cause__.
-        #
-        # Route through the same primary-code classifier the cursor
-        # path uses so connect-time CORRUPT / NOTADB / FORMAT etc.
-        # surface as the right PEP 249 subclass instead of a bare
-        # OperationalError. Without this, an operator pointing dqlite
-        # at a non-database file sees `OperationalError("Failed to
-        # connect: ...")` instead of the more diagnostic
-        # `DatabaseError`.
+        # Route through the cursor-path primary-code classifier so
+        # connect-time CORRUPT/NOTADB/etc. surface as the right PEP 249
+        # subclass and leader-change codes carry through for
+        # is_disconnect. The prefix goes on ``message`` only, never on
+        # raw_message (which is verbatim server text).
         from dqlitedbapi.cursor import _classify_operational
 
         exc_cls = _classify_operational(e.code)
-        # Preserve the un-modified server text on raw_message so
-        # callers reading the un-truncated diagnostic see exactly
-        # what the server emitted. The "Failed to connect: " prefix
-        # belongs on the user-facing ``message`` only — prefixing
-        # raw_message would contaminate the "verbatim server text"
-        # contract.
         if issubclass(exc_cls, DatabaseError) or issubclass(exc_cls, InterfaceError):
             raise exc_cls(
                 f"{FAILED_TO_CONNECT_PREFIX}{e.message}",
@@ -863,17 +497,9 @@ async def _build_and_connect(
             raw_message=e.raw_message,
         ) from e
     except _client_exc.ClusterPolicyError as e:
-        # Deterministic configuration mismatch. Route through
-        # ``InterfaceError`` with a distinguishing ``"Cluster policy
-        # rejection;"`` prefix so callers can branch on the message
-        # without importing client-layer types. SA's ``is_disconnect``
-        # narrows ``InterfaceError`` matching to "connection is
-        # closed" / "cursor is closed", so the pool does NOT enter a
-        # retry loop against the permanent policy rejection — matches
-        # the ``_call_client`` query-path wrap. Plumb code=None /
-        # raw_message symmetric with the seven sibling per-class
-        # arms below; the prefix is on ``message`` only, leaving
-        # ``raw_message`` as the verbatim server text.
+        # Permanent config mismatch. InterfaceError with the "Cluster
+        # policy rejection;" prefix so SA's is_disconnect does NOT
+        # retry it (it narrows InterfaceError to closed-conn/cursor).
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(
             cluster_policy_rejection_message(None, str(e)),
@@ -881,80 +507,41 @@ async def _build_and_connect(
             raw_message=raw_msg,
         ) from e
     except _client_exc.DqliteConnectionError as e:
-        # Transport / handshake failure at the connect layer (TCP
-        # refused, DNS failure, server-reset, leader-change rewrap).
-        # The cursor-path classifier maps DqliteConnectionError to
-        # OperationalError; mirror it on the connect path so SA's
-        # pool retry loop sees the right shape and the substring
-        # scan can classify it. Thread the optional ``code`` and
-        # ``raw_message`` through so a leader-change rewrap (the
-        # client's ``connect()`` LEADER_ERROR_CODES branch surfaces
-        # ``DqliteConnectionError(..., code=10250, raw_message=...)``)
-        # carries the wire-level signal that SA's is_disconnect's
-        # code-based classifier expects — matching the query path.
+        # Transport/handshake failure. Thread code+raw_message so a
+        # leader-change rewrap carries the wire signal is_disconnect
+        # expects, matching the query path.
         code = getattr(e, "code", None)
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise OperationalError(
             f"{FAILED_TO_CONNECT_PREFIX}{e}", code=code, raw_message=raw_msg
         ) from e
     except _client_exc.ClusterError as e:
-        # Non-policy ClusterError — transient at the cluster discovery
-        # layer (no leader yet, all nodes unreachable). Surface as
-        # OperationalError so the SA pool's retry loop classifies it
-        # correctly, with raw_message preserved.
+        # Transient discovery failure (no leader yet / all unreachable).
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise OperationalError(
             f"{FAILED_TO_CONNECT_PREFIX}{e}", code=None, raw_message=raw_msg
         ) from e
     except _client_exc.ProtocolError as e:
-        # Wire-level desync during handshake (very rare). Match the
-        # cursor-path classifier's wording so SA's substring scan sees
-        # the canonical ``WIRE_DECODE_FAILED_PREFIX``.
+        # Handshake wire desync. Use WIRE_DECODE_FAILED_PREFIX so SA's
+        # substring scan recognises it.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise OperationalError(
             f"{WIRE_DECODE_FAILED_PREFIX}: {e}", code=None, raw_message=raw_msg
         ) from e
     except _client_exc.DataError as e:
-        # Encode-side error during the open handshake (e.g. a binary
-        # database name that fails encode_text). Surface as DataError
-        # per PEP 249 §7 — symmetric with the cursor-path classifier.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise DataError(str(e), code=None, raw_message=raw_msg) from e
     except _WireEncodeError as e:
-        # Raw wire-layer ``EncodeError`` leaking past the client
-        # layer's wrap discipline. ``DqliteProtocol.open_database``
-        # does not wrap the ``OpenRequest(name=database).encode()``
-        # site (the request is built once per connect and
-        # encode-failures are caller-input faults: NUL byte in the
-        # database name, oversize TEXT, surrogate codepoint, etc.).
-        # The client's ``_connect_impl`` bare ``except BaseException``
-        # at connection.py:1709 propagates this unchanged.
-        # ``dqlitewire.EncodeError`` is NOT a subclass of
-        # ``_client_exc.ProtocolError`` (the multi-inheritance shape
-        # at exceptions.py is one-way — the client class inherits
-        # FROM the wire class, not vice versa), so without this
-        # bespoke arm, the raw wire exception escapes past every
-        # ``except dbapi.Error:`` block — PEP 249 §7 violation.
-        # Symmetric with the cursor-path classifier
-        # at cursor.py's ``_call_client`` which has the same arm
-        # for the bind-time encode case.
+        # Raw wire EncodeError on the open request (NUL/oversize/
+        # surrogate db name). NOT a subclass of client ProtocolError,
+        # so without this arm it escapes every ``except dbapi.Error:``.
         raise DataError(f"wire encode failed: {e}", code=None, raw_message=str(e)) from e
     except _client_exc.InterfaceError as e:
-        # Driver-misuse on the connect path (e.g. cross-loop reuse of
-        # an inner DqliteConnection). Surface as InterfaceError per
-        # PEP 249 — symmetric with the cursor-path classifier.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise InterfaceError(str(e), code=None, raw_message=raw_msg) from e
     except _client_exc.DqliteError as e:
-        # Catch-all for any future DqliteError subclass not enumerated
-        # above. PEP 249 §7: errors that occur during the operation
-        # of the database are wrapped in DatabaseError or its
-        # subclasses; an InterfaceError wrap would mis-classify a
-        # server-sourced error as a driver-misuse error. Use
-        # DatabaseError as the conservative wrap class so cross-
-        # driver code using ``except DatabaseError:`` catches future
-        # error classes correctly. Mirrors the cursor-path classifier
-        # catch-all at the end of ``_call_client``.
+        # Catch-all for future DqliteError subclasses. DatabaseError
+        # (not InterfaceError) so server-sourced errors classify right.
         raw_msg = getattr(e, "raw_message", None) or str(e)
         raise DatabaseError(
             f"unrecognized client error ({type(e).__name__}): {e}",
@@ -962,34 +549,20 @@ async def _build_and_connect(
             raw_message=raw_msg,
         ) from e
     except OSError as e:
-        # Transport-level error escaping the client's wrap discipline
-        # (e.g. an asyncio cancellation that bypassed the inner
-        # try/except, or a refactor regression that newly leaks
-        # ConnectionResetError past the client layer). PEP 249 §7
-        # requires database-sourced failures to surface as Error
-        # subclasses; OperationalError is the right shape for
-        # transport.
+        # Transport error escaping the client's wrap discipline.
         raise OperationalError(
             f"{FAILED_TO_CONNECT_PREFIX}{e}", code=None, raw_message=str(e)
         ) from e
     except BaseExceptionGroup as eg:
-        # See the sibling arm above the ``DqliteConnection(...)``
-        # construction for the rationale. ``BaseExceptionGroup``
-        # bypasses every per-class arm; wrap as ``OperationalError``
-        # (transport flavour, since this block surrounds the actual
-        # connect) with the remainder on ``__cause__``. PEP 654
-        # cancel-class split runs first so any
-        # ``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit``
-        # children are re-raised rather than silently wrapped.
+        # See the sibling arm above the construct; cancel-class split
+        # runs first, remainder wrapped as OperationalError.
         cancel_group, remainder = eg.split(
             lambda e: isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit))
         )
         if cancel_group is not None:
             raise cancel_group from None
-        # Defensive narrowing via ``if`` instead of ``assert`` so the
-        # subsequent ``remainder.exceptions`` access doesn't surface
-        # ``AttributeError`` under ``python -O``. Logically
-        # unreachable under the BaseExceptionGroup.split contract.
+        # ``if`` not ``assert`` so the .exceptions access below doesn't
+        # raise AttributeError under -O. Unreachable per the split contract.
         if remainder is None:
             raise eg
         child_classes = {type(c).__name__ for c in remainder.exceptions}
@@ -999,38 +572,18 @@ async def _build_and_connect(
             code=None,
             raw_message=str(remainder),
         ) from remainder
-    # Read-only session: emit ``PRAGMA query_only = 1`` on the live
-    # connection before publishing it to the caller. Run on the inner
-    # ``DqliteConnection`` directly so the wire round-trip bypasses
-    # the dbapi ``Cursor`` layer (and its ``op_lock``); no nested
-    # lock concern. Reconnect / invalidation paths re-enter
-    # ``_build_and_connect`` for a fresh inner conn, so the PRAGMA is
-    # naturally re-emitted on every rebuild — no separate "re-apply
-    # on reconnect" hook is needed.
-    #
-    # Defence-in-depth: if a cancel lands between ``conn.connect()``
-    # success and the PRAGMA ack, close the orphan socket so it
-    # doesn't leak. The PRAGMA itself can't raise an authorizer
-    # rejection — ``query_only`` is NOT in dqlite-server's
-    # PRAGMA deny-list (verified at
-    # ``dqlite-upstream/src/vfs.c:2479-2499``).
+    # Read-only session: emit PRAGMA query_only=1 on the inner conn
+    # (bypasses the Cursor op_lock). Re-emitted naturally on every
+    # rebuild since reconnect re-enters here. query_only is NOT in
+    # dqlite-server's PRAGMA deny-list (vfs.c), so it can't be rejected.
     if session_mode == "read_only":
         try:
             await conn.execute("PRAGMA query_only = 1")
         except BaseException:
-            # Shield the close so a second cancel arriving mid-close
-            # does not abandon the inner socket half-closed. The
-            # surrounding cancel-handling discipline elsewhere in
-            # this module (see e.g. ``aio/connection.py`` ensure-
-            # connection close-path) uses the same idiom.
-            #
-            # Hoist the coro into an explicit Task with a done-
-            # callback observer BEFORE shielding so an outer cancel
-            # landing mid-await does not orphan the implicit Task
-            # ``asyncio.shield`` would otherwise create — that
-            # orphan would surface as "Task exception was never
-            # retrieved" at GC. Same pattern as
-            # ``cluster.py::_observe_drain_exception``.
+            # Shield the close against a second cancel. Hoist into an
+            # explicit Task with a done-callback observer first so an
+            # outer cancel doesn't orphan the implicit shield Task
+            # ("Task exception was never retrieved" at GC).
             from dqliteclient.cluster import _observe_drain_exception
 
             close_task = asyncio.ensure_future(conn.close())
@@ -1044,73 +597,33 @@ async def _build_and_connect(
 def _is_no_transaction_error(exc: Exception) -> bool:
     """True if ``exc`` is a genuine "no active transaction" server reply.
 
-    Gates the silent swallow on the SQLite result code in addition to
-    the English wording. A disk-full / constraint / IO error whose
-    message happens to include the magic substring will not be
-    swallowed.
+    Gates the silent swallow on BOTH the SQLite code and the canonical
+    wording. ``code=None`` (how the dbapi wraps connection/cluster/
+    protocol errors) never matches — those must surface, not swallow.
 
-    Substring fragility: the matched text is the SQLite engine's
-    canonical wording (``"no transaction is active"``), pinned by
-    ``NO_TRANSACTION_MESSAGE_SUBSTRINGS`` in
-    ``dqlitewire.constants`` and exercised by the integration test
-    ``tests/integration/test_no_transaction_error_wording.py`` against
-    a live cluster. A future SQLite version that rephrases the message
-    would surface this as a real ``OperationalError`` from
-    ``commit()`` / ``rollback()`` rather than a silent swallow — the
-    integration test would catch it before users see the regression.
-    Server-side rephrasings are extremely rare (the canonical wording
-    has been stable across many SQLite releases); the substring guard
-    is the best available signal short of a stable extended-error-code
-    pin, which dqlite does not currently emit for this case.
-
-    A ``code`` of ``None`` (the dbapi wraps DqliteConnectionError /
-    ClusterError / ProtocolError / DataError with ``code=None``) must
-    NOT match: those classes are precisely the errors we want to
-    surface, never silently swallow. The integration test
-    ``test_no_transaction_error_wording.py`` proves the server emits
-    code=1 for the genuine reply, so the whitelist is exhaustive on
-    its own — the message-text fallback is only valid alongside a
-    real SQLite code.
-
-    Substring guard rationale: ``DQLITE_ERROR = 1`` (defined in
-    ``dqlite-upstream/include/dqlite.h``) shares the wire low-byte
-    with ``SQLITE_ERROR = 1``. Upstream emits ``DQLITE_ERROR`` from
-    ``gateway.c::handle_request_transfer`` ("leadership transfer
-    failed") on the ``REQUEST_TRANSFER`` path. The Python client
-    does not invoke that request type today, so the collision is
-    latent — but the substring filter is the only thing standing
-    between the latent dqlite-namespace code-1 emission and a
-    silent swallow by ``commit()`` / ``rollback()``. Drop the
-    filter only if the wire layer gains a namespace-discriminator
-    byte upstream.
+    The substring filter is load-bearing despite the code gate:
+    DQLITE_ERROR shares low-byte 1 with SQLITE_ERROR, and upstream
+    emits DQLITE_ERROR for "leadership transfer failed" (a path the
+    client doesn't invoke today, so the collision is latent). Drop the
+    filter only if the wire gains a namespace-discriminator byte.
     """
     code = getattr(exc, "code", None)
     if code is None:
         return False
-    # Mask to the SQLite primary result code (low byte of the extended
-    # code); mirrors ``_classify_operational`` in cursor.py. Without the
-    # mask, any extended variant of SQLITE_ERROR / SQLITE_MISUSE whose
-    # low byte is 1 or 21 would slip past the whitelist and be surfaced.
+    # Mask to the primary code (mirrors _classify_operational) so an
+    # extended variant of code 1/21 can't slip past the whitelist.
     if primary_sqlite_code(code) not in _NO_TX_PRIMARY_CODES:
         return False
-    # Match against the un-truncated server text (raw_message) rather
-    # than ``str(exc)`` (truncated). A long server message that has
-    # the no-tx clause beyond the truncation cap would otherwise miss
-    # the substring and surface the no-tx as a real error.
+    # Match the un-truncated raw_message: a long message with the no-tx
+    # clause past the truncation cap would miss against str(exc).
     raw = getattr(exc, "raw_message", None) or str(exc)
     lowered = raw.lower()
     return any(s in lowered for s in _NO_TX_SUBSTRINGS)
 
 
 def _safe_writer_close(writer: asyncio.StreamWriter) -> None:
-    """``StreamWriter.close()`` last-resort: callable scheduled on the
-    owning loop via ``call_soon_threadsafe`` to drive FIN out of a
-    transport without awaiting the protocol-level drain.
-
-    Used by :meth:`Connection.force_close_transport` so terminate paths
-    don't crash the loop with a stray exception (e.g. transport already
-    closed by a connection_lost race).
-    """
+    """Scheduled via call_soon_threadsafe to drive FIN out of a transport
+    without awaiting drain; swallows a connection_lost-race exception."""
     try:
         writer.close()
     except Exception:  # noqa: BLE001 - last-resort cleanup
@@ -1129,169 +642,61 @@ def _cleanup_loop_thread(
     close_timeout: float = _LOOP_THREAD_JOIN_FALLBACK_SECONDS,
     inner_handle: list[Any] | None = None,
     *,
-    # Bind PURE-MODULE globals (``warnings`` / ``logger`` /
-    # ``contextlib``) as keyword-only default args so the
-    # ``Py_FinalizeEx`` phase-3 module-globals-None-set teardown
-    # (documented in ``Lib/weakref.py::_exitfunc`` /
-    # ``Python/pylifecycle.c::Py_FinalizeEx``) cannot replace the
-    # names this body dereferences with ``None`` between function
-    # definition and finalizer invocation. Stdlib precedent:
-    # ``Lib/tempfile.py::_TemporaryFileWrapper.close`` captures
-    # ``closer`` the same way; ``multiprocessing.util.Finalize`` is
-    # the same pattern. Names captured at definition time — if the
-    # module re-binds any of them after definition (none do today;
-    # not even test fixtures should), the captured value is stale.
-    #
-    # ``get_current_pid`` is INTENTIONALLY NOT captured: tests
-    # (``test_cleanup_loop_thread_finalizer_fork_safe.py``) patch
-    # the module-level name via ``unittest.mock.patch`` to simulate
-    # a forked child, and a kwarg-default capture would freeze the
-    # production value past the patch. The runtime dereference
-    # below is wrapped in a ``try`` block that catches the
-    # shutdown-time ``TypeError`` ('NoneType' is not callable) so
-    # the shutdown-safety goal is still met for ``get_current_pid``.
+    # Capture pure-module globals as kwarg defaults so a Py_FinalizeEx
+    # phase-3 globals-None-set can't replace the names this body
+    # dereferences between definition and finalizer invocation.
+    # ``get_current_pid`` is deliberately NOT captured (tests patch it
+    # to simulate a fork); its deref below is try-wrapped instead.
     _warnings: Any = warnings,
     _logger: Any = logger,
     _contextlib: Any = contextlib,
     _sanitize_for_log: Any = sanitize_for_log,
 ) -> None:
-    """Stop the background event loop and join its thread.
+    """Stop the background event loop and join its thread (from a
+    ``weakref.finalize``, so it must not reference the Connection).
 
-    Called from a ``weakref.finalize`` so it must not reference the
-    ``Connection`` instance. ``closed_flag`` is a 1-element list that
-    the Connection mutates when ``close()`` is called — we use that
-    rather than a direct reference to self to decide whether to emit
-    a ``ResourceWarning``.
+    ``closed_flag`` is a 1-element list the Connection flips on close
+    (decides the ResourceWarning); ``inner_handle`` is a late-published
+    box holding a ``weakref.ref`` to the inner DqliteConnection. Both
+    use the box idiom to avoid pinning the outer/inner into the
+    finalize args (which would create a GC-preventing cycle). Only the
+    leaked-outer-GC path reaches here with the box populated.
 
-    ``inner_handle`` is a 0-or-1-element list mutated in
-    ``Connection._get_async_connection`` (inline ``[:]=``) once
-    ``self._async_conn`` is built. When populated, the single element
-    is a ``weakref.ref`` to the inner ``DqliteConnection``. The box
-    indirection is the canonical idiom for late-publishing a value
-    into a ``weakref.finalize``'s captured args (the finalize captures
-    args by reference at registration time; mutating a captured list
-    is observed at call time). A ``weakref.ref`` avoids strong-pinning
-    the inner from the finalize's args (which would create a
-    reference cycle: outer → ``_async_conn`` → inner; finalize args →
-    inner directly; cycle through the outer's ``__dict__``).
-
-    The box is NOT cleared on explicit close paths: explicit close
-    detaches the finalizer (``self._finalizer.detach()``) before
-    nulling ``_async_conn``, so the cleanup callback never observes
-    a populated box on that arm. The only path that reaches this
-    callback with the box populated is the leaked-outer-GC path —
-    where the inner's ``weakref.ref`` may resolve to ``None`` if the
-    inner was reclaimed in the same GC pass (handled by the
-    ``if inner is not None`` guard below).
-
-    ``close_timeout`` mirrors the operator's ``Connection._close_timeout``
-    so the finalizer's join budget matches the graceful ``close()`` and
-    ``force_close_transport()`` paths. Captured positionally at finalize
-    registration so the finalizer does not retain a reference to the
-    ``Connection`` instance. Floored at
-    ``_LOOP_THREAD_JOIN_MIN_SECONDS`` so a tight ``close_timeout``
-    (down to the ``_CLOSE_TIMEOUT_FLOOR=0.01`` minimum) still leaves
-    enough slack for the queued ``loop.stop`` callback to land and the
-    daemon thread to exit on a non-stuck loop.
-
-    Fork-safety: ``creator_pid`` is the pid of the process that
-    constructed the Connection; the finalizer fires in BOTH parent
-    and child after ``os.fork`` (each frees the inherited
-    Connection independently). In the child the captured ``loop`` /
-    ``thread`` are parent-owned — calling ``loop.close()`` would
-    close inherited selector FDs the parent still uses;
-    ``thread.join`` blocks for up to the configured budget on a
-    non-existent OS thread (only the calling thread crosses
-    ``fork``); ``ResourceWarning`` based on the parent's frozen
-    ``closed_flag`` is a false positive (the parent may close after
-    fork). Mirror the discipline of ``Connection._check_thread`` /
-    ``DqliteConnection.close`` / ``Pool.close``: pid-mismatch →
-    no-op.
-
-    Shutdown-safety: when CPython's ``Py_FinalizeEx`` reaches phase 3
-    (cycle-collect after ``atexit``), ``PyImport_Cleanup`` walks
-    ``sys.modules`` and sets every module's globals to ``None``. A
-    finalize that dereferences imported names by NAME would then see
-    ``None`` for ``get_current_pid`` / ``warnings`` / ``logger`` /
-    ``contextlib`` and raise ``TypeError`` / ``AttributeError`` —
-    emitting an unraisable-hook traceback that buries whatever
-    actually caused the shutdown. Names are captured as kwarg
-    defaults at definition time to dodge this teardown phase. If
-    any of the captured names ends up ``None`` at call time anyway
-    (exotic reload paths), the body short-circuits silently.
+    Fork-safe (pid-mismatch -> no-op; the captured loop/thread are
+    parent-owned). ``close_timeout`` mirrors the operator's knob,
+    floored at _LOOP_THREAD_JOIN_MIN_SECONDS.
     """
-    # Read ``get_current_pid`` from module globals at call time so
-    # the test fixture's ``patch("dqlitedbapi.connection."
-    # "get_current_pid", ...)`` is observed. Wrap in a broad except
-    # so the ``Py_FinalizeEx`` phase-3 ``get_current_pid = None``
-    # teardown surfaces as a silent no-op (not an unraisable-hook
-    # ``TypeError: 'NoneType' object is not callable`` traceback).
+    # Deref at call time so the test patch is observed; broad except so
+    # a phase-3 ``get_current_pid=None`` is a silent no-op, not an
+    # unraisable-hook traceback.
     try:
         current_pid = get_current_pid()
     except Exception:
-        # Module global ``get_current_pid`` may be ``None`` under
-        # interpreter shutdown; return silently rather than emit an
-        # unraisable-hook traceback that buries whatever caused the
-        # shutdown.
         return
     if current_pid != creator_pid:
-        # Forked child. The captured loop/thread/closed_flag belong
-        # to the parent process. Skip cleanup entirely — both the
-        # warning emission and the loop/thread teardown.
+        # Forked child: captured loop/thread belong to the parent.
         return
-    # Resolve the inner ``DqliteConnection`` if the late-publish box
-    # has been populated. Use a weakref to avoid strong-pinning. If
-    # the inner has already been GC'd (the leaked-outer path: the
-    # outer's ``__dict__["_async_conn"]`` held the only strong ref
-    # to the inner, so the inner is reclaimed in the same collection
-    # pass that triggers this finalizer), ``inner_ref()`` returns
-    # ``None`` and we skip the disarm / drain reap entirely — the
-    # inner's own ``weakref.finalize`` will have fired in the same
-    # pass and emitted its own diagnostic if applicable.
+    # Resolve the inner via weakref; None if it was reclaimed in the
+    # same GC pass (its own finalizer handles that case).
     inner: Any = None
     if inner_handle:
         inner_ref = inner_handle[0]
         if inner_ref is not None:
             inner_obj = inner_ref() if callable(inner_ref) else None
-            # Skip the inner-targeted disarm if the inner is already
-            # closed (``_closed_flag[0] is True``): no false-positive
-            # warning to suppress and no pending drain to reap.
             if inner_obj is not None:
                 inner = inner_obj
-    # Wrap the entire body in try/finally so the loop/thread teardown
-    # ALWAYS runs, regardless of whether the warning emission raises.
-    # Under ``pytest -W error::ResourceWarning`` the
-    # ``warnings.warn(..., ResourceWarning, ...)`` call below converts
-    # to a raised ``ResourceWarning`` (subclass of ``Warning`` /
-    # ``Exception``, NOT ``RuntimeError``). Without the finally, the
-    # raise propagated out of the finalizer past the narrow
-    # ``contextlib.suppress(RuntimeError)``, the cleanup steps below
-    # never ran, and the daemon event-loop thread lingered with an
-    # open socket — ironically *amplifying* the leak the warning was
-    # supposed to surface.
+    # try/finally so the loop/thread teardown ALWAYS runs even if the
+    # warning emission raises (e.g. ResourceWarning -> raise under
+    # ``-W error::ResourceWarning``); otherwise the daemon thread would
+    # linger, amplifying the very leak the warning surfaces.
     try:
-        # User never called close() → leak warning (matches stdlib
-        # sqlite3). The narrow ``RuntimeError`` suppression here is
-        # for the specific interpreter-shutdown race where the
-        # warnings module's own finalization is mid-teardown; any
-        # other exception (including ResourceWarning being
-        # converted to a raise under -W error) is allowed to
-        # propagate through the surrounding finally so the
-        # finalizer's reporter (sys.unraisablehook) still surfaces
-        # it while the cleanup completes. The
-        # ``_warnings is not None and _contextlib is not None``
-        # guard handles the rare interpreter-reload path where the
-        # kwarg-default capture itself sees ``None`` mid-shutdown.
+        # User never called close() -> leak warning (stdlib parity).
+        # Narrow RuntimeError suppress for the warnings-module-teardown
+        # race; the None guards cover the interpreter-reload path.
         if closed_flag[0] is False and _warnings is not None and _contextlib is not None:
             with _contextlib.suppress(RuntimeError):
-                # Sanitise the address before interpolation: a
-                # custom ``dial_func`` that bypassed ``parse_address``
-                # could otherwise carry LF / U+2028 into journald via
-                # the ResourceWarning emission and split the record.
-                # Defence-in-depth -- the address normally goes
-                # through ``_client_parse_address`` at __init__, but
-                # the ``__repr__`` discipline at line 3776 is the
-                # established convention for this class.
+                # Sanitise the address so a dial_func that bypassed
+                # parse_address can't split a journald record via LF.
                 _warnings.warn(
                     f"Connection(address={_sanitize_for_log(str(address))!r}) "
                     f"was garbage-collected without close(); cleaning up "
@@ -1301,15 +706,9 @@ def _cleanup_loop_thread(
                     stacklevel=2,
                 )
     finally:
-        # Disarm the inner client's ``_connection_unclosed_warning``
-        # finalizer BEFORE the loop teardown, mirroring the discipline
-        # at ``force_close_transport`` lines 2148-2155. Without this,
-        # the same GC sweep that fired this finalize would also
-        # eventually fire the inner's finalizer, emitting a misleading
-        # second ResourceWarning ("DqliteConnection ... was garbage-
-        # collected without await close()") for the SAME socket — one
-        # leak surfacing as two stderr lines. Mirrors what the explicit
-        # close paths already do at close.py / force_close_transport.
+        # Disarm the inner's ResourceWarning finalizer before teardown
+        # so the same GC sweep doesn't surface a second misleading
+        # warning for the same socket.
         if inner is not None and _contextlib is not None:
             inner_closed_flag = getattr(inner, "_closed_flag", None)
             if isinstance(inner_closed_flag, list) and inner_closed_flag:
@@ -1320,19 +719,11 @@ def _cleanup_loop_thread(
                     inner_finalizer.detach()
                 with _contextlib.suppress(Exception):
                     inner._finalizer = None
-            # Reap any pending invalidation-drain task on the inner
-            # BEFORE ``loop.stop`` lands, mirroring the bounded-
-            # resnapshot block in ``force_close_transport`` at
-            # ``connection.py:2156-2219``. Without this reap, the
-            # task survives ``loop.close()`` (CPython
-            # ``BaseEventLoop.close`` does NOT cancel pending tasks),
-            # ``Task.__del__`` fires with state PENDING, and asyncio
-            # writes "Task was destroyed but it is pending" to stderr
-            # via its default exception handler — bypassing
-            # ``warnings.catch_warnings`` and surfacing as a third
-            # stderr line per GC-leaked sync ``Connection``. FIFO of
-            # the ``call_soon_threadsafe`` ready queue ensures the
-            # cancel callbacks run before the queued ``loop.stop``.
+            # Reap any pending invalidation-drain task before loop.stop
+            # (FIFO ready queue): loop.close() does NOT cancel pending
+            # tasks, so otherwise Task.__del__ writes "Task was
+            # destroyed but it is pending" to stderr. Bounded
+            # re-snapshot closes the snapshot-vs-fresh-publish race.
             if not loop.is_closed():
                 resnapshot_cap = 3
                 for _attempt in range(resnapshot_cap):
@@ -1355,10 +746,8 @@ def _cleanup_loop_thread(
                     with _contextlib.suppress(RuntimeError):
                         loop.call_soon_threadsafe(_cancel_and_observe, pending)
                 else:
-                    # Cap exhausted: final defensive null-out. Mirrors
-                    # the ``force_close_transport`` cap-exhausted
-                    # branch. Operator-visible warning only on the
-                    # pathological feedback-loop case.
+                    # Cap exhausted (pathological _invalidate feedback
+                    # loop): final null-out + operator-visible warning.
                     with _contextlib.suppress(Exception):
                         inner._pending_drain = None
                     if _logger is not None:
@@ -1368,35 +757,21 @@ def _cleanup_loop_thread(
                             "to avoid 'Task was destroyed but it is pending' at GC.",
                             resnapshot_cap,
                         )
-            # Close the inner writer transport BEFORE ``loop.stop`` so the
-            # FIN flushes via the orderly path, mirroring ``close()`` and
-            # ``force_close_transport``. FIFO of the ``call_soon_threadsafe``
-            # ready queue ensures this lands before the queued ``loop.stop``
-            # below. Without it, the transport is still open when
-            # ``loop.close()`` runs and the StreamWriter's later ``__del__``
-            # fires against a dead loop, surfacing as "unclosed transport" /
-            # "unclosed socket" / "Event loop is closed" warnings on every
-            # GC-leaked sync ``Connection``. ``_safe_writer_close`` is
-            # idempotent, so this does not double-close with any later path.
+            # Close the inner writer before loop.stop (FIFO ready queue)
+            # so FIN flushes orderly; otherwise StreamWriter.__del__
+            # fires against a dead loop ("unclosed transport" warnings).
+            # _safe_writer_close is idempotent.
             if not loop.is_closed():
                 proto = getattr(inner, "_protocol", None)
                 writer = getattr(proto, "_writer", None)
                 if writer is not None:
                     with _contextlib.suppress(RuntimeError):
                         loop.call_soon_threadsafe(_safe_writer_close, writer)
-        # Narrow suppression to the specific exceptions loop/thread
-        # teardown can legitimately raise during finalization. Wider
-        # ``except Exception: pass`` would hide programmer bugs like a
-        # missing attribute reference introduced during a refactor.
+        # Narrow suppression so a refactor-introduced bug still surfaces.
         try:
             if not loop.is_closed():
                 loop.call_soon_threadsafe(loop.stop)
         except RuntimeError:  # pragma: no cover - race: loop closed mid-call
-            # Loop was closed between is_closed() and the threadsafe
-            # call. Log at debug so the swallow is observable for
-            # operators triaging finalize-time anomalies; the
-            # ``pragma: no cover`` stays because the path is genuinely
-            # racy and not reproducible in tests.
             if _logger is not None:
                 _logger.debug(
                     "Connection._cleanup_loop_thread: loop.call_soon_threadsafe "
@@ -1404,18 +779,12 @@ def _cleanup_loop_thread(
                     exc_info=True,
                 )
         if _contextlib is not None:
-            # ``_join_budget_for_current_thread`` shortens the budget
-            # when the finalizer fires on a thread that hosts a
-            # running asyncio loop — otherwise the user's loop is
-            # parked for the full close_timeout.
             with _contextlib.suppress(RuntimeError):
                 thread.join(timeout=_join_budget_for_current_thread(close_timeout))
         try:
             if not loop.is_closed():
                 loop.close()
         except RuntimeError:  # pragma: no cover - race: loop restarted mid-finalize
-            # Raised if the loop was somehow restarted mid-finalization.
-            # Same operator-visibility rationale as above.
             if _logger is not None:
                 _logger.debug(
                     "Connection._cleanup_loop_thread: loop.close() raised "
@@ -1425,161 +794,47 @@ def _cleanup_loop_thread(
 
 
 _OWNER_INTERNAL_BUSY: object = object()
-"""Sentinel placed in ``Connection._transaction_owner`` during the
-COMMIT/ROLLBACK wire RTT inside the ``transaction()`` ctxmgr. The
-slot must stay non-None across the round-trip so a sibling thread
-under ``check_same_thread=False`` cannot reserve via the
-``_transaction_owner is not None`` gate in the wire-RTT window
-and silently overlap with the outer transaction.
-
-The slot's int contract (thread-id) is preserved for reads in
-``commit()`` / ``rollback()`` (the ``_tx_owner == current_ident``
-check naturally returns False against the sentinel object so the
-"stray commit reject" arm is bypassed — which is what we want
-when the inner COMMIT/ROLLBACK is being driven by the ctxmgr
-itself).
-"""
+"""Parked in ``_transaction_owner`` during the ctxmgr's COMMIT/ROLLBACK
+RTT: keeps the slot non-None so a sibling thread can't reserve it
+mid-round-trip, while ``_tx_owner == current_ident`` reads in commit()/
+rollback() return False against it (bypassing the stray-commit reject)."""
 
 
 class Connection:
     """PEP 249 compliant database connection.
 
-    Transactions: each statement auto-commits at the server unless
-    wrapped in an explicit ``BEGIN`` — this differs from PEP 249 §6's
-    implicit-transaction model and from stdlib ``sqlite3``. See the
-    README's "Transactions" section.
+    Autocommit-by-default: every statement commits at the server unless
+    wrapped in an explicit ``BEGIN`` (diverges from PEP 249 §6 / stdlib
+    sqlite3; see the README). This also applies to ``executemany`` — a
+    mid-batch cancel without a surrounding BEGIN persists the completed
+    iterations.
 
-    The autocommit-by-default model also applies to ``executemany``:
-    without a surrounding ``BEGIN`` / ``COMMIT``, a mid-batch cancel
-    leaves the iterations that already completed persisted. See
-    ``Cursor.executemany`` / ``AsyncCursor.executemany`` for the
-    cancellation-atomicity contract.
-
-    Thread-affinity: by default (``check_same_thread=True``), every
-    public method enforces the ``threadsafety=1`` contract — sync
-    side via ``_check_thread()``, async side via
-    ``_check_loop_binding()`` / ``_check_loop_only()`` (the
-    asymmetry exists because the sync class is thread-bound and the
-    async class is loop-bound). Calls from a foreign OS thread
-    (sync) or foreign event loop (async) raise ``ProgrammingError``.
-
-    Under ``check_same_thread=False``, the cross-thread arm of
-    ``_check_thread()`` is gated off and the Connection can be
-    shared across threads. The wire is already serialised by
-    ``self._op_lock`` regardless of caller thread (every sync public
-    method routes through ``_run_sync`` which acquires the lock
-    BEFORE ``asyncio.run_coroutine_threadsafe``), and
-    ``force_close_transport()`` already runs cross-thread without
-    ``_check_thread`` — the relaxation extends a pre-existing
-    pattern rather than inventing one. Matches stdlib
-    ``sqlite3.connect(check_same_thread=False)`` semantics.
-
-    Per-cursor state is NOT thread-safe even under
-    ``check_same_thread=False``. Each ``Cursor`` instance holds
-    result state (``_rows``, ``_description``, ``_rowcount``,
-    ``_lastrowid``, ``_row_index``, ``messages``) that is not
-    locked; two threads racing ``cur.execute()`` on the same cursor
-    produce torn reads. The contract under
-    ``check_same_thread=False`` matches stdlib sqlite3's:
-    **share connections across threads; create one cursor per
-    thread.** Recommended pattern:
+    Thread-affinity: ``check_same_thread=True`` (default) enforces the
+    threadsafety=1 contract — foreign-thread calls raise
+    ProgrammingError. ``check_same_thread=False`` relaxes the
+    cross-thread check (the wire is already serialised by ``_op_lock``).
+    Under it, the contract matches stdlib sqlite3: **share connections
+    across threads; create one cursor per thread** (per-cursor result
+    state is unlocked — sharing a cursor gives torn reads). Pattern:
 
         conn = dqlitedbapi.connect(addr, check_same_thread=False)
         def worker():
             cur = conn.cursor()  # each thread gets its own cursor
             cur.execute("SELECT 1")
             return cur.fetchall()
-        threads = [threading.Thread(target=worker) for _ in range(10)]
-        for t in threads: t.start()
 
-    Sharing a cursor across threads is unsupported even under
-    ``check_same_thread=False`` — torn-read results, not exceptions.
-
-    Read-only property reads (``closed``, ``address``,
-    ``autocommit``, ``isolation_level``, ``row_factory``) bypass
-    the affinity check unconditionally and are GIL-atomic at the
-    CPython level — safe to read from any thread / loop, but may
-    still raise ``InterfaceError`` on a closed connection
-    (``autocommit`` / ``isolation_level`` also raise
-    ``InterfaceError`` if read from a forked child). The
-    ``in_transaction`` property retains the affinity check under
-    ``check_same_thread=True`` for shipped-API compatibility
-    (callers depend on the cross-thread / cross-loop raise), and
-    relaxes under ``check_same_thread=False`` to match stdlib.
-
-    ``Connection.close()`` retains the cross-thread check
-    unconditionally even under ``check_same_thread=False``: it
-    tears down the daemon loop thread synchronously, which
-    requires the creator thread's identity. Use
-    ``force_close_transport()`` from non-creator threads (the
-    documented foreign-thread teardown path — SA's pool recycle
-    uses this).
-
-    ``Connection.messages`` is best-effort under
-    ``check_same_thread=False``: the PEP 249 §6.4 "cleared by all
-    standard methods" contract implicitly assumes single-thread
-    access; cross-thread methods may interleave their clears,
-    causing one thread's diagnostics to be overwritten by
-    another's. Callers needing reliable diagnostics in a cross-
-    thread shared-Connection setup should use Python logging
-    instead.
-
-    BUSY retries (``busy_timeout > 0``) release the wire lock
-    between attempts so sibling threads can make progress. Under
-    ``check_same_thread=False``, this means a retried statement
-    may observe interleaved writes from siblings. Wrap in an
-    explicit transaction (``conn.transaction()`` or
-    ``cursor.execute("BEGIN")``) to make the retry atomic. See
-    ``dqlitedbapi._busy_retry.retry_sync_on_busy`` docstring for
-    details.
-
-    The fork check (``_creator_pid`` comparison) is NEVER relaxed:
-    cross-process Connection use raises ``InterfaceError``
-    regardless of ``check_same_thread``. Forking is unsafe at the
-    OS level (inherited socket, dead daemon thread) and is a hard
-    error in both modes.
-
-    **PEP 703 free-threaded CPython** (``python3.13t`` /
-    ``python3.14t``): the ``check_same_thread=False`` contract is
-    GIL-validated. Under free-threaded CPython, attribute stores
-    remain atomic (PEP 703 §"Borrowed References") and container
-    mutations are critical-sectioned (PEP 703 §"Container Thread-
-    Safety"), so the existing locking is sound for the cross-
-    thread cases documented above. However, NOT every attribute
-    has been audited for stale-read visibility under PEP 703's
-    relaxed memory ordering. Two practical caveats for no-GIL
-    operators:
-
-    1. A foreign-thread reader of ``conn._async_conn`` (e.g. via
-       ``conn.in_transaction``) racing a creator-thread
-       ``conn.close()`` may observe a stale-non-None pointer for
-       one instruction window after close — the read is atomic
-       but the visibility ordering relative to other state writes
-       is not guaranteed without an explicit barrier. The
-       observable effect is a single bonus ``InterfaceError``
-       ("Connection is closed") on the affected method instead
-       of the clean ``False`` short-circuit; no torn data, no
-       crash.
-
-    2. Cursor-per-thread is still required (same as the GIL
-       contract). Cross-thread cursor sharing is undefined under
-       both GIL and no-GIL CPython.
-
-    No additional locking is currently applied for PEP 703-only
-    residue (the GIL-era locks already cover the cross-thread
-    correctness hazards). If you hit a stale-read or torn-state
-    race on a no-GIL build, please file an issue with a
-    reproducer — the trigger to invest further in the audit is a
-    real-world failure on ``python3.14t``, not speculation.
+    ``close()`` keeps the cross-thread check unconditionally (it tears
+    down the daemon loop thread synchronously); use
+    ``force_close_transport()`` from non-creator threads. The fork
+    check (``_creator_pid``) is NEVER relaxed — cross-process use is a
+    hard InterfaceError in both modes. Under check_same_thread=False,
+    ``messages`` is best-effort (interleaved clears) and BUSY retries
+    release the wire lock between attempts (wrap in a transaction to
+    keep a retry atomic).
     """
 
-    # PEP 249 optional extension ("Attributes from Module Exceptions"):
-    # expose the module-level exception classes as class attributes so
-    # cross-driver generic code can write ``except conn.Error:`` without
-    # importing the driver module. Stdlib ``sqlite3.Connection`` and
-    # every mainstream driver (psycopg2, asyncpg, aiosqlite) do the same.
-    # Class attrs (not instance attrs) to keep ``type(conn).Error``
-    # identity.
+    # PEP 249 optional extension: expose exception classes as class
+    # attrs so generic code can write ``except conn.Error:``.
     Error = _exc.Error
     Warning = _exc.Warning  # noqa: A003, N815 - PEP 249 §7 mandated class attr name
     InterfaceError = _exc.InterfaceError
@@ -1590,11 +845,8 @@ class Connection:
     InternalError = _exc.InternalError
     ProgrammingError = _exc.ProgrammingError
     NotSupportedError = _exc.NotSupportedError
-    # dqlite-specific extension subclass of OperationalError. Mirrored
-    # at the class level (sibling discipline with the nine PEP 249
-    # mandated names above) so introspection / IDE autocomplete on a
-    # ``conn`` instance surfaces the class symmetrically with how it's
-    # exported from the module.
+    # dqlite-specific OperationalError subclass; mirrored here for
+    # introspection symmetry with the PEP 249 names.
     AmbiguousCommitError = _exc.AmbiguousCommitError
 
     def __init__(
@@ -1618,94 +870,35 @@ class Connection:
         """Initialize connection (does not connect yet).
 
         Args:
-            address: Node address in "host:port" format
-            database: Database name to open
-            timeout: Per-RPC-phase timeout in seconds (must be positive
-                and finite; validated here so direct ``Connection(...)``
-                calls don't silently accept bad values that later
-                produce hangs or stranger downstream errors). Each phase
-                of an operation (send, read, any continuation drain)
-                gets the full budget independently — a single call can
-                take up to roughly N × ``timeout`` end-to-end. Wrap
-                callers in ``asyncio.timeout(...)`` to enforce a
-                wall-clock deadline.
+            address: Node address in "host:port" format.
+            database: Database name to open.
+            timeout: Per-RPC-phase budget (seconds); a call can take
+                up to N x this end-to-end. Wrap in asyncio.timeout for
+                a wall-clock deadline.
             max_total_rows: Cumulative row cap across continuation
-                frames for a single query. Forwarded to the underlying
-                :class:`DqliteConnection`. ``None`` disables the cap.
-            max_continuation_frames: Per-query continuation-frame cap.
-                Bounds Python-side decode work a hostile server can
-                inflict by drip-feeding 1-row frames. Forwarded to the
-                underlying :class:`DqliteConnection`.
-            trust_server_heartbeat: When True, widen the per-read
-                deadline to the server-advertised heartbeat (subject to
-                a 300 s hard cap). Default False so the configured
-                ``timeout`` is authoritative.
-            close_timeout: Budget (seconds) for the transport-drain
-                during ``close()``. Forwarded to the underlying
-                :class:`DqliteConnection`. The default (0.5 s) is
-                sized for LAN; callers with higher-latency links or
-                strict shutdown SLAs can override.
-            dial_timeout: Per-TCP-connect budget (seconds) — mirrors
-                go-dqlite's ``Config.DialTimeout``. ``None`` (default)
-                collapses onto ``timeout``. Set a smaller value than
-                ``timeout`` to fast-fail on a DNS-typo / firewalled
-                peer rather than paying the full per-RPC budget at the
-                dial stage. Forwarded to the underlying
-                :class:`DqliteConnection`.
-            attempt_timeout: Per-attempt envelope (seconds) covering
-                dial + handshake + first RPC — mirrors go-dqlite's
-                ``Config.AttemptTimeout``. ``None`` (default) collapses
-                onto ``timeout``. Smaller-than-``timeout`` values
-                bound the parallel leader-sweep against slow-
-                handshaking peers (TLS-terminating proxies with stuck
-                welcomes, partial-restart nodes). Forwarded to the
-                underlying :class:`DqliteConnection`.
-            dial_func: Caller-supplied async dialer replacing the
-                default TCP path — mirrors go-dqlite's
-                ``WithDialFunc``. Use cases: TLS, unix-socket
-                transport, custom SO_KEEPALIVE policy, out-of-band
-                health probes. ``None`` (default) uses the standard
-                ``asyncio.open_connection`` path. Forwarded to the
-                underlying :class:`DqliteConnection`. See
-                :data:`dqliteclient.DialFunc` for the protocol.
-            busy_timeout: Maximum cumulative seconds to spend retrying
-                BUSY responses before raising. Default ``5.0`` matches
-                stdlib ``sqlite3.connect(timeout=5.0)`` so application
-                code that worked against stdlib transparently survives
-                concurrent writers on dqlite too. Retries follow
-                SQLite's deterministic ``sqliteDefaultBusyCallback``
-                curve (1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100 ms
-                then flat 100 ms). ``0`` disables retry (first BUSY
-                raises immediately — stdlib parity for ``timeout=0``).
-                The PRAGMA escape hatch (``PRAGMA busy_timeout = N``)
-                is intercepted at the Cursor layer and writes to the
-                same backing field; never reaches the server (dqlite's
-                VFS authorizer denies the PRAGMA). Validated here
-                (non-negative finite number; rejects bool).
-            check_same_thread: When ``True`` (default), every method
-                call must come from the thread that created the
-                Connection; cross-thread calls raise
-                ``ProgrammingError``. When ``False``, the cross-thread
-                check is disabled and the Connection is safe to share
-                across threads — the wire is already serialised by
-                ``self._op_lock`` regardless of caller thread, and
-                ``force_close_transport`` already runs cross-thread
-                without ``_check_thread`` (see its docstring). Per-
-                cursor result state is NOT thread-safe; the
-                documented pattern under ``check_same_thread=False``
-                is "share connections, not cursors" — each thread
-                constructs its own cursor via ``conn.cursor()``.
-                Matches stdlib ``sqlite3.connect(check_same_thread=
-                False)``. ``Connection.close()`` retains the
-                cross-thread check unconditionally because it tears
-                down the daemon loop thread synchronously, a
-                creator-thread-only operation; foreign-thread
-                teardown uses ``force_close_transport()`` (the
-                documented foreign-thread path that SA's pool recycle
-                already uses). The fork check (``_creator_pid``
-                comparison) is NEVER relaxed: cross-process
-                Connection use raises ``InterfaceError`` regardless
-                of ``check_same_thread``.
+                frames per query; ``None`` disables.
+            max_continuation_frames: Per-query frame cap, bounding
+                decode work a hostile server can inflict via 1-row
+                frames.
+            trust_server_heartbeat: Widen the per-read deadline to the
+                server heartbeat (300 s hard cap). Default False.
+            close_timeout: Transport-drain budget for ``close()``.
+            dial_timeout: Per-TCP-connect budget; ``None`` collapses
+                onto ``timeout``. Smaller value fast-fails dead peers.
+            attempt_timeout: Per-attempt dial+handshake+first-RPC
+                envelope; ``None`` collapses onto ``timeout``. Smaller
+                bounds the leader-sweep against slow-handshaking peers.
+            dial_func: Async dialer replacing the default TCP path
+                (TLS, unix-socket, custom KEEPALIVE). See
+                :data:`dqliteclient.DialFunc`.
+            busy_timeout: Cumulative seconds retrying BUSY before
+                raising (SQLite curve). Default 5.0 = stdlib parity;
+                ``0`` disables. ``PRAGMA busy_timeout`` writes the same
+                field (intercepted at the Cursor layer).
+            check_same_thread: ``True`` (default) confines calls to the
+                creator thread; ``False`` shares across threads (one
+                cursor per thread). ``close()`` and the fork check are
+                never relaxed. See the class docstring.
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
@@ -1713,11 +906,8 @@ class Connection:
             _validate_timeout(dial_timeout)
         if attempt_timeout is not None:
             _validate_timeout(attempt_timeout)
-        # ``busy_timeout`` validation: non-negative finite number;
-        # explicitly reject bool (which is ``int`` to ``isinstance``
-        # but would silently coerce True→1.0 / False→0.0). Mirrors
-        # ``_validate_timeout``'s discipline but allows zero (stdlib
-        # parity for ``busy_timeout=0`` meaning "no retry").
+        # busy_timeout: non-negative finite; reject bool (would coerce
+        # True->1.0). Allows zero (stdlib parity for "no retry").
         if isinstance(busy_timeout, bool) or not isinstance(busy_timeout, (int, float)):
             raise TypeError(
                 f"busy_timeout must be a number (seconds); got {type(busy_timeout).__name__}"
@@ -1726,23 +916,13 @@ class Connection:
             raise ValueError(
                 f"busy_timeout must be a non-negative finite number; got {busy_timeout}"
             )
-        # ``check_same_thread`` strict-bool validation: stdlib parity
-        # for the kwarg ``sqlite3.connect(check_same_thread=True)``
-        # semantics. Reject ``int`` (including 0/1) explicitly because
-        # ``isinstance(True, int)`` is True, so the looser
-        # ``isinstance(v, int)`` would silently accept ``0`` / ``1``
-        # — but the kwarg contract is strict bool. Reject ``None``
-        # and any other type with the same diagnostic.
+        # Strict bool: reject 0/1 (isinstance(True, int) is True).
         if not isinstance(check_same_thread, bool):
             raise ProgrammingError(
                 f"check_same_thread must be bool; got {type(check_same_thread).__name__}"
             )
-        # ``InterfaceError`` at the operator's config-load site rather
-        # than at first-use — the sibling ``DqliteConnection``
-        # already parses here; mirror that contract at the dbapi
-        # layer. Map the client's ``ValueError`` / ``TypeError`` to
-        # PEP 249's ``InterfaceError`` ("problems with the database
-        # interface rather than the database itself").
+        # Validate at config-load site (mirrors DqliteConnection);
+        # map to InterfaceError per PEP 249.
         if not isinstance(address, str):
             raise InterfaceError(
                 f"address must be a 'host:port' string, got {type(address).__name__}"
@@ -1752,14 +932,9 @@ class Connection:
         if not database:
             raise InterfaceError("database must be a non-empty string")
         if database != database.strip():
-            # Reject any leading/trailing whitespace. dqlite-server's
-            # ``OPEN(name=whitespace)`` has implementation-defined
-            # semantics: it may create a database literally named
-            # ``" "`` / ``" default"``, fail with a SQL-level filename
-            # error, or silently mismatch a future open of the same
-            # logical name written without surrounding whitespace.
-            # The dbapi layer is the right place to canonicalise —
-            # same discipline as ``_client_parse_address``.
+            # Surrounding whitespace has implementation-defined OPEN
+            # semantics server-side (may create a distinct db or
+            # silently mismatch a later open); canonicalise here.
             raise InterfaceError(
                 f"database must not have leading or trailing whitespace (got {database!r})"
             )
@@ -1776,65 +951,25 @@ class Connection:
             "max_continuation_frames",
             upper=MAX_CONTINUATION_FRAMES_UPPER_BOUND,
         )
-        # ``max_message_size``: ``None`` falls back to the wire-layer
-        # default (64 MiB). The wire layer revalidates the value at
-        # protocol construction; the dbapi layer just stores and
-        # forwards. Passing the value through without dbapi-side
-        # validation keeps a single source of truth.
+        # ``None`` -> wire default (64 MiB); wire layer revalidates, so
+        # the dbapi just stores and forwards (single source of truth).
         self._max_message_size = max_message_size
         self._trust_server_heartbeat = trust_server_heartbeat
         self._close_timeout = close_timeout
         self._dial_timeout = dial_timeout
         self._attempt_timeout = attempt_timeout
         self._dial_func = dial_func
-        # ``busy_timeout`` is stored as float seconds (stdlib parity).
-        # The PRAGMA setter also writes to this field; the kwarg and
-        # PRAGMA share a single backing store so either tunes the
-        # other. Default ``5.0`` matches stdlib ``sqlite3.connect``'s
-        # ``timeout`` default.
+        # Float seconds; shares the backing field with the PRAGMA setter.
         self._busy_timeout: float = float(busy_timeout)
-        # ``check_same_thread`` is the per-instance opt-out from the
-        # creator-thread enforcement. Default ``True`` matches stdlib
-        # sqlite3 (and preserves the pre-existing strict contract);
-        # ``False`` gates off the cross-thread arm of
-        # ``_check_thread()`` so the Connection can be shared across
-        # threads. See ``_check_thread`` for the gate site and the
-        # class docstring for the cursor contract under the relaxation.
         self._check_same_thread: bool = check_same_thread
-        # ``session_mode``: one of ``"immediate"`` (default) /
-        # ``"deferred"`` / ``"exclusive"`` / ``"read_only"``.
-        #
-        # - ``"immediate"``: bare ``BEGIN`` is rewritten to
-        #   ``BEGIN IMMEDIATE`` at the cursor layer, eliminating the
-        #   ``SQLITE_BUSY_SNAPSHOT (517)`` race for the
-        #   SELECT-then-INSERT pattern under concurrent writers.
-        #   dqlite-server's VFS recommends this as the idiomatic
-        #   form. Concurrent ``BEGIN IMMEDIATE``s contend at the
-        #   writer-lock and surface as ordinary ``SQLITE_BUSY (5)``,
-        #   which the busy_timeout retry curve absorbs transparently.
-        # - ``"deferred"``: legacy SQLite DEFERRED — bare ``BEGIN``
-        #   passes through unchanged. Suited to read-only sessions
-        #   that want to avoid the writer-lock serialisation tax.
-        # - ``"exclusive"``: the SA dialect's ``do_begin`` emits
-        #   ``BEGIN EXCLUSIVE`` literally for stronger lock semantics.
-        # - ``"read_only"``: bare ``BEGIN`` passes through (DEFERRED
-        #   form) AND ``PRAGMA query_only = 1`` is set on the
-        #   connection at first-connect time so the engine refuses
-        #   every write at PREPARE with ``SQLITE_READONLY``.
-        #
-        # ``None`` (default) consults ``DQLITE_SESSION_MODE`` env var;
-        # missing / empty → ``"immediate"``. Invalid values raise
-        # ``ValueError`` at construct time, not at first ``do_begin``.
-        #
-        # Two attributes live on the connection:
-        #   - ``_dqlite_session_mode``: the LIVE mode used by
-        #     ``do_begin`` and the cursor rewrite. May be mutated by
-        #     the SA ``DqliteSessionModeCharacteristic`` for
-        #     per-checkout overrides.
-        #   - ``_dqlite_session_mode_default``: the construct-time
-        #     intrinsic default. NEVER reassigned after ``__init__``;
-        #     used by the SA characteristic's ``reset_characteristic``
-        #     to restore the slot on pool checkin.
+        # session_mode: immediate (default; rewrites bare BEGIN to
+        # BEGIN IMMEDIATE to dodge SQLITE_BUSY_SNAPSHOT) / deferred /
+        # exclusive / read_only (DEFERRED + PRAGMA query_only=1 at
+        # connect). ``None`` consults DQLITE_SESSION_MODE, else
+        # immediate. Two slots: ``_dqlite_session_mode`` is the live
+        # value (SA may override per-checkout);
+        # ``_dqlite_session_mode_default`` is the construct-time default
+        # used to restore on pool checkin (never reassigned).
         from dqlitedbapi._pragma_intercept import (
             session_mode_default_from_env,
             validate_session_mode,
@@ -1848,121 +983,59 @@ class Connection:
         self._dqlite_session_mode_default: str = resolved_session_mode
         self._async_conn: DqliteConnection | None = None
         self._closed = False
-        # stdlib ``sqlite3.Connection.row_factory`` parity. None means
-        # "return plain tuples". New cursors inherit this default.
+        # None means plain tuples; new cursors inherit this.
         self._row_factory: RowFactory | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._loop_lock = threading.Lock()
         self._op_lock = threading.Lock()
-        # Owner-thread of the current ``_op_lock`` holder. Updated
-        # under the lock (inside ``_run_sync``) so ``close()``'s
-        # same-thread re-entry bypass at ``:2540`` can distinguish
-        # "WE hold the lock" from "SOMEONE holds the lock". Under
-        # tier-2 (``check_same_thread=False``) the creator thread
-        # can call ``close()`` while a sibling thread legitimately
-        # holds the lock from inside its own ``_run_sync`` — the
-        # bare ``_op_lock.locked()`` probe cannot distinguish that
-        # case from the SIGINT-during-acquire self-heal the bypass
-        # was designed for, and would release the sibling's lock,
-        # corrupting protocol state. ``int`` writes are GIL-atomic
-        # so a stale read is bounded to "miss the bypass, take the
-        # bounded-acquire path" — safe-failure.
+        # Owner-thread of the current _op_lock holder (set under the
+        # lock in _run_sync) so close()'s same-thread re-entry bypass
+        # distinguishes "WE hold it" from a sibling thread holding it
+        # under check_same_thread=False — the bare .locked() probe
+        # would release the sibling's lock and corrupt protocol state.
         self._op_lock_owner: int | None = None
         self._connect_lock: asyncio.Lock | None = None
         self._creator_thread = threading.get_ident()
-        # ``threading.get_ident()`` returns the OS pthread tid which on
-        # Linux/macOS may match across fork (the child's main thread
-        # tid usually equals the pid). Fork-after-init is unsupported:
-        # the inherited TCP socket would be shared with the parent and
-        # writes would interleave on the wire, the inherited daemon
-        # loop thread does not survive fork, and asyncio primitives
-        # bound to the parent's loop are unusable in the child. Store
-        # the creator pid so cross-fork use raises a clear
-        # ``InterfaceError`` from any public method, instead of silent
-        # corruption. Symmetric with the pickle / copy / deepcopy
-        # guards on this class.
+        # Fork-after-init is unsupported (shared socket, dead daemon
+        # thread, parent-loop-bound primitives); store the pid so
+        # cross-fork use raises InterfaceError instead of corrupting.
         self._creator_pid = os.getpid()
-        # PEP 249 optional extension. No driver path currently appends
-        # here; callers can rely on the attribute existing. The tuple-
-        # value type is the ``exception value`` per PEP 249 §13 — an
-        # Exception instance, not a string.
+        # PEP 249 §13: values are Exception instances, not strings.
         self.messages: list[tuple[type[Exception], Exception]] = []
-        # ``transaction()`` context-manager owner sentinel. Stores the
-        # OS thread id of the body owner while a ``with conn.transaction()``
-        # block is active; ``commit`` / ``rollback`` reject from inside
-        # the body so the ctxmgr keeps boundary control. Mirrors the
-        # async sibling's ``_transaction_owner`` (which stores
-        # ``asyncio.Task``); thread id is the sync equivalent identity.
+        # OS thread id of the active ``transaction()`` body owner;
+        # commit/rollback reject from inside so the ctxmgr keeps
+        # boundary control. Async sibling stores a Task instead.
         self._transaction_owner: int | None = None
-        # ``_state_lock`` guards the read-check-write composites on
-        # Connection state under ``check_same_thread=False``. Today
-        # the only protected composite is the ``transaction()``
-        # ctxmgr's owner-check + owner-reserve at entry. Without
-        # the lock, two foreign threads racing into ``with
-        # conn.transaction():`` would both pass the ``is not None``
-        # check, both attempt ``BEGIN``; the second BEGIN serializes
-        # through ``_op_lock`` and raises ``OperationalError("cannot
-        # start a transaction within a transaction")`` from the
-        # wire. That's loud but server-emitted; this lock turns it
-        # into a local Python-side ``InterfaceError`` at the
-        # offending caller's frame. Lock-order discipline:
-        # ``_state_lock`` is brief and outermost; never held while
-        # acquiring ``_op_lock`` from inside the lock body.
+        # Guards the transaction() owner-check+reserve composite under
+        # check_same_thread=False so two threads can't both enter.
+        # Outermost/brief; never held while acquiring _op_lock.
         self._state_lock = threading.Lock()
-        # 1-element list (mutable, captured by the finalizer) that
-        # close() flips to True. Using a list avoids the finalizer
+        # Mutable flag the finalizer reads; a list avoids the finalizer
         # closing over ``self`` and preventing GC.
         self._closed_flag: list[bool] = [False]
-        # Box for late-publishing the inner ``DqliteConnection``
-        # handle into ``_cleanup_loop_thread``'s captured args. The
-        # finalize captures THIS list by reference at registration
-        # time (inside ``_ensure_loop``, before the inner is built);
-        # ``_get_async_connection`` mutates the slot to
-        # ``weakref.ref(inner)`` once the inner is built so the
-        # finalize body can reach it without strong-pinning.
-        #
-        # The box is intentionally NOT cleared on explicit close
-        # paths: those detach the finalizer before nulling
-        # ``_async_conn``, so the cleanup callback never observes a
-        # populated box on the explicit-close arm. The dead
-        # ``weakref.ref`` may survive until outer reclamation; the
-        # cleanup callback's ``if inner is not None`` guard handles
-        # the resolved-to-None case correctly.
+        # Box for late-publishing the inner handle into the finalizer's
+        # captured args (mutated by _get_async_connection to a
+        # weakref.ref). Not cleared on explicit close (finalizer is
+        # detached first); the ``if inner is not None`` guard handles
+        # a resolved-to-None ref.
         self._inner_finalize_handle: list[Any] = []
         self._finalizer: weakref.finalize[Any, Any] | None = None
-        # Track outstanding cursors weakly so Connection.close() can
-        # scrub their state (stdlib sqlite3 cascades; buffered fetches
-        # on a cursor whose Connection was externally closed used to
-        # silently succeed against stale in-memory rows).
+        # Tracked weakly so close() can scrub cursor state (else
+        # buffered fetches answer from stale in-memory rows).
         self._cursors: weakref.WeakSet[Cursor] = weakref.WeakSet()
 
     def _check_thread(self) -> None:
-        """Raise on cross-process (fork) or cross-thread misuse.
-
-        - InterfaceError if called from a forked child (pid mismatch).
-        - ProgrammingError if called from a different thread than the
-          creator AND ``check_same_thread=True`` (the default).
-
-        The fork check ALWAYS runs regardless of
-        ``check_same_thread``: cross-process Connection use is never
-        safe (inherited socket, dead daemon loop thread, asyncio
-        primitives bound to the parent's loop). ``check_same_thread``
-        only relaxes the cross-thread arm. Matches stdlib
-        ``sqlite3``'s contract: the C-level fork-safety isn't a
-        parameter; only the thread check is.
-        """
+        """InterfaceError on fork (always); ProgrammingError on
+        cross-thread use when check_same_thread=True. The fork check is
+        never relaxed (inherited socket, dead loop thread)."""
         if get_current_pid() != self._creator_pid:
             raise InterfaceError(
                 f"Connection used after fork; reconstruct from configuration "
                 f"in the target process. (created in pid {self._creator_pid}, "
                 f"current pid {get_current_pid()})"
             )
-        # ``getattr`` with a default of ``True`` so test fixtures that
-        # build ``Connection`` via ``__new__`` (skipping ``__init__``)
-        # without seeding the slot fall through to the strict
-        # (cross-thread-raises) behaviour they were written against.
-        # Production paths always have the attribute from ``__init__``.
+        # Default True so __new__-built fixtures fall through to strict.
         if not getattr(self, "_check_same_thread", True):
             return
         current = threading.get_ident()
@@ -1976,33 +1049,13 @@ class Connection:
             )
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
-        """Ensure a dedicated event loop is running in a background thread.
+        """Ensure a dedicated event loop runs in a background thread, so
+        sync methods work even inside a running async context.
 
-        This allows sync methods to work even when called from within
-        an already-running async context (e.g. uvicorn).
-
-        Registers a ``weakref.finalize`` the first time the loop is
-        created so a Connection that's garbage-collected without an
-        explicit ``close()`` still cleans up its thread. (GC'd connections
-        used to leak daemon threads forever.)
-
-        Defence-in-depth pid guard at the lowest sensible point in the
-        sync stack: every PUBLIC caller already routes through
-        ``_check_thread`` before reaching ``_run_sync`` / ``_ensure_loop``,
-        but a subclass / refactor / new caller that forgets that
-        perimeter check would otherwise return the parent's loop object
-        in a forked child (``loop.is_closed()`` is a Python attribute
-        inherited as False; ``self._thread`` survives only in the
-        thread that called ``fork()``). The result is an
-        ``asyncio.run_coroutine_threadsafe`` against a loop nobody
-        drains — the caller hangs on ``Future.result(timeout=...)``
-        for the configured per-RPC budget and then raises a generic
-        ``TimeoutError`` / ``OperationalError`` instead of the
-        canonical ``InterfaceError("Connection used after fork ...")``.
-        Mirror the discipline of the at-fork resolve-leader-cache lock
-        replacement at module top and the ``_check_thread`` guard on
-        the public surface: keep the diagnostic shape uniform across
-        every fork-violating entry point.
+        Registers a finalizer on first loop creation so a GC'd
+        Connection still reaps its thread. Carries a defence-in-depth
+        fork guard so a caller bypassing _check_thread doesn't run
+        against the parent's undrained loop in a child.
         """
         if get_current_pid() != self._creator_pid:
             raise InterfaceError(
@@ -2010,17 +1063,8 @@ class Connection:
                 f"in the target process. (created in pid {self._creator_pid}, "
                 f"current pid {get_current_pid()})"
             )
-        # Snapshot ``self._loop`` into a local before the second
-        # attribute access to defend against a concurrent close()
-        # nulling the field between the two reads (classic double-
-        # checked-locking defect). ``close()`` nulls ``self._loop``
-        # under ``_loop_lock``; the fast path does NOT take the lock
-        # so a racing finalize / atexit / force_close_transport
-        # caller (each of which intentionally bypasses
-        # ``_check_thread``) could leave the second access reading
-        # the already-nulled attribute and raise ``AttributeError``
-        # on ``.is_closed()``. The slow path's lock-held re-check
-        # below keeps the construction sequence race-free.
+        # Snapshot before the second access so a concurrent close()
+        # nulling _loop can't make .is_closed() raise AttributeError.
         snapshot = self._loop
         if snapshot is not None and not snapshot.is_closed():
             return snapshot
@@ -2029,18 +1073,9 @@ class Connection:
                 self._loop = asyncio.new_event_loop()
                 self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
                 self._thread.start()
-                # Finalizer can't close over self — it'd keep the
-                # Connection alive. Capture primitives only. The
-                # closed-flag list is mutated by close() so the
-                # finalizer knows whether to emit a leak warning.
-                # ``_inner_finalize_handle`` is a list captured by
-                # reference; ``_get_async_connection`` populates it
-                # inline with ``weakref.ref(inner)`` once
-                # ``self._async_conn`` is built so the finalize can
-                # disarm the inner's ResourceWarning finalizer and
-                # reap any pending ``_invalidate`` drain task BEFORE
-                # ``loop.stop`` lands. See ``_cleanup_loop_thread``'s
-                # docstring for the boxed-handle rationale.
+                # Capture primitives only — closing over self would
+                # keep the Connection alive. _inner_finalize_handle is
+                # populated later with a weakref.ref(inner).
                 self._finalizer = weakref.finalize(
                     self,
                     _cleanup_loop_thread,
@@ -2055,82 +1090,36 @@ class Connection:
         return self._loop
 
     def _run_sync[T](self, coro: Coroutine[Any, Any, T]) -> T:
-        """Run an async coroutine from sync code.
+        """Run an async coroutine from sync code on the background loop,
+        serialised by _op_lock (one wire op at a time).
 
-        Submits the coroutine to the dedicated background event loop
-        and blocks until the result is available. The operation lock
-        ensures only one operation runs at a time, preventing wire
-        protocol corruption from concurrent access. The coroutine's
-        return type ``T`` is preserved so callers retain inferred
-        result types (mirrors the sibling generic in
-        ``DqliteConnection._run_protocol``).
-
-        On sync-side timeout we cancel the future AND invalidate the
-        underlying connection. The coroutine may have already written
-        partial bytes to the socket before observing the cancel;
-        invalidation poisons the wire stream so the next operation
-        reconnects instead of reusing a torn protocol state.
-
-        Lock acquisition is bounded by ``self._timeout`` so a same-
-        thread re-entry from a signal handler (e.g. SIGTERM handler
-        calling ``close()`` while ``execute()`` is mid-await) raises a
-        clean ``InterfaceError`` instead of deadlocking on the
-        non-reentrant ``threading.Lock``. Cross-thread waiters honour
-        the same bound — long-running ops cannot trap a sibling
-        thread's call indefinitely.
+        On sync-side timeout, cancels the future AND invalidates the
+        connection (the coro may have half-written the socket, so the
+        next op must reconnect). Lock acquire is bounded by
+        ``self._timeout`` so a same-thread signal-handler re-entry
+        raises cleanly instead of deadlocking the non-reentrant lock.
         """
-        # ``threading.Lock.acquire(timeout=...)`` is interruptible by
-        # SIGINT on CPython — a ``KeyboardInterrupt`` (or ``SystemExit``)
-        # raised by the signal handler escapes ``acquire`` BEFORE the
-        # ``try`` block below is entered, so the in-block KI cleanup
-        # arm is skipped. If a prior in-flight call is still running on
-        # the loop thread, it owns ``_in_use=True`` and the connection
-        # is wedged for the life of the dbapi instance. Schedule a
-        # defensive ``_invalidate`` so the next call reconnects with a
-        # clean slate. Gate on ``_async_conn._in_use`` so a KI raised
-        # during a quiet acquire (no prior op) does not invalidate
-        # gratuitously.
+        # acquire(timeout=...) is SIGINT-interruptible: a KI/SystemExit
+        # escapes BEFORE the try block, skipping its cleanup arm. If a
+        # prior op is in flight it owns _in_use, wedging the connection;
+        # schedule a defensive _invalidate. Gated on _in_use so a KI on
+        # a quiet acquire doesn't invalidate gratuitously.
         try:
             acquired = self._op_lock.acquire(timeout=self._timeout)
         except (KeyboardInterrupt, SystemExit):
-            # If KI/SystemExit landed in the bytecode-narrow gap
-            # between ``acquire(timeout=...)`` returning True and
-            # ``acquired = ...`` STORE_FAST executing, the lock IS
-            # held but the local ``acquired`` is unbound — the outer
-            # try/finally below would then skip the release and
-            # permanently leak the lock. Best-effort release here:
-            # ``threading.Lock.release()`` raises RuntimeError when
-            # the lock is unlocked, so a suppress makes the call
-            # safe in the more-common "KI landed before acquire
-            # could complete" case too.
+            # The lock may be held if KI landed in the gap between
+            # acquire returning True and the STORE_FAST; best-effort
+            # release (suppress the unlocked-lock RuntimeError).
             with contextlib.suppress(RuntimeError):
                 self._op_lock_owner = None
                 self._op_lock.release()
-            # The coroutine was never scheduled on the loop, so close
-            # it explicitly to suppress "coroutine was never awaited"
-            # ResourceWarnings (and free its frame).
+            # Close the never-scheduled coro to avoid a warning.
             coro.close()
-            # Mirror the post-acquire KI arm's synchronous null-out
-            # discipline. The loop-thread coroutine for the prior
-            # in-flight op holds ``_in_use=True`` and is parked on a
-            # slow ``reader.read()``; the queued
-            # ``call_soon_threadsafe(_invalidate)`` only lands when
-            # the read yields (potentially up to the read deadline
-            # away). Without the synchronous null-out, a retry from
-            # the signal handler reads a stale non-None
-            # ``self._async_conn``, hits ``_check_in_use``, and
-            # raises "another operation is in progress" — wedging
-            # the connection until the prior coroutine drains.
-            #
-            # ``self._async_conn = None`` is a single STORE_ATTR
-            # (GIL-atomic on CPython); the loop-thread coroutine
-            # holds its own local reference to the dying conn and
-            # will reap its transport via the scheduled
-            # ``_invalidate`` below.
-            #
-            # Gated on ``_in_use`` (preserved from the original
-            # code) so a KI raised during a quiet acquire (no prior
-            # op) does not invalidate gratuitously.
+            # Synchronously null _async_conn so a retry from the signal
+            # handler doesn't hit "another operation is in progress" on
+            # the stale in-use conn (the queued _invalidate only lands
+            # when the slow read yields). GIL-atomic STORE_ATTR; the
+            # loop coro keeps its own ref and reaps via _invalidate.
             dying = self._async_conn
             if dying is not None and self._loop is not None and dying._in_use:
                 self._async_conn = None
@@ -2140,32 +1129,16 @@ class Connection:
                         InterfaceError("operation interrupted during op-lock acquire"),
                     )
             raise
-        # Release the lock from a single finally that covers the
-        # window between ``acquired = ...`` returning True and the
-        # inner ``try:`` body — a KI/SystemExit raised by a signal
-        # handler in that gap would otherwise leak the lock
-        # permanently (subsequent ``_run_sync`` calls deadlock until
-        # ``acquire(timeout=...)`` fires).
-        # Stamp owner BEFORE entering the try/finally so the close()
-        # bypass probe at ``:2540`` can read the slot. Writing here
-        # (not earlier) means a not-acquired arm doesn't pollute the
-        # slot. GIL-atomic int assignment.
+        # Stamp owner before the try/finally so the close() bypass probe
+        # can read it (only on the acquired arm). GIL-atomic.
         if acquired:
             self._op_lock_owner = threading.get_ident()
         try:
             if not acquired:
                 coro.close()
-                # ``OperationalError`` (not ``InterfaceError``) for
-                # parity with the async sibling at
-                # ``aio/connection.py``: ``commit`` / ``rollback``
-                # op_lock-acquire-timeout also raise ``OperationalError``.
-                # SA's ``is_disconnect`` is gated on ``DatabaseError``
-                # and recognises the ``OperationalError`` class — so a
-                # contended slot is recycled by the pool rather than
-                # surfaced as a programmer-bug class. The message
-                # leads with the canonical ``"op_lock acquire timed
-                # out"`` prefix so a sibling-thread/signal-handler
-                # contention scenario is identifiable in logs.
+                # OperationalError (not InterfaceError) so SA's
+                # is_disconnect recycles the contended slot rather than
+                # treating it as a programmer bug. Canonical prefix.
                 raise OperationalError(
                     f"op_lock acquire timed out after {self._timeout}s waiting "
                     "for another operation on this connection to release "
@@ -2174,104 +1147,48 @@ class Connection:
                     "condition and retry on a fresh connection.",
                     code=None,
                 )
-            # Defensive narrow wrap: if ``_ensure_loop()`` raises
-            # before the coroutine is scheduled (rare paths: OS
-            # thread-start failure, ``new_event_loop`` failing under
-            # FD ulimit exhaustion), close ``coro`` so the
-            # unscheduled coroutine doesn't emit
-            # ``RuntimeWarning("coroutine was never awaited")`` at GC.
-            # The sibling cleanup arms in the KI / SystemExit /
-            # TimeoutError / CancelledError branches all close
-            # ``coro``; this completes the discipline for
-            # the third failure mode. Distinct from the
-            # ``run_coroutine_threadsafe`` RuntimeError arm below —
-            # that one knows the loop is closed; this one knows we
-            # never even built the loop. Conflating them in one
-            # except would route an OS-resource-exhaustion error
-            # through the "event loop closed" remap, misleading
-            # operators. Pinned by
-            # tests/test_run_sync_ensure_loop_raise_closes_coroutine.py.
+            # Close coro if _ensure_loop raises before scheduling (OS
+            # thread-start / FD-exhaustion) so it doesn't warn at GC.
+            # Distinct from the closed-loop arm below so an OS-resource
+            # error isn't misrouted through the "event loop closed" remap.
             try:
                 loop = self._ensure_loop()
             except BaseException:
                 coro.close()
                 raise
-            # ``self._timeout`` is the per-RPC-phase budget; a single
-            # high-level sync call can stack up to
-            # ``_SYNC_PHASES_MULTIPLIER`` phases (handshake + open + send
-            # + read+drain) before the Future settles. The async surface
-            # honours the per-phase contract by wrapping each RPC in
-            # ``asyncio.timeout(self._timeout)`` and exposes no
-            # cross-RPC ceiling, so the sync wrapper must absorb the
-            # documented N × budget here or it silently fires false
-            # positives on benign latency the async surface tolerates.
+            # Per-phase budget x N: the async surface wraps each RPC in
+            # its own asyncio.timeout with no cross-RPC ceiling, so the
+            # single sync window must absorb all phases.
             sync_timeout = _SYNC_PHASES_MULTIPLIER * self._timeout
-            # ``future`` is bound inside the KI-aware ``try`` below so a
-            # KI/SystemExit landing between ``run_coroutine_threadsafe``
-            # returning and ``future.result(...)`` entering the wait
-            # still routes through the cleanup arm. The sentinel
-            # ``future = None`` makes the KI cleanup arm's ``locals()``
-            # lookup deterministic — if the schedule itself raised
-            # ``RuntimeError("Event loop is closed")`` the inner arm
-            # below remaps; if the schedule LANDED but a KI fires
-            # before we entered the result wait, ``future`` is bound
-            # to the scheduled future and the cleanup discipline
-            # (cancel + invalidate + bounded-wait) runs against it.
+            # future=None sentinel so the KI cleanup arm is deterministic
+            # whether the schedule raised or landed before the result wait.
             future: concurrent.futures.Future[T] | None = None
             try:
                 try:
                     future = asyncio.run_coroutine_threadsafe(coro, loop)
                 except RuntimeError as e:
-                    # ``asyncio.run_coroutine_threadsafe`` raises bare
-                    # ``RuntimeError("Event loop is closed")`` when the
-                    # loop is closed between ``_ensure_loop()`` returning
-                    # and the schedule call landing — the canonical race
-                    # is a sibling thread (``do_terminate`` from a
-                    # finalizer thread, manual ``loop.close()``, SIGTERM-
-                    # with-budget shutdown). Without this catch the bare
-                    # RuntimeError escapes the PEP 249 ``Error`` hierarchy
-                    # (SA's ``is_disconnect`` is gated on ``DatabaseError``
-                    # so it cannot classify the failure correctly), AND
-                    # the unscheduled coroutine emits
-                    # ``RuntimeWarning("coroutine was never awaited")`` at
-                    # GC — a warning whose traceback does not point at
-                    # dqlite, sending operators chasing the wrong layer.
-                    # Close the coroutine and remap to ``OperationalError``
-                    # (a ``DatabaseError`` subclass) with the original
-                    # RuntimeError chained for diagnostics. Narrow the
-                    # remap to the closed-loop substring so unrelated
-                    # RuntimeErrors ("Non-thread-safe operation invoked on
-                    # an event loop other than the current one" — a
-                    # programmer-bug shape) propagate as themselves
-                    # rather than being silently classified as a database
-                    # connection failure. Close the coroutine on every
-                    # arm so neither path leaks the unawaited-coroutine
-                    # warning.
+                    # Loop closed between _ensure_loop and the schedule
+                    # (sibling do_terminate / SIGTERM shutdown). Close
+                    # the coro and remap the closed-loop case to
+                    # OperationalError; let other RuntimeErrors (e.g.
+                    # the non-thread-safe programmer bug) propagate.
                     coro.close()
                     if "Event loop is closed" not in str(e):
                         raise
                     raise OperationalError(
                         f"event loop closed before coroutine could be scheduled: {e}"
                     ) from e
-                # Future.result() provides a happens-before memory barrier,
-                # ensuring all writes by the event loop thread are visible here.
+                # Future.result() is a happens-before barrier; loop-thread
+                # writes are visible here.
                 return future.result(timeout=sync_timeout)
             except TimeoutError as e:
-                # ``TimeoutError`` can only be raised by
-                # ``future.result(timeout=sync_timeout)`` above, which
-                # means ``future`` is bound by this point. The assert
-                # exists for mypy (which sees ``future: Future | None``
-                # post-gap-window-guard) and as a defensive invariant.
+                # Only future.result can raise this, so future is bound;
+                # assert is for mypy.
                 assert future is not None
-                # Race check BEFORE calling ``cancel()`` /
-                # ``_invalidate``: the coroutine may have completed
-                # successfully between ``result(timeout=...)`` raising
-                # TimeoutError and our cancel attempt landing. In that
-                # case the operation actually persisted — raising
-                # OperationalError now would cause the caller's retry
-                # logic to re-run the op and, for non-idempotent
-                # statements, duplicate the write. Honour the
-                # successful completion instead.
+                # The coro may have completed between result() raising
+                # and our cancel landing. If so the op persisted —
+                # honour it instead of raising (a retry would duplicate
+                # a non-idempotent write).
                 recovered_error: BaseException | None = None
                 if (
                     future.done() and not future.cancelled()
@@ -2279,79 +1196,31 @@ class Connection:
                     try:
                         return future.result(timeout=0)
                     except BaseException as recovered:
-                        # Coroutine completed with an exception of its
-                        # own (e.g. SQLITE_BUSY, leader flip mid-flight).
-                        # Capture for chaining: the legacy "on sync-
-                        # timeout, you get OperationalError" contract is
-                        # preserved (we still raise OperationalError
-                        # below), but the recovered exception is attached
-                        # via __cause__ so the user can see the actual
-                        # failure instead of an opaque "timed out"
-                        # diagnostic.
+                        # Coro completed with its own error; chain it via
+                        # __cause__ so the user sees the real failure, not
+                        # an opaque "timed out".
                         recovered_error = recovered
-                # If the coroutine actually completed (success branch
-                # returned via ``future.result(timeout=...)`` in the
-                # main try-block above; exception branch caught
-                # ``recovered_error`` here), the connection is healthy:
-                # ``_run_protocol``'s ``finally`` already cleared
-                # ``_in_use``. Re-raise the recovered exception
-                # immediately, skipping the null-out + invalidate +
-                # bounded-cancel-wait blocks below — invalidating a
-                # connection whose coroutine just finished cleanly
-                # forces an unnecessary reconnect on every subsequent
-                # sync call (silent reconnect storm under tight sync-
-                # timeout tuning + slow-server / leader-flip churn).
-                # The KI/SystemExit arm below has the same discipline.
+                # Coro completed -> connection is healthy (_in_use already
+                # cleared); re-raise immediately, skipping invalidate to
+                # avoid a reconnect storm under tight tuning.
                 if recovered_error is not None:
                     if isinstance(recovered_error, asyncio.CancelledError):
                         raise OperationalError(
                             "Operation cancelled in async context (no meaning in sync caller)"
                         ) from recovered_error
-                    # See the trailing ``recovered_error`` arm below
-                    # for the ``noqa: B904`` rationale (bare ``raise``
-                    # preserves causality vs the calling-thread
-                    # timer).
+                    # bare raise preserves causality vs the timer (see
+                    # the trailing arm's noqa rationale)
                     raise recovered_error  # noqa: B904
                 future.cancel()
-                # Synchronously null ``self._async_conn`` from the
-                # calling thread, mirroring the
-                # ``(KeyboardInterrupt, SystemExit)`` arm below. Same
-                # rationale: a slow ``reader.read()`` parked on the
-                # loop has not yet reached a scheduling checkpoint,
-                # so the ``call_soon_threadsafe(_invalidate)`` we
-                # queue next will only land when that read yields
-                # (potentially up to the read deadline away).
-                # Without the synchronous null-out, the caller's
-                # retry hits ``_check_in_use`` against the still-
-                # latched ``_in_use=True`` on the dying conn and
-                # raises "another operation is in progress" until
-                # the slow read finally drains.
-                #
-                # ``self._async_conn = None`` is a single STORE_ATTR
-                # (GIL-atomic on CPython); the loop-thread coroutine
-                # holds its own local reference to the dying conn and
-                # will reap its own transport via the scheduled
-                # ``_invalidate`` below.
-                #
-                # The null-out is placed AFTER the
-                # ``recovered_error`` race-recovery branch above so a
-                # coroutine that actually completed (success or late
-                # server-side exception) does not get its connection
-                # state torn out from under it. The success branch
-                # returns ``future.result(timeout=...)`` in the main
-                # try-block; the exception branch raises
-                # immediately via the early-raise block (just above
-                # ``future.cancel()``), so this null-out and the
-                # subsequent ``_invalidate`` schedule fire only on a
-                # genuine timeout where the coroutine is still in
-                # flight.
+                # Synchronously null _async_conn so the caller's retry
+                # doesn't hit "another operation is in progress" while
+                # the slow read keeps _in_use latched. Reached only on a
+                # genuine timeout (the recovered branch above re-raised).
                 dying = self._async_conn
                 self._async_conn = None
-                # Poison the underlying connection. The coroutine may have
-                # half-written a request; the wire is in unknown state.
-                # Fire-and-forget on the loop thread (don't await).
+                # Poison the wire (the coro may have half-written a
+                # request); fire-and-forget on the loop thread.
                 if dying is not None:
-                    # RuntimeError if the loop is already shutting down.
                     with contextlib.suppress(
                         RuntimeError
                     ):  # pragma: no cover - race: loop closing mid-schedule
@@ -2363,15 +1232,9 @@ class Connection:
                                 f"of {self._timeout}s)"
                             ),
                         )
-                # Wait a bounded time for the cancelled coroutine to
-                # unwind. Without this, the next sync call can race the
-                # still-running prior coroutine — both want the
-                # underlying DqliteConnection's ``_in_use`` flag, and the
-                # new op sees ``already in use`` even though from the
-                # caller's perspective the previous operation already
-                # raised. The 1s cap is enough for normal cancellation
-                # to land; ``_invalidate`` above is the safety net for
-                # a genuinely stuck coroutine.
+                # Bounded wait for the cancelled coro to unwind so the
+                # next sync call doesn't race its _in_use; _invalidate
+                # above is the safety net for a stuck coro.
                 try:
                     future.result(timeout=1.0)
                 except (
@@ -2380,102 +1243,42 @@ class Connection:
                 ):
                     pass
                 except Exception:
-                    # Unexpected: the cancelled coroutine terminated
-                    # with something other than CancelledError /
-                    # TimeoutError (e.g. a programming bug in a
-                    # cleanup path). Outer OperationalError still
-                    # surfaces for the caller; DEBUG-log the root
-                    # cause so operators can see it instead of having
-                    # it silently absorbed.
+                    # Cancelled coro died with an unexpected error
+                    # (cleanup bug); DEBUG-log it, outer error still wins.
                     logger.debug(
                         "sync timeout: unexpected error during bounded cancel-wait",
                         exc_info=True,
                     )
-                # ``recovered_error`` is guaranteed None here: the
-                # early-raise block immediately after the recovery
-                # capture above re-raises the recovered exception
-                # without falling through, so this point is reached
-                # only on a genuine timeout (coroutine still in
-                # flight; sync caller's ``Future.result(timeout=...)``
-                # fired). Connection state is now ambiguous, hence
-                # the unconditional ``OperationalError``.
                 raise OperationalError(
                     f"Operation timed out after {sync_timeout} seconds "
                     f"({_SYNC_PHASES_MULTIPLIER} × per-phase budget of "
                     f"{self._timeout}s)"
                 ) from e
             except (KeyboardInterrupt, SystemExit):
-                # KeyboardInterrupt / SystemExit raised inside the
-                # caller's thread while it was blocked on Future.result.
-                # The coroutine is still running on the background loop
-                # thread, owns ``DqliteConnection._in_use=True``, and
-                # without intervention every subsequent sync call would
-                # fail with "another operation is in progress" — the
-                # connection is wedged for life.
+                # Signal raised while blocked on Future.result; the coro
+                # still runs and owns _in_use, wedging the connection.
+                # Cancel + _invalidate + bounded-wait, then re-raise the
+                # signal (no ``from``). Narrowed to KI/SystemExit: normal
+                # Exceptions re-raised by Future.result propagate the
+                # standard path and must NOT invalidate.
                 #
-                # Mirror the timeout cleanup: cancel the future, schedule
-                # an _invalidate on the loop thread (so the wire state
-                # is poisoned and the next call reconnects), then bound-
-                # wait for the coroutine to unwind. Re-raise the original
-                # KI/SystemExit (no ``from``) so the signal propagates
-                # to the caller's frame as Python expects.
-                #
-                # Narrowed to ``KeyboardInterrupt | SystemExit`` (not
-                # bare ``BaseException``) because ``Future.result`` on
-                # a coroutine that raises a normal ``Exception``
-                # subclass (every PEP 249 error inherits from
-                # ``Exception``) re-raises that exception on the
-                # calling thread — those must propagate to the caller
-                # via the standard exception path, NOT trigger
-                # invalidation.
-                #
-                # Gap-window guard: ``future`` may be ``None`` if the
-                # KI/SystemExit landed BEFORE ``run_coroutine_threadsafe``
-                # returned — e.g. PyErr_SetAsyncExc delivered to the
-                # calling thread between the outer try entering and
-                # the inner schedule call. ``coro`` is also unscheduled
-                # in that case; close it so it does not emit
-                # ``RuntimeWarning("coroutine was never awaited")`` at
-                # GC. Without the guard, the cleanup arms below
-                # would dereference ``future.done()`` and raise
-                # ``AttributeError`` from inside the BaseException
-                # handler, masking the original signal.
+                # future may be None if the signal landed before the
+                # schedule returned; close the unscheduled coro and
+                # re-raise (else future.done() below raises AttributeError).
                 if future is None:
                     coro.close()
                     raise
-                #
-                # Race-recovery (mirror of the TimeoutError arm
-                # above): if the coroutine resolved the future
-                # successfully (or with its own real exception)
-                # between ``Future.result(...)`` raising the signal
-                # and our cleanup, there is no wedged in-flight op
-                # to poison. Skip the ``_invalidate`` schedule and
-                # the synchronous ``_async_conn`` null-out so the
-                # connection stays reusable on the next call. The
-                # KI signal still re-raises below.
+                # Race-recovery (mirror of the timeout arm): if the coro
+                # already resolved, there's nothing wedged — drain the
+                # captured exception (avoid "never retrieved") and re-raise.
                 if future.done() and not future.cancelled():
-                    # ``future.cancel()`` on a done future is a no-op
-                    # but still call it to keep state consistent
-                    # with the wedge path below.
                     future.cancel()
-                    # Drain any captured exception so asyncio doesn't
-                    # log "Future exception was never retrieved".
                     with contextlib.suppress(BaseException):
                         future.result(timeout=0)
                     raise
                 future.cancel()
-                # Synchronously null ``self._async_conn`` from the
-                # calling thread so the next sync op gets a fresh-
-                # connect path regardless of whether the loop thread
-                # has drained yet. ``self._async_conn = None`` is a
-                # single STORE_ATTR (GIL-atomic on CPython); the
-                # still-running loop-thread coroutine holds its own
-                # local reference to the dying conn and will reap its
-                # own transport via the scheduled ``_invalidate``.
-                # Without this null-out, a slow read on the loop can
-                # keep ``_in_use=True`` for up to the read deadline,
-                # wedging the next sync op with "another operation
-                # is in progress" until the old coroutine yields.
+                # Null _async_conn so the next op reconnects regardless of
+                # loop drain state (else a slow read keeps _in_use latched).
                 dying = self._async_conn
                 self._async_conn = None
                 if dying is not None:
@@ -2484,15 +1287,8 @@ class Connection:
                             dying._invalidate,
                             InterfaceError("operation interrupted"),
                         )
-                # Narrow suppress: a SECOND KI/SystemExit landing
-                # inside the 1-second bounded wait must propagate so
-                # the user's Ctrl-C escalation reaches the process.
-                # The original (first) KI is still re-raised by the
-                # trailing ``raise``. CancelledError/TimeoutError
-                # are absorbed (cancellation acknowledged); other
-                # ``Exception`` from the cancelled coroutine is
-                # DEBUG-logged so a programming bug in cleanup is
-                # observable. Mirrors the timeout arm's narrow shape.
+                # Narrow suppress so a SECOND KI inside the bounded wait
+                # still escalates; the first KI re-raises below.
                 try:
                     future.result(timeout=1.0)
                 except (
@@ -2507,32 +1303,14 @@ class Connection:
                     )
                 raise
         finally:
-            # Only release if we actually acquired. ``acquired`` is
-            # always defined here because the surrounding ``try`` was
-            # entered after the acquire — even if the acquire raised
-            # KI, that path raised before reaching this try and the
-            # finally does not run.
             if acquired:
-                # Clear the owner BEFORE release: a concurrent close
-                # bypass probe must not see "owner == me" after we've
-                # released. The integer write is GIL-atomic.
+                # Clear owner before release so a concurrent close bypass
+                # probe can't see "owner == me" after release.
                 self._op_lock_owner = None
-                # Suppress RuntimeError: the same-thread close()
-                # bypass below (around line 2780) may have already
-                # released ``_op_lock`` from a signal-handler
-                # invocation that interleaved with this _run_sync's
-                # parked ``Future.result``. ``threading.Lock.release``
-                # raises ``RuntimeError("release unlocked lock")`` on
-                # a second release. Without this suppress, Python's
-                # try/finally exception-replacement contract would
-                # replace the in-flight ``KeyboardInterrupt`` /
-                # ``SystemExit`` with the wrong-layer RuntimeError —
-                # a PEP 249 §7 surface violation that defeats the
-                # very signal the operator delivered. Symmetric with
-                # the acquire-time KI-cleanup site above and with the
-                # close()-bypass site below, both of which already
-                # apply the same suppress for the analogous
-                # already-released cases.
+                # Suppress RuntimeError: the same-thread close() bypass
+                # may have already released the lock from a signal
+                # handler, and a double-release would replace the
+                # in-flight KI/SystemExit with the wrong-layer error.
                 with contextlib.suppress(RuntimeError):
                     self._op_lock.release()
 
@@ -2547,14 +1325,9 @@ class Connection:
         if self._connect_lock is None:
             self._connect_lock = asyncio.Lock()
 
-        # Snapshot to a local before the ``async with`` entry. A
-        # foreign-thread ``force_close_transport`` nulling
-        # ``self._connect_lock`` between the check above and the
-        # ``async with`` entry would otherwise produce
-        # ``AttributeError: 'NoneType' object has no attribute
-        # '__aenter__'`` outside the dbapi.Error tree. Treat the
-        # nulled-lock case as the documented closed-state to keep
-        # the diagnostic inside ``dqlitedbapi.Error``.
+        # Snapshot before the async-with: a foreign-thread
+        # force_close_transport nulling _connect_lock would otherwise
+        # raise AttributeError outside the dbapi.Error tree.
         connect_lock = self._connect_lock
         if connect_lock is None:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
@@ -2577,25 +1350,13 @@ class Connection:
                 dial_func=getattr(self, "_dial_func", None),
                 session_mode=getattr(self, "_dqlite_session_mode", "immediate"),
             )
-            # Late-publish the inner handle into the
-            # ``_cleanup_loop_thread`` finalize's captured args. The
-            # finalize was registered at ``_ensure_loop`` time before
-            # the inner existed; mutating the captured list slot is
-            # the canonical late-publish idiom for ``weakref.finalize``
-            # (the finalize captures args by reference at registration
-            # time). ``weakref.ref(inner)`` avoids strong-pinning the
-            # inner from the finalize args — without the weakref, the
-            # finalize args would form an outer→inner→outer reference
-            # cycle through the outer's ``__dict__`` that prevented
-            # the outer from being GC'd.
+            # Late-publish the inner handle into the finalizer's captured
+            # args (registered before the inner existed). weakref.ref
+            # avoids an outer<->inner cycle that would block GC.
             with contextlib.suppress(Exception):
                 self._inner_finalize_handle[:] = [weakref.ref(self._async_conn)]
-            # Snapshot under the lock so a foreign-thread
-            # ``force_close_transport`` nulling ``self._async_conn``
-            # between the lock release and the return read cannot
-            # deliver ``None`` to the caller (whose subsequent
-            # attribute access would raise bare ``AttributeError``
-            # outside the dbapi.Error tree).
+            # Snapshot under the lock so a foreign-thread close nulling
+            # _async_conn can't return None to the caller.
             inner = self._async_conn
 
         if inner is None:
@@ -2603,64 +1364,22 @@ class Connection:
         return inner
 
     def connect(self) -> None:
-        """Eagerly establish the TCP session.
-
-        Optional — the connection is lazy and the first cursor() or
-        execute() will connect automatically. Call this to fail-fast
-        when the cluster is unreachable, without allocating a cursor.
-        Mirrors :meth:`AsyncConnection.connect`.
-        """
-        # Thread-affinity check FIRST — match the async sibling's
-        # discipline (``_check_loop_only`` runs before the messages
-        # clear at ``aio/connection.py:1576``). A foreign-thread
-        # caller must not mutate the owner thread's ``messages``
-        # list before the diagnostic fires; otherwise PEP 249
-        # §6.1.1's "messages cleared by every standard method call"
-        # invariant gets violated by a thread that has no business
-        # touching the list.
+        """Eagerly establish the TCP session (optional — the connection
+        is lazy). Use to fail-fast when the cluster is unreachable."""
+        # Thread check before the messages clear so a cross-thread caller
+        # doesn't scrub the owner thread's list before the diagnostic.
         self._check_thread()
-        # PEP 249 §6.4: ``Connection.messages`` is "cleared by all
-        # standard methods". ``connect()`` is a dqlite extension
-        # (not in PEP 249), but the project-wide invariant — every
-        # public Connection method clears messages — covers this
-        # method too. Mirror the async sibling: clear AFTER the
-        # thread-affinity check so cross-thread callers don't
-        # mutate the owner thread's list.
         del self.messages[:]
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # _get_async_connection is a coroutine; route through _run_sync
-        # so we share the same loop-in-thread the cursor path uses.
         self._run_sync(self._get_async_connection())
 
     def _cascade_cursors(self) -> None:
-        """Cascade close-state to every tracked cursor.
-
-        Called from both fork-branch and main-branch arms of
-        ``close()`` and ``force_close_transport()``. Mirrors stdlib
-        ``sqlite3.Connection.close()``'s implicit cursor cascade and
-        the async sibling ``AsyncConnection._cascade_cursors``.
-
-        Always clears ``cur.messages`` per PEP 249 §6.4. Previously
-        the four duplicated copies of this body diverged: the
-        fork-branches dropped the ``del cur.messages[:]`` step that
-        the main-branches included — a cascade-closed cursor in a
-        forked child retained stale ``messages`` entries. The helper
-        is the union, not the intersection: every cascaded cursor
-        gets the full scrub regardless of fork-vs-main path.
-
-        ``weakref.proxy(cur._connection)`` is wrapped in
-        ``contextlib.suppress(TypeError)`` so a double-cascade (the
-        proxy is already a proxy) is silently absorbed — same shape
-        as ``Cursor.close``.
-        """
-        # Snapshot under _state_lock then release the lock before the
-        # per-cursor scrub. ``cur._closed = True`` etc. don't re-enter
-        # the WeakSet, but iterating outside the lock keeps the lock
-        # window narrow. ``WeakSet`` add/discard are not documented
-        # thread-safe under PEP 703 free-threading; under GIL Python
-        # the writes are bytecode-atomic but defending here is cheap
-        # belt-and-suspenders.
+        """Cascade close-state to every tracked cursor (stdlib parity),
+        including the PEP 249 §6.4 messages clear. ``weakref.proxy`` swap
+        is suppress(TypeError) so a double-cascade is a no-op."""
+        # Snapshot under the lock, scrub outside it (the scrub doesn't
+        # re-enter the WeakSet); WeakSet ops aren't PEP 703 thread-safe.
         _state_lock = getattr(self, "_state_lock", None) or threading.Lock()
         with _state_lock:
             snapshot = list(self._cursors)
@@ -2681,71 +1400,31 @@ class Connection:
 
     def close(self) -> None:
         """Close the connection."""
-        # PEP 249 §6.1: close() must be idempotent ("further attempts
-        # at .close() have no effect"). Check the closed flag BEFORE
-        # the thread guard so a re-close from a finalizer / atexit /
-        # ThreadPoolExecutor cleanup running on a non-creator thread
-        # is a no-op rather than raising ProgrammingError. The first
-        # close still must run on the creator thread (it tears down
-        # the loop thread and primitives that are GIL-but-not-thread-
-        # safe), so the thread check stays — just AFTER the closed
-        # short-circuit. Mirrors the cursor-side resolution.
+        # Idempotent (PEP 249 §6.1): closed-check before the thread guard
+        # so a re-close from a non-creator thread is a no-op, not a raise.
         if self._closed:
             return
-        # Fork-after-init: the inherited connection FDs are shared
-        # with the parent, the inherited daemon loop thread did not
-        # survive fork (only the calling thread crosses), and
-        # ``self._loop`` references a defunct loop. Calling
-        # ``_close_async`` would deadlock or send FIN on sockets the
-        # parent still uses. Flip the closed flags so the child can
-        # GC its references quietly without touching the wire or the
-        # dead loop, and skip the loop teardown. The pid-aware
-        # ``_check_thread`` would also raise here, but close() is
-        # documented as PEP 249 idempotent and silent on already-
-        # closed inputs — quiet no-op preserves that contract for
-        # the GC / atexit path that commonly drives close in a
-        # forked worker.
+        # Fork-after-init: the inherited loop/socket are the parent's;
+        # _close_async would deadlock or FIN the parent's sockets. Flip
+        # the flags + drop parent-loop-bound refs (else the dead daemon
+        # Thread pins them in threading._active) and skip teardown.
         if get_current_pid() != self._creator_pid:
             self._closed = True
             self._closed_flag[0] = True
-            # Cascade to tracked cursors so buffered fetches on them
-            # stop silently answering from stale in-memory rows in
-            # the child. stdlib sqlite3.Connection.close() does the
-            # same; the non-fork branch below mirrors this loop.
-            # Without it, a cursor inherited across fork retains
-            # _closed=False and the parent's stale rows / description.
             self._cascade_cursors()
             if self._finalizer is not None:
                 self._finalizer.detach()
                 self._finalizer = None
-            # Drop every parent-loop-bound reference so the child's GC
-            # can reap the inherited daemon loop ``Thread``, asyncio
-            # event loop, inner ``DqliteConnection``, and connect lock
-            # without pinning them via ``threading._active`` (the
-            # daemon-loop OS thread does not survive fork — only the
-            # calling thread crosses POSIX ``fork(2)`` — so the Thread
-            # object sits in ``_active`` indefinitely, pinning the
-            # loop, which pins the selector and inherited socket FDs).
-            # Mirrors the client-layer sibling ``DqliteConnection.close``
-            # fork branch which nulls its parent-loop-bound state, and
-            # the dbapi.aio ``AsyncConnection.close`` fork sibling.
             self._async_conn = None
             self._loop = None
             self._thread = None
             self._connect_lock = None
             self._transaction_owner = None
             return
-        # Cross-thread check is STRICT here regardless of
-        # ``check_same_thread`` — close() tears down the daemon loop
-        # thread synchronously, which requires the creator-thread's
-        # identity. Foreign-thread teardown uses
-        # ``force_close_transport()`` (no _check_thread; see that
-        # method's docstring). The strict check here keeps the
-        # documented contract: "share connections under
-        # check_same_thread=False, but call force_close_transport
-        # for non-creator-thread cleanup." Calling _check_thread()
-        # WOULD relax under the flag — inline the bare check
-        # instead.
+        # Cross-thread check is STRICT even under check_same_thread=False
+        # (close() tears down the daemon loop thread synchronously);
+        # foreign threads use force_close_transport(). Inline the bare
+        # check since _check_thread() would relax under the flag.
         current = threading.get_ident()
         if current != self._creator_thread:
             raise ProgrammingError(
@@ -2757,105 +1436,40 @@ class Connection:
                 f"force_close_transport() from non-creator threads "
                 f"(SA's pool recycle path uses this)."
             )
-        # PEP 249 §6.1.1: Connection.messages should be cleared on
-        # any standard Connection method invocation. The sibling
-        # commit/rollback/cursor paths already clear; align close()
-        # so the contract is uniform across the four required methods.
-        # Hoisted AFTER ``_check_thread`` (and AFTER the fork-check
-        # short-circuit above) so a foreign-thread first-close on an
-        # alive connection does not scrub the owner thread's list
-        # before the diagnostic fires -- mirrors the async sibling's
-        # ordering at ``aio/connection.py:1576-1582``.
+        # Clear messages after the thread check (so a foreign-thread
+        # first-close doesn't scrub the owner's list pre-diagnostic).
         del self.messages[:]
         self._closed = True
-        # Flip the flag the finalizer reads so it knows this was an
-        # explicit close (no ResourceWarning).
+        # Flag the finalizer reads to suppress its ResourceWarning.
         self._closed_flag[0] = True
-        # Cascade to tracked cursors so buffered fetches on them
-        # stop silently answering from stale in-memory rows. stdlib
-        # sqlite3.Connection.close() does the same. The helper writes
-        # directly to the cursor's private attributes so we bypass
-        # the Cursor.close() path (which would re-dispatch through
-        # Cursor.messages).
         self._cascade_cursors()
-        # Detach the finalizer — it's about to do nothing useful, and
-        # keeping it registered would double-stop the loop.
+        # Detach the finalizer (keeping it would double-stop the loop).
         if self._finalizer is not None:
             self._finalizer.detach()
             self._finalizer = None
         try:
             if self._loop is not None and not self._loop.is_closed():
-                # Same-thread re-entry detection: if a signal handler
-                # (SIGTERM / SIGINT) ran ``close()`` on the creator
-                # thread while a prior ``_run_sync`` was still parked
-                # in ``Future.result(timeout=...)``, ``_op_lock`` is
-                # already held by this same thread. The bounded
-                # acquire inside ``_run_sync`` would block for
-                # ``self._timeout`` and time out — correct, but
-                # operator-hostile (a SIGTERM handler that calls
-                # ``close()`` should not pause for the configured
-                # query timeout).
-                #
-                # Skip the bounded acquire entirely on detected same-
-                # thread re-entry. The underlying ``_async_conn``'s
-                # transport reap is best-effort even on the happy
-                # path (the existing ``suppress(Exception)`` wrap
-                # acknowledges this); the loop teardown in the
-                # ``finally`` below still runs unconditionally so the
-                # daemon thread is reaped and the OS socket FDs are
-                # released by the loop's stop-and-close. Close the
-                # un-awaited coroutine explicitly so it does not emit
-                # ``coroutine 'Connection._close_async' was never
-                # awaited`` at gc time.
+                # Same-thread re-entry (signal handler ran close() while
+                # a prior _run_sync is parked holding _op_lock): skip the
+                # bounded acquire (it would block self._timeout) and just
+                # close the un-awaited coro. The finally below still
+                # reaps the loop/thread. Probe _op_lock_owner, not
+                # .locked(), so a sibling's lock under tier-2 isn't
+                # mistaken for ours and released (corrupting the wire).
                 if getattr(self, "_op_lock_owner", None) == threading.get_ident():
-                    # Same-thread re-entry: a SIGINT delivered between
-                    # ``_run_sync``'s ``acquire`` succeeding and the
-                    # trailing ``finally`` release running can leave
-                    # the lock latched by this very thread (KI raises
-                    # before ``release()`` executes). Without a
-                    # best-effort release here, the bypass path returns
-                    # with the lock still held; the next ``_run_sync``
-                    # on the same connection then deadlocks for the
-                    # full ``self._timeout`` and surfaces "op_lock
-                    # acquire timed out" with no operator-visible hint
-                    # of the SIGINT root cause. ``release()`` raises
-                    # ``RuntimeError`` only if the lock is already
-                    # released; suppress narrows the catch so a true
-                    # logic error elsewhere still propagates.
-                    #
-                    # The probe now reads ``_op_lock_owner`` (an
-                    # owner-tracked field updated under the lock by
-                    # ``_run_sync``) instead of the bare
-                    # ``_op_lock.locked()`` probe. Under tier-2
-                    # (``check_same_thread=False``) the bare probe
-                    # could see a SIBLING thread's legitimate lock as
-                    # "held" and the creator's close would release
-                    # the sibling's lock, corrupting protocol state
-                    # by allowing two coroutines to drive the wire
-                    # concurrently. The owner-aware probe distinguishes
-                    # "WE hold the lock" (the KI-self-heal case) from
-                    # "someone else holds it" (let the bounded acquire
-                    # path run, surfacing the contention as a clean
-                    # ``OperationalError`` from ``_run_sync``).
+                    # A SIGINT may have left the lock latched (KI before
+                    # release ran); best-effort release so the next
+                    # _run_sync doesn't deadlock.
                     with contextlib.suppress(RuntimeError):
                         self._op_lock_owner = None
                         self._op_lock.release()
                     coro = self._close_async()
                     coro.close()
                 else:
-                    # Narrow the suppression so the op_lock-acquire-
-                    # timeout signal surfaces to the caller. The async
-                    # sibling at ``aio/connection.py`` raises on
-                    # contended close (force-closes the transport AND
-                    # raises) so operators / SA pool see the recycle
-                    # event. The sync side previously swallowed every
-                    # ``Exception`` here, including the
-                    # ``OperationalError("op_lock acquire timed out
-                    # ...")`` raised by ``_run_sync`` under contention.
-                    # Genuine transport / drain faults during close
-                    # are still swallowed — close() is best-effort and
-                    # the connection IS closed by the time control
-                    # reaches the loop-teardown ``finally`` below.
+                    # Re-raise the op_lock-acquire-timeout (matches the
+                    # async sibling) so SA's pool sees the recycle event;
+                    # genuine drain faults stay swallowed (close is
+                    # best-effort, the conn is closed by the finally).
                     try:
                         self._run_sync(self._close_async())
                     except OperationalError:
@@ -2864,98 +1478,38 @@ class Connection:
                         pass
         finally:
             with self._loop_lock:
-                # Mirror ``AsyncConnection.close()``'s ``finally``-
-                # clause discipline (``aio/connection.py``: every
-                # exit path nulls ``self._async_conn``). The two
-                # ``Exception``-suppressing arms above (same-thread
-                # KI re-entry's ``coro.close()`` and the wedged-loop
-                # ``contextlib.suppress(Exception)``) skip
-                # ``_close_async``'s own finally — leaving
-                # ``self._async_conn`` pointing at a live
-                # ``DqliteConnection`` whose writer transport's FD
-                # is reaped only at GC, AFTER the loop teardown
-                # below stops the selector. ``connection_lost`` then
-                # cannot fire and the FD lingers until the dbapi
-                # instance itself is GC'd, surfacing as a
-                # ``ResourceWarning("unclosed transport")``.
-                #
-                # Best-effort writer.close() drives FIN to the peer
-                # synchronously instead of waiting on the
-                # ``_SelectorSocketTransport``'s deferred ``__del__``.
-                # Placed BEFORE ``self._loop.close()`` below so the
-                # writer.close runs while the selector still exists
-                # to dispatch the close event.
+                # Always null _async_conn (the suppress arms above skip
+                # _close_async's own finally). Best-effort writer.close
+                # drives FIN synchronously before loop.close, else the
+                # transport FD lingers to GC ("unclosed transport").
                 if self._async_conn is not None:
                     inner = self._async_conn
                     proto = getattr(inner, "_protocol", None)
                     writer = getattr(proto, "_writer", None) if proto is not None else None
                     if writer is not None and self._loop is not None and not self._loop.is_closed():
-                        # ``StreamWriter.close()`` mutates transport
-                        # state (calls ``self._loop._remove_reader(...)``
-                        # under the hood) and is documented as not
-                        # thread-safe by stdlib asyncio — touching
-                        # the selector from the calling thread while
-                        # the loop is still running on its own thread
-                        # races with the selector's transport-state
-                        # bookkeeping. Schedule via
-                        # ``call_soon_threadsafe`` like the sibling
-                        # ``force_close_transport`` does (the sibling
-                        # ``self._async_conn.force_close_transport()``
-                        # call shape). FIFO discipline
-                        # of the ready queue with the subsequent
-                        # ``loop.stop`` queue ensures FIN goes out
-                        # before ``run_forever`` exits.
+                        # writer.close() isn't thread-safe; schedule on
+                        # the loop (FIFO before the loop.stop below).
                         with contextlib.suppress(RuntimeError):
                             self._loop.call_soon_threadsafe(_safe_writer_close, writer)
                     elif writer is not None:
-                        # Loop is closed / unavailable — the
-                        # ``_safe_writer_close`` synchronous call
-                        # is the best we can do to flush FIN.
+                        # Loop gone — sync close is the best we can do.
                         with contextlib.suppress(Exception):
                             writer.close()
                     self._async_conn = None
                 if self._loop is not None and not self._loop.is_closed():
-                    # ``is_closed()`` is a TOCTOU check — the loop
-                    # could be closed by a concurrent finalizer /
-                    # interpreter-shutdown sweep between the check
-                    # and the ``call_soon_threadsafe`` call, raising
-                    # ``RuntimeError("Event loop is closed")``. The
-                    # finalizer at ``_cleanup_loop_thread`` already
-                    # wraps the same call in ``suppress(RuntimeError)``;
-                    # mirror the discipline here so ``Connection.close``
-                    # cannot leak a bare ``RuntimeError`` past the
-                    # PEP 249 ``Error`` hierarchy on the race.
+                    # is_closed() is TOCTOU vs a concurrent finalizer;
+                    # suppress the closed-loop RuntimeError.
                     with contextlib.suppress(RuntimeError):
                         self._loop.call_soon_threadsafe(self._loop.stop)
                     if self._thread is not None:
-                        # Honour the operator's ``close_timeout`` knob
-                        # for the join budget, mirroring
-                        # ``force_close_transport()``. Floor at
-                        # ``_LOOP_THREAD_JOIN_MIN_SECONDS`` so a tight
-                        # ``close_timeout`` (down to the 0.01 s floor)
-                        # still gives the queued ``loop.stop`` callback
-                        # enough scheduling slack to land and the
-                        # daemon thread to exit on a non-stuck loop.
-                        # WAN-tuned operators set
-                        # ``close_timeout >> 0.1`` and get the full
-                        # configured window. A genuinely stuck loop
-                        # bottoms out at the floor instead of the
-                        # previous hard-coded 5 s.
+                        # Honour close_timeout, floored so a tight value
+                        # still lets loop.stop land on a non-stuck loop.
                         self._thread.join(
                             timeout=max(self._close_timeout, _LOOP_THREAD_JOIN_MIN_SECONDS)
                         )
-                    # ``loop.close()`` raises
-                    # ``RuntimeError("Cannot close a running event loop")``
-                    # if ``thread.join`` returned with the loop still
-                    # alive (a wire read longer than the join budget
-                    # leaves the loop spinning). The finalizer wraps
-                    # the same call defensively (see
-                    # ``_cleanup_loop_thread``); mirror that here so
-                    # ``Connection.close()`` cannot leak a bare
-                    # ``RuntimeError`` past the PEP 249 ``Error``
-                    # hierarchy. Drop the local refs unconditionally
-                    # so a retry close re-runs through the
-                    # finalizer's reaping path on next GC.
+                    # loop.close() raises if the loop is still alive
+                    # (read outlasted the join); swallow + drop refs so
+                    # the next GC re-runs the finalizer's reap.
                     try:
                         self._loop.close()
                     except RuntimeError:
@@ -2967,70 +1521,39 @@ class Connection:
                         )
                     self._loop = None
                     self._thread = None
-                # Drop the asyncio.Lock bound to the loop we just closed;
-                # the lazy-create branch in _get_async_connection rebuilds it
-                # against the next loop so the primitive never outlives its
-                # owning event loop.
+                # Drop the loop-bound asyncio.Lock; _get_async_connection
+                # rebuilds it against the next loop.
                 self._connect_lock = None
 
     def force_close_transport(self) -> None:
-        """Force-close the underlying socket transport without
-        awaiting any in-flight RPC.
+        """Force-close the socket transport without awaiting any
+        in-flight RPC. Synchronous, bounded by ``close_timeout``,
+        idempotent.
 
-        Synchronous, bounded by ``close_timeout``. Mirrors the async
-        sibling :meth:`AsyncConnection.force_close_transport` for the
-        sync path. Intended for last-resort shutdown scenarios where
-        :meth:`close` would block on a stuck wire read — typically
-        SQLAlchemy's ``do_terminate`` during ``engine.dispose()``
-        under partition + SIGTERM, where ``close()``'s
-        ``self._timeout``-bounded ``_run_sync(_close_async())`` adds
-        latency the operator cannot afford.
-
-        Idempotent. Never raises on already-closed inputs.
-
-        Contract divergence from :meth:`close`:
-
-        - Skips the ``_run_sync(_close_async())`` await, so a parked
-          ``reader.read()`` does not gate the shutdown.
-        - Schedules the synchronous ``writer.close()`` via
-          ``call_soon_threadsafe`` (writer is not thread-safe per
-          stdlib asyncio); the loop processes the call before
-          ``loop.stop`` lands so FIN actually goes out.
-        - Bounded by ``self._close_timeout`` for the thread join,
-          not ``self._timeout``.
-        - No ``_check_thread`` / no ``_op_lock`` acquire — terminate
-          must work from finalize threads and signal handlers.
+        For last-resort shutdown where close() would block on a stuck
+        read (SA do_terminate under partition+SIGTERM). Unlike close():
+        skips the _run_sync await, joins on close_timeout, and runs with
+        no _check_thread / no _op_lock so it works from finalize threads
+        and signal handlers.
         """
-        # PEP 249 §6.4 + project discipline: every public Connection
-        # method clears ``messages`` as the first statement so a stale
-        # entry from a prior call does not survive across the call
-        # boundary. ``contextlib.suppress(AttributeError)`` tolerates
-        # ``__new__``-built fixtures that bypass ``__init__``.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         if self._closed:
             return
         self._closed = True
         self._closed_flag[0] = True
-        # Fork-after-init: same shape as close()'s pid guard. Drop
-        # local refs and skip touching the wire / dead loop.
+        # Fork-after-init: same shape as close()'s pid guard.
         if get_current_pid() != self._creator_pid:
             self._cascade_cursors()
             if self._finalizer is not None:
                 self._finalizer.detach()
                 self._finalizer = None
-            # Same parent-loop-bound nullification as close()'s fork
-            # branch — see the comment block there. Without it, the
-            # inherited daemon ``Thread`` + asyncio loop chain stays
-            # alive in the child via ``threading._active`` until
-            # interpreter exit.
             self._async_conn = None
             self._loop = None
             self._thread = None
             self._connect_lock = None
             self._transaction_owner = None
             return
-        # Cascade cursors — same shape as close()'s cascade.
         self._cascade_cursors()
         if self._finalizer is not None:
             self._finalizer.detach()
@@ -3039,15 +1562,9 @@ class Connection:
             inner = self._async_conn
             self._async_conn = None
             loop = self._loop
-            # Disarm the inner client's ResourceWarning finalizer
-            # (``DqliteConnection._connection_unclosed_warning``)
-            # BEFORE the loop runs ``writer.close``: the warning's
-            # three-flag gate fails open in the post-force-close
-            # state, emitting a misleading "GC'd without close" on
-            # the connection we are explicitly closing here.
-            # ``close()`` detaches the inner finalizer inside
-            # ``_close_impl``; ``force_close_transport`` doesn't route
-            # through ``close()`` so the detach has to happen here.
+            # Disarm the inner's ResourceWarning finalizer before the
+            # loop closes the writer, else it warns "GC'd without close"
+            # on the conn we're explicitly closing.
             if inner is not None:
                 inner_closed_flag = getattr(inner, "_closed_flag", None)
                 if isinstance(inner_closed_flag, list) and inner_closed_flag:
@@ -3059,31 +1576,11 @@ class Connection:
                     inner._finalizer = None
             if loop is not None and not loop.is_closed():
                 if inner is not None:
-                    # Reap any pending invalidation-drain task on the
-                    # inner conn before stopping the loop. A prior
-                    # ``_invalidate`` (e.g. scheduled by ``_run_sync``
-                    # on a sync timeout) may have created an
-                    # ``inner._pending_drain`` Task that is still in
-                    # flight; without an explicit cancel queued before
-                    # ``loop.stop``, ``inner`` falls out of scope after
-                    # ``loop.close()`` and ``Task.__del__`` emits
-                    # "Task was destroyed but it is pending" via
-                    # asyncio's exception handler, plus the coroutine
-                    # frame keeps the StreamReader/StreamWriter
-                    # referenced (small leak per orphaned drain).
-                    # Mirrors the async sibling's bounded re-snapshot
-                    # reap at lines 842-911. The loop thread is still
-                    # actively running until the queued ``loop.stop``
-                    # processes (the ``call_soon_threadsafe`` ready
-                    # queue runs in FIFO; stop is the LAST callback we
-                    # queue), so a coroutine on the loop thread can
-                    # call ``_invalidate`` synchronously from its
-                    # except arms in client/connection.py and publish
-                    # a FRESH ``_pending_drain`` task BETWEEN our
-                    # snapshot and our null. The bounded loop closes
-                    # the snapshot-vs-fresh-publish race; without it,
-                    # the fresh task would be orphaned and surface as
-                    # "Task was destroyed but it is pending" at GC.
+                    # Reap any pending invalidation-drain task before
+                    # loop.stop (FIFO): else Task.__del__ emits "Task was
+                    # destroyed but it is pending". Bounded re-snapshot
+                    # because a loop coro can publish a fresh drain task
+                    # between our snapshot and null.
                     resnapshot_cap = 3
                     for _attempt in range(resnapshot_cap):
                         pending = getattr(inner, "_pending_drain", None)
@@ -3105,12 +1602,8 @@ class Connection:
                         with contextlib.suppress(RuntimeError):
                             loop.call_soon_threadsafe(_cancel_and_observe, pending)
                     else:
-                        # Cap exhausted: a racing ``_invalidate`` keeps
-                        # creating fresh ``_pending_drain`` tasks each
-                        # iteration. Final defensive null-out + WARNING
-                        # so operators see the pathological feedback
-                        # loop. Mirrors the async-sibling cap-exhausted
-                        # branch in ``AsyncConnection.force_close_transport``.
+                        # Cap exhausted (racing _invalidate keeps
+                        # republishing): final null-out + warning.
                         with contextlib.suppress(Exception):
                             inner._pending_drain = None
                         logger.warning(
@@ -3124,26 +1617,14 @@ class Connection:
                     proto = getattr(inner, "_protocol", None)
                     writer = getattr(proto, "_writer", None) if proto is not None else None
                     if writer is not None:
-                        # ``StreamWriter.close()`` is not thread-safe;
-                        # schedule on the owning loop. The
-                        # ``loop.stop`` we queue immediately afterwards
-                        # is itself a ``call_soon_threadsafe`` and the
-                        # loop processes ready callbacks in FIFO order,
-                        # so the writer.close lands first and FIN goes
-                        # out before ``run_forever`` exits.
+                        # writer.close() isn't thread-safe; schedule it
+                        # (FIFO before the loop.stop below).
                         with contextlib.suppress(RuntimeError):
                             loop.call_soon_threadsafe(_safe_writer_close, writer)
                 with contextlib.suppress(RuntimeError):
                     loop.call_soon_threadsafe(loop.stop)
-                # ``_join_budget_for_current_thread`` shortens the
-                # budget when force_close_transport runs on a thread
-                # that hosts a running asyncio loop (SA sync
-                # do_close / do_terminate dispatched via greenlet
-                # from an async context lands here on the user's
-                # loop thread). The full ``max(close_timeout,
-                # _LOOP_THREAD_JOIN_MIN_SECONDS)`` budget applies on
-                # off-loop threads so a non-stuck loop still has
-                # enough slack for the queued ``loop.stop`` to land.
+                # Shortened budget when running on a thread that hosts a
+                # loop (SA do_terminate via greenlet); full budget else.
                 join_budget = _join_budget_for_current_thread(self._close_timeout)
                 if self._thread is not None:
                     self._thread.join(timeout=join_budget)
@@ -3171,50 +1652,16 @@ class Connection:
 
     @property
     def in_transaction(self) -> bool:
-        """Whether the connection currently has an open transaction.
+        """Whether an explicit transaction is open.
 
-        Callers use this in shutdown paths to decide whether to commit
-        or rollback. Delegates to the underlying client-layer
-        :class:`DqliteConnection` for the live "is BEGIN in flight"
-        signal.
-
-        **Divergence from stdlib**: stdlib
-        ``sqlite3.Connection.in_transaction`` raises
-        ``ProgrammingError`` on a closed connection; this driver
-        returns ``False`` instead, by definition (a closed connection
-        cannot hold an open transaction). Never-connected connections
-        likewise return ``False``. This makes the getter safe to use
-        in shutdown paths that need to decide whether to commit or
-        rollback before close, without an extra closed-state try /
-        except scaffold. Cross-driver code that relies on stdlib's
-        raise behaviour to detect a closed connection should use the
-        ``closed``-state probe directly, not ``in_transaction``.
-
-        **Closed-state precedence**: the closed short-circuit runs
-        BEFORE ``_check_thread()`` so a foreign-thread reader of a
-        closed connection (e.g. a shutdown hook running on another
-        thread) gets the documented ``False`` rather than a
-        ``ProgrammingError`` thread-affinity violation. A closed
-        connection is observably immutable; thread affinity becomes
-        moot once close() has run.
-
-        **Thread affinity under ``check_same_thread``**: under the
-        default ``check_same_thread=True``, a cross-thread read on a
-        live connection raises ``ProgrammingError`` (preserves
-        shipped-API compatibility for callers that catch the raise
-        as a wrong-thread signal). Under ``check_same_thread=False``,
-        the cross-thread read returns the bool from the inner
-        without raising — matches stdlib
-        ``sqlite3.Connection.in_transaction`` semantics (a plain
-        C-level attribute read with no thread check). The fork
-        check IS still unconditional: even under
-        ``check_same_thread=False``, reading from a forked child
-        raises ``InterfaceError``.
+        Diverges from stdlib: returns False on a closed/never-connected
+        connection instead of raising, so it's safe in shutdown paths.
+        The closed short-circuit runs before the thread check; under
+        check_same_thread=True a cross-thread live read raises, under
+        False it returns the value (the fork check is unconditional).
         """
-        # Snapshot the reference once so a concurrent close() that nulls
-        # ``_async_conn`` cannot land between the None-check and the
-        # attribute read. ``bool(...)`` keeps the mock-adapter safety
-        # from the stdlib-parity introduction.
+        # Snapshot so a concurrent close() nulling _async_conn can't land
+        # between the None-check and the read.
         conn = self._async_conn
         if conn is None or self._closed:
             return False
@@ -3223,50 +1670,11 @@ class Connection:
 
     @property
     def autocommit(self) -> "bool | int":
-        """``True`` — dqlite operates in autocommit-by-default mode.
-
-        Mirrors the surface stdlib ``sqlite3`` added in Python 3.12 and
-        the long-standing ``psycopg.Connection.autocommit`` accessor.
-        Every statement commits at the server unless the caller issued
-        an explicit ``BEGIN``. See class docstring for the contract.
-
-        The bare dbapi exposes ``True`` here because the underlying
-        wire protocol is genuinely autocommit-by-default. The
-        SQLAlchemy adapter (``sqlalchemy-dqlite``) deliberately exposes
-        ``False`` because SA wraps the connection with explicit
-        BEGIN/COMMIT control — both are accurate for their respective
-        layer.
-
-        **Setter / getter round-trip**: stores the setter input on
-        ``self._autocommit_value`` and returns it. ``True`` and
-        stdlib's ``LEGACY_TRANSACTION_CONTROL`` (``-1``) are both
-        accepted; both no-op the wire layer (dqlite is fixed-mode
-        autocommit) but the property reflects the caller's last
-        input. The stdlib 3.12+ idiom ``conn.autocommit =
-        sqlite3.LEGACY_TRANSACTION_CONTROL; assert conn.autocommit
-        == sqlite3.LEGACY_TRANSACTION_CONTROL`` round-trips on this
-        driver — the module exports ``LEGACY_TRANSACTION_CONTROL =
-        -1`` precisely so this idiom works. The default (never-set)
-        return is ``True``. Setting to ``False`` (or any non-
-        ``True``, non-``-1`` value) raises ``NotSupportedError``.
-
-        **Closed-state behaviour**: raises
-        ``InterfaceError("Connection is closed ...")`` on a closed
-        connection, matching stdlib `sqlite3`'s
-        ``ProgrammingError("Cannot operate on a closed database.")``.
-        Cross-driver teardown probes consulting the getter during
-        dispose see a sharp diagnostic rather than the misleading
-        ``True`` sentinel against a closed connection.
-
-        **Fork-after-init**: raises ``InterfaceError("...used after
-        fork...")`` when read from a forked child process. The
-        ``_autocommit_value`` instance attribute is fork-inheritable
-        (a plain attribute), so without the pid guard a forked child
-        would read the parent's last setter input against a dead
-        inner transport. Mirrors the canonical guard shape used by
-        ``_stub_unsupported`` / ``_ensure_locks`` so every public
-        surface on this class surfaces fork-after-init with the same
-        diagnostic before any value read.
+        """``True`` — dqlite is autocommit-by-default (stdlib 3.12+ /
+        psycopg parity). Setter stores and round-trips ``True`` or the
+        ``-1`` LEGACY_TRANSACTION_CONTROL sentinel (both no-op the wire);
+        any other value raises NotSupportedError. Raises InterfaceError
+        on a closed connection or from a forked child.
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
@@ -3281,60 +1689,24 @@ class Connection:
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
-        # Thread-affinity check FIRST -- mirror ``commit``/``rollback``
-        # and the async sibling's discipline at
-        # ``aio/connection.py:1576``. Threadsafety=1 affinity contract
-        # applies even to the no-op accept-path: a cross-thread caller
-        # must not scrub the owner thread's ``messages`` list before
-        # the diagnostic fires.
+        # Thread check before the messages clear (no-op path is still an
+        # attempt). suppress(AttributeError) for __new__-built fixtures.
         self._check_thread()
-        # PEP 249 §6.4 + project discipline: every public state-
-        # mutating method clears ``messages``. Hoisted AFTER the
-        # thread check so cross-thread misuse doesn't mutate the
-        # owner thread's list.
-        # ``contextlib.suppress(AttributeError)`` tolerates
-        # ``__new__``-built fixtures that bypass ``__init__``.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # Accept ``True`` (acknowledges the existing mode) and the
-        # stdlib sentinel ``sqlite3.LEGACY_TRANSACTION_CONTROL``
-        # (numerically ``-1``) — stdlib's 3.12+ surface uses the
-        # sentinel as the "do not change isolation" signal that
-        # cross-driver code passes through. Both no-op the wire
-        # layer (dqlite is fixed-mode autocommit) but we STORE the
-        # caller's input so the getter round-trips. Cross-driver
-        # idiom ``conn.autocommit = sqlite3.LEGACY_TRANSACTION_CONTROL;
-        # assert conn.autocommit == -1`` now works on this driver —
-        # the module exports ``LEGACY_TRANSACTION_CONTROL = -1``
-        # for precisely this idiom.
-        # Any other value (``False`` / ``0`` / ``1`` / truthy
-        # non-bool) raises ``NotSupportedError`` — stdlib itself
-        # enforces a similarly strict gate (no PyObject_IsTrue
-        # coercion).
-        #
-        # **Inner-AsyncConnection slot is INDEPENDENT** — see the
-        # same paragraph on ``isolation_level.setter`` below. The
-        # sync setter stores on ``self._autocommit_value`` only;
-        # ``self._async_conn._autocommit_value`` is not mirrored.
-        # No wire-layer effect (dqlite is fixed-mode autocommit);
-        # divergence is pinned by
-        # ``test_property_setters_do_not_mirror_to_inner_async_conn.py``.
+        # Accept True and the -1 LEGACY_TRANSACTION_CONTROL sentinel
+        # (both no-op the wire; stored so the getter round-trips). The
+        # inner _async_conn slot is intentionally not mirrored (pinned
+        # by test_property_setters_do_not_mirror_to_inner_async_conn).
         if value is True:
             self._autocommit_value: bool | int = value
             return
-        # Tight ``-1`` gate matching stdlib's exact-int discipline at
-        # ``Modules/_sqlite/connection.c::pysqlite_connection_autocommit_setter``:
-        # loose ``value == -1`` previously accepted ``-1.0`` /
-        # ``Decimal('-1')`` / custom ``__eq__`` objects and stored
-        # them on ``_autocommit_value``, breaking the cross-driver
-        # ``isinstance(conn.autocommit, int)`` introspection idiom.
-        # Reject non-int (and bool, which is an int subclass we
-        # already covered above); on accept, canonicalise-store as
-        # ``int(-1)`` so the getter always round-trips a canonical
-        # int even if the caller passed an ``IntEnum`` / subclass.
+        # Tight exact-int -1 gate (stdlib discipline): loose == -1 would
+        # accept -1.0 / Decimal and break isinstance(autocommit, int).
+        # Canonicalise-store as int(-1).
         if isinstance(value, int) and not isinstance(value, bool) and value == -1:
             self._autocommit_value = -1
             return
@@ -3347,41 +1719,12 @@ class Connection:
 
     @property
     def isolation_level(self) -> "str | None":
-        """stdlib pre-3.12 ``sqlite3.Connection.isolation_level``-
-        parity surface.
-
-        **Setter / getter round-trip**: stores the (validated) setter
-        input on ``self._isolation_level_value`` and returns it.
-        ``None`` (the default), ``""`` (stdlib's default value of
-        the property), and the implicit-BEGIN ``"DEFERRED"`` /
-        ``"IMMEDIATE"`` / ``"EXCLUSIVE"`` variants are all accepted;
-        every value no-ops the wire layer (dqlite is fixed-mode
-        autocommit) but the property reflects the caller's last
-        input. This preserves the canonical cross-driver
-        "mirror source config to dst" idiom
-        (``dst.isolation_level = src.isolation_level`` where ``src``
-        is a stdlib ``sqlite3.Connection`` that defaults to ``""``)
-        — the round-trip is the point of the widening.
-
-        The default (never-set) return is ``None`` — truthful for
-        dqlite's autocommit-by-default mode (the bijection
-        ``autocommit=True`` ↔ ``isolation_level=None``).
-
-        Without this property, ``conn.isolation_level = None``
-        succeeded silently (Python allows arbitrary instance
-        attribute writes without ``__slots__``); the user's
-        attempt to express "use autocommit" had no effect on the
-        driver. The property closes the silent-write footgun.
-
-        **Closed-state behaviour**: raises ``InterfaceError`` on a
-        closed connection, matching stdlib `sqlite3`'s
-        ``ProgrammingError("Cannot operate on a closed database.")``
-        on the equivalent getter.
-
-        **Fork-after-init**: raises ``InterfaceError("...used after
-        fork...")`` when read from a forked child process —
-        ``_isolation_level_value`` is fork-inheritable. Mirrors the
-        sibling ``autocommit`` getter's discipline.
+        """stdlib pre-3.12 isolation_level-parity surface. Setter stores
+        and round-trips None / "" / DEFERRED / IMMEDIATE / EXCLUSIVE
+        (all no-op the wire), preserving the cross-driver
+        ``dst.isolation_level = src.isolation_level`` idiom. Default
+        None. Raises InterfaceError on a closed connection or forked
+        child.
         """
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
@@ -3396,58 +1739,19 @@ class Connection:
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
-        # Thread-affinity check FIRST -- see ``autocommit.setter`` for
-        # the rationale (no-op accept-path is still an attempt and
-        # cross-thread misuse must not mutate the owner thread's
-        # ``messages`` list before the diagnostic fires).
+        # Thread check first; suppress(AttributeError) for fixtures.
         self._check_thread()
-        # PEP 249 §6.4: clear ``messages``. Hoisted AFTER the thread
-        # check so cross-thread misuse doesn't mutate the owner
-        # thread's list. ``contextlib.suppress(AttributeError)``
-        # tolerates ``__new__``-built fixtures that bypass
-        # ``__init__``.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # Accept the stdlib pre-3.12 accept-set as no-ops: ``None``,
-        # ``""`` (the stdlib DEFAULT value of the property), and the
-        # implicit-BEGIN ``"DEFERRED"`` / ``"IMMEDIATE"`` /
-        # ``"EXCLUSIVE"`` variants. dqlite is fixed-mode autocommit
-        # at the wire layer, so all five collapse to the same
-        # behaviour — accepting them preserves the canonical
-        # cross-driver "mirror source config to dst" idiom (``dst
-        # .isolation_level = src.isolation_level`` where ``src`` is
-        # a stdlib ``sqlite3.Connection`` that defaults to ``""``).
-        # We STORE the caller's input on ``self._isolation_level_value``
-        # so the getter round-trips — without storage, the canonical
-        # cross-driver idiom assigns the value silently and the next
-        # read returns the default. Mirrors the ``autocommit.setter``
-        # storage discipline.
-        #
-        # **Inner-AsyncConnection slot is INDEPENDENT.** The setter
-        # stores on the sync wrapper only; ``self._async_conn
-        # ._isolation_level_value`` is not mirrored. The wire layer
-        # no-ops every accepted value (dqlite is fixed-mode
-        # autocommit), so divergence between the sync and inner slot
-        # has no observable effect on SQL execution. Callers reading
-        # the inner's view explicitly via ``conn._async_conn
-        # .isolation_level`` (a private accessor) get the inner's
-        # default, not the outer's last-set value — by design.
-        # Threading the setter write across the loop-thread boundary
-        # to mirror would introduce ordering hazards the rest of the
-        # sync surface deliberately avoids, with zero behavioural
-        # benefit. The pin in
-        # ``test_property_setters_do_not_mirror_to_inner_async_conn.py``
-        # locks the divergence so a future refactor that accidentally
-        # couples the slots without re-thinking the threading model
-        # surfaces fast.
-        #
-        # Genuinely invalid values (non-string, unknown string)
-        # raise ``ProgrammingError`` (PEP 249 §7 "caller-shape
-        # misuse"), NOT ``NotSupportedError`` (which is for
-        # features the database lacks).
+        # Accept the stdlib pre-3.12 set (None/""/DEFERRED/IMMEDIATE/
+        # EXCLUSIVE) as no-ops; store so the getter round-trips. Inner
+        # _async_conn slot is intentionally not mirrored (pinned by
+        # test_property_setters_do_not_mirror_to_inner_async_conn).
+        # Invalid values raise ProgrammingError (caller misuse), not
+        # NotSupportedError.
         if value is None:
             self._isolation_level_value: str | None = value
             return
@@ -3466,53 +1770,20 @@ class Connection:
     def commit(self) -> None:
         """Commit any pending transaction.
 
-        If the connection has never been used, this is a silent no-op
-        (matches stdlib ``sqlite3`` and the existing "no spurious
-        connect" contract). If the server reports "no transaction is
-        active," that too is swallowed — and on this driver "no
-        transaction is active" is the *common* case, because every
-        statement auto-commits at the server unless an explicit
-        ``BEGIN`` was issued (see class docstring / README
-        "Transactions"). stdlib ``sqlite3.commit()`` silently succeeds
-        in the same case, and callers should not have to tell the
-        difference between an empty transaction and a successfully
-        committed one.
-
-        Operational caveat: on a leader flip mid-transaction, COMMIT
-        can raise ``OperationalError`` with a code in
-        ``dqlitewire.LEADER_ERROR_CODES``. The write MAY or MAY NOT
-        have been persisted — Raft may already have replicated the
-        commit log entry before the flip, or the flip may have
-        occurred before the entry was appended. Callers cannot tell
-        from the exception alone. Use idempotent DML
-        (``INSERT OR REPLACE``, UPDATE on a unique key) or an
-        out-of-band state-check before retrying to avoid duplicate
-        writes. The same caveat applies to ``__exit__``'s clean-exit
-        commit.
+        Silent no-op if never used or if the server reports "no active
+        transaction" (the common case here, since every statement
+        auto-commits unless an explicit BEGIN ran). Caveat: a leader
+        flip mid-COMMIT raises with a LEADER_ERROR_CODES code and the
+        write may or may not have persisted — use idempotent DML before
+        retrying.
         """
-        # Thread-affinity check FIRST -- mirror async sibling at
-        # ``aio/connection.py:1576``. A foreign-thread caller must
-        # not scrub the owner thread's ``messages`` list before the
-        # diagnostic fires; PEP 249 §6.1.1's "messages cleared by
-        # every standard method call" invariant scopes to the owning
-        # caller.
+        # Thread check before the messages clear (scopes to the owner).
         self._check_thread()
-        # PEP 249 §6.1.1: clear ``messages`` on every standard method
-        # call. Hoisted AFTER the thread-affinity check so cross-
-        # thread misuse doesn't mutate the owner thread's list.
         del self.messages[:]
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # Reject explicit ``commit()`` from inside ``with
-        # conn.transaction():`` body. The ctxmgr owns transaction
-        # boundaries — a stray commit ends the transaction without
-        # exiting the block, and the surrounding rollback-at-exit
-        # then no-ops because ``in_transaction`` is already False.
-        # Mirrors the async sibling's stray-commit reject arm in
-        # ``AsyncConnection.commit``.
-        # ``getattr`` so test helpers that build via ``Connection.__new__``
-        # (skipping ``__init__``) without seeding the slot don't crash;
-        # production paths always have the attribute from ``__init__``.
+        # Reject stray commit() inside ``with conn.transaction():`` —
+        # the ctxmgr owns boundaries. getattr for __new__-built fixtures.
         _tx_owner = getattr(self, "_transaction_owner", None)
         if _tx_owner is not None and _tx_owner == threading.get_ident():
             raise InterfaceError(
@@ -3520,29 +1791,16 @@ class Connection:
                 "the context manager owns transaction boundaries — "
                 "exit the ``with`` block first."
             )
-        # Snapshot ``_async_conn`` to a local so a foreign-thread
-        # ``force_close_transport`` racing between the None-check
-        # and the protocol/in_transaction reads below cannot
-        # produce a silent no-op commit against an invalidated
-        # connection. Under ``check_same_thread=False`` (tier-2),
-        # ``_check_thread`` short-circuits and
-        # ``force_close_transport`` is documented foreign-thread-
-        # callable; the prior single-thread rationale comment was
-        # structurally wrong for that case. The post-snapshot
-        # reads all use the local ``inner`` reference so later
-        # nulling of ``self._async_conn`` does not slip through.
+        # Snapshot _async_conn so a foreign-thread force_close racing the
+        # reads below can't produce a silent no-op against an
+        # invalidated connection.
         inner = self._async_conn
         if inner is None:
             return
-        # Cancel-after-invalidate contract — see async sibling
-        # ``aio/connection.py``'s ``commit()`` for full rationale.
-        # A prior commit/rollback cancelled mid-flight invalidates
-        # the inner client conn AND clears its ``in_transaction``
-        # flag. A naive retry would then short-circuit on the False
-        # flag and silently return — hiding partial-commit
-        # ambiguity (the cancelled commit may or may not have
-        # reached the leader). Raise BEFORE the ``in_transaction``
-        # short-circuit.
+        # Cancel-after-invalidate: a prior cancelled commit invalidates
+        # the conn and clears in_transaction, so raise BEFORE the
+        # in_transaction short-circuit (else partial-commit ambiguity
+        # is hidden as a silent return).
         if getattr(inner, "_protocol", "_sentinel") is None:
             raise InterfaceError(
                 f"Connection invalidated (id={id(self)}); reconnect before "
@@ -3550,22 +1808,12 @@ class Connection:
                 "reached the leader before cancel landed; server-side "
                 "transaction state is ambiguous."
             )
-        # Local short-circuit when no transaction is active. Mirrors
-        # stdlib ``sqlite3.Connection.commit`` which uses
-        # ``sqlite3_get_autocommit`` to skip the wire round-trip.
-        # ``in_transaction`` already ORs in the
-        # ``_has_untracked_savepoint`` flag at the client layer, so the
-        # property covers the autobegun-via-quoted-SAVEPOINT case
-        # without the dbapi having to peek at the private attribute.
-        # ``getattr`` keeps mock tolerance: stripped-down test stubs
-        # without the property short-circuit (no wire round-trip) the
-        # same way a fresh connection would.
+        # Skip the wire round-trip when no transaction is active (stdlib
+        # parity); in_transaction also covers the untracked-SAVEPOINT case.
         if not getattr(inner, "in_transaction", False):
             return
-        # Stdlib parity: the C-level ``sqlite3_busy_timeout`` callback
-        # fires on every SQL statement including COMMIT (which is just
-        # SQL to SQLite). Wrap with the SQLite-curve retry so a
-        # contended COMMIT survives the same way an INSERT does.
+        # Busy-retry: COMMIT is SQL too, so a contended COMMIT survives
+        # like an INSERT.
         from dqlitedbapi._busy_retry import _resolve_busy_timeout_seconds, retry_sync_on_busy
 
         retry_sync_on_busy(
@@ -3575,29 +1823,18 @@ class Connection:
         )
 
     async def _commit_async(self) -> None:
-        """Async implementation of commit."""
         if self._async_conn is None:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # Clear ``messages`` under the lock so the PEP 249 contract
-        # "messages cleared by every method call" is atomic with the
-        # operation. ``_run_sync`` holds ``_op_lock`` across this
-        # coroutine; the pre-lock clear in ``commit()`` leaves a
-        # window where a sibling thread could write directly to
-        # ``messages`` between that clear and the lock acquire.
-        # Mirror the async sibling's defense-in-depth shape.
+        # In-lock clear (atomic with the op) closes the window where a
+        # sibling could write messages after commit()'s pre-lock clear.
         del self.messages[:]
         try:
-            # Route through ``_call_client`` so client-layer errors
-            # (including ``DqliteConnectionError`` for an externally
-            # invalidated connection) surface as PEP 249 ``Error``
-            # subclasses, not raw client exceptions.
+            # Via _call_client so client errors surface as PEP 249 Errors.
             await _call_client(self._async_conn.execute("COMMIT"))
         except OperationalError as e:
             if _is_no_transaction_error(e):
                 return
-            # Leader flip mid-COMMIT: see async sibling for the
-            # AmbiguousCommitError rationale (in-doubt Raft log
-            # entry; retry hazards).
+            # Leader flip mid-COMMIT -> in-doubt Raft entry.
             if e.code in _LEADER_ERROR_CODES:
                 raise AmbiguousCommitError(
                     "ambiguous commit: leader flipped during COMMIT; "
@@ -3609,29 +1846,14 @@ class Connection:
             raise
 
     def rollback(self) -> None:
-        """Roll back any pending transaction.
-
-        Same silent-success contract as :meth:`commit` for "no active
-        transaction" and for never-used connections. As with
-        :meth:`commit`, "no active transaction" is the *common* case
-        on this driver — see the class docstring for the autocommit-
-        by-default contract.
-        """
-        # Thread-affinity check FIRST -- see ``commit`` for the
-        # full rationale. Cross-thread caller must not mutate the
-        # owner thread's ``messages`` list before the diagnostic
-        # fires.
+        """Roll back any pending transaction. Same silent-success
+        contract as :meth:`commit` for "no active transaction" / never-
+        used connections."""
         self._check_thread()
         del self.messages[:]
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # Reject stray ``rollback()`` from inside ``with
-        # conn.transaction():`` body — the ctxmgr owns boundaries.
-        # Mirrors the async sibling and the same-shape guard in
-        # ``commit()``.
-        # ``getattr`` so test helpers that build via ``Connection.__new__``
-        # (skipping ``__init__``) without seeding the slot don't crash;
-        # production paths always have the attribute from ``__init__``.
+        # Reject stray rollback() inside transaction(); getattr for fixtures.
         _tx_owner = getattr(self, "_transaction_owner", None)
         if _tx_owner is not None and _tx_owner == threading.get_ident():
             raise InterfaceError(
@@ -3640,15 +1862,11 @@ class Connection:
                 "raise from inside the ``with`` block to trigger "
                 "rollback-at-exit, or exit the block first."
             )
-        # Snapshot ``_async_conn`` to a local — see ``commit()`` for
-        # the foreign-thread ``force_close_transport`` race rationale.
+        # Snapshot _async_conn — see commit() for the race rationale.
         inner = self._async_conn
         if inner is None:
             return
-        # Cancel-after-invalidate guard — see ``commit`` for the full
-        # rationale. Raise BEFORE the ``in_transaction`` short-circuit
-        # so a post-``_invalidate`` rollback surfaces as
-        # ``InterfaceError`` instead of silently no-opping.
+        # Cancel-after-invalidate guard — see commit().
         if getattr(inner, "_protocol", "_sentinel") is None:
             raise InterfaceError(
                 f"Connection invalidated (id={id(self)}); reconnect before "
@@ -3656,19 +1874,12 @@ class Connection:
                 "reached the leader before cancel landed; server-side "
                 "transaction state is ambiguous."
             )
-        # See commit() — same local short-circuit applies. Saves a
-        # wire round-trip on the autocommit-by-default common case.
+        # See commit() — same short-circuit saves a round-trip.
         if not getattr(inner, "in_transaction", False):
             return
-        # Stdlib parity: the C-level ``sqlite3_busy_timeout`` callback
-        # fires on every SQL statement including ROLLBACK (which is just
-        # SQL to SQLite). Wrap with the SQLite-curve retry so a contended
-        # ROLLBACK survives the same way COMMIT does. Safe wrt the
-        # cancel-after-invalidate contract: ``retry_sync_on_busy`` retries
-        # ONLY on ``SQLITE_BUSY`` and propagates every other exception
-        # (including ``CancelledError``) unchanged, and cancel/invalidate
-        # never produces ``SQLITE_BUSY`` — so a wrapped ROLLBACK cannot be
-        # re-issued after invalidation.
+        # Busy-retry (ROLLBACK is SQL too). Safe vs cancel-after-
+        # invalidate: retry fires only on SQLITE_BUSY, which cancel
+        # never produces.
         from dqlitedbapi._busy_retry import _resolve_busy_timeout_seconds, retry_sync_on_busy
 
         retry_sync_on_busy(
@@ -3678,16 +1889,11 @@ class Connection:
         )
 
     async def _rollback_async(self) -> None:
-        """Async implementation of rollback."""
         if self._async_conn is None:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # In-lock messages clear; see ``_commit_async`` for the
-        # rationale.
+        # In-lock clear; see _commit_async.
         del self.messages[:]
         try:
-            # See ``_commit_async``: route through ``_call_client`` so
-            # client-layer failures surface as PEP 249 ``Error``
-            # subclasses.
             await _call_client(self._async_conn.execute("ROLLBACK"))
         except OperationalError as e:
             if not _is_no_transaction_error(e):
@@ -3695,64 +1901,31 @@ class Connection:
 
     @contextlib.contextmanager
     def transaction(self) -> Iterator[None]:
-        """Synchronous context manager wrapping ``BEGIN`` / ``COMMIT``
-        / ``ROLLBACK``.
+        """Context manager: BEGIN on enter, COMMIT on clean exit,
+        ROLLBACK on exception.
 
-        Mirrors :meth:`AsyncConnection.transaction` and the canonical
-        sync-DB-API pattern used by ``psycopg.Connection.transaction``
-        and ``psycopg2.connection``. Without this method,
-        ``with conn.transaction(): ...`` raised ``AttributeError``
-        outside the ``dbapi.Error`` hierarchy — cross-driver porting
-        code's ``except dbapi.Error:`` arm could not catch it.
-
-        Issues ``BEGIN`` on enter, ``COMMIT`` on clean exit,
-        ``ROLLBACK`` on exception. Stray :meth:`commit` /
-        :meth:`rollback` from inside the body raise ``InterfaceError``
-        — the ctxmgr owns boundaries. Nested ``with
-        conn.transaction()`` raises ``InterfaceError``. Closed
-        connections raise ``InterfaceError`` on enter.
-
-        The sync surface emits ``BEGIN`` / ``COMMIT`` / ``ROLLBACK``
-        directly through a cursor rather than driving the client
-        layer's task-scoped ``transaction()`` async ctxmgr — the
-        sync caller is single-threaded by ``_check_thread`` so the
-        client's task-affinity guard would gratuitously reject
-        sequential ``_run_sync`` calls inside one ``with`` block.
+        Stray commit()/rollback() inside the body, nesting, and a closed
+        connection all raise InterfaceError. Emits the statements
+        through a cursor rather than the client's task-scoped async
+        ctxmgr (whose task-affinity guard would reject the sequential
+        _run_sync calls).
         """
         del self.messages[:]
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         self._check_thread()
         token = threading.get_ident()
-        # ``getattr`` with a fresh-Lock fallback so test fixtures
-        # that build ``Connection`` via ``__new__`` (skipping
-        # ``__init__``) without seeding the attribute don't crash.
-        # Production paths always have the attribute from
-        # ``__init__``. A fresh Lock per call is acceptable in the
-        # test-only path because no sibling thread holds it.
+        # getattr/fresh-Lock fallback for __new__-built fixtures.
         _state_lock = getattr(self, "_state_lock", None) or threading.Lock()
         cursor = self.cursor()
-        # Owner slot is set INSIDE the outer try so a BaseException
-        # (KeyboardInterrupt / SystemExit) arriving at the
-        # assignment-site bytecode is caught by the outer finally,
-        # which clears the slot. Mirrors the async sibling, and
-        # preserved by source-pin test
-        # test_sync_transaction_owner_assignment_inside_try_frame.
+        # Owner slot set INSIDE the try so a KI at the assignment is
+        # caught by the outer finally (pinned by
+        # test_sync_transaction_owner_assignment_inside_try_frame).
         try:
-            # Atomic read-check-RESERVE of ``_transaction_owner``
-            # under ``_state_lock``: under ``check_same_thread=False``
-            # two foreign threads could otherwise both pass the
-            # ``is not None`` check and both attempt ``BEGIN``. We
-            # RESERVE the slot with the current thread's id INSIDE
-            # the lock so a sibling thread sees us as the owner
-            # even if our BEGIN hasn't reached the wire yet. If
-            # BEGIN fails downstream, the outer ``finally`` clears
-            # the slot (guarded by token-equality so we never
-            # clear a sibling thread's reservation).
-            # Lock-order: ``_state_lock`` is released BEFORE
-            # ``cursor.execute("BEGIN")`` so we don't hold it
-            # across the wire round-trip — the reservation pattern
-            # is sufficient.
+            # Atomic read-check-RESERVE under _state_lock so two threads
+            # under check_same_thread=False can't both BEGIN. Lock
+            # released before the wire round-trip; the outer finally
+            # clears the slot on failure (token-guarded).
             with _state_lock:
                 if self._transaction_owner is not None:
                     raise InterfaceError(
@@ -3765,26 +1938,12 @@ class Connection:
             try:
                 yield
             except BaseException:
-                # Best-effort rollback: emit ROLLBACK while temporarily
-                # parking the owner slot at a SENTINEL (not None) so
-                # the cursor's commit/rollback affordance through
-                # this same connection does not trip the owner-token
-                # guard AND a sibling thread under tier-2 cannot
-                # observe a free slot in the wire-RTT window and
-                # silently reserve it. Reset it in the outer finally
-                # regardless. The ROLLBACK itself may fail (leader
-                # flip, transport, etc.) — suppress that exception
-                # so the caller's original exception propagates
-                # (chaining via ``__context__`` is automatic). If
-                # ROLLBACK failed, force-close the transport so the
-                # slot does not return to the SA pool with an open
-                # server-side transaction; SA's ``is_disconnect``
-                # walks ``__cause__`` only and would not classify
-                # the suppressed ROLLBACK failure. Mirror of the
-                # aio ``__aexit__`` rollback-Exception arm. The
-                # sentinel keeps the nested-transaction reject arm
-                # firing for sibling threads under tier-2 while the
-                # COMMIT/ROLLBACK is in flight.
+                # Best-effort ROLLBACK with the owner slot parked at a
+                # non-None sentinel (keeps the nested-tx reject firing
+                # for siblings during the RTT). Suppress a ROLLBACK
+                # failure so the caller's exception propagates; on
+                # failure force-close so the slot doesn't return to the
+                # SA pool with an open server-side transaction.
                 with _state_lock:
                     self._transaction_owner = _OWNER_INTERNAL_BUSY  # type: ignore[assignment]
                 try:
@@ -3798,15 +1957,9 @@ class Connection:
                         self._transaction_owner = token
                 raise
             else:
-                # Park the owner slot at a SENTINEL (not None) before
-                # COMMIT so a sibling thread under tier-2 cannot
-                # observe a free slot in the wire-RTT window and
-                # silently reserve it. The
-                # ``cursor.execute("COMMIT")`` path itself does not
-                # trip the owner-token guard because the inner
-                # ``commit()`` checks ``_tx_owner == current_ident``
-                # which is naturally False against the sentinel.
-                # Restore in the outer finally.
+                # Park the owner slot at the non-None sentinel before
+                # COMMIT so a sibling can't reserve in the RTT window
+                # (the sentinel reads as not-owner so COMMIT passes).
                 with _state_lock:
                     self._transaction_owner = _OWNER_INTERNAL_BUSY  # type: ignore[assignment]
                 try:
@@ -3815,44 +1968,20 @@ class Connection:
                     with _state_lock:
                         self._transaction_owner = token
         finally:
-            # Only clear if we still own the slot — defensive against
-            # a hypothetical re-entry that shouldn't be reachable
-            # given the guard above. Mirrors the async sibling, which
-            # uses ``is`` because tasks are unique objects; the sync
-            # token is a thread id (small int) so ``==`` is the right
-            # comparison (CPython interns small ints but the contract
-            # is not guaranteed at the language level).
+            # Clear only if we still own the slot (== because the token
+            # is a thread-id int, not an interned-guaranteed object).
             if self._transaction_owner == token:
                 self._transaction_owner = None
             with contextlib.suppress(Exception):
                 cursor.close()
 
     def cursor(self, **unknown_kwargs: object) -> Cursor:
-        """Return a new Cursor object.
-
-        Reject unknown kwargs (notably stdlib's ``factory=`` Cursor-
-        subclass hook) with ``NotSupportedError`` so cross-driver
-        porting code's ``except dbapi.Error:`` catches the rejection
-        rather than the bare ``TypeError`` Python raises for an
-        unexpected kwarg. Symmetric with ``connect()``'s
-        ``**unknown_kwargs`` pattern that rejects stdlib-only kwargs
-        with ``NotSupportedError`` rather than silently ignoring them.
-        """
+        """Return a new Cursor. Unknown kwargs (e.g. stdlib's factory=)
+        raise NotSupportedError, not a bare TypeError, so cross-driver
+        ``except dbapi.Error:`` catches them."""
         del self.messages[:]
-        # Affinity precedence: closed → thread → kwarg-shape. Surface
-        # the most-salient diagnostic first. Stdlib sqlite3 and the
-        # in-package ``Cursor.execute`` rationale (cursor.py) both
-        # order closed-state ahead of input-shape rejection; the
-        # thread check is hoisted ABOVE the kwarg reject for the same
-        # reason — a foreign-thread caller passing ``factory=...``
-        # should see ``ProgrammingError("...same thread...")`` rather
-        # than ``NotSupportedError(unknown kwarg)``, otherwise the
-        # next no-kwarg call would still fail on the thread check and
-        # the operator gets two different diagnostics for the same
-        # underlying misuse. NOTE: ``_stub_unsupported`` deliberately
-        # skips the thread check (rejection is universal there —
-        # those features are unsupported in every state); the asymmetry
-        # is intentional, documented at ``_stub_unsupported``.
+        # Precedence: closed -> thread -> kwarg-shape, so a foreign-thread
+        # factory= caller sees the thread diagnostic, not two errors.
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         self._check_thread()
@@ -3864,34 +1993,14 @@ class Connection:
                 f"subclassing is not supported.)"
             )
         cur = Cursor(self)
-        # ``WeakSet.add`` is not documented thread-safe; lock for
-        # belt-and-suspenders under check_same_thread=False (and
-        # required under PEP 703 free-threading). ``_state_lock``
-        # is held only briefly across the single dict insert.
+        # WeakSet.add isn't documented thread-safe; lock briefly.
         _state_lock = getattr(self, "_state_lock", None) or threading.Lock()
         with _state_lock:
             self._cursors.add(cur)
-        # Re-check ``_closed`` after add: ``cursor()`` is creator-
-        # thread-only but ``force_close_transport`` is documented as
-        # callable from finalize threads / signal handlers / SA-pool
-        # reclaim threads (no ``_check_thread`` / no ``_op_lock``
-        # acquire; see ``force_close_transport`` docstring). The
-        # cascade snapshot at ``list(self._cursors)`` can therefore
-        # run on a sibling thread between this method's prelude
-        # ``if self._closed:`` check and the WeakSet add — and the
-        # freshly-built cursor would skip the cascade scrub and be
-        # returned to the caller with ``_closed=False`` and a strong
-        # ref to the now-dead Connection. Mirrors the async sibling
-        # at ``aio/connection.py`` (the verbatim re-check + scrub +
-        # discard block). Defense-in-depth: if ``_closed`` flipped
-        # during the construction-and-add window, apply the same
-        # scrub the cascade would have applied AND discard the entry
-        # so ``self._cursors`` matches the ``_cascade_cursors``
-        # postcondition (empty after close). Without ``discard()``,
-        # post-close diagnostics that read ``len(conn._cursors)``
-        # see a stale count, and any future cascade field added
-        # (e.g. a buffer pointer) would silently leak on the late-
-        # added cursor.
+        # Re-check _closed after add: a foreign-thread force_close can
+        # cascade between the prelude check and the add, leaving this
+        # fresh cursor unscrubbed. Apply the cascade scrub + discard so
+        # _cursors matches the post-close postcondition.
         if self._closed:
             cur._closed = True
             cur._rows = []
@@ -3900,17 +2009,9 @@ class Connection:
             cur._lastrowid = None
             cur._row_index = 0
             del cur.messages[:]
-            # Do NOT swap ``cur._connection`` to a ``weakref.proxy``
-            # here. The cursor is already scrubbed (``_closed=True``,
-            # fields cleared) and discarded from ``_cursors`` below,
-            # so the "no strong-pin of the closed Connection" rationale
-            # does not apply: a closed cursor's strong ref to its
-            # Connection is metadata-only (no operational state is
-            # reached through it). Preserving the strong ref keeps
-            # PEP 249 §6.5.1 identity (``cursor.connection is conn``)
-            # AND hashability (``weakref.proxy`` instances are not
-            # hashable) on the race-leaked path, matching what the
-            # non-race path already does for every other closed cursor.
+            # Keep cur._connection as a strong ref (not a proxy): the
+            # cursor is already scrubbed, so the ref is metadata-only,
+            # and a strong ref preserves identity + hashability.
             with _state_lock:
                 self._cursors.discard(cur)
         return cur
@@ -3921,29 +2022,11 @@ class Connection:
         parameters: Sequence[Any] | None = None,
         /,
     ) -> Cursor:
-        """Stdlib ``sqlite3.Connection`` convenience extension (NOT part
-        of PEP 249 §10 optional extensions) — open a cursor, run
-        ``execute``, return the cursor.
-
-        Parity with stdlib ``sqlite3.Connection.execute`` and with the
-        async-side ``AsyncAdaptedConnection.execute``. SA-internal code
-        paths and the ``connect``-event listener idiom call
-        ``dbapi_connection.execute(...)`` directly; without this method,
-        sync dialect users hit ``AttributeError`` on the first checkout
-        of a ``dqlite://`` engine that registers a ``connect`` listener
-        — an opaque diagnostic that escapes the ``dbapi.Error``
-        hierarchy.
-
-        On a synchronous failure of ``cur.execute(...)`` close the
-        freshly-opened cursor before re-raising so the caller's
-        exception path doesn't leak an unowned cursor. Mirrors the
-        async adapter's cleanup-on-raise discipline.
+        """Stdlib convenience extension (not PEP 249): open a cursor,
+        execute, return it. Without it SA's connect-listener idiom hits
+        AttributeError outside the dbapi.Error tree. Closes the cursor
+        on synchronous failure before re-raising.
         """
-        # PEP 249 §6.4: messages list is cleared automatically by all
-        # standard connection methods. ``self.cursor()`` does its own
-        # clear, but eagerly clearing here aligns this shortcut's
-        # prelude shape with the seven other public Connection
-        # methods that all clear-before-anything-else.
         del self.messages[:]
         cur = self.cursor()
         try:
@@ -3963,44 +2046,16 @@ class Connection:
         seq_of_parameters: Iterable[Sequence[Any]],
         /,
     ) -> Cursor:
-        """Stdlib ``sqlite3.Connection`` convenience extension (NOT part
-        of PEP 249 §10 optional extensions) — open a cursor, run
-        ``executemany``, return the cursor.
-
-        Parity with stdlib ``sqlite3.Connection.executemany`` and with
-        the async-side ``AsyncConnection.executemany``. Cross-driver
-        code (aiosqlite / psycopg / asyncpg) reaches for this shortcut
-        on both sync and async sides; without it, sync callers hit
-        ``AttributeError`` — an opaque diagnostic that escapes the
-        ``dbapi.Error`` hierarchy.
-
-        Mirrors the cleanup-on-raise discipline of ``execute``: close
-        the freshly-opened cursor on synchronous failure before
-        re-raising so the caller's exception path doesn't leak an
-        unowned cursor.
+        """Stdlib convenience extension (not PEP 249): open a cursor,
+        executemany, return it. Closes the cursor on synchronous
+        failure before re-raising.
         """
-        # PEP 249 §6.4: see ``execute`` shortcut for the eager-clear
-        # rationale.
         del self.messages[:]
-        # Closed-state precedence: route through ``self.cursor()`` so
-        # a closed connection raises ``InterfaceError`` BEFORE the
-        # outer-shape check fires. Mirrors ``Connection.cursor()``'s
-        # ordering: closed → cross-thread → input-shape. The
-        # outer-shape check moves AFTER cursor construction so a
-        # closed connection that receives a bad-shape ``seq`` raises
-        # the closed-state ``InterfaceError`` (cross-driver feature-
-        # probe / pool-recycle hooks expect that class), not a
-        # shape ``ProgrammingError``.
+        # Via cursor() so a closed connection raises InterfaceError
+        # before the shape check (cross-driver hooks expect that class).
         cur = self.cursor()
-        # Reject the outer shapes that would silently iterate over keys
-        # (dict) / characters (str / bytes / bytearray / memoryview), or
-        # iterate in non-deterministic order (set / frozenset). The
-        # shared ``_validate_executemany_seq_shape`` helper is the
-        # single source of truth so this shortcut and
-        # ``Cursor.executemany`` produce one diagnostic and one
-        # accept/reject contract. ``Mapping`` at large is NOT rejected
-        # so an OrderedDict-of-rows pattern still works — only literal
-        # ``dict`` (the common single-row misuse) is denied.
+        # Reject shapes that iterate keys/chars or in nondeterministic
+        # order; shared helper keeps one contract with Cursor.executemany.
         try:
             _validate_executemany_seq_shape(seq_of_parameters)
         except ProgrammingError:
@@ -4017,52 +2072,22 @@ class Connection:
 
     @property
     def address(self) -> str:
-        """Node address this connection was opened against.
-
-        Read-only. Exposed so diagnostic layers (SQLAlchemy adapter,
-        pool metrics, structured logs) can label events with the peer
-        address without reaching into the private ``_address`` field.
-        """
+        """Node address this connection was opened against (read-only)."""
         return self._address
 
     @property
     def closed(self) -> bool:
-        """``True`` once :meth:`close` has been called OR the inner
-        client connection has been invalidated (cancel-mid-execute,
-        leader-flip, transport reset).
-
-        Mirrors the psycopg / asyncpg convention so callers porting
-        idempotent-close patterns (``if not conn.closed: conn.close()``)
-        do not hit ``AttributeError``. PEP 249 does not mandate this
-        property; stdlib ``sqlite3`` famously omits it. The underlying
-        flag is already maintained by every method that mutates
-        closed-ness.
-
-        Peer-driver parity (psycopg, asyncpg) — both return True for
-        invalidated connections so cross-driver code branching on
-        ``conn.closed`` to drive reconnect heuristics works correctly.
-        Use :attr:`invalidated` if you specifically need to distinguish
-        the two states. Mirrors the async sibling at
-        ``aio/connection.py``'s ``AsyncConnection.closed``.
-        """
+        """``True`` once :meth:`close` ran OR the inner connection was
+        invalidated (cancel-mid-execute, leader-flip, transport reset).
+        psycopg/asyncpg parity; use :attr:`invalidated` to distinguish
+        the two states."""
         return self._closed or self.invalidated
 
     @property
     def invalidated(self) -> bool:
-        """``True`` if the inner client connection has been invalidated
-        but :meth:`close` has not yet been called explicitly.
-
-        Invalidation happens on cancel-mid-execute / leader-flip /
-        transport reset. Returns ``False`` if the connection has been
-        explicitly closed (``closed`` is the canonical signal then),
-        if it was never connected, or if it is alive and well.
-
-        asyncpg returns True from ``is_closed()`` for the same state;
-        psycopg exposes ``connection.broken``. This driver splits the
-        two: ``closed`` ORs both states (peer-driver parity);
-        ``invalidated`` lets callers distinguish. Mirrors the async
-        sibling ``AsyncConnection.invalidated``.
-        """
+        """``True`` if the inner connection was invalidated (cancel /
+        leader-flip / reset) but :meth:`close` hasn't been called.
+        False if explicitly closed, never-connected, or healthy."""
         if self._closed:
             return False
         inner = self._async_conn
@@ -4072,41 +2097,16 @@ class Connection:
 
     @property
     def row_factory(self) -> RowFactory | None:
-        """stdlib ``sqlite3.Connection.row_factory`` parity hook.
-
-        Set to a callable ``factory(cursor, row) -> Any`` to wrap
-        each fetched tuple before returning. ``None`` (default)
-        returns plain tuples per PEP 249. New cursors inherit this
-        default; assigning ``cur.row_factory = ...`` overrides
-        per-cursor.
-
-        **Factory contract**: factories that require a specific
-        ``Cursor`` subclass — notably ``sqlite3.Row``, whose
-        C-extension constructor type-checks the first argument to
-        be ``pysqlite_CursorType`` — do NOT work with this driver.
-        The setter accepts them, but the first fetch surfaces
-        ``DataError("row_factory call failed: argument 1 must be
-        sqlite3.Cursor, not Cursor")``.
-
-        Use plain callables (lambdas, dataclass builders,
-        ``namedtuple._make``) instead. See ``Cursor.row_factory``
-        for the recommended shapes.
-        """
+        """stdlib row_factory parity: a ``factory(cursor, row)`` callable
+        wrapping each fetched tuple; ``None`` returns plain tuples. New
+        cursors inherit it. ``sqlite3.Row`` does NOT work (its ctor
+        type-checks for a real sqlite3.Cursor) — use plain callables."""
         return self._row_factory
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
-        # State-mutating setter — enforce the same closed-then-thread
-        # discipline as every other public method on this class. The
-        # getter intentionally bypasses the check (read-only / GIL-
-        # atomic), but a closed-conn setter mutation would silently
-        # succeed and a cross-thread setter mutation would let a
-        # foreign thread override the row_factory for cursors created
-        # by the creator thread. Mirrors ``Cursor.row_factory.setter``
-        # which has both checks. ``del self.messages[:]`` mirrors the
-        # PEP 249 §6.4 + project discipline applied to every public
-        # state-mutating method. ``contextlib.suppress(AttributeError)``
-        # tolerates ``__new__``-built fixtures that bypass ``__init__``.
+        # State-mutating setter -> closed-then-thread checks (the getter
+        # bypasses them). suppress(AttributeError) for fixtures.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
@@ -4121,27 +2121,19 @@ class Connection:
 
     @property
     def text_factory(self) -> type[str]:
-        """stdlib ``sqlite3.Connection.text_factory``-parity stub.
-
-        dqlitedbapi always returns TEXT cells as ``str`` (UTF-8
-        decoded at the wire layer); custom text-factory routing is
-        not supported. Setter rejects non-``str`` values with
-        ``NotSupportedError`` so a silent write cannot happen."""
+        """stdlib text_factory stub: TEXT is always returned as str
+        (UTF-8 at the wire); the setter rejects non-str with
+        NotSupportedError."""
         return str
 
     @text_factory.setter
     def text_factory(self, value: object) -> None:
-        # PEP 249 §6.4 + closed-first precedence — see
-        # ``autocommit.setter`` for the rationale.
-        # ``contextlib.suppress(AttributeError)`` tolerates
-        # ``__new__``-built fixtures that bypass ``__init__``.
+        # suppress(AttributeError) for __new__-built fixtures.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
-        # Threadsafety=1 affinity contract — see ``autocommit.setter``
-        # for the rationale.
         self._check_thread()
         if value is str:
             return
@@ -4150,34 +2142,14 @@ class Connection:
             "always returned as str (UTF-8 decoded at the wire layer)"
         )
 
-    # PEP 249 §7 (TPC extension) and stdlib sqlite3 parity stubs.
-    # PEP 249 says drivers without TPC support MUST raise
-    # NotSupportedError on the TPC methods rather than letting
-    # AttributeError leak (which escapes the dbapi.Error hierarchy).
-    # The stdlib-sqlite3 helpers (load_extension, backup, iterdump,
-    # create_function/aggregate/collation) similarly should surface
-    # via NotSupportedError so cross-driver code that calls them
-    # inside ``except sqlite3.Error:`` catches uniformly. dqlite-
-    # server does not implement any of these.
-    #
-    # **Note for cross-driver code porting from stdlib ``sqlite3``:**
-    # ``hasattr(conn, "tpc_begin")`` returns ``True`` on this driver
-    # because the stub IS defined (it just unconditionally raises).
-    # Stdlib ``sqlite3`` has no ``tpc_*`` methods at all, so
-    # ``hasattr`` returns ``False`` there. Code that feature-detects
-    # via ``hasattr`` will mistakenly take the "supported" branch
-    # against dqlitedbapi and then surface ``NotSupportedError``
-    # from inside the call. To portably test for support, use a
-    # ``try: conn.tpc_begin(xid); except dbapi.NotSupportedError:``
-    # block instead of ``hasattr``. The same caveat applies to
-    # ``callproc`` / ``nextset`` / ``scroll`` on the cursor side.
+    # TPC + stdlib-sqlite3 parity stubs: dqlite-server implements none,
+    # so they raise NotSupportedError (inside dbapi.Error) rather than
+    # leaking AttributeError. CAVEAT: hasattr() returns True here (the
+    # stub exists), unlike stdlib — feature-detect via try/except
+    # NotSupportedError, not hasattr.
 
-    # ``*args, **kwargs`` shape so any caller signature — positional,
-    # keyword, novel-PEP-249-extension kwarg — reaches
-    # ``_stub_unsupported`` and surfaces ``NotSupportedError`` inside
-    # the ``dqlitedbapi.Error`` hierarchy. Tightly-typed signatures
-    # leak bare ``TypeError`` outside the hierarchy, breaking cross-
-    # driver feature-probe code (``except dbapi.Error: ...``).
+    # *args/**kwargs so any caller signature reaches _stub_unsupported
+    # (a tight signature would leak bare TypeError outside dbapi.Error).
     def tpc_begin(self, *args: object, **kwargs: object) -> NoReturn:
         """PEP 249 two-phase-commit stub. Always raises ``NotSupportedError`` —
         dqlite does not support two-phase commit (single-leader Raft)."""
@@ -4209,26 +2181,11 @@ class Connection:
         self._stub_unsupported("dqlite does not support two-phase commit")
 
     def _stub_unsupported(self, msg: str) -> NoReturn:
-        """Shared helper for ``NotSupportedError`` stubs: clear
-        ``self.messages`` per PEP 249 §6.4 messages-clear contract,
-        check fork-after-init (canonical ``InterfaceError`` per the
-        project-wide convention) and closed-state per stdlib
-        ``sqlite3`` precedence, then raise.
-
-        Pid check runs BEFORE the closed-check so a forked child sees
-        the canonical fork diagnostic (``InterfaceError``, routes
-        through cross-driver retry middleware) instead of
-        ``NotSupportedError`` (``DatabaseError``-subtree class, not
-        recognised by ``is_disconnect`` classifiers). ``_check_thread``
-        is still NOT applied — these are universally-unsupported
-        regardless of state, and thread-affinity creep here is beyond
-        what the stub represents. The pid check is structurally
-        different: it surfaces an existential "this object is no
-        longer addressable" condition, not a per-thread misuse.
-
-        ``contextlib.suppress(AttributeError)`` tolerates
-        ``__new__``-built fixtures that bypass ``__init__`` and so
-        lack ``_closed`` / ``messages`` / ``_creator_pid``."""
+        """Shared NotSupportedError stub: clear messages, then check
+        fork (InterfaceError, BEFORE the closed-check so a forked child
+        gets the retry-classifiable diagnostic) and closed-state, then
+        raise. No _check_thread (these are unsupported in every state).
+        suppress(AttributeError) for __new__-built fixtures."""
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         creator_pid = getattr(self, "_creator_pid", None)
@@ -4267,16 +2224,9 @@ class Connection:
             "on the per-RPC timeout"
         )
 
-    # stdlib ``sqlite3.Connection``-parity stubs for VDBE-callback
-    # / db-status / db-config / serialize / blob-open primitives.
-    # None are wire-feasible (the VDBE / pager runs server-side; no
-    # client-callable hook). Stub with ``NotSupportedError`` so the
-    # rejection stays inside the ``dbapi.Error`` hierarchy instead
-    # of leaking ``AttributeError``. Same family as the existing
-    # ``load_extension`` / ``backup`` / ``iterdump`` / ``create_*``
-    # stubs. Each stub routes through ``_stub_unsupported`` which
-    # performs the messages-clear and closed-check prelude per
-    # PEP 249 §6.4 + stdlib precedence.
+    # More stdlib parity stubs (VDBE-callback / db-status / db-config /
+    # serialize / blob-open): none wire-feasible, all raise via
+    # _stub_unsupported.
 
     def set_authorizer(self, *args: object, **kwargs: object) -> NoReturn:
         """Stdlib ``sqlite3.Connection.set_authorizer`` parity stub. Always
@@ -4297,18 +2247,10 @@ class Connection:
         self._stub_unsupported("dqlite-server does not expose a per-statement trace callback")
 
     def total_changes(self, *args: object, **kwargs: object) -> NoReturn:
-        """dqlite-server does not surface a total_changes counter on
-        the wire.
-
-        Stdlib ``sqlite3.Connection.total_changes`` is an int-valued
-        attribute. This driver exposes it as a callable stub
-        (parens required) to keep the ``hasattr(conn, "total_changes")``
-        invariant that the rest of the stub family relies on —
-        ``hasattr`` would propagate the ``NotSupportedError`` raised
-        from a property-getter, breaking cross-driver feature-probe
-        code. Pinned by tests/test_total_changes_hasattr_safe.py and
-        tests/test_pep249_stub_hasattr_divergence.py.
-        """
+        """No total_changes counter on the wire. Exposed as a callable
+        stub (not a property) so hasattr() stays safe — a property
+        getter would propagate NotSupportedError. Pinned by
+        test_total_changes_hasattr_safe / test_pep249_stub_hasattr_divergence."""
         self._stub_unsupported("dqlite-server does not surface a total_changes counter on the wire")
 
     def getlimit(self, *args: object, **kwargs: object) -> NoReturn:
@@ -4370,13 +2312,8 @@ class Connection:
         """Stdlib ``sqlite3.Connection.enable_load_extension`` parity stub.
         Always raises ``NotSupportedError`` — dqlite-server does not support
         runtime extension loading."""
-        # ``*args/**kwargs`` shape so any caller signature — including
-        # the zero-arg form a typing-confused operator might write —
-        # reaches ``_stub_unsupported`` and surfaces a
-        # ``NotSupportedError`` inside the ``dqlitedbapi.Error``
-        # hierarchy. Tightly-typed signatures leak bare ``TypeError``
-        # outside the hierarchy, breaking cross-driver feature-probe
-        # code (``except dbapi.Error: ...``).
+        # *args/**kwargs so any signature reaches _stub_unsupported
+        # (a tight signature would leak bare TypeError outside dbapi.Error).
         self._stub_unsupported("dqlite-server does not support runtime extension loading")
 
     def load_extension(self, *args: object, **kwargs: object) -> NoReturn:
@@ -4397,18 +2334,9 @@ class Connection:
         )
 
     def iterdump(self, *, filter: str | None = None, **kwargs: object) -> NoReturn:
-        # Spell ``filter=`` explicitly so ``inspect.signature`` matches
-        # the documented stdlib-3.13 shape ``(*, filter=None)`` for
-        # cross-driver tooling that walks the dbapi-connection API
-        # surface (doc generators, IDE auto-complete,
-        # compatibility-shim detection). ``**kwargs`` still absorbs
-        # any future Python additions so callers route through
-        # ``_stub_unsupported`` rather than leaking a bare ``TypeError``
-        # outside the ``dqlitedbapi.Error`` hierarchy. Stdlib's
-        # ``iterdump`` is keyword-only (no positional args after
-        # ``self``); we mirror that to surface positional misuse as a
-        # bare ``TypeError`` at the call site, matching the stdlib
-        # diagnostic rather than masking it.
+        # Explicit ``filter=`` matches the stdlib-3.13 (*, filter=None)
+        # shape for API-surface tooling; **kwargs absorbs future
+        # additions; keyword-only mirrors stdlib's positional rejection.
         del filter  # accepted for signature parity; dqlite has no dump surface
         self._stub_unsupported(
             "dqlite does not support stdlib sqlite3 iterdump; "
@@ -4441,28 +2369,15 @@ class Connection:
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else ("connected" if self._async_conn else "unused")
-        # Sibling-discipline with the client-layer ``DqliteConnection.__repr__``
-        # at ``dqliteclient/connection.py``: route ``_address`` through
-        # ``sanitize_for_log`` before ``!r`` so an attacker-influenced
-        # address (custom ``dial_func`` or leader-redirect target that
-        # survived ``parse_address``) renders with the same operator-
-        # readable ``?`` substitution everywhere the address appears in
-        # logs, not the cosmetically-different `` `` escape Python's
-        # ``str.__repr__`` would produce. The client commit
-        # ``Strip invisible-character class from address and server-text
-        # interpolations`` motivated the discipline; this is the one-
-        # layer-up sibling for the dbapi surface.
+        # Sanitise the address before !r so an attacker-influenced
+        # address renders with the same ? substitution used elsewhere.
         safe_addr = sanitize_for_log(str(self._address))
         return f"<Connection address={safe_addr!r} database={self._database!r} {state}>"
 
     def __reduce__(self) -> NoReturn:
-        # Connections own a live socket, an event-loop thread, and a
-        # weakref-finalizer cycle — none of which survives pickling.
-        # Without this guard the default pickle walks the attribute
-        # graph and surfaces a confusing ``cannot pickle '_thread.lock'``
-        # message that buries the driver-level intent. Stdlib
-        # ``sqlite3.Connection`` raises an explicit driver-level
-        # TypeError; mirror that shape.
+        # A live socket / loop thread / finalizer cycle can't be pickled;
+        # raise an explicit driver TypeError (stdlib parity) instead of
+        # the confusing default "cannot pickle '_thread.lock'".
         raise TypeError(
             f"cannot pickle {type(self).__name__!r} object — driver "
             "connections own a live socket and an event-loop thread; "
@@ -4471,29 +2386,15 @@ class Connection:
         )
 
     def __enter__(self) -> Self:
-        """Materialise the underlying connection and return self.
-
-        .. note::
-
-            **Asymmetric lifecycle** (mirrors the async sibling
-            :meth:`AsyncConnection.__aenter__`). ``__enter__`` calls
-            :meth:`connect`, but :meth:`__exit__` performs commit /
-            rollback only — it does **NOT** close the connection
-            (matches stdlib ``sqlite3.Connection.__exit__``). After
-            ``with`` exits the underlying socket + loop thread are
-            still alive; call ``conn.close()`` explicitly or hand
-            ownership to a pool. See :meth:`__exit__` for the
-            stdlib-parity rationale.
-        """
-        # Eager connect to match ``AsyncConnection.__aenter__`` — both
-        # context managers should fail at the ``with`` line when the
-        # cluster is unreachable, not inside the body's first operation.
+        """Eager-connect and return self. __exit__ commits/rolls back
+        but does NOT close (stdlib parity) — the socket + loop thread
+        stay alive for reuse; close() or a pool owns teardown."""
+        # Eager connect so ``with`` fails at the line, not in the body.
         try:
             self.connect()
         except BaseException:
-            # Python does not call ``__exit__`` when ``__enter__`` raises,
-            # so clean up partial state ourselves. ``close()`` is
-            # idempotent and tolerates the never-connected case.
+            # __exit__ isn't called when __enter__ raises; clean up here
+            # (close() is idempotent and tolerates never-connected).
             with contextlib.suppress(Exception):
                 self.close()
             raise
@@ -4505,43 +2406,19 @@ class Connection:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Commit on clean exit, rollback on exception, do NOT close.
-
-        Matches stdlib ``sqlite3.Connection`` parity: ``__exit__``
-        finishes the transaction (commit on clean exit, rollback on
-        exception) but leaves the underlying connection open so the
-        same instance is reusable in a subsequent ``with`` block. This
-        is the sync sibling of ``AsyncConnection.__aexit__`` and
-        carries the same no-close contract.
-
-        Both arms tolerate KeyboardInterrupt / SystemExit landing
-        mid-COMMIT or mid-ROLLBACK: server-side state may be ambiguous
-        if the request reached the leader before the signal landed,
-        but the signal still propagates faithfully (with a DEBUG
-        breadcrumb for operator forensics).
+        """Commit on clean exit, rollback on exception, do NOT close
+        (stdlib parity — the connection stays reusable). KI/SystemExit
+        mid-COMMIT/ROLLBACK is partial-ambiguous but still propagates
+        (with a DEBUG breadcrumb).
         """
-        # If no query has ever run, there's no transaction to commit or
-        # roll back — nothing to do; the connection remains reusable,
-        # matching stdlib sqlite3 / psycopg semantics. Also short-circuit
-        # if a foreign thread closed the connection mid-``with`` block
-        # (publicly documented surface: ``force_close_transport`` is
-        # callable from SA pool reclaim threads, signal handlers,
-        # finalize threads). Without the ``_closed`` arm the subsequent
-        # ``self.commit()`` raises ``InterfaceError`` from the closed-
-        # state guard and supplants the body exception (or the clean
-        # exit's success) with a closed-state misuse error.
+        # Nothing to finish if never used; also short-circuit if a
+        # foreign-thread force_close already closed it (else commit()'s
+        # closed-state guard would supplant the body exception).
         if self._closed or self._async_conn is None:
             return
         if exc_type is None:
-            # Clean exit: commit. Let exceptions propagate; silent
-            # data loss is worse than a noisy failure. A KI / SystemExit
-            # landing inside the COMMIT round-trip is partial-commit-
-            # ambiguous (the COMMIT may or may not have reached the
-            # leader); log a DEBUG breadcrumb so operators can correlate
-            # the cancelled close with the source signal — symmetric
-            # with the async sibling (see ``AsyncConnection.__aexit__``'s
-            # rollback breadcrumb arm in ``aio/connection.py``) and with
-            # this method's own rollback arm below.
+            # Clean exit: commit; let exceptions propagate (silent data
+            # loss is worse). DEBUG breadcrumb on signal interruption.
             try:
                 self.commit()
             except (KeyboardInterrupt, SystemExit):
@@ -4556,19 +2433,12 @@ class Connection:
                 )
                 raise
         else:
-            # Body already raised; attempt rollback but don't mask
-            # the original exception. Narrow except so programming
-            # bugs still surface; DEBUG-log the rollback failure so
-            # operators can tell silent-swallow from silent-success
-            # — matching the async __aexit__ pattern.
+            # Body raised; attempt rollback without masking it (narrow
+            # except so bugs surface, DEBUG-log the rollback failure).
             try:
                 self.rollback()
             except (KeyboardInterrupt, SystemExit):
-                # Signal interrupted the rollback (no asyncio.CancelledError
-                # in sync context). Log the breadcrumb and re-raise so
-                # the signal supersedes the body exception, matching
-                # the async sibling and the client transaction()
-                # ctxmgr's discipline.
+                # Signal supersedes the body exception; breadcrumb + raise.
                 logger.debug(
                     "Connection.__exit__ (address=%s, id=%s): "
                     "rollback interrupted by signal after body raised",
@@ -4585,20 +2455,11 @@ class Connection:
                     id(self),
                     exc_info=True,
                 )
-        # Do NOT close — matches stdlib sqlite3.Connection.__exit__ and
-        # psycopg2. (psycopg3 closes on exit; we deliberately don't,
-        # because closing-on-context-manager-exit conflicts with common
-        # SA-style usage where Connection lifetimes outlive a single
-        # ``with conn:`` block.) Callers who want eager close use
-        # ``conn.close()`` explicitly or go through a pool.
+        # Deliberately no close (stdlib/psycopg2 parity) — SA-style usage
+        # outlives a single ``with`` block.
 
 
-# PEP 249 optional parity extension mirroring the exception-class
-# attributes on ``Connection``: expose the ``Cursor`` class so cross-
-# driver adapter / instrumentation code can ``isinstance(cur,
-# conn.Cursor)`` without importing ``dqlitedbapi.cursor``. Assigned
-# outside the class body to avoid shadowing the ``Cursor`` type name
-# in method annotations within the class scope. Not a
-# ``cursor_factory`` hook — ``cursor()`` still instantiates ``Cursor``
-# directly; this is purely an introspection / isinstance-check surface.
+# Expose Cursor for ``isinstance(cur, conn.Cursor)`` without importing
+# dqlitedbapi.cursor. Assigned outside the class body to avoid shadowing
+# the Cursor annotation name; not a cursor_factory hook.
 Connection.Cursor = Cursor  # type: ignore[attr-defined]

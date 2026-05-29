@@ -1,17 +1,7 @@
 """Live integration: leader-redirect-on-connect against a real cluster.
 
-End-to-end coverage for the ``_resolve_leader`` step added to
-``_build_and_connect``. Mocked unit coverage is in
-``tests/test_leader_redirect_on_connect.py``; this file pins the
-behaviour against the live cluster so a regression in the wire
-layer or in ``ClusterClient.find_leader`` would surface here even
-if the unit tests stay green.
-
-Tests use ``cluster_control`` from ``dqlitetestlib`` (bootstrapped
-in the top-level ``tests/conftest.py``) where they need
-deterministic leader manipulation. Each test that mutates cluster
-topology restores the original leader on its way out so subsequent
-tests in the session see a stable starting state.
+Topology-mutating tests restore the original leader on exit so later tests
+in the session see a stable starting state.
 """
 
 from __future__ import annotations
@@ -30,8 +20,6 @@ if TYPE_CHECKING:
 
 
 def _node_addresses() -> list[str]:
-    """Read DQLITE_TEST_CLUSTER_NODES with the python-dqlite-dev
-    default."""
     raw = os.environ.get(
         "DQLITE_TEST_CLUSTER_NODES",
         "localhost:9001,localhost:9002,localhost:9003",
@@ -39,14 +27,8 @@ def _node_addresses() -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
-# --- normal flows ---
-
-
 @pytest.mark.integration
 def test_connect_with_seed_as_leader_succeeds() -> None:
-    """Happy path: the seed address is the current leader.
-    ``_resolve_leader`` returns the seed verbatim and the OPEN
-    runs against it."""
     seed = os.environ.get("DQLITE_TEST_CLUSTER", "localhost:9001")
     conn = connect(seed, timeout=5.0)
     try:
@@ -59,15 +41,8 @@ def test_connect_with_seed_as_leader_succeeds() -> None:
 
 @pytest.mark.integration
 def test_connect_via_follower_address_redirects_to_leader() -> None:
-    """The seed is a follower; ``_resolve_leader`` follows the
-    redirect and OPEN runs against the actual leader. Without
-    leader-redirect-on-connect this would fail with
-    ``SQLITE_IOERR_NOT_LEADER`` from the follower's OPEN handler.
-
-    Picks the non-leader nodes from ``DQLITE_TEST_CLUSTER_NODES``
-    and connects through each — at least two of the three nodes
-    are followers in the steady state, so this is a robust pin.
-    """
+    """Connecting through a follower must redirect; without redirect it would fail
+    with ``SQLITE_IOERR_NOT_LEADER`` from the follower's OPEN handler."""
     import asyncio
 
     from dqliteclient.cluster import ClusterClient
@@ -100,10 +75,8 @@ def test_connect_via_follower_address_redirects_to_leader() -> None:
 def test_connect_after_leader_flip_routes_to_new_leader(
     cluster_control: TestClusterControl,
 ) -> None:
-    """Force a leader flip; a brand-new ``connect()`` against the
-    OLD-leader address (now a follower) succeeds because
-    ``_resolve_leader`` follows the redirect to the new leader.
-    Restores the original leader on the way out."""
+    """After a leader flip, connect() against the old-leader address (now a follower)
+    succeeds via redirect. Restores the original leader on the way out."""
     import asyncio
 
     starting = asyncio.run(cluster_control.current_leader_node())
@@ -114,8 +87,6 @@ def test_connect_after_leader_flip_routes_to_new_leader(
 
     try:
         # The seed is now a follower (the demoted ex-leader).
-        # ``_resolve_leader`` should follow the redirect and the
-        # OPEN should reach the new leader.
         conn = connect(seed, timeout=5.0)
         try:
             cur = conn.cursor()
@@ -128,15 +99,9 @@ def test_connect_after_leader_flip_routes_to_new_leader(
             asyncio.run(cluster_control.transfer_leadership_to(starting.node_id))
 
 
-# --- failure flows ---
-
-
 @pytest.mark.integration
 def test_connect_to_unreachable_seed_raises_operational_error() -> None:
-    """Seed unreachable: ``_resolve_leader`` cannot reach any node
-    in its 1-node store; surfaces as ``OperationalError`` with the
-    canonical ``Failed to find leader from`` prefix."""
-    # Pick a port we know nothing is listening on.
+    # Port 1: nothing is listening, so leader resolution fails.
     with pytest.raises(OperationalError, match="Failed to find leader"):
         conn = connect("127.0.0.1:1", timeout=1.0)
         conn.connect()  # explicit connect for clearer failure point

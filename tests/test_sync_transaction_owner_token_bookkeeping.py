@@ -1,25 +1,4 @@
-"""Pin: sync ``Connection.transaction()`` ctxmgr token-bookkeeping
-discipline.
-
-The sync ``transaction()`` ctxmgr at ``connection.py:2160-2246`` is
-covered today only by the integration suite. The async sibling at
-``aio/connection.py`` has a mock-only unit-level pin
-(``test_async_transaction_owner_set_inside_try_frame``). This file
-brings the sync surface to parity by pinning four load-bearing
-invariants with mock-only unit tests so a refactor regression lights
-up locally rather than only in the cluster fixture:
-
-1. ``self._transaction_owner = token`` is INSIDE the outer ``try:``
-   frame (source-level pin, mirrors the async sibling AST pin).
-2. The BaseException arm clears the owner slot BEFORE running
-   ``ROLLBACK`` so the cursor-layer commit/rollback path does not
-   trip the owner-token guard.
-3. The BaseException arm restores the slot back to ``token`` before
-   re-raising so the outer ``finally``'s ``== token`` guard fires.
-4. The outermost ``finally`` swallows any exception raised by
-   ``cursor.close()`` (``contextlib.suppress(Exception)``) so the
-   user's exception (if any) is not masked.
-"""
+"""Sync ``transaction()`` ctxmgr token-bookkeeping discipline (mock-only unit pins)."""
 
 from __future__ import annotations
 
@@ -39,7 +18,7 @@ from dqlitedbapi.connection import Connection
 def _bare_connection() -> Connection:
     conn = Connection.__new__(Connection)
     conn._closed = False
-    conn._async_conn = MagicMock()  # truthy but unused (cursor() is mocked)
+    conn._async_conn = MagicMock()  # truthy but unused; cursor() is mocked
     conn._creator_thread = threading.get_ident()
     conn._creator_pid = os.getpid()
     conn._transaction_owner = None
@@ -48,20 +27,12 @@ def _bare_connection() -> Connection:
 
 
 def test_sync_transaction_owner_assignment_inside_try_frame_source_pin() -> None:
-    """Source-level pin: ``self._transaction_owner = token`` lives
-    inside a ``try:`` frame (possibly nested through a ``with``
-    block for the _state_lock reservation). Mirrors the async
-    sibling's AST pin — a ``BaseException`` between the STORE_ATTR
-    and the SETUP_FINALLY is impossible to inject from Python, so
-    the structural pin is the right contract layer."""
+    """``self._transaction_owner = token`` lives inside a ``try:`` frame (possibly nested
+    through the ``with _state_lock:`` block) so the finally clears it under any BaseException."""
     src = textwrap.dedent(inspect.getsource(conn_mod.Connection.transaction))
     tree = ast.parse(src)
 
     def _node_contains_owner_assign(node: ast.AST) -> bool:
-        """Walk all descendants looking for ``self._transaction_owner =
-        <expr>``. The _state_lock reservation wraps the assignment in
-        a ``with`` block inside the try; the recursive walk catches
-        it regardless of nesting depth."""
         for child in ast.walk(node):
             if isinstance(child, ast.Assign):
                 for tgt in child.targets:
@@ -72,8 +43,6 @@ def test_sync_transaction_owner_assignment_inside_try_frame_source_pin() -> None
     def find_owner_assign_in_try(node: ast.AST) -> bool:
         for child in ast.walk(node):
             if isinstance(child, ast.Try):
-                # Recursive walk over the try's body covers the
-                # ``with _state_lock:`` block introduced by Phase 2.1.
                 for stmt in child.body:
                     if _node_contains_owner_assign(stmt):
                         return True
@@ -88,11 +57,8 @@ def test_sync_transaction_owner_assignment_inside_try_frame_source_pin() -> None
 
 
 def test_sync_transaction_baseexception_clears_owner_before_rollback() -> None:
-    """When the body raises, the owner slot is parked at the
-    ``_OWNER_INTERNAL_BUSY`` sentinel BEFORE ``ROLLBACK`` runs so the
-    cursor-layer commit/rollback guard cannot trip on the pinned
-    creator-thread token AND a sibling thread under tier-2 cannot
-    observe a free slot in the wire-RTT window."""
+    """When the body raises, the owner slot is parked at ``_OWNER_INTERNAL_BUSY`` BEFORE
+    ``ROLLBACK`` runs so the cursor guard can't trip and no tier-2 sibling sees a free slot."""
     from dqlitedbapi.connection import _OWNER_INTERNAL_BUSY
 
     conn = _bare_connection()
@@ -102,7 +68,6 @@ def test_sync_transaction_baseexception_clears_owner_before_rollback() -> None:
 
     def execute_side_effect(sql: str) -> None:
         if sql == "ROLLBACK":
-            # Snapshot the slot at the moment ROLLBACK is dispatched.
             observed.append(conn._transaction_owner)
 
     cursor.execute.side_effect = execute_side_effect
@@ -121,10 +86,8 @@ def test_sync_transaction_baseexception_clears_owner_before_rollback() -> None:
 
 
 def test_sync_transaction_baseexception_restores_owner_then_finally_clears() -> None:
-    """After ``ROLLBACK`` runs the BaseException arm's inner finally
-    restores the slot to the token; the outer finally then clears it
-    via the ``== token`` guard. End-state observed by the caller is
-    ``None`` — pin via cursor.close() side-effect."""
+    """The BaseException arm restores the slot to the token, then the outer finally clears it
+    via the ``== token`` guard — observed end-state at cursor.close() is ``None``."""
     conn = _bare_connection()
     cursor = MagicMock()
 
@@ -142,35 +105,27 @@ def test_sync_transaction_baseexception_restores_owner_then_finally_clears() -> 
     with pytest.raises(_BodyError), conn.transaction():
         raise _BodyError("synthetic")
 
-    # close() runs in the outermost finally AFTER the ``== token``
-    # clear; observation should be None.
     assert close_observed == [None]
-    # And the post-context state matches.
     assert conn._transaction_owner is None
 
 
 def test_sync_transaction_finally_swallows_cursor_close_exception() -> None:
-    """The outermost ``finally`` uses ``contextlib.suppress(Exception)``
-    around ``cursor.close()`` so a misbehaving close cannot mask the
-    user's clean exit nor poison the post-context state."""
+    """The outermost finally suppresses ``cursor.close()`` exceptions so a misbehaving close
+    can't mask the user's clean exit or poison post-context state."""
     conn = _bare_connection()
     cursor = MagicMock()
     cursor.close.side_effect = OSError("simulated close failure")
     conn.cursor = MagicMock(return_value=cursor)
 
-    # No exception — the clean exit should NOT surface the close()
-    # OSError; the suppress arm absorbs it.
+    # Clean exit must not surface the close() OSError; the suppress arm absorbs it.
     with conn.transaction():
         pass
     assert conn._transaction_owner is None
 
 
 def test_sync_transaction_begin_failure_leaves_owner_unset() -> None:
-    """If ``BEGIN`` itself raises, the ctxmgr never enters its body
-    and the owner slot stays clear so the caller's error-handling can
-    still issue commit/rollback. The ``self._transaction_owner = token``
-    line lives AFTER the BEGIN execute, which is the source-level
-    contract this test pins."""
+    """If ``BEGIN`` raises, the body is never entered and the owner slot stays clear (the
+    ``_transaction_owner = token`` line lives AFTER the BEGIN execute)."""
     conn = _bare_connection()
     cursor = MagicMock()
 

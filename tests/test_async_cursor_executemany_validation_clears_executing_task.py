@@ -1,17 +1,5 @@
-"""Pin: ``AsyncCursor.executemany`` clears ``_executing_task`` on
-validation-rejected raise paths.
-
-Previously the slot was set BEFORE the verb-reject / PRAGMA-reject /
-row-returning-reject checks; a validation-rejected executemany pinned
-``_executing_task`` to a completed task, then a cross-task
-``cur.execute(...)`` observed the stale slot and raised
-``InterfaceError("cursor is already executing in another task")`` on
-a cursor that was NOT actually executing.
-
-Sibling ``execute()`` already scoped the slot inside the try/finally
-so any non-success exit path cleared it; this pin enforces the same
-discipline on ``executemany``.
-"""
+"""``executemany`` clears ``_executing_task`` on validation-rejected raise paths, so a stale slot
+doesn't make a later cross-task ``execute()`` raise a bogus "already executing" error."""
 
 from __future__ import annotations
 
@@ -38,17 +26,13 @@ def _bare_async_cursor() -> Any:
     acur._connection = aconn
     acur._executing_task = None
     acur.messages = []
-    # ``_completed_iterations`` is snapshotted in ``executemany``
-    # before ``_reset_execute_state`` runs; seed so the bare-cursor
-    # fixture supports the validation-reject paths.
+    # Snapshotted in executemany before _reset_execute_state; seed for the validation-reject paths.
     acur._completed_iterations = 0
     return acur
 
 
 async def test_executemany_select_reject_clears_executing_task() -> None:
-    """SELECT is rejected by the row-returning guard. The slot must
-    be cleared so a subsequent operation on the cursor doesn't trip
-    the "cursor is already executing" guard."""
+    """SELECT is rejected by the row-returning guard; the slot must still be cleared."""
     cur = _bare_async_cursor()
     assert cur._executing_task is None
     with pytest.raises(ProgrammingError, match="DML statements"):
@@ -76,8 +60,7 @@ async def test_executemany_begin_reject_clears_executing_task() -> None:
 
 
 async def test_executemany_none_seq_clears_executing_task() -> None:
-    """``None`` for seq_of_parameters is rejected before the slot-set
-    body. Belt-and-braces — the slot must be None at exit."""
+    """``None`` seq_of_parameters is rejected before the slot-set body; slot stays None at exit."""
     cur = _bare_async_cursor()
     with pytest.raises(ProgrammingError, match="None"):
         await cur.executemany("INSERT INTO t VALUES (?)", None)
@@ -87,25 +70,18 @@ async def test_executemany_none_seq_clears_executing_task() -> None:
 async def test_subsequent_execute_after_rejected_executemany_does_not_trip_cross_task_guard() -> (
     None
 ):
-    """Behavioural pin: after a validation-rejected executemany, a
-    sibling task can call cur.execute() without tripping
-    ``InterfaceError("cursor is already executing")``."""
+    """After a validation-rejected executemany, a sibling execute() must not trip the cross-task
+    "already executing" guard."""
     cur = _bare_async_cursor()
 
-    # Validation-reject first.
     with pytest.raises(ProgrammingError):
         await cur.executemany("SELECT 1", [(1,)])
 
-    # Sibling task / continuation calls execute. With the bug,
-    # _executing_task was pinned to the original task; this would
-    # raise InterfaceError on the cross-task observation. With the
-    # fix, the slot is None so a fresh execute proceeds.
     captured: list[BaseException] = []
 
     async def _sibling() -> None:
         try:
-            # Manually mimic the cross-task check at execute() entry —
-            # we don't actually run the wire roundtrip (no transport).
+            # Mimic the cross-task check at execute() entry; no wire roundtrip (no transport).
             cur_task = asyncio.current_task()
             if cur._executing_task is not None and cur._executing_task is not cur_task:
                 from dqlitedbapi.exceptions import InterfaceError as _IfaceErr

@@ -1,25 +1,6 @@
-"""Pin: ``Cursor.lastrowid`` / ``Cursor.description`` / ``Cursor.rowcount``
-/ ``Cursor.arraysize`` post-close reads behave as documented
-(bypass-permitted contract).
-
-Closed-state reads do NOT raise (bypass-permitted). ``close()`` clears
-``description`` (a closed cursor cannot serve a result set) but
-PRESERVES ``lastrowid`` and ``rowcount``, matching stdlib
-``sqlite3.Cursor`` — both stay readable after the cursor is closed, so a
-consumer that reads ``cursor.lastrowid`` after closing the cursor (as
-SQLAlchemy does at result-access time) still gets the real rowid.
-Without a regression guard, a future tightening to raise
-``InterfaceError("cursor is closed")`` — or a re-introduction of the
-scrub — would land silently.
-
-``arraysize`` is also preserved by ``close()`` (caller-set
-configuration, not result-set state).
-
-``connection`` post-close behaviour is its own contract (the
-weakref.proxy swap + ReferenceError → InterfaceError envelope) and
-is pinned by existing tests on the proxy-resolve probe; the property
-read itself returns the proxy.
-"""
+"""Post-close property reads do not raise. ``close()`` clears ``description`` but
+preserves ``lastrowid``/``rowcount``/``arraysize`` (stdlib sqlite3 parity; SQLAlchemy
+reads ``lastrowid`` after close)."""
 
 from __future__ import annotations
 
@@ -69,22 +50,17 @@ def _populated_async_cursor() -> AsyncCursor:
 def test_sync_post_close_description_scrubbed_to_none() -> None:
     cur = _populated_sync_cursor()
     cur.close()
-    # Bypass-permitted contract: post-close read does NOT raise.
     assert cur.description is None
 
 
 def test_sync_post_close_lastrowid_preserved() -> None:
     cur = _populated_sync_cursor()
     cur.close()
-    # Preserved across close, matching stdlib sqlite3.Cursor.lastrowid.
     assert cur.lastrowid == 42
 
 
 def test_sync_post_close_arraysize_preserved() -> None:
-    """``arraysize`` is caller-set configuration, NOT result-set
-    state. ``close()`` deliberately does NOT scrub it (sibling
-    discipline with stdlib ``sqlite3.Cursor``).
-    """
+    """``arraysize`` is caller config, not result-set state; ``close()`` keeps it."""
     cur = _populated_sync_cursor()
     cur.close()
     assert cur.arraysize == 5
@@ -93,7 +69,6 @@ def test_sync_post_close_arraysize_preserved() -> None:
 def test_sync_post_close_rowcount_preserved() -> None:
     cur = _populated_sync_cursor()
     cur.close()
-    # Preserved across close, matching stdlib sqlite3.Cursor.rowcount.
     assert cur.rowcount == 2
 
 

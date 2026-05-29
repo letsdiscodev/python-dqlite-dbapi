@@ -1,14 +1,5 @@
-"""Validation of the ``max_total_rows`` constructor parameter (DB-API).
-
-The dbapi layer is the PEP 249 §7 boundary: every error originating
-from the driver must be a subclass of ``Error``. Bad
-``max_total_rows`` values therefore raise ``ProgrammingError`` (the
-PEP 249 class for "errors related to the database's operation, but
-not necessarily under the control of the programmer", per §6.1.4).
-The client-layer validator raises raw ``TypeError`` / ``ValueError``
-(client consumers don't sit behind the PEP 249 boundary); the dbapi
-entry points wrap those into ``ProgrammingError``.
-"""
+"""Bad ``max_total_rows`` raises ``ProgrammingError``: the dbapi wraps the
+client layer's raw ``TypeError``/``ValueError`` into the PEP 249 ``Error`` hierarchy."""
 
 import pytest
 

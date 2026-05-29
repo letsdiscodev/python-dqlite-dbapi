@@ -1,22 +1,5 @@
-"""Pin: ``iterdump``, ``enable_load_extension``, and
-``load_extension`` stubs route caller misuse through the
-``dqlitedbapi.Error`` hierarchy when the signature accepts the
-call.
-
-``iterdump`` matches stdlib 3.13's ``(self, *, filter=None)`` shape
-plus a ``**kwargs`` absorber for forward-compat with future stdlib
-kwargs; positional misuse surfaces as bare ``TypeError`` matching
-stdlib's positional-rejection. ``enable_load_extension`` and
-``load_extension`` use ``(self, *args, **kwargs)`` so every
-signature reaches ``_stub_unsupported`` and surfaces a
-``NotSupportedError`` inside the dbapi exception hierarchy.
-
-The three subjects had previously carried tightly-typed signatures
-that leaked bare ``TypeError`` outside ``dqlitedbapi.Error`` for
-keyword-mismatch — breaking cross-driver feature-probe code. This
-pin forecloses a re-tightening regression on the keyword path while
-matching stdlib's positional-rejection on iterdump.
-"""
+"""iterdump/enable_load_extension/load_extension stubs surface NotSupportedError (inside
+dqlitedbapi.Error) instead of leaking a bare TypeError on keyword mismatch."""
 
 from __future__ import annotations
 
@@ -41,12 +24,12 @@ def async_conn() -> AsyncConnection:
     [
         ("iterdump", (), {}),
         ("iterdump", (), {"filter": "*"}),  # stdlib 3.13 added kwarg
-        ("iterdump", (), {"filter": "*", "novel_kwarg": True}),  # **kwargs absorbs unknown
-        ("enable_load_extension", (), {}),  # zero-arg
+        ("iterdump", (), {"filter": "*", "novel_kwarg": True}),
+        ("enable_load_extension", (), {}),
         ("enable_load_extension", (True,), {}),
         ("enable_load_extension", (), {"enabled": True}),
         ("enable_load_extension", (True,), {"extra": "ignored"}),
-        ("load_extension", (), {"path": "x.so"}),  # kwarg form
+        ("load_extension", (), {"path": "x.so"}),
         ("load_extension", ("x.so",), {}),
         ("load_extension", ("x.so",), {"entrypoint": "init", "extra": 1}),
     ],
@@ -85,10 +68,7 @@ def test_async_stub_routes_through_notsupported_error(
 def test_iterdump_filter_kwarg_does_not_leak_typeerror(
     sync_conn: dqlitedbapi.Connection,
 ) -> None:
-    """The headline regression: a Python-3.13 caller doing
-    ``conn.iterdump(filter="x")`` must NOT see a bare ``TypeError``
-    from the signature mismatch — that escapes ``except dbapi.Error``
-    and breaks cross-driver feature-probe code."""
+    """iterdump(filter="x") from a 3.13 caller must not leak a bare TypeError."""
     with pytest.raises(dqlitedbapi.NotSupportedError):
         sync_conn.iterdump(filter="x")
 
@@ -96,36 +76,30 @@ def test_iterdump_filter_kwarg_does_not_leak_typeerror(
 def test_enable_load_extension_zero_arg_does_not_leak_typeerror(
     sync_conn: dqlitedbapi.Connection,
 ) -> None:
-    """A caller writing ``conn.enable_load_extension()`` (expecting
-    'default off') previously saw a bare ``TypeError`` from the
-    missing positional argument. The stub must absorb the call."""
+    """enable_load_extension() with no args must absorb the call, not leak a TypeError."""
     with pytest.raises(dqlitedbapi.NotSupportedError):
         sync_conn.enable_load_extension()
 
 
-# --- TPC stubs (PEP 249 §7) -----------------------------------------------
-# Mirror the iterdump / load_extension / enable_load_extension matrix for
-# the six TPC stubs (tpc_begin / tpc_prepare / tpc_commit / tpc_rollback /
-# tpc_recover / xid). dqlite cannot support TPC (Raft is a single-cluster
-# commit log, no XA coordinator), so any caller signature must surface
-# NotSupportedError inside the dbapi.Error hierarchy.
+# dqlite cannot support TPC (Raft is a single-cluster log, no XA coordinator), so the six
+# TPC stubs surface NotSupportedError for any signature.
 
 
 @pytest.mark.parametrize(
     "method,args,kwargs",
     [
-        ("tpc_begin", (), {}),  # missing positional in old signature
-        ("tpc_begin", (object(), object()), {}),  # too many positionals
-        ("tpc_begin", (object(),), {"format": 1}),  # novel kwarg
-        ("tpc_prepare", (object(),), {}),  # extra positional
-        ("tpc_commit", (object(), object()), {}),  # too many positionals
-        ("tpc_commit", (), {"novel": True}),  # novel kwarg
-        ("tpc_rollback", (), {"novel": True}),  # novel kwarg
-        ("tpc_recover", (), {"timeout": 5}),  # novel kwarg
-        ("xid", (), {}),  # missing 3 positionals
-        ("xid", (1, "g"), {}),  # missing 1 positional
-        ("xid", (1, "g", "b", "extra"), {}),  # too many positionals
-        ("xid", (1, "g", "b"), {"novel": True}),  # novel kwarg
+        ("tpc_begin", (), {}),
+        ("tpc_begin", (object(), object()), {}),
+        ("tpc_begin", (object(),), {"format": 1}),
+        ("tpc_prepare", (object(),), {}),
+        ("tpc_commit", (object(), object()), {}),
+        ("tpc_commit", (), {"novel": True}),
+        ("tpc_rollback", (), {"novel": True}),
+        ("tpc_recover", (), {"timeout": 5}),
+        ("xid", (), {}),
+        ("xid", (1, "g"), {}),
+        ("xid", (1, "g", "b", "extra"), {}),
+        ("xid", (1, "g", "b"), {"novel": True}),
     ],
 )
 def test_sync_tpc_stub_routes_through_notsupported_error(

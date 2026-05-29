@@ -1,19 +1,5 @@
 """Pin: every dbapi entry point uses the client-layer's promoted
-``DEFAULT_TIMEOUT_SECONDS`` / ``DEFAULT_CLOSE_TIMEOUT_SECONDS``
-constants instead of inline literals.
-
-The client at ``dqliteclient/connection.py`` promotes both defaults
-to a single source of truth and its block-comment claims "lockstep
-across the whole stack." The dbapi layer had not adopted the
-promotion: every dbapi entry point shipped a literal ``10.0`` (and
-companion ``0.5``), so a future tuning of the client constants
-would silently leave the dbapi defaults stale.
-
-This pin locks the five dbapi entry points (``connect``,
-``aio.connect``, ``aio.aconnect``, ``Connection.__init__``,
-``AsyncConnection.__init__``) to the client-layer constants so a
-single ``DEFAULT_TIMEOUT_SECONDS`` bump propagates everywhere.
-"""
+timeout constants, not inline literals, so a bump propagates everywhere."""
 
 from __future__ import annotations
 

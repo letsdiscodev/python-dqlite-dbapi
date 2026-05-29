@@ -1,13 +1,5 @@
-"""Pin: ``dqlitedbapi.Row`` is the cross-driver-portable equivalent
-of stdlib ``sqlite3.Row`` — a SEQUENCE (value iteration, positional +
-slice indexing) plus column-name access via ``row["name"]`` /
-``.keys()`` and ``dict(row)`` / ``**row`` spread, without the
-cursor-type constraint that makes stdlib's class unusable on this
-driver.
-
-Cross-driver porting: swap ``sqlite3.Row`` for ``dqlitedbapi.Row``
-1:1; every documented stdlib idiom holds.
-"""
+"""``dqlitedbapi.Row`` is a drop-in ``sqlite3.Row`` equivalent without the
+cursor-type constraint that makes stdlib's class unusable on this driver."""
 
 from __future__ import annotations
 
@@ -72,9 +64,7 @@ def test_row_equality() -> None:
 
 
 def test_row_double_spread_into_kwargs() -> None:
-    """The ``**row`` spread works on string keys via ``keys()`` +
-    ``__getitem__`` (CPython consumes those, not ``__iter__``).
-    """
+    """``**row`` spreads via ``keys()`` + ``__getitem__``, not ``__iter__``."""
     cur = _cursor_with_description("a", "b")
     row = Row(cur, (10, 20))
 
@@ -92,12 +82,7 @@ def test_row_rejects_non_int_non_str_key() -> None:
 
 
 def test_row_rejects_bool_key() -> None:
-    # ``bool`` is an ``int`` subclass, so ``row[True]`` would otherwise
-    # silently return column 1 and ``row[False]`` column 0. This driver
-    # rejects ``bool``-where-an-int-is-expected everywhere else
-    # (``arraysize`` setter, ``fetchmany`` size, ``scroll``,
-    # ``_validate_ticks``) as a caller-bug trap; ``Row`` follows the
-    # same discipline rather than silently coercing.
+    # bool is an int subclass: row[True]/row[False] would silently index 1/0.
     cur = _cursor_with_description("x", "y")
     row = Row(cur, (10, 20))
     with pytest.raises(TypeError, match="must be int or str, not bool"):
@@ -107,8 +92,6 @@ def test_row_rejects_bool_key() -> None:
 
 
 def test_row_int_and_str_access_unaffected_by_bool_exclusion() -> None:
-    # Regression guard for the ``bool`` exclusion: genuine ``int``
-    # indexing (including negative) and column-name access keep working.
     cur = _cursor_with_description("x", "y")
     row = Row(cur, (10, 20))
     assert row[0] == 10
@@ -139,13 +122,8 @@ def test_row_repr() -> None:
 
 
 def test_row_sqlite3_sequence_parity() -> None:
-    """``dqlitedbapi.Row`` matches stdlib ``sqlite3.Row``'s SEQUENCE
-    semantics exactly: iteration / tuple / list / unpacking yield
-    VALUES (not column names), positional + slice indexing work, and
-    ``in`` checks values — while name access, ``dict(row)``, ``**row``
-    and ``keys()`` still behave identically. Pins the regression where
-    Row subclassed ``Mapping`` and silently iterated column names.
-    """
+    """Row matches ``sqlite3.Row`` sequence semantics: iteration yields values,
+    not column names (regression where Row subclassed Mapping)."""
     import sqlite3
 
     cur = _cursor_with_description("x", "y")
@@ -156,20 +134,17 @@ def test_row_sqlite3_sequence_parity() -> None:
     std = con.execute("SELECT 1 AS x, 2 AS y").fetchone()
     con.close()
 
-    # Sequence iteration yields values (the corrupted idioms).
     assert tuple(row) == tuple(std) == (1, 2)
     assert list(row) == list(std) == [1, 2]
     assert [v for v in row] == [1, 2]
     a, b = row
     assert (a, b) == (1, 2)
-    # Positional + slice indexing.
     assert row[0] == std[0] == 1
     assert row[1] == std[1] == 2
     assert row[0:2] == std[0:2] == (1, 2)
-    # Membership checks values, matching stdlib (not column names).
+    # Membership checks values, not column names (matching stdlib).
     assert (2 in row) is (2 in std) is True
     assert ("x" in row) is ("x" in std) is False
-    # Name-keyed access and mapping conversions remain identical.
     assert row["x"] == std["x"] == 1
     assert tuple(row.keys()) == tuple(std.keys()) == ("x", "y")
     assert dict(row) == dict(std) == {"x": 1, "y": 2}

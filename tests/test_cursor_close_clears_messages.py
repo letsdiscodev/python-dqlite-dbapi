@@ -1,7 +1,4 @@
-"""PEP 249 §6.1.2: Cursor.messages is cleared by every standard cursor
-method "prior to executing the call". close() is a standard cursor
-method; pin that it clears messages.
-"""
+"""PEP 249 §6.1.2: every standard cursor method clears ``messages``; pin close()."""
 
 from __future__ import annotations
 
@@ -26,10 +23,7 @@ async def test_async_cursor_close_clears_messages() -> None:
 
 
 def test_sync_cursor_close_clears_messages_idempotent_call() -> None:
-    """Even on a second close() (the no-op early-return path), the
-    messages clear must still happen. PEP 249 wording is
-    unambiguous — every method call clears, regardless of the path
-    the method takes."""
+    """Even a second close() (the no-op early-return path) must still clear messages."""
     conn = connect("localhost:9001")
     cur = conn.cursor()
     cur.close()

@@ -1,12 +1,5 @@
-"""Pin diagnostic-quality fields in user-facing error messages and
-reprs:
-
-- The async loop-affinity ``ProgrammingError`` includes both the
-  bound and current loop identifiers (mirrors the sync sibling's
-  thread-affinity message which already names both thread ids).
-- ``Cursor.__repr__`` / ``AsyncCursor.__repr__`` include the parent
-  connection's address and ``id(self)`` so logs that fan multiple
-  cursors across pooled connections can be disambiguated.
+"""Diagnostic fields in error messages and reprs: the loop-affinity error names
+both loop ids; cursor reprs include the connection address and ``id(self)``.
 """
 
 from __future__ import annotations
@@ -84,7 +77,7 @@ class TestCursorReprIncludesAddressAndId:
         cur = Cursor.__new__(Cursor)
         cur._closed = True
         cur._rowcount = 5
-        cur._connection = MagicMock(spec=[])  # no _address
+        cur._connection = MagicMock(spec=[])
         r = repr(cur)
         assert "address='?'" in r
         assert "closed" in r
@@ -113,14 +106,12 @@ class TestCursorReprIncludesAddressAndId:
 
 class TestLoopAffinityMessageAtCallSites:
     async def test_ensure_locks_raises_with_loop_ids(self) -> None:
-        """Drive the actual call site: bind on loop A, attempt use on
-        loop B, assert message contains the loop ids."""
+        """Bind on loop A, attempt use on loop B; the message names both loop ids."""
         import os as _os
 
         conn = AsyncConnection.__new__(AsyncConnection)
         conn._closed = False
         conn._creator_pid = _os.getpid()
-        # Bind to a fake loop reference.
         import weakref
 
         bound = asyncio.new_event_loop()

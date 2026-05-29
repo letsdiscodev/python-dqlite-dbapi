@@ -1,15 +1,6 @@
-"""Pin: ``_convert_bind_param`` rejects non-primitive adapter /
-``__conform__`` output at the dbapi layer with ``ProgrammingError``
-naming the original input type, mirroring stdlib's microprotocols-
-layer rejection.
-
-Before this fix, a non-primitive value (e.g. a ``register_adapter``
-returning a custom class instance, or a value with no adapter and
-no ``__conform__``) flowed through to the wire encoder where it
-surfaced as ``EncodeError`` → ``DataError`` naming the post-chain
-type. The new gate names the original input type AND the
-adapter-produced type so operators can locate the misregistration
-site.
+"""Pin: ``_convert_bind_param`` rejects non-primitive adapter/``__conform__`` output
+at the dbapi layer, naming both the original input type and the produced type so
+operators can locate the misregistration site.
 """
 
 from __future__ import annotations
@@ -22,10 +13,7 @@ from dqlitedbapi.types import _convert_bind_param
 
 
 def test_adapter_returning_non_primitive_rejected_with_original_type_in_message() -> None:
-    """``register_adapter(MyClass, lambda x: object())`` produces a
-    non-primitive at the adapter site; the post-chain guard rejects
-    it with a message naming MyClass (so the operator can find the
-    registration), AND naming the produced type."""
+    """A non-primitive adapter output is rejected, naming both the input and produced type."""
 
     class Money:
         def __init__(self, cents: int) -> None:
@@ -51,8 +39,7 @@ def test_adapter_returning_non_primitive_rejected_with_original_type_in_message(
 
 
 def test_adapter_returning_wire_primitive_succeeds() -> None:
-    """Sibling positive: an adapter returning a wire primitive passes
-    through the post-chain guard cleanly."""
+    """Positive sibling: an adapter returning a wire primitive passes the guard."""
 
     class Money:
         def __init__(self, cents: int) -> None:

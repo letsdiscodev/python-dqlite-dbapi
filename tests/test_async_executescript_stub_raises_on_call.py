@@ -1,14 +1,8 @@
-"""Pin: ``AsyncConnection.executescript`` and ``AsyncCursor.executescript``
-are plain ``def`` (not ``async def``), so the unconditional
-``NotSupportedError`` fires on the call line — matching the sync
-sibling's diagnostic-leak prevention.
+"""The executescript stubs are plain ``def`` (not ``async def``) so
+``NotSupportedError`` fires on the call line.
 
-If the stubs were ``async def`` (the original shape), a caller who
-forgot the ``await`` would observe a silent no-op with only a
-GC-time ``RuntimeWarning("coroutine was never awaited")`` — defeating
-the diagnostic-leak prevention this stub family was added for. Pin
-the call-line raise so a future refactor that re-applies ``async
-def`` to the body fails this test.
+If they were ``async def``, a forgotten ``await`` would be a silent no-op with
+only a GC-time RuntimeWarning, defeating the diagnostic-leak prevention.
 """
 
 from __future__ import annotations
@@ -23,8 +17,6 @@ from dqlitedbapi.exceptions import NotSupportedError
 
 
 def test_async_connection_executescript_is_plain_def_not_coroutine() -> None:
-    """The stub is plain ``def`` so the call line raises (not the
-    deferred ``await`` line)."""
     assert not inspect.iscoroutinefunction(AsyncConnection.executescript), (
         "AsyncConnection.executescript must be `def`, not `async def`, so the "
         "NotSupportedError fires on the call line — not deferred to await"
@@ -39,8 +31,7 @@ def test_async_cursor_executescript_is_plain_def_not_coroutine() -> None:
 
 
 def test_async_connection_executescript_call_raises_immediately() -> None:
-    """An unawaited call must raise NotSupportedError immediately,
-    not return a coroutine that emits a warning at GC."""
+    """An unawaited call must raise immediately, not return a warning-at-GC coroutine."""
     aconn = AsyncConnection.__new__(AsyncConnection)
     aconn.messages = []
     with pytest.raises(NotSupportedError, match="executescript"):
@@ -48,7 +39,6 @@ def test_async_connection_executescript_call_raises_immediately() -> None:
 
 
 def test_async_cursor_executescript_call_raises_immediately() -> None:
-    """The cursor stub also raises on the call line."""
     from unittest.mock import MagicMock
 
     cur = AsyncCursor.__new__(AsyncCursor)

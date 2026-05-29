@@ -1,20 +1,8 @@
-"""Pin: COMMIT raising leader-error code propagates (no silent swallow).
+"""Pin: COMMIT raising a leader-error code propagates (no silent swallow).
 
-The dbapi's ``_is_no_transaction_error`` whitelist only swallows
-``OperationalError`` whose primary code is in ``_NO_TX_PRIMARY_CODES`` AND whose
-message matches the no-tx substring. Leader-flip codes
-(``SQLITE_IOERR_NOT_LEADER`` 10250, ``SQLITE_IOERR_LEADERSHIP_LOST``
-10506) primary-mask to 10 — outside the whitelist — so they MUST
-propagate.
-
-A future refactor that "helpfully" widens the whitelist to also silence
-leader-flip codes (e.g. treating "tx state ambiguous" like "no tx, no-op")
-would silently swallow the leader-flip — the user would see clean exit
-even though the row may not have committed. Catastrophic.
-
-This test pins the contract for sync and async, ``commit`` and
-``rollback``, and the context-manager exit paths that route through
-``commit``.
+Leader-flip codes primary-mask to 10, outside ``_is_no_transaction_error``'s
+whitelist, so they must propagate. Widening the whitelist to silence them would
+report a clean exit while the row may not have committed.
 """
 
 from __future__ import annotations
@@ -82,14 +70,7 @@ class TestSyncCommitLeaderFlipPropagates:
             conn._closed = True
 
     def test_exit_clean_commit_leader_flip_propagates(self, code: int) -> None:
-        """``__exit__`` with no exception calls ``commit``; leader-flip
-        must propagate up through the context manager, not be swallowed.
-        Tracker-state cleanup is verified at the client layer in
-        ``python-dqlite-client/tests/test_run_protocol_auto_rollback_codes.py``
-        (for the auto-rollback set) and via ``_invalidate`` (for the
-        leader-class set); the mock harness here only exercises the
-        propagation contract.
-        """
+        """``__exit__`` with no exception calls commit; leader-flip must propagate."""
         conn = _make_sync_with_inner()
         try:
             conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
@@ -123,10 +104,7 @@ class TestAsyncCommitLeaderFlipPropagates:
         assert ei.value.code == code
 
     async def test_aexit_clean_commit_leader_flip_propagates(self, code: int) -> None:
-        """``__aexit__`` with no exception calls ``commit``; leader-flip
-        must propagate up through the context manager. Tracker-state
-        cleanup is verified at the client layer (see the sync sibling
-        comment for the cross-reference)."""
+        """``__aexit__`` with no exception calls commit; leader-flip must propagate."""
         conn = _make_async_with_inner()
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[union-attr]
             "leadership lost", code

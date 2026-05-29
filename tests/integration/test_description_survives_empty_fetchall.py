@@ -1,18 +1,5 @@
-"""Pin: ``cursor.description`` survives empty fetchall / fetchone /
-fetchmany. PEP 249 §6.6: description "is available after the last
-fetchall() call".
-
-Stdlib ``sqlite3`` and aiosqlite both preserve description after
-exhaustion. Go-dqlite's ``Test_ColumnTypesEnd``
-(``driver_test.go:551-601``) pins the equivalent contract for the Go
-client.
-
-This regression fence guards against a future buffer-clearing path
-that drops description on exhaustion. The
-``executemany`` BaseException-cleanup path was recently extended to
-clear description; a similar mistake on the fetch-exhaustion side
-would silently break PEP 249 conformance.
-"""
+"""``cursor.description`` survives empty fetchall/fetchone/fetchmany
+(PEP 249 §6.6: available after the last fetch)."""
 
 from __future__ import annotations
 

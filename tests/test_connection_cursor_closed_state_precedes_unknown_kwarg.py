@@ -1,11 +1,5 @@
-"""Pin: ``Connection.cursor(**kwargs)`` and ``AsyncConnection.cursor``
-check the closed state BEFORE rejecting unknown kwargs, so a closed
-connection diagnostic is not masked by a capability-gap diagnostic.
-
-Stdlib ``sqlite3`` and the in-package ``Cursor.execute`` rationale
-(closed-first; see cursor.py's documented precedence) are the
-reference.
-"""
+"""``cursor(**kwargs)`` checks closed-state BEFORE rejecting unknown kwargs, so the
+closed diagnostic isn't masked by a capability-gap one."""
 
 from __future__ import annotations
 
@@ -25,9 +19,7 @@ def test_sync_cursor_unknown_kwarg_on_closed_raises_interface_error() -> None:
 
 
 def test_sync_cursor_unknown_kwarg_on_open_still_raises_not_supported() -> None:
-    """Negative-control: on an open connection, the unknown-kwarg
-    rejection still fires (with NotSupportedError, after the closed
-    check passes)."""
+    """Negative control: on an open connection the unknown-kwarg rejection still fires."""
     c = dqlitedbapi.connect("127.0.0.1:9999")
     try:
         with pytest.raises(dqlitedbapi.NotSupportedError, match="kwargs"):

@@ -1,13 +1,5 @@
-"""Pin: ``Cursor.arraysize.setter`` and ``Cursor.row_factory.setter``
-clear ``self.messages[:]`` on entry per PEP 249 §6.4 — mirroring the
-already-shipped connection-side discipline (``autocommit.setter``,
-``isolation_level.setter``, ``text_factory.setter``,
-``Connection.row_factory.setter``).
-
-Sync + async parity. Without these clears, a state-mutating cursor
-operation would carry over stale messages from a prior failed
-operation, violating PEP 249's "list is cleared automatically by all
-standard connection methods calls (prior to executing the call)".
+"""``Cursor.arraysize`` and ``Cursor.row_factory`` setters clear ``self.messages`` on entry
+per PEP 249 §6.4 (sync + async), mirroring the connection-side setter discipline.
 """
 
 from __future__ import annotations

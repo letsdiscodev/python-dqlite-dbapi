@@ -1,29 +1,6 @@
-"""Pin: ``Connection._run_sync``'s outer ``finally`` arm tolerates
-the case where the same-thread ``close()`` bypass has already
-released ``_op_lock``.
-
-The bypass branch at ``Connection.close()`` (around line 2777)
-runs when a signal handler invokes ``conn.close()`` while another
-sync call is parked in ``Future.result(timeout=...)``. The bypass
-nulls ``_op_lock_owner`` and releases the lock so the loop-thread
-teardown does not deadlock waiting for the in-flight ``_run_sync``
-to release.
-
-When control returns to ``_run_sync`` (KI / SystemExit raised at
-the interrupted ``Future.result``), the outer ``finally`` tries
-to release the lock a second time. ``threading.Lock.release()``
-on an unlocked lock raises ``RuntimeError("release unlocked
-lock")``. Python's try/finally semantics REPLACE the propagating
-``KeyboardInterrupt`` with that ``RuntimeError`` — a PEP 249 §7
-surface violation: callers expect ``KeyboardInterrupt`` or a
-``dbapi.Error`` subclass, never a raw ``RuntimeError`` from the
-lock primitive.
-
-The two sibling release sites on the same lock object —
-acquire-time KI cleanup and the close() bypass itself — already
-wrap their releases in ``contextlib.suppress(RuntimeError)`` for
-the analogous "already released" case. The outer finally is the
-last missing site.
+"""Pin: ``_run_sync``'s outer ``finally`` tolerates the same-thread close() bypass
+having already released ``_op_lock`` — a double release() would replace the in-flight
+KeyboardInterrupt with RuntimeError("release unlocked lock"), violating the PEP 249 surface.
 """
 
 from __future__ import annotations
@@ -50,19 +27,12 @@ def _make_with_loop_thread() -> Connection:
 
 
 def test_run_sync_outer_finally_tolerates_already_released_op_lock() -> None:
-    """Simulate the signal-handler bypass: the lock is released
-    out-of-band on the same thread before the outer ``finally``
-    runs. The finally must NOT raise ``RuntimeError("release
-    unlocked lock")`` — that raise would replace the in-flight
-    ``KeyboardInterrupt`` per Python's try/finally contract.
-    """
+    """Lock released out-of-band on the same thread before the outer finally must not raise."""
     conn = _make_with_loop_thread()
     try:
 
         def _bypass_release_then_raise_ki(*_args: object, **_kwargs: object) -> None:
-            # Mirror the close() bypass: null the owner slot and
-            # release the lock from the same thread that is parked
-            # inside ``Future.result``.
+            # Mirror the close() bypass: null the owner slot and release from the same thread.
             assert conn._op_lock_owner == threading.get_ident()
             conn._op_lock_owner = None
             conn._op_lock.release()
@@ -83,16 +53,7 @@ def test_run_sync_outer_finally_tolerates_already_released_op_lock() -> None:
 
 
 def test_run_sync_outer_finally_no_runtimeerror_replaces_keyboard_interrupt() -> None:
-    """Stricter form of the above: assert the propagated exception
-    is *exactly* ``KeyboardInterrupt`` and not the wrong-layer
-    ``RuntimeError("release unlocked lock")``.
-
-    Python's try/finally exception-replacement rule means that
-    pre-fix, the outer finally's raw ``self._op_lock.release()``
-    on the already-released lock raises ``RuntimeError``, and the
-    runtime swallows the in-flight ``KeyboardInterrupt`` (it
-    survives on ``__context__`` only). Pin the post-fix invariant.
-    """
+    """Stricter form: the propagated exception is exactly KeyboardInterrupt, not RuntimeError."""
     conn = _make_with_loop_thread()
     try:
 

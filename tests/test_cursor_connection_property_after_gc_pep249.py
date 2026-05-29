@@ -1,22 +1,9 @@
-"""Pin: ``Cursor.connection`` property translates a ``ReferenceError``
-from the ``weakref.proxy(self._connection)`` swap into a PEP 249
-``InterfaceError`` so cross-driver code wrapping cursor introspection
-in ``except dbapi.Error:`` continues to match after the parent
-``Connection`` has been garbage-collected.
-
-Companion to ``test_cursor_closed_after_connection_gc_pep249`` which
-covers the 11 other public cursor methods; the ``connection``
-property is the asymmetric outlier whose translation arm is pinned
-here.
-
-The probe attribute access at ``cursor.py`` (``_ = self._connection
-.address``) is load-bearing: a refactor that replaces the probe with
-one that does NOT trigger weakref resolution (e.g. ``type(self
-._connection)``) would silently return a dead proxy that blows up on
-the caller's first attribute access — outside the dbapi.Error
-hierarchy. These tests pin both the translation arm and the
-chained-cause discipline.
-"""
+"""Cursor.connection translates the ReferenceError from a stale
+weakref.proxy into InterfaceError so except dbapi.Error: keeps matching
+after the parent Connection is GC'd. The probe access (_ =
+self._connection.address) must trigger weakref resolution; replacing it
+with one that does not (e.g. type(self._connection)) would return a dead
+proxy that blows up later outside the hierarchy."""
 
 from __future__ import annotations
 
@@ -44,8 +31,7 @@ def test_connection_property_after_parent_gc_raises_interfaceerror() -> None:
 
 
 def test_connection_property_after_parent_gc_chains_referenceerror() -> None:
-    """``__cause__`` carries the underlying ``ReferenceError`` so an
-    operator triaging the InterfaceError sees the original signal."""
+    """__cause__ carries the underlying ReferenceError."""
     cur = _open_closed_cursor_with_gcd_connection()
     with pytest.raises(dqlitedbapi.InterfaceError) as exc_info:
         _ = cur.connection
@@ -53,8 +39,7 @@ def test_connection_property_after_parent_gc_chains_referenceerror() -> None:
 
 
 def test_connection_property_caught_by_dbapi_error_hierarchy() -> None:
-    """The translation is the load-bearing PEP 249 hierarchy defence:
-    a generic ``except dbapi.Error:`` must match."""
+    """A generic except dbapi.Error: must match the translated error."""
     cur = _open_closed_cursor_with_gcd_connection()
     with pytest.raises(dqlitedbapi.Error):
         _ = cur.connection

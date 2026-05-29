@@ -1,24 +1,4 @@
-"""Pin: ``retry_sync_on_busy`` and ``retry_async_on_busy`` implement
-the SQLite-curve BUSY retry — stdlib parity for the C-level
-``sqlite3_busy_timeout`` callback.
-
-These tests drive the module-level helpers directly with controlled
-``run_sync`` substitutes; the integration with ``Cursor.execute`` /
-``Connection.commit`` / ``Cursor.executemany`` is pinned at the
-higher-level test files.
-
-Behaviours pinned:
-
-- Retry advances the SQLite curve (1, 2, 5, 10, 15 ms ...) — not
-  exponential-with-jitter.
-- ``busy_timeout=0`` disables retry (single attempt; no sleep).
-- A non-BUSY ``OperationalError`` (different code) propagates
-  immediately.
-- ``KeyboardInterrupt`` during ``time.sleep`` propagates (not
-  caught by the BUSY arm).
-- Coroutines are re-created on each attempt via ``coro_factory()``.
-- Budget exhaustion raises the most recent BUSY exception.
-"""
+"""Pin: ``retry_sync_on_busy`` implements the SQLite-curve BUSY retry (stdlib parity)."""
 
 from __future__ import annotations
 
@@ -33,8 +13,7 @@ from dqlitewire import SQLITE_BUSY
 
 
 def test_retry_sync_succeeds_after_busy_then_ok() -> None:
-    """First call raises BUSY, second call returns. The helper sleeps
-    once and retries."""
+    """First call raises BUSY, second returns: helper sleeps once and retries."""
     run_sync_mock = MagicMock(
         side_effect=[OperationalError("database is locked", code=SQLITE_BUSY), "ok"]
     )
@@ -46,8 +25,7 @@ def test_retry_sync_succeeds_after_busy_then_ok() -> None:
 
 
 def test_retry_sync_sleeps_sqlite_curve() -> None:
-    """Sleep durations follow the SQLite curve (1, 2, 5, 10, 15 ms ...)
-    not exponential-with-jitter."""
+    """Sleep durations follow the SQLite curve (1, 2, 5, 10, 15 ms), not exponential."""
     run_sync_mock = MagicMock(
         side_effect=[
             OperationalError("locked", code=SQLITE_BUSY),
@@ -66,8 +44,7 @@ def test_retry_sync_sleeps_sqlite_curve() -> None:
 
 
 def test_retry_sync_raises_when_budget_exhausted() -> None:
-    """When cumulative sleep would exceed ``busy_timeout_ms``, the
-    helper stops retrying and raises the original ``OperationalError``."""
+    """When cumulative sleep would exceed the budget, raise the original OperationalError."""
     busy_exc = OperationalError("locked", code=SQLITE_BUSY)
     run_sync_mock = MagicMock(side_effect=busy_exc)
     with (
@@ -79,8 +56,7 @@ def test_retry_sync_raises_when_budget_exhausted() -> None:
 
 
 def test_retry_sync_non_busy_propagates_immediately() -> None:
-    """A different OperationalError code (e.g. SQLITE_LOCKED=6) is
-    NOT retried — raised immediately, no sleep."""
+    """A different OperationalError code (SQLITE_LOCKED=6) is raised immediately, no sleep."""
     run_sync_mock = MagicMock(side_effect=OperationalError("locked", code=6))
     with (
         patch("dqlitedbapi._busy_retry.time.sleep") as sleep_mock,
@@ -93,8 +69,7 @@ def test_retry_sync_non_busy_propagates_immediately() -> None:
 
 
 def test_retry_sync_zero_budget_no_retry() -> None:
-    """``busy_timeout=0`` → no retry. First BUSY raises immediately,
-    no sleep happens."""
+    """``busy_timeout=0`` → no retry: first BUSY raises immediately, no sleep."""
     run_sync_mock = MagicMock(side_effect=OperationalError("locked", code=SQLITE_BUSY))
     with (
         patch("dqlitedbapi._busy_retry.time.sleep") as sleep_mock,
@@ -106,9 +81,7 @@ def test_retry_sync_zero_budget_no_retry() -> None:
 
 
 def test_retry_sync_keyboardinterrupt_propagates() -> None:
-    """``KeyboardInterrupt`` raised during ``time.sleep`` must NOT
-    be caught by the ``except OperationalError`` arm (KI is
-    ``BaseException``, not ``Exception``)."""
+    """KeyboardInterrupt (a BaseException) must not be caught by the OperationalError arm."""
     run_sync_mock = MagicMock(side_effect=OperationalError("locked", code=SQLITE_BUSY))
     with (
         patch("dqlitedbapi._busy_retry.time.sleep", side_effect=KeyboardInterrupt),
@@ -118,9 +91,7 @@ def test_retry_sync_keyboardinterrupt_propagates() -> None:
 
 
 def test_retry_sync_coro_factory_called_each_attempt() -> None:
-    """Coroutines are single-use — re-awaiting raises. The retry helper
-    must call ``coro_factory()`` ONCE PER ATTEMPT to get a fresh
-    coroutine each time."""
+    """Coroutines are single-use, so the helper calls ``coro_factory()`` once per attempt."""
     run_sync_mock = MagicMock(
         side_effect=[
             OperationalError("locked", code=SQLITE_BUSY),

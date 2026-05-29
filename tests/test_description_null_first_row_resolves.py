@@ -1,15 +1,5 @@
-"""Pin: ``description[i][1]`` (``type_code``) resolves through
-``row_types[1:]`` for the first non-NULL type when ``column_types[i]
-== ValueType.NULL``.
-
-PEP 249 §6.1.2 says ``type_code`` "must compare equal to one of Type
-Objects". The previous behaviour mapped any NULL-first-row column to
-``None`` even when subsequent rows carried meaningful types — the
-wire carries per-row types (used by ``_convert_row``) so the column-
-header could and should reflect the resolved type. Only when EVERY
-row's value at that column is NULL does the fallback to ``None``
-fire (the genuinely unrecoverable case).
-"""
+"""Pin: a NULL-first-row column's ``type_code`` resolves from the first
+non-NULL type in later rows, falling back to UNKNOWN only if all rows are NULL."""
 
 from __future__ import annotations
 
@@ -24,8 +14,7 @@ from dqlitewire import ValueType
 
 
 class _StubInnerConn:
-    """Stub for ``DqliteConnection`` returning a hand-seeded wire
-    response. Exercises ``_execute_async``'s description-build path."""
+    """Stub ``DqliteConnection`` returning a hand-seeded wire response."""
 
     def __init__(
         self,
@@ -52,8 +41,7 @@ class _StubInnerConn:
 
 
 def _seed_cursor() -> tuple[Cursor, Connection]:
-    """Build a hand-seeded sync ``Cursor`` + ``Connection`` shell so
-    we can call ``_execute_async`` against a stub inner conn."""
+    """Hand-seeded sync ``Cursor`` + ``Connection`` shell over a stub conn."""
     conn = Connection.__new__(Connection)
     conn._closed = False
     conn._async_conn = None  # set per test
@@ -75,13 +63,8 @@ def _seed_cursor() -> tuple[Cursor, Connection]:
 
 
 def test_sync_description_null_first_row_resolves_through_subsequent_rows() -> None:
-    """A column whose first row is NULL but whose subsequent rows have
-    typed values must surface the resolved type in description, not
-    ``None``."""
+    """A NULL-first column with typed later rows must surface the resolved type."""
     cur, conn = _seed_cursor()
-    # Two rows: row 0 has NULL in column 0; row 1 has TEXT (10/ISO8601-like
-    # convention — pick a non-NULL ValueType).
-    # Use ValueType.TEXT (3) and ValueType.NULL (5).
     column_types = [int(ValueType.NULL)]
     row_types = [[int(ValueType.NULL)], [int(ValueType.TEXT)]]
     rows = [(None,), ("hello",)]
@@ -89,7 +72,6 @@ def test_sync_description_null_first_row_resolves_through_subsequent_rows() -> N
         [b"col"], column_types, row_types, rows
     )
 
-    # ``_get_async_connection`` returns the inner conn — patch it.
     async def _get_inner() -> Any:
         return conn._async_conn
 
@@ -105,20 +87,9 @@ def test_sync_description_null_first_row_resolves_through_subsequent_rows() -> N
 
 
 def test_sync_value_conversion_resolves_for_null_first_converter_column() -> None:
-    """Companion to the description-resolution pin above: a column
-    whose first row is NULL but whose later row carries a *converter*
-    type (ISO8601) must both (a) resolve the description ``type_code``
-    from the later row AND (b) run the per-row value converter so the
-    NULL row stays ``None`` while the typed row becomes a ``datetime``.
-
-    The existing description pin uses ``ValueType.TEXT`` — a non-
-    converter type — so it exercises only the description-build half.
-    This pins the data-path half: ``_convert_rows``/``_convert_row``
-    must dispatch on the per-row type for a NULL-first column. A
-    regression that narrowed the conversion probe to row 0 (finding
-    NULL → "no conversion needed") would leave the typed row as a raw
-    string and this test would catch it.
-    """
+    """Data-path half: a NULL-first column with a later converter type
+    (ISO8601) must dispatch the per-row converter, not just resolve the
+    description; the NULL row stays None and the typed row becomes datetime."""
     cur, conn = _seed_cursor()
     column_types = [int(ValueType.NULL)]
     row_types = [[int(ValueType.NULL)], [int(ValueType.ISO8601)]]
@@ -134,23 +105,16 @@ def test_sync_value_conversion_resolves_for_null_first_converter_column() -> Non
 
     asyncio.run(cur._execute_async("SELECT col FROM t", []))
 
-    # Description resolved from the later typed row.
     assert cur._description is not None
     assert cur._description[0][1] == int(ValueType.ISO8601)
-    # Data path: the NULL row stays None; the typed row converts to a
-    # datetime via the per-row converter dispatch.
     assert cur._rows[0][0] is None
     assert isinstance(cur._rows[1][0], datetime.datetime)
     assert cur._rows[1][0] == datetime.datetime(2024, 1, 15, 10, 30, 45)
 
 
 def test_sync_description_all_null_falls_back_to_unknown() -> None:
-    """When EVERY row's value at the column index is NULL, the type
-    code falls back to the ``UNKNOWN`` sentinel — genuinely
-    unrecoverable. UNKNOWN is a PEP 249 Type Object (with empty
-    ``values``) so the chained-``==`` introspection idiom returns
-    False cleanly for every real Type Object.
-    """
+    """All-NULL column falls back to the UNKNOWN sentinel (a real Type
+    Object, so chained ``==`` returns False cleanly)."""
     from dqlitedbapi import UNKNOWN
 
     cur, conn = _seed_cursor()

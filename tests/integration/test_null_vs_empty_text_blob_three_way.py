@@ -1,23 +1,7 @@
-"""Pin: NULL, empty TEXT (``""``), and empty BLOB (``b""``) are
-distinct on the wire and through the dbapi readback path.
+"""Pin: NULL, empty TEXT (``""``), and empty BLOB (``b""``) stay distinct end-to-end.
 
-Wire-level shape:
-
-* ``None`` → ``ValueType.NULL`` (5), payload ``b"\\x00" * 8``
-* ``""`` → ``ValueType.TEXT`` (3), payload ``b"\\x00" * 8`` (NUL +
-  pad)
-* ``b""`` → ``ValueType.BLOB`` (4), payload ``b"\\x00" * 8`` (uint64
-  length=0)
-
-The payloads are byte-identical (8 zero bytes); the type tags
-disambiguate. SQLite preserves the same three-way distinction
-(``typeof(NULL) = 'null'``, ``typeof('') = 'text'``,
-``typeof(X'') = 'blob'``).
-
-A future "coerce empty to NULL" change would silently break round-
-trip across cluster nodes that share data with non-Python peers
-(Go / C clients seeing the original distinction). Pin so the change
-must be deliberate.
+All three have byte-identical 8-zero payloads on the wire; only the type tag
+disambiguates them, matching SQLite's typeof() null/text/blob distinction.
 """
 
 from __future__ import annotations
@@ -48,9 +32,7 @@ def test_null_text_blob_three_way_distinction(cluster_address: str) -> None:
 
 @pytest.mark.integration
 def test_empty_text_compares_distinctly_from_null(cluster_address: str) -> None:
-    """``'' = ''`` is 1 (TEXT comparison); ``NULL = NULL`` is NULL
-    (unknown). The dbapi must surface these as ``1`` and ``None``
-    respectively — same as stdlib ``sqlite3``."""
+    """``'' = ''`` is 1; ``NULL = NULL`` is NULL (unknown) — same as stdlib sqlite3."""
     with dqlitedbapi.connect(cluster_address, database="test_empty_eq") as conn:
         c = conn.cursor()
         c.execute("SELECT '' = ''")
@@ -65,10 +47,7 @@ def test_empty_text_compares_distinctly_from_null(cluster_address: str) -> None:
 
 @pytest.mark.integration
 def test_executemany_mixed_null_empty_text_blob(cluster_address: str) -> None:
-    """Mixed NULL / empty-TEXT / empty-BLOB across a multi-row
-    executemany batch. Pins per-row type-tag selection so a
-    refactor of the row-encoder cannot silently coerce one shape
-    into another."""
+    """Mixed NULL / empty-TEXT / empty-BLOB in one executemany batch pins per-row type tags."""
     with dqlitedbapi.connect(cluster_address, database="test_em_mix") as conn:
         c = conn.cursor()
         c.execute("CREATE TABLE IF NOT EXISTS em (id INTEGER PRIMARY KEY, t TEXT, b BLOB)")

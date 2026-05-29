@@ -1,20 +1,6 @@
-"""Pin: ``AsyncCursor.__anext__`` yields cooperatively between
-buffered rows so ``async for row in cursor:`` over a large result
-set does not monopolise the event loop.
-
-The cursor pre-fetches the entire result set at ``execute`` time;
-``fetchone`` reads from the in-memory buffer with no wire IO. The
-``await self.fetchone()`` in ``__anext__`` is therefore an "await
-on an already-resolved coroutine", which does NOT yield to the loop
-scheduler. ``async for row in cur:`` over N rows is N tight
-iterations with effectively zero yields — the canonical async
-anti-pattern.
-
-The fix adds ``await asyncio.sleep(0)`` every N rows (threshold
-chosen so tight inner loops over small fetches pay zero overhead)
-so siblings on the user loop get loop time even when the cursor
-is being iterated row-by-row.
-"""
+"""``__anext__`` yields cooperatively (``asyncio.sleep(0)`` every N rows) so iterating a large
+buffered result set does not monopolise the loop. Rows are pre-fetched, so awaiting the buffered
+``fetchone`` would otherwise never yield to the scheduler."""
 
 from __future__ import annotations
 
@@ -27,20 +13,12 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 
 
 class _StubCursor:
-    """Lightweight stand-in that satisfies just enough of
-    ``AsyncCursor.__anext__``'s contract: ``fetchone`` returns the
-    next row from a pre-built list (or ``None`` at end).
-
-    Iterating an instance via ``__anext__.__get__(self)`` exercises
-    the real cursor method against this stub — we don't need the
-    rest of the AsyncCursor slot machinery.
-    """
+    """Stand-in whose ``fetchone`` returns the next row from a pre-built list (``None`` at end)."""
 
     def __init__(self, rows: list[tuple[Any, ...]]) -> None:
         self._rows = rows
         self._row_index = 0
-        # Mirror the AsyncCursor slot so __anext__'s counter
-        # increment lands on a real attribute.
+        # Mirror the AsyncCursor slot so __anext__'s counter increment lands on a real attribute.
         self._aiter_yield_counter = 0
 
     async def fetchone(self) -> tuple[Any, ...] | None:
@@ -55,12 +33,9 @@ class _StubCursor:
 
 
 async def _iterate_stub_via_real_anext(stub: _StubCursor) -> list[tuple[Any, ...]]:
-    """Drive the stub through AsyncCursor's actual ``__anext__`` and
-    ``__aiter__`` methods so the test exercises the production code
-    rather than a re-implementation."""
+    """Drive the stub through AsyncCursor's real ``__anext__`` (production code, not a re-impl)."""
     out: list[tuple[Any, ...]] = []
-    # ``__aiter__`` calls ``_check_parent_loop_only_lazy`` then returns
-    # self; replicate inline.
+    # Replicate __aiter__: check loop binding, then return self.
     stub._check_parent_loop_only_lazy()
     while True:
         try:
@@ -73,9 +48,7 @@ async def _iterate_stub_via_real_anext(stub: _StubCursor) -> list[tuple[Any, ...
 
 @pytest.mark.asyncio
 async def test_anext_yields_between_buffered_rows_on_large_iteration() -> None:
-    """Iterating 10000 pre-buffered rows must let a sibling ticker
-    run at least a non-trivial number of times. Under the prior
-    shape the sibling got zero ticks."""
+    """Iterating 10000 buffered rows must let a sibling ticker run a non-trivial count."""
     rows: list[tuple[Any, ...]] = [(i, i * 2) for i in range(10_000)]
     stub = _StubCursor(rows)
 
@@ -107,8 +80,7 @@ async def test_anext_yields_between_buffered_rows_on_large_iteration() -> None:
 
 @pytest.mark.asyncio
 async def test_anext_small_iteration_does_not_pay_excess_yield_overhead() -> None:
-    """Small iterations (below the threshold) should not pay any
-    per-row yield overhead."""
+    """Small iterations (below the threshold) should not pay any per-row yield overhead."""
     rows: list[tuple[Any, ...]] = [(i,) for i in range(10)]
     stub = _StubCursor(rows)
 
@@ -131,7 +103,6 @@ async def test_anext_small_iteration_does_not_pay_excess_yield_overhead() -> Non
         with pytest.raises(asyncio.CancelledError):
             await task
 
-    # A tiny iteration should not trigger the threshold-gated yield.
     assert during <= 2, (
         f"small async iteration should not yield internally; sibling ran {during} times"
     )
@@ -139,7 +110,7 @@ async def test_anext_small_iteration_does_not_pay_excess_yield_overhead() -> Non
 
 @pytest.mark.asyncio
 async def test_anext_stop_iteration_at_end() -> None:
-    """Sanity: the iteration stops when fetchone returns None."""
+    """Iteration stops when fetchone returns None."""
     stub = _StubCursor([(1,), (2,)])
     seen = await _iterate_stub_via_real_anext(stub)
     assert seen == [(1,), (2,)]

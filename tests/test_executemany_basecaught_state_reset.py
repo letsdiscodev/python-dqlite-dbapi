@@ -1,22 +1,4 @@
-"""Pin: ``Cursor.executemany`` / ``AsyncCursor.executemany``
-``except BaseException`` arms reset every per-result-set
-field on mid-batch failure and re-raise.
-
-PEP 249 §6.1.5 says ``rowcount=-1`` means undetermined.
-The reset block uses that signal so callers
-cannot mistake the LAST iteration's rowcount for the
-cumulative count of successfully-applied iterations.
-A regression that drops the bare ``raise`` would
-silently turn ``executemany`` failures into "succeeded
-with rowcount=-1"; a regression that drops one of the
-field assignments leaves stale state observable.
-
-The end-to-end behaviour is covered by integration tests
-(``test_executemany_failure_resets_rowcount``,
-``test_executemany_cancel_mid_batch``); these unit pins
-exercise the same reset block without a live cluster
-so PR-time CI catches the regression.
-"""
+"""``executemany``'s ``except BaseException`` arm resets per-result-set state and re-raises."""
 
 from __future__ import annotations
 
@@ -29,14 +11,10 @@ from dqlitedbapi.cursor import Cursor
 
 
 def _seed_post_iteration_state(cur: Cursor | AsyncCursor) -> None:
-    """Mimic state that a successfully-applied iteration would
-    have left behind — so the reset's effect is observable.
+    """Mimic post-iteration state so the reset's effect is observable.
 
-    ``_lastrowid`` is deliberately *not* mutated here: the per-iteration
-    rowid write happens via the snapshot/restore arm inside
-    ``executemany``, and the BaseException arm restores
-    ``_lastrowid`` to its pre-batch value. Mutating ``_lastrowid`` in
-    this helper would mask the restore.
+    Deliberately leaves ``_lastrowid`` alone: mutating it here would mask the
+    BaseException arm's restore-to-pre-batch.
     """
     cur._rowcount = 42
     cur._rows = [(1,), (2,)]
@@ -52,16 +30,11 @@ async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> N
         raise raised
 
     cur = Cursor(conn)
-    # Pre-batch lastrowid — the value the caller observed from a prior
-    # single-row INSERT. The BaseException arm restores this snapshot
-    # so callers see the rowid they had before executemany.
-    cur._lastrowid = 99
+    cur._lastrowid = 99  # pre-batch value the BaseException arm must restore
 
     async def _seeded_execute(*args: object, **kwargs: object) -> None:
         _seed_post_iteration_state(cur)
-        # Intra-batch rowid write — what _execute_async does on the
-        # row-returning DML path. Without the snapshot/restore arm,
-        # this value would leak past the BaseException re-raise.
+        # Intra-batch rowid write that must not leak past the re-raise.
         cur._lastrowid = 101
         await _execute_then_fail()
 
@@ -71,14 +44,8 @@ async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> N
     ):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
-    # Every field is reset to the "no operation performed" surface;
-    # rowcount=-1 (PEP 249 "undetermined"). _lastrowid is restored to
-    # the pre-batch snapshot — stdlib sqlite3.Cursor.lastrowid is
-    # documented as not being cleared by failed/cancelled operations,
-    # and the cursor's docstring at module top pins close() as the
-    # single lifecycle event that scrubs it. The intra-batch write
-    # (101) is overwritten by the restore so cross-driver code reading
-    # ``cur.lastrowid`` after the failure sees the pre-batch value.
+    # Fields reset to baseline (rowcount=-1); _lastrowid restored to the
+    # pre-batch snapshot, overwriting the intra-batch write (101).
     assert cur._rowcount == -1
     assert cur._rows == []
     assert cur._description is None
@@ -87,28 +54,19 @@ async def test_sync_executemany_basecaught_resets_all_fields_and_reraises() -> N
 
 
 async def test_sync_executemany_basecaught_preserves_completed_iterations() -> None:
-    """Pin the preserve-direction of the BaseException arm: iteration 0
-    succeeds (incrementing ``_completed_iterations`` to 1), iteration 1
-    raises a BaseException-subclass. After the re-raise, the reset
-    fields scrub to baseline AND ``_completed_iterations`` survives at
-    its mid-batch value — the documented observability signal callers
-    rely on for idempotent compensation after a cancel."""
+    """BaseException arm scrubs reset fields but preserves the mid-batch
+    ``_completed_iterations`` (the observability signal for idempotent compensation)."""
     conn = MagicMock()
 
     class _Sentinel(BaseException):
-        """Synthetic BaseException subclass to drive the arm without
-        triggering pytest's BaseException-bypassing behaviour."""
+        """BaseException subclass that pytest won't bypass."""
 
     cur = Cursor(conn)
-    cur._lastrowid = 99  # seed lastrowid so we can also assert it survives
+    cur._lastrowid = 99
 
-    # The loop body calls ``_execute_async`` then ``acc.push(self)`` then
-    # ``self._completed_iterations += 1``. Drive iteration 0 to
-    # success (push will read seeded state) and iteration 1 to raise.
     call_count = {"n": 0}
 
     async def _maybe_fail(*args: object, **kwargs: object) -> None:
-        # Seed the per-iteration state so ``acc.push`` is happy.
         cur._rowcount = 1
         cur._rows = []
         cur._description = None
@@ -123,19 +81,12 @@ async def test_sync_executemany_basecaught_preserves_completed_iterations() -> N
     ):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
-    # Reset fields scrub to baseline (already pinned by the sibling
-    # test above — re-pin together for locality):
     assert cur._rowcount == -1
     assert cur._rows == []
     assert cur._description is None
     assert cur._row_index == 0
-    # ``_lastrowid`` preservation (mirrored from the sibling test):
     assert cur._lastrowid == 99
-    # ``_completed_iterations`` preservation (the new pin):
-    # iteration 0 succeeded (incremented to 1), iteration 1 raised
-    # BEFORE the increment ran. The arm must NOT zero this — it is
-    # the observability signal for "how many iterations committed
-    # before the failure".
+    # iteration 0 succeeded (count->1); iteration 1 raised before the increment.
     assert cur._completed_iterations == 1, (
         "_completed_iterations must survive the BaseException re-raise; "
         f"got {cur._completed_iterations}"
@@ -150,15 +101,11 @@ async def test_async_executemany_basecaught_resets_all_fields_and_reraises() -> 
         raise raised
 
     aconn_cursor = AsyncCursor(conn)
-    # Pre-batch lastrowid — the value the caller observed from a prior
-    # single-row INSERT. The BaseException arm restores this snapshot.
-    aconn_cursor._lastrowid = 99
+    aconn_cursor._lastrowid = 99  # pre-batch value the BaseException arm restores
 
     async def _seeded_execute(*args: object, **kwargs: object) -> None:
         _seed_post_iteration_state(aconn_cursor)
-        # Intra-batch rowid write — what _execute_unlocked does on the
-        # row-returning DML path. The snapshot/restore arm overwrites
-        # this on the BaseException re-raise.
+        # Intra-batch rowid write overwritten on the re-raise.
         aconn_cursor._lastrowid = 101
         await _execute_then_fail()
 
@@ -182,9 +129,7 @@ async def test_async_executemany_basecaught_resets_all_fields_and_reraises() -> 
 
 
 async def test_async_executemany_basecaught_preserves_completed_iterations() -> None:
-    """Async sibling of the sync preserve-direction pin: iteration 0
-    succeeds, iteration 1 raises a BaseException-subclass, the re-raise
-    leaves ``_completed_iterations`` at its mid-batch value."""
+    """Async sibling: re-raise leaves ``_completed_iterations`` at its mid-batch value."""
     import asyncio
 
     conn = MagicMock()
@@ -216,14 +161,11 @@ async def test_async_executemany_basecaught_preserves_completed_iterations() -> 
     ):
         await aconn_cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
-    # Reset fields scrub to baseline:
     assert aconn_cursor._rowcount == -1
     assert list(aconn_cursor._rows) == []
     assert aconn_cursor._description is None
     assert aconn_cursor._row_index == 0
-    # ``_lastrowid`` preservation:
     assert aconn_cursor._lastrowid == 99
-    # ``_completed_iterations`` preservation (the new pin):
     assert aconn_cursor._completed_iterations == 1, (
         "_completed_iterations must survive the BaseException re-raise; "
         f"got {aconn_cursor._completed_iterations}"

@@ -1,14 +1,4 @@
-"""Pin: ``executemany``'s PRAGMA-specific diagnostic fires even when
-the SQL has a leading SQL comment.
-
-The diagnostic at the row-returning reject site used the raw
-``operation.lstrip().upper()`` instead of the already-computed
-comment-stripped ``head_normalised``. So a user writing ``-- comment
-\\nPRAGMA foreign_keys`` got the generic "use execute() for
-SELECT / VALUES / PRAGMA / EXPLAIN / WITH" message rather than the
-PRAGMA-specific "per-call semantics" guidance. Inconsistent UX
-between equivalent SQL inputs.
-"""
+"""``executemany``'s PRAGMA-specific diagnostic fires even with a leading SQL comment."""
 
 from __future__ import annotations
 
@@ -21,8 +11,7 @@ from dqlitedbapi.exceptions import ProgrammingError
 
 
 def _make_cursor() -> Cursor:
-    """Build a Cursor whose guards are tame enough for the synchronous
-    executemany pre-flight to run."""
+    """Build a Cursor tame enough for the synchronous executemany pre-flight to run."""
     cursor = Cursor.__new__(Cursor)
     cursor._closed = False
     cursor.messages = []
@@ -60,16 +49,14 @@ def test_executemany_pragma_after_comment_emits_pragma_diagnostic(sql: str) -> N
 
 
 def test_executemany_pragma_with_no_comment_still_pragma_specific() -> None:
-    """Sanity: the comment-free form continues to hit the PRAGMA-
-    specific arm."""
+    """Sanity: the comment-free form continues to hit the PRAGMA-specific arm."""
     cursor = _make_cursor()
     with pytest.raises(ProgrammingError, match="per-call semantics"):
         cursor.executemany("PRAGMA foreign_keys", [(1,)])
 
 
 def test_executemany_select_falls_through_to_generic_message() -> None:
-    """Negative: a non-PRAGMA row-returning verb still takes the
-    generic diagnostic."""
+    """Negative: a non-PRAGMA row-returning verb still takes the generic diagnostic."""
     cursor = _make_cursor()
     with pytest.raises(ProgrammingError, match="DML statements"):
         cursor.executemany("SELECT 1", [(1,)])

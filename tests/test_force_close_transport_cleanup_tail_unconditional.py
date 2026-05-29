@@ -1,17 +1,6 @@
-"""Pin: ``AsyncConnection._force_close_transport`` runs the cleanup
-tail (``_pending_drain`` reap and ``self._async_conn = None``)
-unconditionally — including when ``_protocol`` has been cleared by
-a prior ``_invalidate`` or when ``_writer`` is None on a partially-
-constructed inner.
-
-The previous code early-returned on ``proto is None`` and
-``writer is None``, skipping the pending-drain cancel and the
-adapter null-out. SA's ``terminate()`` → ``_force_close_transport``
-chain reaches this when an in-flight protocol error invalidated the
-connection but ``_pending_drain`` is still scheduled — the early-
-return left the bounded-drain task scheduled and the adapter
-holding a live reference to the closed inner.
-"""
+"""``_force_close_transport`` runs the cleanup tail (``_pending_drain`` reap and
+``_async_conn = None``) unconditionally, even when ``_protocol`` or ``_writer`` is None
+(post-``_invalidate`` or partially-constructed inner) — the old early-return leaked both."""
 
 from __future__ import annotations
 
@@ -23,9 +12,7 @@ from dqlitedbapi.aio.connection import AsyncConnection
 def _make_async_connection_with_inner(
     *, proto_present: bool, writer_present: bool
 ) -> tuple[AsyncConnection, MagicMock, MagicMock]:
-    """Build a closed-but-not-fully-cleaned-up ``AsyncConnection``
-    with a configurable ``_protocol`` / ``_writer`` shape on its
-    inner."""
+    """``AsyncConnection`` with a configurable ``_protocol``/``_writer`` shape on its inner."""
     import os
 
     aconn = AsyncConnection.__new__(AsyncConnection)
@@ -57,9 +44,7 @@ def _make_async_connection_with_inner(
 
 
 def test_cleanup_tail_runs_when_protocol_is_none() -> None:
-    """Post-``_invalidate`` state: ``_protocol`` cleared. The early-
-    return on ``proto is None`` previously skipped the reap and
-    null-out; pin the unconditional execution."""
+    """``_protocol`` cleared (post-``_invalidate``): reap and null-out still run."""
     aconn, inner, pending = _make_async_connection_with_inner(
         proto_present=False, writer_present=False
     )

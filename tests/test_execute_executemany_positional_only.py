@@ -1,13 +1,5 @@
-"""Pin: Connection.execute / executemany / Cursor.execute /
-executemany are positional-only (`/` after parameters).
-
-Stdlib sqlite3 raises TypeError for `execute(operation="...")` —
-the keyword argument is rejected. dqlitedbapi previously accepted
-the kwarg, breaking cross-driver portable code.
-
-Symmetric with the existing executescript / setinputsizes
-positional-only fixes.
-"""
+"""Pin: execute/executemany on Connection and Cursor are positional-only, matching stdlib
+sqlite3 which rejects ``execute(operation="...")`` with TypeError."""
 
 import pytest
 

@@ -1,13 +1,5 @@
-"""Pin: sync ``Connection.__exit__`` re-raises ``KeyboardInterrupt``
-or ``SystemExit`` from ``rollback()`` after a body exception, with
-a DEBUG breadcrumb log.
-
-The async sibling has a parallel pin
-(``test_aexit_rollback_debug_log.py``); the sync side previously
-had no test for this specific arm. A future refactor that
-broadened the catch to ``except BaseException`` (or removed the
-breadcrumb) would silently swallow signal-interrupted rollback.
-"""
+"""Sync ``Connection.__exit__`` re-raises KeyboardInterrupt/SystemExit from rollback()
+after a body exception, with a DEBUG breadcrumb (a broadened catch would swallow it)."""
 
 from __future__ import annotations
 
@@ -21,9 +13,8 @@ from dqlitedbapi import Connection
 
 def _connection() -> Connection:
     conn = Connection("127.0.0.1:9001")
-    # The early-return at the top of ``__exit__`` short-circuits if
-    # ``_async_conn`` is None (no connect() called yet). Set a
-    # sentinel so the rollback arm we're testing is reached.
+    # __exit__ early-returns when _async_conn is None; set a sentinel to reach the
+    # rollback arm.
     conn._async_conn = object()  # type: ignore[assignment]
     return conn
 

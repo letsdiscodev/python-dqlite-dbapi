@@ -1,15 +1,5 @@
-"""Pin: ``dqlitedbapi.Row`` surface that prior tests did not cover —
-hashability, ``__eq__`` vs a non-``Row``, and construction from a
-cursor with ``description=None``.
-
-``Row`` is a ``@final`` documented stdlib-``sqlite3.Row`` replacement.
-Existing tests cover positional/name indexing, ``dict(row)``,
-``.keys()``, ``**row`` spread, and positive ``Row == Row`` equality —
-but not ``hash(row)`` (a regression dropping ``__hash__`` would silently
-make ``Row`` unusable as a dict key / set member), ``row == <non-Row>``
-(must return ``False`` via ``NotImplemented``, not raise), or the
-empty/``None``-description branch.
-"""
+"""``dqlitedbapi.Row`` hashability, ``__eq__`` vs a non-``Row``, and the
+``description=None`` branch."""
 
 from __future__ import annotations
 

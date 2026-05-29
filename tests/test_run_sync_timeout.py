@@ -12,7 +12,6 @@ from dqlitedbapi.exceptions import OperationalError
 
 class TestRunSyncTimeout:
     def test_run_sync_times_out(self) -> None:
-        """_run_sync should raise OperationalError after timeout."""
         conn = Connection("localhost:9001", timeout=0.1)
 
         async def hang_forever() -> None:
@@ -24,19 +23,8 @@ class TestRunSyncTimeout:
     def test_run_sync_logs_unexpected_error_during_cancel_wait(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When the bounded cancel-wait window unexpectedly observes
-        an exception that is neither CancelledError nor TimeoutError,
-        it must surface via DEBUG logging. A bare
-        ``suppress(Exception)`` would swallow programmer bugs
-        silently; the outer ``OperationalError`` must still be raised,
-        but the root cause should be visible to operators.
-
-        Inject a stub Future whose ``result()`` raises ``TimeoutError``
-        on the first call (triggering the timeout branch) and
-        ``RuntimeError`` on the second call (the bounded cancel-wait).
-        The DEBUG log is the only place that RuntimeError becomes
-        visible; a naive ``suppress(Exception)`` would eat it.
-        """
+        """An unexpected (non-Cancelled/Timeout) error in the cancel-wait must DEBUG-log,
+        not be silently swallowed; the outer OperationalError still raises."""
         import concurrent.futures as cf
 
         from dqlitedbapi import connection as conn_module
@@ -51,10 +39,7 @@ class TestRunSyncTimeout:
                 return True
 
             def done(self) -> bool:
-                # Race check — pretend the coroutine is still
-                # running, so the cancel-success branch is skipped
-                # and the original cancel-then-bounded-wait path
-                # executes.
+                # Pretend still running so the cancel-then-bounded-wait path executes.
                 return False
 
             def cancelled(self) -> bool:
@@ -69,7 +54,6 @@ class TestRunSyncTimeout:
         stub = _StubFuture()
 
         def _fake_run_coroutine_threadsafe(coro: Any, loop: Any) -> _StubFuture:
-            # Consume the coroutine so the interpreter doesn't warn.
             coro.close()
             return stub
 
@@ -89,22 +73,13 @@ class TestRunSyncTimeout:
         assert any(
             "unexpected error" in rec.message.lower() and rec.levelno == logging.DEBUG
             for rec in caplog.records
-        ), (
-            "Bounded cancel-wait should DEBUG-log unexpected errors so "
-            "programmer bugs in cleanup paths are observable, not silent."
-        )
+        ), "Bounded cancel-wait should DEBUG-log unexpected errors, not swallow them silently."
 
     def test_run_sync_preserves_coroutine_return_type(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Pin the TypeVar narrowing: ``_run_sync(coro)`` must declare
-        the same return type as ``coro`` so type-checkers can verify
-        downstream uses of the result. A regression widening the
-        signature back to ``Any`` silently erases this guarantee and
-        would not fail a runtime test, so ``typing.assert_type`` (a
-        no-op at runtime, evaluated at type-check time) documents the
-        contract. Mirrors the sibling pin on ``_call_client``.
-        """
+        """Pin the TypeVar narrowing: ``_run_sync(coro)`` returns coro's type, checked via
+        ``assert_type`` (a regression to ``Any`` would not fail a runtime-only test)."""
         from typing import assert_type
 
         from dqlitedbapi import connection as conn_module
@@ -140,14 +115,8 @@ class TestRunSyncCancelSuccessRace:
     def test_run_sync_returns_value_when_cancel_loses_race(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``future.result(timeout=...)`` raises ``TimeoutError`` when
-        the bounded wait expired, but the coroutine may have completed
-        successfully on the loop thread between the timeout and our
-        cancel attempt. ``_run_sync`` must observe ``future.done()`` /
-        ``future.cancelled()`` BEFORE invalidating the connection and
-        return the successful result. Otherwise the caller's retry
-        logic re-runs a non-idempotent statement, doubling the write.
-        """
+        """If the coroutine completes between the bounded-wait TimeoutError and our cancel,
+        ``_run_sync`` must return the late success, not invalidate (else a retry double-writes)."""
         import concurrent.futures as cf
         from typing import Any
 
@@ -156,10 +125,7 @@ class TestRunSyncCancelSuccessRace:
         conn = Connection("localhost:9001", timeout=0.05)
 
         class _LateSuccessFuture:
-            """Future whose ``result(timeout=...)`` first raises
-            TimeoutError (modelling ``_run_sync``'s bounded wait
-            expiring) and then reports the coroutine as
-            successfully completed."""
+            """result() raises TimeoutError first, then returns the late success."""
 
             def __init__(self) -> None:
                 self._calls = 0
@@ -177,7 +143,7 @@ class TestRunSyncCancelSuccessRace:
                 self._calls += 1
                 if self._calls == 1:
                     raise cf.TimeoutError()
-                return 1234  # successful completion the cancel raced with
+                return 1234
 
         stub = _LateSuccessFuture()
 
@@ -194,25 +160,14 @@ class TestRunSyncCancelSuccessRace:
         async def _never_runs() -> None:
             await asyncio.sleep(999)
 
-        # Must NOT raise OperationalError; must return the late success.
         result = conn._run_sync(_never_runs())
         assert result == 1234
 
 
 class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
-    """Pin: when the bounded ``Future.result(timeout=...)`` expired
-    but the coroutine actually completed on the loop thread with a
-    server-side exception (e.g. ``IntegrityError``), ``_run_sync``
-    surfaces the recovered exception's class directly — NOT a
-    ``OperationalError("timed out")`` wrap.
-
-    The wrap-in-OperationalError shape used to break caller-side
-    type-based dispatch: ``except IntegrityError:`` would not match,
-    and the retry harness would re-run a non-idempotent autocommit
-    DML, double-writing. The fix re-raises ``recovered_error``
-    directly; the original ``TimeoutError`` is still reachable via
-    ``__context__``.
-    """
+    """Pin: when the bounded wait expired but the coroutine completed with a server-side
+    exception (e.g. IntegrityError), ``_run_sync`` re-raises that class directly, not an
+    OperationalError wrap (which would break ``except IntegrityError`` dispatch)."""
 
     def test_recovered_integrity_error_propagates_directly(
         self, monkeypatch: pytest.MonkeyPatch
@@ -226,10 +181,7 @@ class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
         conn = Connection("localhost:9001", timeout=0.05)
 
         class _LateIntegrityErrorFuture:
-            """Future whose ``result(timeout=...)`` first raises
-            TimeoutError, then reports the coroutine as completed-
-            with-IntegrityError (e.g. UNIQUE constraint violation
-            that landed at the same instant the sync timer fired)."""
+            """result() raises TimeoutError first, then the recovered IntegrityError."""
 
             def __init__(self) -> None:
                 self._calls = 0
@@ -266,18 +218,13 @@ class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
         async def _never_runs() -> None:
             await asyncio.sleep(999)
 
-        # Faithful exception class wins over contract preservation:
-        # the IntegrityError must propagate, NOT be wrapped in
-        # OperationalError.
         with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
             conn._run_sync(_never_runs())
 
     def test_recovered_exception_carries_timeout_in_context(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The original ``TimeoutError`` is preserved on the raised
-        exception's ``__context__`` so callers that need the timeout
-        signal for diagnostics can still walk the chain."""
+        """The original TimeoutError stays reachable via the raised exception's ``__context__``."""
         import concurrent.futures as cf
         from typing import Any
 
@@ -318,9 +265,6 @@ class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
         try:
             conn._run_sync(_never_runs())
         except IntegrityError as e:
-            # Python sets __context__ to the in-flight TimeoutError
-            # automatically when an except clause raises a new
-            # exception.
             assert isinstance(e.__context__, cf.TimeoutError), (
                 "the original TimeoutError must be reachable via __context__"
             )
@@ -329,13 +273,8 @@ class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
 
 
 class TestRunSyncTimeoutSynchronousNullOutOfAsyncConn:
-    """The TimeoutError arm of ``_run_sync`` must synchronously null
-    ``self._async_conn`` from the calling thread — exactly like the
-    sibling ``(KeyboardInterrupt, SystemExit)`` arm does — so the
-    next sync call gets a fresh-connect path even when the loop
-    thread is still parked inside a slow ``reader.read()`` and
-    has not yet drained the scheduled ``_invalidate``.
-    """
+    """The TimeoutError arm must synchronously null ``self._async_conn`` (like the KI/SystemExit
+    arm) so the next call reconnects even before the loop drains the scheduled ``_invalidate``."""
 
     def test_timeout_arm_nulls_async_conn_synchronously(
         self, monkeypatch: pytest.MonkeyPatch
@@ -347,11 +286,7 @@ class TestRunSyncTimeoutSynchronousNullOutOfAsyncConn:
 
         conn = Connection("localhost:9001", timeout=0.05)
 
-        # Stand in for a real ``AsyncConnection`` so the cleanup arm's
-        # ``self._async_conn is not None`` guard passes and the
-        # scheduled-on-loop ``_invalidate`` callable resolves. We do
-        # NOT need it to be invoked — only the synchronous null-out is
-        # under test here.
+        # Stand in for AsyncConnection so the cleanup arm's not-None guard passes.
         class _StubAsyncConn:
             def _invalidate(self, exc: BaseException | None = None) -> None:
                 pass
@@ -375,9 +310,7 @@ class TestRunSyncTimeoutSynchronousNullOutOfAsyncConn:
                 self._calls += 1
                 if self._calls == 1:
                     raise cf.TimeoutError()
-                # bounded-wait second call: pretend the cancelled
-                # coroutine has now unwound cleanly
-                raise cf.CancelledError()
+                raise cf.CancelledError()  # bounded-wait: coroutine unwound cleanly
 
         stub = _StubFuture()
 
@@ -397,13 +330,6 @@ class TestRunSyncTimeoutSynchronousNullOutOfAsyncConn:
         with pytest.raises(OperationalError, match="timed out"):
             conn._run_sync(_never_runs())
 
-        # The synchronous null-out is the load-bearing assertion: a
-        # subsequent sync op must take the fresh-connect path
-        # regardless of whether the loop thread has drained the
-        # scheduled ``_invalidate`` yet. Without this null-out, a
-        # caller's retry would hit ``_check_in_use`` against the
-        # stale dying conn whose ``_in_use=True`` is still latched
-        # until the slow read finally yields.
         assert conn._async_conn is None, (
             "TimeoutError arm must null self._async_conn synchronously, "
             "mirroring the (KeyboardInterrupt, SystemExit) arm — otherwise "

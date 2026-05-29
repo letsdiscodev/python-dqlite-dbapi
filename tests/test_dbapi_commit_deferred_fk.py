@@ -1,12 +1,5 @@
-"""Pin the cross-layer contract for deferred-FK COMMIT failures.
-
-The client layer's _run_protocol auto-rollback branch (and the
-deferred-FK clear in execute()) clears the tracker on a code-19
-COMMIT/RELEASE failure under PRAGMA defer_foreign_keys=ON. This
-test pins that the dbapi-layer commit() routes the failure to
-IntegrityError and that ``conn.in_transaction`` reflects the
-tracker clear immediately.
-"""
+"""Cross-layer pin: a deferred-FK code-19 COMMIT failure routes to
+IntegrityError and ``conn.in_transaction`` reflects the tracker clear."""
 
 from __future__ import annotations
 
@@ -27,7 +20,7 @@ async def test_aio_commit_deferred_fk_violation_raises_integrity_clears_inflight
 
     async def fake_execute(sql: str) -> object:
         # Mimic the real client path: tracker cleared THEN exception raised.
-        fake_inner.in_transaction = False
+        fake_inner.in_transaction = False  # tracker cleared before the raise
         raise _client_exc.OperationalError("FOREIGN KEY constraint failed", 19)
 
     fake_inner.execute = fake_execute
@@ -35,5 +28,4 @@ async def test_aio_commit_deferred_fk_violation_raises_integrity_clears_inflight
 
     with pytest.raises(IntegrityError, match="FOREIGN KEY"):
         await conn.commit()
-    # Cross-layer pin: dbapi.in_transaction reflects client tracker.
     assert conn.in_transaction is False

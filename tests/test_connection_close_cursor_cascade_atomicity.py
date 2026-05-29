@@ -1,15 +1,5 @@
-"""Pin: ``Connection.close()`` cursor cascade clears the cursors set
-even if the per-cursor scrub raises mid-loop.
-
-Without the try/finally wrapper, a KI/SystemExit raised mid-iteration
-left ``self._cursors`` populated with stale references — and later
-cursors un-iterated (still ``_closed=False``, with stale ``_rows``).
-
-The per-cursor ``_closed = True`` is intentionally the FIRST write so
-even an interrupted scrub leaves cursors with the load-bearing flag
-set. ``_check_closed()`` gates all reads, so stale ``_rows`` after a
-cursor's own ``_closed=True`` is unreachable.
-"""
+"""``Connection.close()`` clears the cursors set even if a per-cursor scrub raises
+mid-loop, so no stale references survive an interrupted cascade."""
 
 from __future__ import annotations
 
@@ -41,7 +31,6 @@ def _restore_rows_descriptor(target: object) -> None:
 def test_sync_close_clears_cursors_set_even_when_scrub_raises_mid_loop() -> None:
     conn = Connection("localhost:9001")
     cursors = [MagicMock() for _ in range(5)]
-    # Make cursor[3]._rows raise on assignment.
     _install_failing_rows_descriptor(cursors[3])
 
     for cur in cursors:
@@ -53,7 +42,6 @@ def test_sync_close_clears_cursors_set_even_when_scrub_raises_mid_loop() -> None
     finally:
         _restore_rows_descriptor(cursors[3])
 
-    # The cursors set MUST be empty even though the loop raised.
     assert len(conn._cursors) == 0
 
 

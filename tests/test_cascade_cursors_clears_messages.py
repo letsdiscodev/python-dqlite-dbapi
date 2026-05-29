@@ -1,19 +1,5 @@
-"""Pin: cursor cascade on connection close MUST clear ``messages``
-in BOTH the fork-branch and the main-branch.
-
-Before refactoring, the cursor-cascade body was duplicated four
-times in sync ``Connection`` (close-fork, close-main,
-force_close_transport-fork, force_close_transport-main). The two
-fork-branch copies dropped the ``del cur.messages[:]`` step that
-the two main-branch copies included. A cascade-closed cursor in a
-forked child therefore retained stale ``messages`` entries —
-violating the post-cascade contract documented at the main-branch
-sites.
-
-The refactor extracted ``_cascade_cursors()`` as a single private
-method called from all four sites; the helper always clears
-``messages`` (the union of both prior shapes).
-"""
+"""Cursor cascade on connection close clears ``messages`` in both the
+fork-branch and main-branch (fork-branch previously dropped the clear)."""
 
 import os
 import threading
@@ -27,7 +13,6 @@ from dqlitedbapi.cursor import Cursor
 
 
 def _prime_connection() -> tuple[dqlitedbapi.Connection, Cursor]:
-    """Build a Connection with one tracked cursor and stale messages."""
     conn = dqlitedbapi.Connection.__new__(dqlitedbapi.Connection)
     conn._closed = False
     conn._closed_flag = [False]
@@ -64,24 +49,20 @@ def test_cascade_clears_messages_on_main_branch() -> None:
     assert cur._rowcount == -1
     assert cur._lastrowid is None
     assert cur._row_index == 0
-    # Pin: messages cleared.
     assert cur.messages == []
 
 
 def test_force_close_transport_post_fork_clears_messages_on_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pin the previously-asymmetric fork-branch behaviour: a
-    cascade-closed cursor in a forked child must have empty
-    messages, NOT the parent's stale entries."""
+    """Fork-branch cascade-closed cursor has empty messages, not the
+    parent's stale entries."""
     conn, cur = _prime_connection()
     _real_getpid = os.getpid
     monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: _real_getpid() + 1)
     conn.force_close_transport()
     assert cur._closed is True
-    # The drift fix: messages cleared on fork-branch.
     assert cur.messages == []
-    # And the rest of the scrub.
     assert cur._description is None
     assert cur._row_index == 0
 

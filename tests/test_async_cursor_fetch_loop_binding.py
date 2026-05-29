@@ -1,17 +1,5 @@
-"""``AsyncCursor`` fetch / ``__aiter__`` calls now route through
-``_ensure_locks()`` so a call from a different event loop surfaces the
-loop-binding mismatch up front.
-
-The existing pattern in ``setinputsizes`` / ``setoutputsize`` raises a
-clean ``ProgrammingError("AsyncConnection is bound to a different
-event loop. ...")`` synchronously. The fetch path historically did
-not — a wrong-loop ``fetchone`` simply read pre-buffered rows and
-succeeded silently, hiding the misuse until the next awaited
-operation that DID acquire a loop primitive.
-
-Pin the up-front check across all cursor accessors so the diagnostic
-shape is consistent and misuses surface at the call site.
-"""
+"""Fetch / ``__aiter__`` route through ``_ensure_locks()`` so a cross-loop call raises
+``ProgrammingError`` up front rather than silently reading pre-buffered rows."""
 
 from __future__ import annotations
 
@@ -24,8 +12,7 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 
 
 def _invoke_on_fresh_loop_in_thread(coro_factory) -> list[BaseException]:
-    """Run ``await coro_factory()`` on a fresh ``asyncio.run`` in a
-    background thread; return any caught exception."""
+    """Run ``await coro_factory()`` on a fresh ``asyncio.run`` in a thread; return errors."""
     errors: list[BaseException] = []
 
     def _runner() -> None:
@@ -46,9 +33,7 @@ def _invoke_on_fresh_loop_in_thread(coro_factory) -> list[BaseException]:
 async def test_fetchone_rejects_cross_loop_call() -> None:
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
-    # Prime binding on the outer loop and seed a fake result set so
-    # the call would silently succeed if not for the loop-binding
-    # check (the rows are already buffered).
+    # Seed a buffered result set so the call would silently succeed without the loop-binding check.
     conn._ensure_locks()
     cur._description = (("col", None, None, None, None, None, None),)
     cur._rows = [(1,), (2,)]
@@ -86,10 +71,7 @@ async def test_fetchall_rejects_cross_loop_call() -> None:
 
 
 async def test_aiter_rejects_cross_loop_call() -> None:
-    """``__aiter__`` is synchronous; the loop-binding check fires at
-    the ``async for cursor:`` site rather than one await deeper in
-    ``__anext__``.
-    """
+    """``__aiter__`` is sync; the binding check fires at ``async for``, not in ``__anext__``."""
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
     conn._ensure_locks()
@@ -99,9 +81,7 @@ async def test_aiter_rejects_cross_loop_call() -> None:
     def _runner() -> None:
         async def _invoke() -> None:
             try:
-                # __aiter__ is sync — call directly to isolate the
-                # loop-binding behaviour.
-                cur.__aiter__()
+                cur.__aiter__()  # sync; call directly to isolate the loop-binding behaviour
             except BaseException as e:  # noqa: BLE001
                 errors.append(e)
 
@@ -115,8 +95,7 @@ async def test_aiter_rejects_cross_loop_call() -> None:
 
 
 async def test_fetch_methods_accept_same_loop_call() -> None:
-    """Sanity: the binding check must NOT reject a call from the same
-    loop the connection was first used on."""
+    """The binding check must NOT reject a call from the same loop."""
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
     conn._ensure_locks()

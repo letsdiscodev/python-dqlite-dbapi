@@ -1,23 +1,8 @@
-"""Integration pin: ``sqlite_version_info`` must not advertise more
-than the server actually supports.
+"""The hard-coded ``sqlite_version_info`` constant must not exceed the live server's version.
 
-``dqlitedbapi`` exposes ``sqlite_version_info`` (and its string form)
-at module import time — PEP 249 / SQLAlchemy require them to be
-synchronously available before any connection is opened. The value is
-a hard-coded constant because dialect bootstrap cannot wait for a
-connection handshake.
-
-The test interrogates the live server with ``SELECT sqlite_version()``
-and asserts the module constant does not exceed what the server
-reports. SQLAlchemy's SQLite dialect gates feature code paths on
-``sqlite_version_info``; advertising a version higher than the server
-supports would make the dialect emit SQL the server rejects.
-
-When this test fails because upstream dqlite ships a newer SQLite
-bundle (and the constant is older), the test is still green — the
-constant is merely stale. If the constant is advanced past the
-server's actual bundle, this test turns red and pins the driver
-honest.
+It is hard-coded (not read from a connection) because dialect bootstrap happens at import,
+before any handshake; advertising a higher version makes SQLAlchemy emit SQL the server rejects.
+A stale-low constant stays green; a too-high constant turns red.
 """
 
 import pytest
@@ -28,7 +13,6 @@ from dqlitedbapi.aio import aconnect
 
 
 def _parse_version(s: str) -> tuple[int, ...]:
-    # ``SELECT sqlite_version()`` returns e.g. "3.45.1".
     return tuple(int(p) for p in s.split("."))
 
 
@@ -66,8 +50,6 @@ class TestSqliteVersionPin:
         )
 
     def test_sync_and_async_constants_agree(self) -> None:
-        # The two module-level constants must stay in lockstep; a drift
-        # means a coordinated bump was applied to one __init__.py but
-        # not the other.
+        # The sync and async constants must stay in lockstep across both __init__.py files.
         assert dqlitedbapi.sqlite_version_info == aio.sqlite_version_info
         assert dqlitedbapi.sqlite_version == aio.sqlite_version

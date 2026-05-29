@@ -1,10 +1,4 @@
-"""PEP 249 exception wrapping at the cursor layer.
-
-The underlying client raises ``dqliteclient.exceptions.*``. PEP 249
-requires a specific exception hierarchy under the DBAPI module, so the
-cursor must translate those to ``dqlitedbapi.exceptions.*`` when they
-surface to the user.
-"""
+"""Cursor translates ``dqliteclient.exceptions.*`` to the PEP 249 ``dqlitedbapi.exceptions.*``."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
@@ -17,9 +11,7 @@ from dqlitedbapi.cursor import Cursor
 
 
 def _cursor_with_async_conn_raising(exc: Exception) -> Cursor:
-    """Build a Cursor whose underlying async conn raises ``exc`` on every
-    query/execute. Bypasses the event-loop thread by running the coroutine
-    in a fresh event loop."""
+    """Build a Cursor whose async conn raises ``exc`` on every query/execute."""
     mock_async_conn = AsyncMock()
     mock_async_conn.query_raw_typed = AsyncMock(side_effect=exc)
     mock_async_conn.execute = AsyncMock(side_effect=exc)
@@ -50,21 +42,15 @@ class TestExceptionWrapping:
             c.execute("SELECT 1")
 
     def test_client_protocol_error_becomes_operational_error(self) -> None:
-        # Wire desync (ProtocolError / DecodeError / StreamError) maps
-        # to PEP 249 OperationalError so SA's is_disconnect classifier
-        # routes it via the substring branch and invalidates the pool
-        # slot on the first round-trip.
+        # Wire desync maps to OperationalError so SA's is_disconnect invalidates the pool slot.
         c = _cursor_with_async_conn_raising(client_exc.ProtocolError("bad frame"))
         with pytest.raises(dbapi_exc.OperationalError, match="bad frame"):
             c.execute("SELECT 1")
 
     def test_client_data_error_becomes_data_error(self) -> None:
         c = _cursor_with_async_conn_raising(client_exc.DataError("bad param"))
-        # Use a wire-primitive bind (int) so the post-chain wire-
-        # primitive guard in _convert_bind_param doesn't intercept
-        # first. This test exercises the client-layer DataError →
-        # dbapi DataError mapping at the protocol level, not the
-        # bind-validation layer.
+        # Wire-primitive bind (int) so the _convert_bind_param guard doesn't intercept first;
+        # this exercises the protocol-level DataError mapping, not bind validation.
         with pytest.raises(dbapi_exc.DataError, match="bad param"):
             c.execute("INSERT INTO t VALUES (?)", [1])
 

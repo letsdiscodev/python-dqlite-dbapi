@@ -1,23 +1,6 @@
-"""Pin: ``_async_unclosed_warning`` finalizer is fork-safe — it
-skips the ResourceWarning emission when invoked in a forked child
-whose parent owned the captured ``closed_flag`` / ``connected_flag``
-snapshots.
-
-The sync sibling ``_cleanup_loop_thread`` at ``connection.py:659-692``
-has the same discipline and is pinned by
-``tests/test_cleanup_loop_thread_finalizer_fork_safe.py``. The async
-side at ``aio/connection.py:43-88`` did not — a parent process that
-constructed an AsyncConnection, called ``_ensure_connection``
-(setting ``connected_flag[0] = True``), then forked, would have the
-child emit a false-positive ResourceWarning at GC time. The
-warning is purely cosmetic (no socket/loop/thread touched in the
-async finalizer) but the asymmetry with every other fork-traversing
-finalizer in the package is the drift this pin closes.
-
-The fix threads ``creator_pid: int`` through the finalizer
-registration and short-circuits when ``get_current_pid() !=
-creator_pid``.
-"""
+"""Pin: ``_async_unclosed_warning`` finalizer is fork-safe — it skips
+the ResourceWarning when run in a forked child (the captured flags are
+a parent snapshot), short-circuiting on ``get_current_pid() != creator_pid``."""
 
 from __future__ import annotations
 
@@ -31,15 +14,12 @@ from dqlitedbapi.aio.connection import _async_unclosed_warning
 
 
 def test_async_finalizer_short_circuits_on_pid_mismatch_no_warning() -> None:
-    """In a simulated forked child, ``_async_unclosed_warning`` must
-    not emit a ResourceWarning even though ``connected_flag=True`` and
-    ``closed_flag=False`` would otherwise trigger one. The flags are
-    a parent snapshot frozen at fork-time; the parent may very well
-    close after the fork."""
+    """Simulated forked child: no ResourceWarning even though the flags
+    (a parent snapshot) would otherwise trigger one."""
     closed_flag = [False]
     connected_flag = [True]
     parent_pid = os.getpid()
-    child_pid = parent_pid + 1  # simulated child pid
+    child_pid = parent_pid + 1
 
     with (
         patch("dqlitedbapi.aio.connection.get_current_pid", return_value=child_pid),
@@ -56,10 +36,7 @@ def test_async_finalizer_short_circuits_on_pid_mismatch_no_warning() -> None:
 
 
 def test_async_finalizer_emits_warning_when_pid_matches() -> None:
-    """Negative pin: in the SAME process that registered the
-    finalizer (the normal GC path) and with the flags indicating
-    a leak, the warning still fires. Behaviour on the non-forked
-    path is unchanged."""
+    """Negative pin: same process + leak flags -> the warning still fires."""
     closed_flag = [False]
     connected_flag = [True]
     same_pid = os.getpid()
@@ -80,8 +57,7 @@ def test_async_finalizer_emits_warning_when_pid_matches() -> None:
 
 
 def test_async_finalizer_skips_when_closed_flag_set() -> None:
-    """The two pre-existing gates are preserved: explicit close
-    (closed_flag=True) skips the warning."""
+    """Pre-existing gate preserved: explicit close (closed_flag=True) skips."""
     closed_flag = [True]
     connected_flag = [True]
     same_pid = os.getpid()
@@ -98,9 +74,8 @@ def test_async_finalizer_skips_when_closed_flag_set() -> None:
 
 
 def test_async_finalizer_skips_when_never_connected() -> None:
-    """The two pre-existing gates are preserved: never-connected
-    (connected_flag=False) skips the warning (avoids false-positive
-    for ``AsyncConnection(...); del conn`` test-fixture flows)."""
+    """Pre-existing gate preserved: never-connected skips (avoids
+    false-positive for ``AsyncConnection(...); del conn`` flows)."""
     closed_flag = [False]
     connected_flag = [False]
     same_pid = os.getpid()
@@ -118,15 +93,8 @@ def test_async_finalizer_skips_when_never_connected() -> None:
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
 def test_async_finalizer_in_forked_child_does_not_emit_warning() -> None:
-    """End-to-end pin: construct an AsyncConnection (which registers
-    a finalizer with creator_pid), simulate the connected_flag flip,
-    fork, GC the inherited AsyncConnection in the child, and verify
-    the child does not emit a false-positive ResourceWarning to its
-    stderr.
-
-    Mirrors the sync-sibling pin at
-    ``test_cleanup_loop_thread_finalizer_fork_safe.py::test_finalizer_in_forked_child_does_not_block_or_emit_warning``.
-    """
+    """End-to-end: fork, GC the inherited AsyncConnection in the child,
+    verify no false-positive ResourceWarning on its stderr."""
     import contextlib as _contextlib
     import gc
     import sys
@@ -134,10 +102,8 @@ def test_async_finalizer_in_forked_child_does_not_emit_warning() -> None:
     from dqlitedbapi.aio.connection import AsyncConnection
 
     conn = AsyncConnection("127.0.0.1:9999")
-    # Flip connected_flag manually so the finalizer's two pre-existing
-    # gates would otherwise fire if not for the new pid gate. We avoid
-    # running the real ``_ensure_connection`` (would need a live
-    # cluster).
+    # Flip connected_flag manually instead of running real
+    # _ensure_connection (which would need a live cluster).
     conn._connected_flag[0] = True
     assert conn._finalizer is not None
 
@@ -145,8 +111,7 @@ def test_async_finalizer_in_forked_child_does_not_emit_warning() -> None:
     err_r, err_w = os.pipe()
     pid = os.fork()
     if pid == 0:
-        # Child: redirect stderr to the pipe so we can inspect what
-        # the finalizer emitted (warnings go to stderr by default).
+        # Child: redirect stderr to the pipe to capture finalizer warnings.
         os.close(pipe_r)
         os.close(err_r)
         os.dup2(err_w, sys.stderr.fileno())
@@ -160,11 +125,9 @@ def test_async_finalizer_in_forked_child_does_not_emit_warning() -> None:
 
     os.close(pipe_w)
     os.close(err_w)
-    # Read child completion signal.
     while os.read(pipe_r, 4096):
         pass
     os.close(pipe_r)
-    # Read what the child wrote to stderr.
     child_stderr = b""
     while True:
         chunk = os.read(err_r, 4096)
@@ -177,5 +140,4 @@ def test_async_finalizer_in_forked_child_does_not_emit_warning() -> None:
     assert "was garbage-collected" not in decoded, (
         f"forked-child async finalizer emitted false-positive ResourceWarning: {decoded!r}"
     )
-    # Cleanup parent's reference.
     del conn

@@ -43,14 +43,8 @@ if TYPE_CHECKING:
 __all__ = ["AsyncCursor"]
 
 
-# Frequency at which ``AsyncCursor.__anext__`` yields to the event-
-# loop scheduler. ``fetchone`` returns synchronously for pre-buffered
-# rows, so without an explicit yield ``async for row in cursor:``
-# over a large result monopolises the loop. Threshold chosen so the
-# common case (tight inner loops over small fetches, e.g. <512 rows)
-# pays zero scheduler overhead, while a multi-10k iteration cedes
-# the loop to siblings often enough to keep heartbeats / pool
-# acquirers / SA do_ping responsive.
+# ``__anext__`` yield cadence: fetchone is sync for buffered rows, so without
+# this an ``async for`` over a large result would monopolise the loop.
 _ANEXT_YIELD_EVERY: Final[int] = 512
 
 
@@ -58,28 +52,10 @@ async def _resolve_null_rescue_type_codes(
     column_types: Sequence[int],
     row_types: Sequence[Sequence[int]],
 ) -> list[int | _DBAPIType]:
-    """Resolve ``cursor.description`` type codes with a NULL-rescue
-    scan, yielding to the loop on large result sets.
-
-    For each column whose row-0 tag is ``ValueType.NULL`` the scan
-    walks subsequent rows for the first non-NULL tag, falling back
-    to the ``UNKNOWN`` sentinel only when EVERY row at that column
-    index is NULL (PEP 249 §6.1.2: emit a real Type Object, not
-    ``None``; ``UNKNOWN`` marks the genuinely-unrecoverable case).
-    A column NULL across the whole page walks the full row count —
-    O(n_null_cols × n_rows) of pure-Python iteration that runs
-    before the first ``await`` in the result path.
-
-    Gating mirrors ``_convert_rows_async``: below
-    ``_LARGE_RESULT_ROW_THRESHOLD`` the scan runs straight through
-    (small fetches pay zero scheduler overhead); at or above it,
-    ``await asyncio.sleep(0)`` fires every ``_CONVERT_ROWS_YIELD_EVERY``
-    inner-row steps so a single all-NULL column over N rows still
-    cedes the loop to siblings. The resolved list is byte-identical
-    to the prior synchronous inline shape; the sync cursor surface
-    keeps its synchronous twin (it runs on the dbapi daemon loop,
-    where blocking is by design).
-    """
+    """Resolve ``description`` type codes; for NULL-first-row columns scan later
+    rows for a non-NULL tag, falling back to ``UNKNOWN`` only if all rows NULL."""
+    # PEP 249 §6.1.2: emit a real Type Object, not None. Yields every
+    # _CONVERT_ROWS_YIELD_EVERY steps on large results (cf. _convert_rows_async).
     yield_enabled = len(row_types) >= _LARGE_RESULT_ROW_THRESHOLD
     type_codes: list[int | _DBAPIType] = []
     scanned = 0
@@ -105,10 +81,8 @@ async def _resolve_null_rescue_type_codes(
 class AsyncCursor:
     """Async database cursor."""
 
-    # Mirrors ``Cursor.__slots__`` in the sync tree: stable attribute
-    # set, allocated one per ``AsyncConnection.cursor()`` call.
-    # ``__weakref__`` lets ``AsyncConnection._cursors`` (a WeakSet)
-    # hold a reference for the close-cascade.
+    # ``__weakref__`` lets ``AsyncConnection._cursors`` (a WeakSet) hold a
+    # reference for the close-cascade.
     __slots__ = (
         "__weakref__",
         "_aiter_yield_counter",
@@ -135,29 +109,16 @@ class AsyncCursor:
         self._row_index = 0
         self._closed = False
         self._lastrowid: int | None = None
-        # Cooperative-yield counter for ``__anext__``. Pre-fetched
-        # rows make ``await fetchone()`` synchronous; without a
-        # periodic yield, ``async for row in cursor:`` over a large
-        # result monopolises the loop. The counter is reset to zero
-        # on each execute inside ``_reset_execute_state`` so a
-        # fresh cursor starts iteration from the small-batch
-        # fast path.
+        # ``__anext__`` yield counter; reset per execute in _reset_execute_state.
         self._aiter_yield_counter: int = 0
-        # Per-cursor task token used to reject concurrent execute()
-        # calls from different tasks. ``op_lock`` serialises the wire
-        # but not the cursor's per-execute state mutations.
+        # Task token to reject concurrent execute() from different tasks; op_lock
+        # serialises the wire but not the cursor's per-execute state mutations.
         self._executing_task: asyncio.Task[Any] | None = None
-        # See sync sibling for full docs. Tracks the count of
-        # executemany iterations that completed successfully; preserved
-        # across cancel for idempotent-compensation observability.
+        # Executemany iterations completed; preserved across cancel for
+        # idempotent-compensation observability.
         self._completed_iterations: int = 0
-        # Inherit parent connection's default row_factory (stdlib
-        # parity). ``isinstance`` admits real AsyncConnection instances
-        # and user subclasses (a common cross-cutting pattern) while
-        # MagicMock-typed test fakes still fall through to ``None``.
-        # The import is deferred to call time to break the cursor →
-        # connection import cycle (``AsyncConnection`` only appears in
-        # ``TYPE_CHECKING`` at module scope).
+        # Deferred import breaks the cursor -> connection import cycle. isinstance
+        # admits real AsyncConnections + subclasses; MagicMock fakes fall to None.
         from dqlitedbapi.aio.connection import AsyncConnection as _AsyncConnection
 
         self._row_factory: RowFactory | None = (
@@ -165,37 +126,15 @@ class AsyncCursor:
             if isinstance(connection, _AsyncConnection)
             else None
         )
-        # PEP 249 optional extension; see Cursor.messages. Tuple-value
-        # type is the ``exception value`` per PEP 249 §13 — an
-        # Exception instance, not a string.
         self.messages: list[tuple[type[Exception], Exception]] = []
 
     @property
     def connection(self) -> "AsyncConnection":
-        """The AsyncConnection this cursor was created from.
-
-        PEP 249 optional extension. Read-only.
-
-        After ``close()``, ``self._connection`` is swapped for a
-        ``weakref.proxy``. Once the AsyncConnection is itself GC'd,
-        attribute access on the proxy raises ``ReferenceError`` —
-        outside the PEP 249 ``Error`` hierarchy. Catch and re-raise
-        as ``InterfaceError`` so cross-driver code wrapping cursor
-        introspection in ``except dbapi.Error:`` continues to match.
-
-        **Affinity note**: the getter itself does not run
-        ``_check_loop_only()`` — read-only property reads are
-        documented as bypass-permitted at the cursor surface. The
-        loop-affinity check fires at the NEXT method call boundary
-        on the returned handle (``aiocur.connection.execute(...)``
-        triggers ``AsyncConnection.cursor()``'s loop check).
-        Operators triaging cross-loop misuse should walk one frame
-        down from ``aiocur.connection.foo()``-style indirection.
-        """
-        # ``AttributeError`` is included in the catch — see the sync
-        # sibling ``Cursor.connection`` for the rationale (partial-
-        # init / mock parents would otherwise leak bare
-        # ``AttributeError`` outside the PEP 249 hierarchy).
+        """The AsyncConnection this cursor was created from (read-only)."""
+        # close() swaps _connection for a weakref.proxy; a GC'd parent raises
+        # ReferenceError (and partial-init/mock parents AttributeError), both
+        # outside the PEP 249 hierarchy. Re-raise as InterfaceError so
+        # ``except dbapi.Error:`` matches.
         try:
             _ = self._connection.address
         except ReferenceError as e:
@@ -210,99 +149,43 @@ class AsyncCursor:
 
     @property
     def description(self) -> _Description:
-        """Column descriptions for the last query.
+        """7-tuples (name, type_code, None*5) for the last query.
 
-        Returns a tuple of 7-tuples:
-        (name, type_code, display_size, internal_size, precision, scale, null_ok)
-
-        ``type_code`` is the wire-level ``ValueType`` integer from the first
-        result frame (e.g. 10 for ISO8601, 9 for UNIXTIME). The other fields
-        are None — dqlite doesn't expose them.
-
-        Returns the same tuple object on each access (matching stdlib
-        ``sqlite3.Cursor.description``). A tuple is structurally
-        immutable so no defensive copy is needed to keep the cursor's
-        internal state safe from caller mutation.
-
-        **Mixed-type columns flatten to the FIRST non-NULL row's wire
-        tag.** See sync sibling ``Cursor.description`` for full
-        rationale and the recommended ``row_types[i]`` per-row path
-        for callers needing column-uniformity-free parsing.
+        type_code is the wire ValueType int; other fields None (dqlite omits).
+        Mixed-type columns flatten to the first non-NULL row's tag.
         """
         return self._description
 
     @property
     def completed_iterations(self) -> int:
-        """Count of executemany() iterations that completed
-        successfully on the most recent call. See sync sibling
-        ``Cursor.completed_iterations`` for full docs."""
+        """Count of executemany() iterations that completed on the last call."""
         return self._completed_iterations
 
     @property
     def rowcount(self) -> int:
-        """Number of rows affected by the last execute.
-
-        Returns -1 if not applicable or unknown.
-        """
+        """Rows affected by the last execute, or -1 if unknown/inapplicable."""
         return self._rowcount
 
     @property
     def lastrowid(self) -> int | None:
-        """ROWID of this cursor's most-recent successful INSERT.
+        """ROWID of this cursor's most-recent successful INSERT, else None.
 
-        Returns ``None`` before the first INSERT runs on this cursor.
-
-        Cursor-scoped, matching stdlib ``sqlite3.Cursor.lastrowid``: a
-        sibling cursor on the same AsyncConnection does NOT observe
-        this cursor's last INSERT (each cursor stores its own snapshot
-        captured at INSERT time from the underlying connection's
-        ``sqlite3_last_insert_rowid``). ROLLBACK / UPDATE / DELETE /
-        DDL do NOT clear it, and ``close()`` preserves it — all
-        mirroring stdlib ``sqlite3.Cursor.lastrowid``, which stays
-        readable after the cursor is closed.
-
-        **Not updated for ``INSERT ... RETURNING``** (or any row-returning
-        statement). dqlite's wire protocol does not return
-        ``last_insert_id`` on row-returning responses, so the
-        row-returning execute path cannot surface the rowid. Read the
-        id from the returned row instead. This IS a divergence from
-        stdlib ``sqlite3.Cursor.lastrowid``, which updates after
-        ``INSERT ... RETURNING``.
+        Cursor-scoped; survives ROLLBACK/UPDATE/DELETE/DDL and close().
+        NOT updated for ``INSERT ... RETURNING`` (dqlite's wire omits
+        last_insert_id on row-returning responses) — read it from the row.
         """
         return self._lastrowid
 
     @property
     def rownumber(self) -> int | None:
-        """0-based index of the next row in the current result set.
+        """0-based index of the next row; None if no result set is active.
 
-        PEP 249 optional extension: returns ``None`` if no result set is
-        active (no query executed, or last statement was DML without
-        RETURNING); otherwise returns the index of the row that the next
-        ``fetchone()`` would produce.
-
-        **Loop affinity**: runs ``_check_loop_only()`` so a foreign-
-        loop reader does not observe a mid-fetch ``_row_index``
-        (mutated by ``fetchone``/``fetchmany`` on the bound loop).
-        Mirrors the ``in_transaction`` discipline and the sync
-        ``Cursor.rownumber`` sibling. See sync sibling for the full
-        rationale.
-
-        **Closed-state read returns** ``None`` (not ``Error``). See
-        the sync sibling's docstring — closed-cursor ``rownumber``
-        is intentionally ambiguous with the "no result set active"
-        return because ``close()`` scrubs ``_description`` to
-        ``None``. Cross-driver code that distinguishes "DML cursor"
-        from "closed cursor" must gate on ``cur._closed`` first.
+        Runs _check_loop_only() so a foreign-loop reader can't observe a
+        mid-fetch index. Closed cursors return None (ambiguous with "no result
+        set" since close() scrubs _description) — gate on _closed to distinguish.
         """
-        # Closed-state short-circuit BEFORE the loop check so the
-        # docstring contract ("closed-state read returns None")
-        # holds across loops. The previous order ran
-        # ``_check_loop_only`` first, which raises for a cross-loop
-        # read on a closed cursor and bubbled an
-        # InterfaceError / ProgrammingError out instead of None.
-        # stdlib ``sqlite3.Cursor.rownumber`` returns ``None`` when
-        # closed; loop binding is a dqlite concern that must not
-        # weaponise that path.
+        # Closed short-circuit BEFORE the loop check so the closed->None contract
+        # holds across loops (loop binding must not weaponise that path).
         if self._closed:
             return None
         conn = getattr(self, "_connection", None)
@@ -323,26 +206,14 @@ class AsyncCursor:
 
     @arraysize.setter
     def arraysize(self, value: int) -> None:
-        # PEP 249 §6.4 ``messages`` clear-on-entry; mirrors the sync
-        # sibling and the connection-side setters.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
-        # PEP 249 §6.1.2: any state-mutating method on a closed cursor
-        # must raise an ``Error`` subclass. Apply the closed-state
-        # guard FIRST so a bool/int validation error doesn't shadow
-        # the closed-cursor error. Mirrors the sync sibling
-        # ``Cursor.arraysize`` setter.
+        # Closed guard FIRST so a validation error doesn't shadow the closed error.
         self._check_closed()
-        # Loop-binding affinity contract — a state-mutating setter on
-        # a Connection-allocated cursor must be invoked from the
-        # owning loop. Without this, a foreign-loop
-        # ``cur.arraysize = 1`` mid-batch silently swaps the creator
-        # loop's next ``fetchmany`` size. Sibling sync setter calls
-        # ``_check_thread()`` for the same reason.
+        # Loop-binding guard: a foreign-loop setter would otherwise silently swap
+        # the creator loop's next fetchmany size.
         self._connection._check_loop_binding()
-        # Reject bools explicitly even though ``bool`` is an ``int``
-        # subclass: ``arraysize = True`` silently coercing to 1 is a
-        # caller-bug trap, not a useful affordance.
+        # Reject bools (int subclass): ``arraysize = True`` coercing to 1 is a trap.
         if not isinstance(value, int) or isinstance(value, bool):
             raise ProgrammingError(f"arraysize must be a positive int, got {type(value).__name__}")
         if value < 1:
@@ -351,27 +222,19 @@ class AsyncCursor:
 
     @property
     def closed(self) -> bool:
-        """``True`` once :meth:`close` has been called.
-
-        Peer-driver parity (psycopg, asyncpg). PEP 249 does not
-        require it; the underlying flag is already maintained.
-        """
+        """``True`` once :meth:`close` has been called."""
         return self._closed
 
     @property
     def row_factory(self) -> RowFactory | None:
-        """stdlib ``sqlite3.Cursor.row_factory`` parity hook. See
-        sync sibling ``Cursor.row_factory`` for full docs."""
+        """stdlib ``sqlite3.Cursor.row_factory`` parity hook."""
         return self._row_factory
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
-        # PEP 249 §6.4 ``messages`` clear-on-entry; see ``arraysize.setter``.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         self._check_closed()
-        # Loop-binding affinity contract — see ``arraysize.setter``
-        # for rationale.
         self._connection._check_loop_binding()
         if value is not None and not callable(value):
             raise ProgrammingError(
@@ -386,85 +249,40 @@ class AsyncCursor:
     def _reset_execute_state(self) -> None:
         """Clear per-execute state to the "no result set" baseline.
 
-        Mirrors the sync ``Cursor._reset_execute_state`` — see that
-        docstring. These are synchronous attribute writes on one
-        cursor instance; they deliberately happen OUTSIDE ``op_lock``
-        because the lock exists to serialise access to the underlying
-        wire connection, not to the cursor's in-memory fields.
-        ``_lastrowid`` is cursor-scoped but survives across execute —
-        and ``close()`` preserves it too (see the ``lastrowid``
-        property), mirroring stdlib ``sqlite3.Cursor``.
+        Runs OUTSIDE op_lock (the lock serialises the wire, not in-memory
+        fields). _lastrowid is deliberately NOT cleared (survives across execute).
         """
         self._description = None
         self._rows = []
         self._row_index = 0
         self._rowcount = -1
-        # See the sync sibling: reset ``_completed_iterations`` here
-        # too so the property's documented "0 after a single-row
-        # execute" contract holds across an executemany → execute
-        # transition. ``executemany`` already calls
-        # ``_reset_execute_state``, so the explicit reset there is
-        # redundant once the helper takes responsibility.
         self._completed_iterations = 0
-        # Reset the per-iteration yield counter so a fresh execute
-        # starts the next ``async for`` from the small-batch
-        # fast path rather than inheriting state from a prior
-        # large iteration on the same cursor.
         self._aiter_yield_counter = 0
 
     async def _execute_unlocked(
         self, operation: str, parameters: Sequence[Any] | None = None
     ) -> None:
-        """Body of a single ``execute`` call — caller already holds ``op_lock``.
+        """Body of a single ``execute`` — caller already holds ``op_lock``.
 
-        Factored out so ``executemany`` can hold the lock once across
-        every iteration rather than dropping and re-taking it per
-        parameter set (the per-iteration drop used to let a concurrent
-        task on the same connection slip arbitrary statements between
-        iterations — including COMMIT / ROLLBACK / DDL). Caller is
-        responsible for:
-
-        - clearing ``messages``,
-        - holding ``op_lock``,
-        - pre- and post-check ``_check_closed()``,
-        - resetting execute state when this is the first iteration.
+        Factored out so executemany holds the lock once across all iterations
+        (the per-iteration drop let a concurrent task slip COMMIT/ROLLBACK/DDL
+        between iterations). Caller clears messages, holds op_lock, pre/post
+        _check_closed(), and resets state on the first iteration.
         """
         is_query = _is_row_returning(operation)
         params = await _convert_params_async(parameters)
         self._check_closed()
         conn = await self._connection._ensure_connection()
-        # ``_ensure_connection`` awaits, so close() can still race
-        # against this window. Re-check once more before touching
-        # the wire.
+        # _ensure_connection awaits, so close() can race; re-check before the wire.
         self._check_closed()
         if is_query:
             columns, column_types, row_types, rows = await _call_client(
                 conn.query_raw_typed(operation, params)
             )
-            # Post-await close-race guard: a sibling task may have
-            # called ``self.close()`` while we were parked on the
-            # wire. ``close()`` is synchronous and sets ``_closed =
-            # True`` GIL-atomically, plus clears ``_rows`` /
-            # ``_description``; without this re-check, the result-
-            # population below would re-populate state onto the now-
-            # closed cursor. Drop the result silently (close is a no-
-            # error termination — raising into the awaiter's frame
-            # would surprise a caller that just used a try/except for
-            # CancelledError). Mirrors the same discipline already
-            # applied in ``_ExecuteManyAccumulator.apply``'s post-
-            # await re-check arm.
-            #
-            # Also scrub the introspection-surface fields to the "no
-            # result set" baseline. ``description`` / ``rowcount`` /
-            # ``row_index`` are NOT gated by ``_check_closed`` (they
-            # follow stdlib's "readable on closed cursor" precedent),
-            # so a bare ``return`` here would leave the PRIOR query's
-            # values visible — falsely advertising stale state as the
-            # outcome of THIS execute. ``close()``'s cascade scrub
-            # already cleared these fields, but a tier-2 close path
-            # (e.g. inside a foreign thread / signal handler) may have
-            # set ``_closed = True`` without running the cascade scrub
-            # all the way through, so re-scrub defensively.
+            # Post-await close-race guard: a sibling close() may have flipped
+            # _closed while we were parked on the wire. Drop the result silently
+            # and re-scrub the introspection fields (not gated by _check_closed,
+            # so a bare return would leave the PRIOR query's values visible).
             if self._closed:
                 self._description = None
                 self._rows = []
@@ -472,32 +290,17 @@ class AsyncCursor:
                 self._rowcount = -1
                 return
             if not columns:
-                # PRAGMA write-form dispatches through the row-
-                # returning branch but produces no columns; match
-                # stdlib sqlite3's ``description = None`` /
-                # ``rowcount = -1`` contract for non-result statements.
-                # See the sync ``_execute_async`` companion for
-                # rationale.
+                # PRAGMA write-form routes here but produces no columns; match
+                # stdlib's description=None / rowcount=-1 for non-result stmts.
                 self._description = None
                 self._rows = []
                 self._row_index = 0
                 self._rowcount = -1
                 return
             else:
-                # PEP 249 §6.1.2 ``type_code`` must compare equal to a
-                # Type Object. See the sync ``_execute_async`` for the
-                # full rationale. Empty result set → ``column_types``
-                # is legitimately empty and the wire does not carry
-                # declared column affinity separately from the
-                # per-row type tags, so the type information is
-                # unrecoverable. Emit the ``UNKNOWN`` sentinel (a
-                # real Type Object) rather than ``None`` so the
-                # PEP 249 §6.1.2 contract holds (``None`` compared
-                # equal to no Type Object via NotImplemented →
-                # False). Callers that want to detect the wire-
-                # can't-resolve case write ``type_code == UNKNOWN``.
-                # Non-empty but short → ``DataError`` so the
-                # anomaly surfaces loudly.
+                # PEP 249 §6.1.2: type_code must compare equal to a Type Object.
+                # Empty result set has unrecoverable type info -> UNKNOWN sentinel
+                # (a real Type Object, not None). Non-empty but short -> DataError.
                 if len(column_types) == 0 and len(rows) == 0:
                     type_codes: list[int | _DBAPIType] = [_UNKNOWN_TYPE] * len(columns)
                 elif len(column_types) != len(columns):
@@ -506,57 +309,28 @@ class AsyncCursor:
                         f"{len(column_types)} type codes"
                     )
                 else:
-                    # Per-row rescue scan for NULL-first-row columns;
-                    # see sync sibling at ``cursor.py`` for the full
-                    # rationale. Fall back to ``UNKNOWN`` only when
-                    # EVERY row at that column index is NULL
-                    # (genuinely unrecoverable). Routed through the
-                    # async helper so a wide all-NULL result set
-                    # (each such column walks the full row count)
-                    # cedes the loop to siblings every
-                    # ``_CONVERT_ROWS_YIELD_EVERY`` steps instead of
-                    # monopolising it before the first downstream
-                    # ``await``. Small results take the helper's
-                    # synchronous fast path (no scheduler overhead).
                     type_codes = await _resolve_null_rescue_type_codes(column_types, row_types)
                 self._description = tuple(
                     (name, type_codes[i], None, None, None, None, None)
                     for i, name in enumerate(columns)
                 )
-            # Per-row dispatch; see the sync ``_execute_async``
-            # companion for the rationale. ``_convert_rows_async``
-            # collapses to the sync ``_convert_rows`` for small
-            # result sets (no per-row scheduler overhead on the
-            # common case) and yields with ``await asyncio.sleep(0)``
-            # between row batches for large ones — keeps the
-            # cooperative-yield chain intact downstream of the
-            # wire-layer drain.
             self._rows = await _convert_rows_async(rows, row_types, column_types)
             self._row_index = 0
-            # See sync sibling for the rationale: dqlite returns the
-            # buffered row count rather than stdlib's -1 because the
-            # wire layer buffers up front, and the RETURNING path
-            # relies on this for SQLAlchemy's insertmanyvalues.
+            # dqlite returns the buffered row count (not stdlib's -1): the wire
+            # buffers up front and the RETURNING path relies on this for SA's
+            # insertmanyvalues.
             self._rowcount = len(rows)
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))
-            # Same post-await close-race guard as the query branch.
-            # Scrub the introspection-surface fields so post-await
-            # ``description`` / ``rowcount`` / ``row_index`` reads do
-            # not falsely advertise the PRIOR query's values as the
-            # outcome of THIS DML. ``_lastrowid`` is intentionally
-            # PRESERVED: stdlib ``sqlite3.Cursor.lastrowid`` persists
-            # across a close-during-DML boundary and the project
-            # honours that for the keep-on-close semantic.
+            # Post-await close-race guard (see query branch). _lastrowid is
+            # PRESERVED: stdlib persists it across a close-during-DML boundary.
             if self._closed:
                 self._description = None
                 self._rows = []
                 self._row_index = 0
                 self._rowcount = -1
                 return
-            # stdlib-parity: lastrowid only updates on INSERT / REPLACE.
-            # See ``_is_insert_or_replace`` in the sync cursor for
-            # rationale — sync and async share the same contract.
+            # stdlib parity: lastrowid only updates on INSERT / REPLACE.
             if _is_insert_or_replace(operation):
                 self._lastrowid = _to_signed_int64(last_id)
             if _is_dml_rowcount_meaningful(operation):
@@ -565,88 +339,49 @@ class AsyncCursor:
                 self._rowcount = -1
             self._description = None
             self._rows = []
-            # Parity with the SELECT branch and with executemany:
-            # every execute must leave the cursor at row 0 of its
-            # (possibly empty) result set so a subsequent SELECT
-            # iterator starts from a clean state.
+            # Leave the cursor at row 0 so a subsequent SELECT iterator is clean.
             self._row_index = 0
 
     async def execute(self, operation: str, parameters: Sequence[Any] | None = None, /) -> Self:
-        """Execute a database operation (query or command).
+        """Execute a query or command; returns ``self`` for chaining.
 
-        Returns ``self`` so callers can chain ``.fetchall()`` etc.
-
-        Concurrency: a single ``AsyncCursor`` is a single-task
-        primitive. Two tasks issuing ``await cur.execute(...)``
-        concurrently on the same cursor would otherwise silently
-        clobber each other's per-execute state (``_description``,
-        ``_rows``, ``_rowcount``) — the connection's ``op_lock``
-        serialises the wire but not the cursor instance. asyncpg
-        rejects the same shape with ``InterfaceError("cursor is
-        already executing")``; this driver matches.
+        A single AsyncCursor is single-task: concurrent execute() from another
+        task is rejected (op_lock serialises the wire but not per-execute state).
         """
-        # PEP 249 §6.1.2: ``messages`` is cleared by every standard
-        # cursor method before the call runs.
         del self.messages[:]
-        # Fast-path guard outside the lock so we fail quickly on an
-        # already-closed cursor without taking the lock.
+        # Fast-path guard outside the lock to fail quickly on a closed cursor.
         self._check_closed()
-        # Input-validation rejections FIRST (non-str operation, cross-
-        # task slot). These are caller-shape misuses that fire before
-        # any SQL parser touches the bytes; stdlib ``sqlite3``
-        # preserves prior cursor state on the non-str path, and the
-        # cross-task case is a project-specific misuse-rejection that
-        # follows the same "preserve prior state" pattern (no stdlib
-        # analog because sqlite3 is sync-only). The reset below
-        # handles prepare-stage rejections (verb / row-returning /
-        # bind-count / empty SQL) — those clear, matching stdlib.
+        # Input-validation rejections FIRST: stdlib preserves prior cursor state
+        # on the non-str path; the reset below handles prepare-stage rejections.
         if not isinstance(operation, str):
             raise ProgrammingError(
                 f"operation must be a str SQL statement, got {type(operation).__name__}",
                 code=None,
             )
-        # Reject concurrent execute on the same cursor. ``op_lock``
-        # below serialises the wire calls, but the cursor's
-        # per-execute state is mutated outside that lock — two
-        # concurrent execute() calls on the same cursor object see
-        # different result-set state at different times. Use a per-
-        # cursor task token; reject any concurrent entry from a
-        # foreign task.
+        # Reject concurrent execute on the same cursor (per-execute state is
+        # mutated outside op_lock, so two callers would clobber each other).
         cur_task = asyncio.current_task()
         if self._executing_task is not None and self._executing_task is not cur_task:
             raise InterfaceError(
                 f"cursor is already executing in another task (id={id(self)}); "
                 "use one cursor per task"
             )
-        # Caller-shape rejection BEFORE the reset: passing a Mapping
-        # for qmark, set, str, bytes, etc. is a caller-shape misuse
-        # symmetric with the non-str ``operation`` arm above. Per the
-        # documented preservation contract (stdlib parity), the prior
-        # result set must survive these rejections so a retry-with-
-        # coerce idiom can inspect ``cur.description``.
+        # Caller-shape rejection BEFORE the reset so the prior result set survives
+        # (stdlib parity) for a retry-with-coerce idiom inspecting cur.description.
         _validate_caller_param_shape(parameters)
-        # Prepare-stage path: scrub per-execute state so a rejected
-        # ``execute`` (empty SQL / multi-statement / wrong ?-count)
-        # lands at the stdlib "no result set" baseline rather than
-        # reporting the prior query's shape. ``_reset_execute_state``
-        # deliberately does NOT touch ``_lastrowid`` or
-        # ``_executing_task``.
+        # Scrub per-execute state so a rejected execute lands at the stdlib "no
+        # result set" baseline. Does NOT touch _lastrowid or _executing_task.
         self._reset_execute_state()
-        # Set the slot INSIDE the try/finally so a KeyboardInterrupt /
-        # SystemExit delivered at the bytecode boundary between the
-        # STORE_ATTR and the SETUP_FINALLY cannot leave the slot pinned
-        # to a now-completed task. Mirrors the executemany sibling.
+        # Set the slot INSIDE the try/finally so a KeyboardInterrupt at the
+        # STORE_ATTR/SETUP_FINALLY boundary can't pin it to a completed task.
         try:
             self._executing_task = cur_task
 
-            # Pre-flight classification of caller-supplied SQL — empty /
-            # multi-statement / wrong ``?``-count. Mirrors the sync
-            # sibling at cursor.py. See ``_classify_caller_sql`` docstring.
+            # Pre-flight reject of empty / multi-statement / wrong-?-count SQL.
             _classify_caller_sql(operation, parameters)
 
-            # Intercept ``PRAGMA busy_timeout`` at the cursor layer
-            # BEFORE the wire round-trip — dqlite's VFS authorizer
-            # rejects the PRAGMA server-side. Mirrors the sync sibling.
+            # Intercept PRAGMA busy_timeout before the wire (dqlite's VFS
+            # authorizer rejects it server-side).
             from dqlitedbapi._pragma_intercept import (
                 try_intercept_busy_timeout,
                 try_rewrite_begin_to_immediate,
@@ -655,12 +390,8 @@ class AsyncCursor:
             if try_intercept_busy_timeout(self, operation, parameters):  # type: ignore[arg-type]
                 return self
 
-            # Rewrite plain BEGIN to BEGIN IMMEDIATE when session_mode
-            # is "immediate" (the default) to eliminate the
-            # SQLITE_BUSY_SNAPSHOT race; mirrors the sync sibling.
-            # Other modes leave bare BEGIN untouched. Configure via
-            # ``connect(..., session_mode="...")`` or
-            # ``DQLITE_SESSION_MODE`` env var.
+            # Rewrite plain BEGIN -> BEGIN IMMEDIATE under the default "immediate"
+            # session_mode to dodge the SQLITE_BUSY_SNAPSHOT race.
             rewritten = try_rewrite_begin_to_immediate(
                 operation,
                 session_mode=getattr(self._connection, "_dqlite_session_mode", "immediate"),
@@ -669,21 +400,10 @@ class AsyncCursor:
                 operation = rewritten
 
             _, op_lock = self._connection._ensure_locks()
-            # Per-attempt op_lock acquire (was: outer ``async with
-            # op_lock:`` around the whole retry loop). Each retry
-            # attempt acquires the lock, runs the under-lock
-            # ``del self.messages[:]`` + ``_check_closed()`` +
-            # wire round-trip, and releases the lock before
-            # returning. The retry helper's ``await asyncio.sleep``
-            # between attempts therefore runs OUTSIDE the lock —
-            # sibling tasks on the same ``AsyncConnection``
-            # (``await conn.commit()`` / ``rollback()`` /
-            # ``close()``) can acquire ``op_lock`` in the gap
-            # between two BUSY retries instead of parking for the
-            # full SQLite-curve backoff (up to ``busy_timeout``,
-            # default 5 s). Mirrors the sync sibling's
-            # ``retry_sync_on_busy`` discipline, which acquires +
-            # releases ``_op_lock`` per attempt via ``run_sync``.
+            # Acquire op_lock per attempt (not around the whole retry loop) so the
+            # inter-attempt backoff sleep runs OUTSIDE the lock — sibling
+            # commit/rollback/close can acquire op_lock in the gap between BUSY
+            # retries instead of parking for the full backoff.
             from dqlitedbapi._busy_retry import (
                 _resolve_busy_timeout_seconds,
                 retry_async_on_busy,
@@ -691,14 +411,8 @@ class AsyncCursor:
 
             async def _attempt() -> None:
                 async with op_lock:
-                    # Re-clear messages and re-check closed per
-                    # attempt: the under-lock ``del self.messages[:]``
-                    # / ``_check_closed()`` discipline pinned by the
-                    # async-cursor close-recheck issues must hold for
-                    # every attempt, not just the first. Per PEP 249
-                    # §6.1.1 ``messages`` is per-execute, not
-                    # per-attempt — the final retry's diagnostic
-                    # alone surfaces to the caller.
+                    # Re-clear/re-check per attempt; the under-lock discipline
+                    # must hold for every attempt, not just the first.
                     del self.messages[:]
                     self._check_closed()
                     await self._execute_unlocked(operation, parameters)
@@ -708,14 +422,8 @@ class AsyncCursor:
                 _attempt,
             )
         finally:
-            # Clear unconditionally to close the bytecode-tight signal
-            # window between the read and write of a guarded clear: a
-            # BaseException between ``is`` and ``STORE_ATTR`` would
-            # otherwise leave the slot pinned to a now-completed task.
-            # Safe because ``row_factory`` runs only in fetch*; execute*
-            # never re-enters the same cursor's execute path from a
-            # row callback. The cross-task rejection above remains the
-            # primary guard against concurrent execute on one cursor.
+            # Clear unconditionally to close the bytecode-tight signal window
+            # between the guarded read and write of the slot.
             self._executing_task = None
 
         return self
@@ -723,96 +431,50 @@ class AsyncCursor:
     async def executemany(
         self, operation: str, seq_of_parameters: Iterable[Sequence[Any]], /
     ) -> Self:
-        """Execute a database operation multiple times.
+        """Execute a database operation for each parameter set.
 
-        An empty ``seq_of_parameters`` must not leave stale SELECT
-        state around: reset description / rows so callers can't
-        confuse an empty executemany with a preceding SELECT.
+        RETURNING rows are accumulated into _rows so a later fetchall yields all
+        rows across parameter sets. Pure queries (SELECT/VALUES/PRAGMA) rejected.
 
-        For statements with a RETURNING clause, rows produced by each
-        iteration are accumulated into ``_rows`` so a subsequent
-        ``fetchall`` yields every returned row across parameter sets.
-
-        Pure queries (SELECT / VALUES / PRAGMA) are rejected before the
-        loop runs — stdlib ``sqlite3.Cursor.executemany`` does the same.
-        INSERT / UPDATE / DELETE / REPLACE (with or without RETURNING)
-        remain admitted.
-
-        Cancellation atomicity: this driver runs in autocommit-by-default
-        mode. Without a surrounding ``BEGIN`` ... ``COMMIT`` (or a
-        client-layer ``transaction()`` ctxmgr / SA-engine
-        transaction), each iteration commits server-side independently.
-        If the surrounding task is cancelled mid-batch (``asyncio.timeout``,
-        ``asyncio.shield`` expiry, etc.), the iterations that already
-        completed remain persisted; partial-batch persistence is the
-        consequence of running outside a transaction. To make the
-        batch atomic, wrap the call in an explicit ``BEGIN`` /
-        ``COMMIT``. See the ``Connection`` class docstring for the
-        autocommit-by-default rationale.
+        Cancellation atomicity: autocommit-by-default means each iteration
+        commits independently; a mid-batch cancel leaves completed iterations
+        persisted. Wrap in explicit BEGIN/COMMIT to make the batch atomic.
         """
         del self.messages[:]
         self._check_closed()
-        # Input-validation rejections FIRST (None seq, bad outer shape,
-        # non-str operation, cross-task slot). These are caller-shape
-        # misuses fired before any SQL parser touches the bytes;
-        # stdlib ``sqlite3`` preserves prior cursor state on these
-        # paths. The reset below handles prepare-stage rejections
-        # (verb-reject / row-returning / PRAGMA) which clear, matching
-        # stdlib. See sync sibling for full ordering rationale.
+        # Input-validation rejections FIRST (stdlib preserves prior state); the
+        # reset below handles prepare-stage rejections which clear.
         if seq_of_parameters is None:
             raise ProgrammingError(
                 "executemany() seq_of_parameters must be a sequence/iterable, not None",
                 code=None,
             )
-        # Reject outer shapes that would silently iterate over keys
-        # (dict) / characters (str / bytes / bytearray / memoryview) or
-        # iterate in non-deterministic order (set / frozenset). Shared
-        # with the sync sibling and with ``AsyncConnection.executemany``
-        # so the four entry points share one accept/reject contract.
+        # Reject outer shapes that iterate over keys/chars (dict/str/bytes) or in
+        # non-deterministic order (set/frozenset).
         _validate_executemany_seq_shape(seq_of_parameters)
         if not isinstance(operation, str):
             raise ProgrammingError(
                 f"operation must be a str SQL statement, got {type(operation).__name__}",
                 code=None,
             )
-        # Reject concurrent execute/executemany on the same cursor
-        # — see ``execute`` for full rationale. The slot-state check
-        # observes the existing slot BEFORE the slot is set; the
-        # set itself moves inside the try/finally below so a
-        # validation-rejected executemany clears the slot on raise
-        # (sibling ``execute`` already follows this pattern).
+        # Reject concurrent execute/executemany on the same cursor (see execute).
         cur_task = asyncio.current_task()
         if self._executing_task is not None and self._executing_task is not cur_task:
             raise InterfaceError(
                 f"cursor is already executing in another task (id={id(self)}); "
                 "use one cursor per task"
             )
-        # Snapshot ``_completed_iterations`` BEFORE the
-        # ``_reset_execute_state()`` call. See sync sibling for the
-        # input-validation-vs-mid-batch contract rationale.
+        # Snapshot BEFORE the reset (for the input-validation-vs-mid-batch contract).
         completed_iterations_pre_batch = self._completed_iterations
-        # Prepare-stage path begins here. Scrub per-execute state so
-        # a rejected ``executemany`` (verb-reject / row-returning /
-        # PRAGMA) lands at the stdlib "no result set" baseline rather
-        # than reporting the prior query's shape. ``_reset_execute_state``
-        # deliberately does NOT touch ``_lastrowid`` or
-        # ``_executing_task``, so the preserve-across-rejection
-        # contract for lastrowid is unaffected and the slot state
-        # itself is untouched. Also zeroes ``_completed_iterations``
-        # so an empty ``seq_of_parameters`` ends with the same shape
-        # as empty ``execute``.
+        # Scrub per-execute state so a rejected executemany lands at the stdlib
+        # baseline. Does NOT touch _lastrowid or _executing_task.
         self._reset_execute_state()
-        # Set the slot INSIDE the try/finally so any non-success exit
-        # path (validation reject, mid-loop raise, cancel) clears it.
+        # Set the slot INSIDE try/finally so any non-success exit clears it.
         try:
             self._executing_task = cur_task
-            # Reject transaction-control verbs and pure queries up front
-            # (mirror of the sync sibling).
-            # See sync sibling for the leading ``;``-stripping loop and the
-            # trailing ``rstrip(";")`` rationale.
-            # Loop comment-strip + ;-strip together so a leading ``;``
-            # followed by a comment does not bypass the reject-list. See
-            # the sync sibling for full rationale.
+            # Reject transaction-control verbs and pure queries up front. Loop
+            # comment-strip + ;-strip together so a leading ``;`` followed by a
+            # comment cannot bypass the reject-list.
             head_normalised = operation
             while True:
                 stripped = _strip_leading_comments(head_normalised).lstrip()
@@ -831,16 +493,9 @@ class AsyncCursor:
                     "take no parameters and cannot be batched."
                 )
             if _is_row_returning(operation) and not _is_dml_with_returning(operation):
-                # Use the already-computed comment-stripped uppercase
-                # form so a leading SQL comment doesn't route the user
-                # past the PRAGMA-specific diagnostic into the less
-                # actionable generic message. Sync sibling for context.
+                # Use the comment-stripped uppercase form so a leading SQL comment
+                # doesn't route past the PRAGMA-specific diagnostic.
                 if head_normalised.startswith("PRAGMA"):
-                    # See sync sibling: PRAGMA has per-call semantics and
-                    # is never meaningfully batchable; surface the
-                    # PRAGMA-specific guidance so the caller does not
-                    # wonder whether a different PRAGMA would be
-                    # acceptable.
                     raise ProgrammingError(
                         "executemany() does not accept PRAGMA; PRAGMAs have "
                         "per-call semantics and are not batchable. Use "
@@ -851,41 +506,19 @@ class AsyncCursor:
                     "use execute() for SELECT / VALUES / PRAGMA / EXPLAIN / WITH."
                 )
 
-            # Per-execute state was scrubbed BEFORE the reject guards
-            # above so a rejected batch lands at the stdlib baseline.
             acc = _ExecuteManyAccumulator(max_rows=self._connection._max_total_rows)
-            # Hold ``op_lock`` once for the entire loop. Previously each
-            # iteration called ``self.execute(...)`` which re-acquired the
-            # lock, so a concurrent task on the same connection could slip
-            # arbitrary statements — including ``COMMIT`` / ``ROLLBACK`` /
-            # DDL — between iterations of a RETURNING / insertmanyvalues
-            # batch. The sync path is already atomic because ``_run_sync``
-            # holds ``_op_lock`` for the outer coroutine; this restores
-            # parity.
+            # Hold op_lock once for the whole loop so a concurrent task can't slip
+            # COMMIT/ROLLBACK/DDL between iterations of a RETURNING batch.
             _, op_lock = self._connection._ensure_locks()
             async with op_lock:
-                # PEP 249 §6.1.1 — clear messages under the lock; see
-                # ``execute`` and ``commit`` for the under-lock-clear
-                # rationale.
                 del self.messages[:]
                 self._check_closed()
-                # Snapshot the pre-batch lastrowid so a mid-batch
-                # cancel can restore it. Without this snapshot,
-                # ``_execute_unlocked``'s per-iteration write of
-                # ``self._lastrowid`` on INSERT/REPLACE rows leaks
-                # into the cursor surface: a caller who read
-                # ``cur.lastrowid == 5`` from a prior single-row
-                # INSERT, then cancelled an ``executemany`` mid-batch,
-                # would observe whichever rowid the last in-batch
-                # iteration wrote (e.g. ``6`` or ``7``) instead of
-                # the pre-batch ``5``. The BaseException arm below
-                # restores this snapshot. Mirrors the sync sibling.
+                # Snapshot pre-batch lastrowid so a mid-batch cancel restores it
+                # rather than leaking an in-batch iteration's rowid (BaseException
+                # arm below).
                 lastrowid_pre_batch = self._lastrowid
-                # Hoist the placeholder count once for the per-iteration
-                # arity check below. ``_strip_sql_noise`` neutralises
-                # ``?`` inside string literals / comments so only real
-                # placeholders are counted. Mirrors the sync
-                # ``_executemany_async`` sibling.
+                # _strip_sql_noise neutralises ``?`` in literals/comments so only
+                # real placeholders are counted.
                 placeholder_count = _strip_sql_noise(operation).count("?")
                 try:
                     from dqlitedbapi._busy_retry import (
@@ -895,30 +528,13 @@ class AsyncCursor:
 
                     _busy_timeout_seconds = _resolve_busy_timeout_seconds(self._connection)
                     for params in seq_of_parameters:
-                        # Re-check before each iteration so a concurrent
-                        # ``cursor.close()`` landing between iterations
-                        # surfaces as "Cursor is closed" rather than being
-                        # observed only on the next iteration's nested execute
-                        # entry (or not at all for a single-iteration
-                        # remainder).
+                        # Re-check per iteration so a concurrent close() between
+                        # iterations surfaces as "Cursor is closed".
                         self._check_closed()
-                        # Per-iteration structural reject FIRST (a sharp
-                        # diagnostic for a single str/bytes/Mapping/set
-                        # row), THEN the ``?``-count vs ``len(params)``
-                        # arity check — the same ordering and
-                        # ``ProgrammingError`` wording as the sync
-                        # ``_executemany_async`` sibling. Without this the
-                        # async path sent a wrong-arity row to the server
-                        # and surfaced an ``InterfaceError`` (SQLITE_RANGE)
-                        # after a wire round-trip instead of raising a
-                        # local ``ProgrammingError``. The structural reject
-                        # must precede the count check so a single ``str``
-                        # row gets the "sequence of values" diagnostic
-                        # rather than a misleading per-character count.
-                        # Unsized iterables (generators) make ``len`` raise
-                        # ``TypeError`` and deliberately skip the count
-                        # check, falling through to the bind layer —
-                        # matching sync.
+                        # Structural reject FIRST (sharp diagnostic for a single
+                        # str/bytes/Mapping/set row), THEN the arity check below.
+                        # Unsized iterables make len() raise and skip the count
+                        # check, falling through to the bind layer.
                         _validate_caller_param_shape(params)
                         if params is not None:
                             try:
@@ -931,15 +547,9 @@ class AsyncCursor:
                                     f"current statement uses {placeholder_count}, "
                                     f"and there are {param_count} supplied."
                                 )
-                        # Per-iteration BUSY retry (stdlib parity for
-                        # the C-level ``sqlite3_busy_timeout``
-                        # callback firing per statement). Inner
-                        # function (vs. bare lambda) so mypy can
-                        # infer the awaitable's return type. Default-
-                        # argument capture freezes per-iteration
-                        # ``params`` into the function; bare closure
-                        # capture would late-bind and every retry
-                        # would see the LAST iteration's values.
+                        # Per-iteration BUSY retry. Default-arg capture freezes
+                        # this iteration's params; a bare closure would late-bind
+                        # and every retry would see the LAST iteration's values.
                         _iter_params = params
 
                         def _execute_iter(
@@ -954,63 +564,16 @@ class AsyncCursor:
                         )
                         self._check_closed()
                         acc.push(self)
-                        # ``push`` early-returns if a foreign-thread
-                        # cascade flipped ``_closed`` between
-                        # ``_check_closed`` and the snapshot inside
-                        # push. Mirror by only advancing the counter
-                        # when the cursor is still operable; the
-                        # next iteration's ``_check_closed`` will
-                        # raise cleanly.
+                        # push early-returns if a foreign-thread cascade flipped
+                        # _closed; only advance the counter while still operable.
                         if not self._closed:
                             self._completed_iterations += 1
                 except BaseException:
-                    # Mid-batch failure leaves _rowcount at the last
-                    # iteration's value (misleading), so reset to
-                    # PEP 249's "undetermined" sentinel and clear the
-                    # other state fields. Mirrors the sync sibling.
-                    # ``_lastrowid`` is restored to the pre-batch
-                    # snapshot so the caller observes the rowid they
-                    # had before ``executemany`` was called — NOT
-                    # whichever intra-batch row ``_execute_unlocked``
-                    # last wrote. The intent matches the stdlib
-                    # ``sqlite3.Cursor.lastrowid`` contract ("the rowid
-                    # of the last row inserted" — and across the full
-                    # failed/cancelled batch, no row is the canonical
-                    # last-inserted-row). PEP 249 §6.1.1 also requires
-                    # messages be cleared by every cursor method call;
-                    # clear here so the contract holds even on the
-                    # BaseException re-raise path.
-                    # ``_completed_iterations`` is the observability
-                    # signal for "how many iterations committed
-                    # before the failure"; callers reading it after
-                    # cancel get the count for idempotent
-                    # compensation. Conditional restore (see sync
-                    # sibling for full rationale): this aio sibling
-                    # has no inner ``_classify_caller_sql`` layer —
-                    # the outer ``executemany`` runs validation
-                    # (None seq, bad shape, non-str operation) BEFORE
-                    # the ``_reset_execute_state`` call, so those
-                    # paths never reach the snapshot/restore site.
-                    # THIS arm fires only when the iteration loop
-                    # itself raises: ``_execute_unlocked`` raising
-                    # before its ``_completed_iterations += 1``
-                    # runs, ``_check_closed`` raising mid-loop, or
-                    # any other per-iteration BaseException. If the
-                    # in-batch counter is still zero (iteration 0
-                    # raised before its ``+= 1`` — zero in-batch
-                    # progress), restore the pre-batch snapshot so a
-                    # caller who ran a prior ``executemany``
-                    # (completed=N) still observes the prior batch's
-                    # count. Mid-batch raises (counter > 0) preserve
-                    # the in-batch progress for idempotent
-                    # compensation.
-                    #
-                    # ``_lastrowid`` restoration is ALIGNED with
-                    # ``_completed_iterations``: zero in-batch
-                    # progress restores the pre-batch snapshot;
-                    # non-zero progress PRESERVES the in-batch
-                    # lastrowid so the (count, anchor) pair is
-                    # internally consistent. Mirrors the sync sibling.
+                    # Mid-batch failure: reset _rowcount to -1 and clear result
+                    # state. Restore _lastrowid and _completed_iterations to the
+                    # pre-batch snapshot only on ZERO in-batch progress; non-zero
+                    # progress PRESERVES both so the (count, anchor) pair stays
+                    # consistent for idempotent compensation.
                     self._rowcount = -1
                     self._rows = []
                     self._description = None
@@ -1020,31 +583,19 @@ class AsyncCursor:
                         self._completed_iterations = completed_iterations_pre_batch
                     del self.messages[:]
                     raise
-                # Final guard before apply; pairs with the ``_closed``
-                # check inside ``_ExecuteManyAccumulator.apply``.
+                # Final guard before apply; pairs with the _closed check inside
+                # _ExecuteManyAccumulator.apply.
                 self._check_closed()
                 acc.apply(self)
-                # stdlib parity (matches sync sibling at
-                # ``cursor.py`` post-loop): a successful non-empty
-                # ``executemany`` clears ``_lastrowid`` (per
-                # ``sqlite3.Cursor.executemany`` "left unchanged" /
-                # "no single row is the canonical last-inserted-row"
-                # contract). The empty-batch case
-                # (``_completed_iterations == 0``) preserves the
-                # pre-batch snapshot so a caller's prior single-row
-                # INSERT's lastrowid survives a follow-on empty
-                # batch — sibling
-                # ``_ExecuteManyAccumulator.apply()`` already special-
-                # cases ``_pushed == 0`` for rowcount; the symmetric
-                # lastrowid treatment lives here.
+                # stdlib parity: a successful non-empty executemany clears
+                # _lastrowid (no single row is the canonical last-inserted). An
+                # empty batch preserves the pre-batch snapshot.
                 if self._completed_iterations > 0:
                     self._lastrowid = None
                 else:
                     self._lastrowid = lastrowid_pre_batch
         finally:
-            # Clear unconditionally — see ``execute`` finally for the
-            # rationale (closes the bytecode-tight signal window
-            # between the ``is`` read and the ``STORE_ATTR`` write).
+            # Clear unconditionally — see ``execute`` finally for the rationale.
             self._executing_task = None
         return self
 
@@ -1053,65 +604,31 @@ class AsyncCursor:
             raise ProgrammingError("no results to fetch; execute a query first")
 
     async def fetchone(self) -> tuple[Any, ...] | None:
-        """Fetch the next row of a query result set.
-
-        Returns ``None`` when no more rows are available, or when no
-        result set is active (DML-only / never-executed cursor).
-        Stdlib parity — see sync sibling at ``cursor.py``.
-        ``fetchmany`` / ``fetchall`` continue to use
-        ``_check_result_set`` and raise.
-        """
+        """Fetch the next row, or None when exhausted / no result set active."""
         del self.messages[:]
         self._check_closed()
-        # Surface a loop-binding mismatch up front so a caller awaiting
-        # a fetch from a different loop than the one the connection
-        # was bound to gets a clear ``ProgrammingError`` rather than a
-        # silent success on buffered rows. Use the non-binding helper
-        # (``_check_loop_binding``) so a fresh-cursor misuse path
-        # ("fetch before execute") does not lazy-bind the loop before
-        # the result-set guard fires — same family of footgun the
-        # other no-op-shape cursor methods (``setinputsizes`` /
-        # ``setoutputsize`` / ``callproc`` / ``nextset`` / ``scroll``)
-        # already adopted.
+        # Non-binding loop check so a foreign-loop fetch raises rather than
+        # silently succeeding on buffered rows, without lazy-binding a fresh cursor.
         self._connection._check_loop_binding()
         if self._description is None:
-            # Match stdlib: no-result-set returns None rather than
-            # raising. See sync sibling for full rationale.
-            return None
+            return None  # stdlib parity: no result set -> None, not raise
 
         return self._next_row_unlocked()
 
     def _next_row_unlocked(self) -> tuple[Any, ...] | None:
-        """Advance one row + apply ``row_factory`` without clearing
-        ``messages`` or re-running guards.
-
-        Mirrors the sync sibling. Used by both ``fetchone`` (after ITS
-        prelude clear/guards) and ``fetchmany`` (after ITS single
-        prelude clear/guards). PEP 249 §6.1.1 requires the messages
-        clear once per top-level method invocation, NOT once per
-        inner row delivery.
-        """
+        """Advance one row + apply ``row_factory``, without clearing messages or
+        re-running guards (those run once per top-level fetch call)."""
         if self._row_index >= len(self._rows):
             return None
         row = self._rows[self._row_index]
-        # Apply row_factory BEFORE advancing ``_row_index`` so a raise
-        # inside a custom factory leaves the index unchanged. Without
-        # this ordering, ``fetchmany``'s snapshot/restore at
-        # ``snapshot + len(result)`` underestimates by 1 for
-        # factory-raised rows — silently REPLAYING a row on the next
-        # call.
+        # Apply factory BEFORE advancing _row_index so a factory raise leaves the
+        # index unchanged (else fetchmany's snapshot/restore replays a row).
         if self._row_factory is not None:
             try:
                 transformed: tuple[Any, ...] = self._row_factory(self, row)
             except TypeError as exc:
-                # Mirrors the sync sibling at ``cursor.py``: a factory
-                # that rejects ``self`` as its first argument (typical
-                # for ``sqlite3.Row``, whose C-extension constructor
-                # type-checks ``argument 1`` to be a stdlib
-                # ``pysqlite_CursorType``) leaks bare ``TypeError``
-                # past ``except dbapi.Error:`` clauses unless wrapped.
-                # PEP 249 §7 places this under ``DataError`` ("problems
-                # with the processed data").
+                # A factory rejecting ``self`` (e.g. sqlite3.Row) leaks bare
+                # TypeError past ``except dbapi.Error:``; wrap as DataError.
                 raise DataError(
                     f"row_factory call failed: {exc}",
                     code=None,
@@ -1123,65 +640,31 @@ class AsyncCursor:
         return row
 
     async def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
-        """Fetch up to ``size`` next rows of a query result.
+        """Fetch up to ``size`` rows; empty list when exhausted / no result set.
 
-        Returns an empty list when no more rows are available OR when
-        no result set is active (DML-only / never-executed). Stdlib
-        parity with ``sqlite3.Cursor.fetchmany`` for the "no result
-        set" case matching the ``fetchone`` parity already in place.
-
-        **``size=0`` cross-driver matrix**: dqlite returns ``[]``
-        deterministically without consuming rows — same as stdlib
-        ``sqlite3`` on Python 3.13+ (the supported floor). The
-        divergence is with psycopg3, which treats ``0`` as the
-        sentinel "use ``self.arraysize``". See sync sibling for the
-        full rationale.
+        size=0 returns [] without consuming rows (stdlib sqlite3 parity; diverges
+        from psycopg3 which treats 0 as "use self.arraysize").
         """
         del self.messages[:]
         self._check_closed()
-        # Loop-binding check; see ``fetchone`` rationale.
         self._connection._check_loop_binding()
         if self._description is None:
-            # No result set active. Match stdlib by returning ``[]``.
             return []
 
         if size is None:
             size = self._arraysize
         elif not isinstance(size, int) or isinstance(size, bool):
-            # PEP 249 §7: cursor methods must raise dbapi.Error.
-            # Non-int / bool slip past stdlib's C-level int coerce
-            # and produce a bare TypeError otherwise. bool is rejected
-            # because ``True`` silently coerces to 1 (caller-bug trap).
-            # See sync sibling at cursor.py for matching guard.
+            # bool rejected: ``True`` silently coercing to 1 is a caller-bug trap.
             raise ProgrammingError(f"fetchmany expects an int or None, got {type(size).__name__}")
         if size < 0:
-            # Stdlib parity (current Python): ``sqlite3.Cursor.fetchmany``
-            # rejects negative ``size`` on 3.13+ with ``ValueError``.
-            # Mirror the sync sibling's ``ProgrammingError`` wrap so the
-            # rejection stays in the dbapi.Error hierarchy per PEP 249
-            # §7.
+            # Stdlib parity: sqlite3 rejects negative size (wrapped to dbapi.Error).
             raise ProgrammingError(f"fetchmany size must be non-negative; got {size}")
 
-        # Snapshot ``_row_index`` BEFORE the loop. On cancel/exception
-        # mid-loop, restore to (snapshot + delivered count) so rows
-        # that were "consumed" (advanced ``_row_index``) but never made
-        # it into the caller's ``result`` are not silently lost.
-        # Without the restore, a subsequent ``fetchmany()`` would skip
-        # those rows.
-        # Use the ``_next_row_unlocked`` helper so the per-row path
-        # does not re-clear ``messages`` (PEP 249 §6.1.1: once per
-        # top-level call, not once per row) or re-run the closed /
-        # loop-binding guards already validated in this method's
-        # prelude.
+        # Snapshot _row_index; on a mid-loop cancel restore to (snapshot +
+        # delivered) so consumed-but-undelivered rows aren't lost or replayed.
+        # The yield sits AFTER append so len(result) == fully-delivered count.
         snapshot = self._row_index
         result: list[tuple[Any, ...]] = []
-        # Yield cooperatively only for large explicit ``size`` requests so
-        # a small ``fetchmany`` pays zero scheduler overhead. The yield
-        # sits AFTER ``result.append`` so ``len(result)`` always equals the
-        # count of fully-delivered rows (each advanced ``_row_index`` once
-        # in ``_next_row_unlocked``): a cancel landing on the yield leaves
-        # ``_row_index == snapshot + len(result)``, so the restore below is
-        # exact — no row skipped or replayed.
         yield_enabled = size >= _LARGE_RESULT_ROW_THRESHOLD
         try:
             for _ in range(size):
@@ -1192,7 +675,6 @@ class AsyncCursor:
                 if yield_enabled and len(result) % _CONVERT_ROWS_YIELD_EVERY == 0:
                     await asyncio.sleep(0)
         except BaseException:
-            # Restore _row_index so a retry sees the un-delivered rows.
             self._row_index = snapshot + len(result)
             raise
 
@@ -1201,17 +683,8 @@ class AsyncCursor:
     async def _apply_row_factory_yielding(
         self, rows: list[tuple[Any, ...]], factory: RowFactory
     ) -> list[tuple[Any, ...]]:
-        """Apply ``factory`` to every row, yielding to the event loop on
-        large batches so the per-row user-Python pass does not
-        monopolise the user's loop.
-
-        Below ``_LARGE_RESULT_ROW_THRESHOLD`` the straight comprehension
-        runs with no scheduler overhead (the common case). Above it,
-        ``await asyncio.sleep(0)`` fires every ``_CONVERT_ROWS_YIELD_EVERY``
-        rows. The factory ``TypeError`` wrap is identical on both paths so
-        a ``sqlite3.Row``-style factory rejection stays inside the PEP 249
-        hierarchy.
-        """
+        """Apply ``factory`` to every row, yielding every _CONVERT_ROWS_YIELD_EVERY
+        rows on large batches so the per-row pass doesn't monopolise the loop."""
         try:
             if len(rows) < _LARGE_RESULT_ROW_THRESHOLD:
                 return [factory(self, row) for row in rows]
@@ -1222,9 +695,8 @@ class AsyncCursor:
                     await asyncio.sleep(0)
             return transformed
         except TypeError as exc:
-            # Mirrors the sync sibling: wrap ``TypeError`` as
-            # ``DataError`` so a ``sqlite3.Row``-style factory rejection
-            # surfaces inside the PEP 249 hierarchy.
+            # Wrap as DataError so a sqlite3.Row-style factory rejection stays in
+            # the PEP 249 hierarchy.
             raise DataError(
                 f"row_factory call failed: {exc}",
                 code=None,
@@ -1232,30 +704,17 @@ class AsyncCursor:
             ) from exc
 
     async def fetchall(self) -> list[tuple[Any, ...]]:
-        """Fetch all remaining rows of a query result.
-
-        Returns an empty list when the cursor has no more rows OR
-        when no result set is active (DML-only / never-executed).
-        Stdlib parity with ``sqlite3.Cursor.fetchall``.
-        """
+        """Fetch all remaining rows; empty list when exhausted / no result set."""
         del self.messages[:]
         self._check_closed()
-        # Loop-binding check; see ``fetchone`` rationale.
         self._connection._check_loop_binding()
         if self._description is None:
-            # No result set active. Match stdlib by returning ``[]``.
             return []
 
         result = self._rows[self._row_index :]
         if self._row_factory is not None:
-            # Apply factory BEFORE advancing ``_row_index``. Symmetric
-            # with the sync sibling and with ``fetchone`` / ``fetchmany``
-            # discipline — a raise inside a custom factory leaves the
-            # cursor index unchanged so the next fetchone returns the
-            # same row. The transform yields cooperatively on large
-            # buffers (see ``_apply_row_factory_yielding``); the index is
-            # advanced only AFTER it succeeds, so a mid-transform cancel
-            # leaves the whole result re-fetchable.
+            # Advance _row_index only AFTER the transform succeeds so a
+            # factory raise / mid-transform cancel leaves the result re-fetchable.
             transformed = await self._apply_row_factory_yielding(result, self._row_factory)
             self._row_index = len(self._rows)
             return transformed
@@ -1263,253 +722,82 @@ class AsyncCursor:
         return result
 
     def drain_rows(self) -> list[tuple[Any, ...]]:
-        """Transfer ownership of the row buffer to the caller.
+        """Return the row buffer and clear it (ownership transfer; no row_factory).
 
-        Returns the in-memory row list and clears it on the cursor.
-        Synchronous (no ``await``) and does not honour
-        ``_row_factory`` — the caller takes the raw tuples.
-
-        Intended for adapter layers (the SQLAlchemy async adapter
-        in particular) that rebuffer the rows into their own
-        container immediately and would otherwise pay 2× memory
-        for the duration of the transfer:
-
-            # Naive adapter: 2× memory peak (cursor list AND deque).
-            buffered = await cursor.fetchall()  # makes a copy
-            self._rows = collections.deque(buffered)
-
-            # With drain: ownership transfer, single allocation.
-            self._rows = collections.deque(cursor.drain_rows())
-
-        The cursor is unusable for fetch* afterward (the buffer is
-        empty, so a follow-up ``fetchone`` returns None / ``fetchall``
-        returns []) and the caller is expected to close it shortly
-        afterward — the typical pattern in a SA-style ``execute /
-        fetchall / close`` sequence.
-
-        ``rowcount`` / ``lastrowid`` / ``description`` reads MUST
-        come BEFORE the drain — they are independent of ``_rows``
-        but reading them after a drain when downstream code might
-        also have closed the cursor is a footgun. The adapter at
-        ``sqlalchemy-dqlite/aio.py`` calls drain_rows last (after
-        capturing the metadata fields) for that reason.
+        For adapters (SA async) that rebuffer rows and would otherwise pay 2x
+        memory. The cursor is unusable for fetch* afterward. Read
+        rowcount/lastrowid/description BEFORE draining.
         """
         rows = self._rows
         self._rows = []
-        # Position the index at the (now empty) end so any
-        # subsequent fetch* call returns the no-rows result instead
-        # of indexing into the empty buffer with a stale index.
         self._row_index = 0
         return rows
 
     def close(self) -> None:
-        """Close the cursor.
+        """Close the cursor. Idempotent and synchronous by design.
 
-        Idempotent and **synchronous by design**. The body has zero
-        await statements (every operation is a GIL-atomic attribute
-        write plus the weakref-proxy swap); making it ``async def``
-        would invite a forgot-``await`` footgun where ``cur.close()``
-        silently produced a discarded coroutine and the cursor was
-        left undrained, with only a GC-time
-        ``RuntimeWarning("coroutine was never awaited")`` pointing at
-        asyncio internals rather than at dqlite. Mirrors stdlib
-        ``sqlite3.Cursor.close`` and the project's
-        ``executescript`` / ``interrupt`` / ``backup`` / ``tpc_*``
-        family (sync ``def`` stubs that surface forgot-call as
-        immediate ``NotSupportedError`` rather than a discarded
-        coroutine).
-
-        Clears the result-set surface ``description`` / ``_rows`` /
-        ``_row_index`` but PRESERVES ``rowcount`` / ``lastrowid``
-        (readable after close, matching stdlib ``sqlite3.Cursor``),
-        symmetrically with the sync sibling ``Cursor.close`` (see that
-        docstring for the full "post-close state" rationale).
-
-        **``arraysize`` is deliberately NOT scrubbed**: it is a
-        caller-set configuration *hint* (PEP 249 §6.1.2 default ``1``;
-        used by ``fetchmany()`` when ``size`` is omitted), not
-        result-set state. Stdlib ``sqlite3.Cursor`` and psycopg2 both
-        retain ``arraysize`` across ``close()``; this driver matches
-        that parity. ``arraysize`` is therefore the single PEP 249
-        §6.1.2 attribute outside the scrub set above — by design.
-
-        Cross-task safety: ``_closed = True`` is set FIRST (GIL-atomic
-        write) so a sibling task whose ``_execute_unlocked`` is parked
-        on the wire await observes the flag-flip on resume. The
-        executor's post-await ``if self._closed: return`` short-circuit
-        prevents the wire response from re-populating ``_rows`` /
-        ``_description`` onto a closed cursor.
-
-        **Porting note (aiosqlite)**: aiosqlite's ``Cursor.close`` is
-        ``async def`` (its close runs on the connection's background
-        thread, so the async shape is load-bearing there). The
-        standard aiosqlite pattern is ``await cur.close()``. dqlite's
-        ``AsyncCursor.close`` is sync (see "synchronous by design"
-        above); ``await cur.close()`` raises
-        ``TypeError: object NoneType can't be used in 'await'
-        expression``. Either drop the ``await`` (``cur.close()``), use
-        the ``async with cur:`` form which closes on exit, or call
-        :meth:`aclose` — a one-line awaitable alias added for
-        cross-driver portability with ``contextlib.aclosing`` and the
-        aiosqlite / asyncpg / psycopg ``async def close`` shape.
+        Synchronous (no await) so a forgotten ``await cur.close()`` raises
+        immediately instead of leaving an undrained cursor and a discarded
+        coroutine. Clears description / _rows / _row_index but PRESERVES rowcount
+        / lastrowid (readable after close, stdlib parity); arraysize is a config
+        hint and is also kept. ``await cur.close()`` raises TypeError — drop the
+        await, use ``async with cur:``, or call :meth:`aclose`.
         """
-        # PEP 249 §6.1.2 messages-clear contract; see Cursor.close.
-        # Suppress ``AttributeError`` symmetric with the setter
-        # precedent and with the sync sibling: a subclass / test
-        # fixture that strips ``messages`` must not cause close() —
-        # invoked from ``__aexit__`` after a body exception — to
-        # raise and supplant the body's exception (PEP 343 default
-        # behaviour).
+        # Suppress AttributeError so close() invoked from __aexit__ after a body
+        # exception cannot supplant that exception (PEP 343).
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         if self._closed:
             return
-        # Set the flag FIRST so a sibling-task ``_execute_unlocked``
-        # that is parked on the wire await observes it on resume and
-        # short-circuits before repopulating state.
+        # Set the flag FIRST so a sibling _execute_unlocked parked on the wire
+        # observes it on resume and short-circuits before repopulating state.
         self._closed = True
         self._rows = []
         self._description = None
-        # Preserve ``_rowcount`` and ``_lastrowid`` across close, matching
-        # stdlib ``sqlite3.Cursor`` and the sync ``Cursor.close()``: both
-        # stay readable after close so a post-close ``cursor.lastrowid``
-        # read (as SQLAlchemy does at result-access time) returns the real
-        # rowid. ``_rows`` / ``_description`` are still cleared because a
-        # closed cursor cannot fetch.
+        # _rowcount / _lastrowid preserved (stdlib parity); _rows/_description
+        # cleared because a closed cursor cannot fetch.
         self._row_index = 0
-        # The execute / executemany entry points re-check
-        # ``_check_closed`` first, so a stale ``_executing_task``
-        # is not load-bearing on the operational path. Scrubbing it
-        # alongside the rest of the per-execute state keeps the
-        # closed-cursor invariant uniform: any introspection path that
-        # reads ``_executing_task`` on a closed cursor sees ``None``
-        # rather than the now-completed task that ran the final
-        # ``execute()``.
         self._executing_task = None
-        # Drop the strong back-reference to the parent
-        # ``AsyncConnection`` so a closed cursor the user retains
-        # does not pin the connection's loop-bound ``asyncio.Lock``,
-        # ``weakref.finalize`` registration, or any other
-        # connection-lifecycle state past the user's intended
-        # lifetime. The connection's ``_cursors`` is already a
-        # ``WeakSet``; this fixes the reverse direction. See
-        # ``Cursor.close`` for full rationale.
+        # Drop the strong back-reference so a retained closed cursor doesn't pin
+        # the connection's loop-bound lock / finalize registration.
         with contextlib.suppress(
             TypeError
         ):  # pragma: no cover - AsyncConnection always supports weakref
             self._connection = weakref.proxy(self._connection)
 
     async def aclose(self) -> None:
-        """PEP 525 / ``contextlib.aclosing``-compatible awaitable alias
-        for :meth:`close`.
-
-        The underlying close is synchronous by design (see
-        :meth:`close` for the rationale); this wrapper exists so
-        cross-driver code targeting the aiosqlite / asyncpg / psycopg
-        ``async def close`` shape can ``await cur.aclose()`` without
-        the ``TypeError: object NoneType can't be used in 'await'
-        expression`` that ``await cur.close()`` raises, and so
-        ``contextlib.aclosing(cur)`` works as the canonical async-
-        iterator-with-explicit-cleanup helper:
-
-            from contextlib import aclosing
-
-            async with aclosing(cur) as c:
-                async for row in c:
-                    ...
-
-        Unlike PEP 525's ``aclose()`` on async generators (which
-        throws ``GeneratorExit`` into the running generator), this
-        alias performs a plain sync close — there is no body to
-        cancel. The cursor is idempotently closed and its in-memory
-        state scrubbed; see :meth:`close` for the full post-close
-        state surface.
-        """
+        """Awaitable alias for :meth:`close` (contextlib.aclosing / cross-driver
+        ``async def close`` parity); performs a plain sync close."""
         self.close()
 
     def setinputsizes(self, sizes: Sequence[Any] | None, /) -> None:
-        """Set input sizes (no-op for dqlite).
-
-        PEP 249 §6.1.1 names ``setinputsizes`` among the methods that
-        clear the ``messages`` list; we do so even though the method
-        itself does no work. ``sizes`` accepts ``Sequence[Any]`` per
-        PEP 249 §6.2 — items may be a Type Object, an int, or
-        ``None``.
-        """
-        # PEP 249 §6.1.1 — clear "prior to executing the call" so the
-        # contract holds even on the cross-loop rejection path.
+        """Set input sizes (no-op for dqlite)."""
         del self.messages[:]
-        # PEP 249 §6.2 says implementations are "free to have this
-        # method do nothing" — including on closed cursors. The
-        # closed short-circuit runs BEFORE the input-shape validators
-        # so closed-state behaviour is independent of argument shape.
-        # Mirror the sync sibling's documented permissive-on-closed
-        # contract: a closed-cursor cleanup helper can call
-        # setinputsizes / setoutputsize without a raise regardless of
-        # argument shape. Without this short-circuit,
-        # ``_check_loop_binding`` would raise
-        # ``InterfaceError("Connection is closed")``, diverging from
-        # the sync sibling and from the documented intent.
+        # Permissive-on-closed: short-circuit BEFORE validators so a closed-cursor
+        # cleanup helper can call this regardless of argument shape.
         if self._closed or self._connection._closed:
             return
-        # Affinity-before-shape on the open-cursor path: surface a
-        # loop-binding mismatch up front so callers see the same
-        # ``ProgrammingError`` they'd get from ``execute`` /
-        # ``fetchone``. Without this, a sync no-op on a cursor bound
-        # to loop A but called from loop B silently succeeds and
-        # masks the misuse until the next awaited op. Non-binding
-        # helper so calling this on a fresh connection doesn't
-        # lazily bind it. Mirrors the sync sibling's affinity-before-
-        # shape ordering and the ``nextset`` / ``scroll`` /
-        # ``executescript`` / ``callproc`` ordering convention.
+        # Affinity-before-shape: surface a loop-binding mismatch up front (non-
+        # binding so a fresh connection isn't lazily bound).
         self._connection._check_loop_binding()
-        # PEP 249 §6.2 permits no-op implementations. Stdlib
-        # ``sqlite3``, aiosqlite, psycopg, and asyncpg all accept
-        # ``None`` silently. Symmetric with the sync sibling: treat
-        # ``None`` as a no-op for cross-driver portability while
-        # keeping the strict rejection below for invalid types.
         if sizes is None:
             return
-        # Validate input shape symmetric with the sync sibling so a
-        # caller-side bug (e.g. passing a string) surfaces at the call
-        # site rather than being silently absorbed. PEP 249 §7 keeps
-        # the failure inside the ``dbapi.Error`` hierarchy.
         if isinstance(sizes, (str, bytes, bytearray, memoryview)):
-            # ``memoryview`` satisfies ``collections.abc.Sequence`` so
-            # it would slip past the explicit-rejection arm and reach
-            # the ABC arm below. Quartet-rejection keeps this validator
-            # aligned with the sibling ``_reject_non_sequence_params``
-            # (str/bytes/bytearray/memoryview).
+            # memoryview satisfies Sequence, so reject the quartet explicitly.
             raise ProgrammingError(
                 f"setinputsizes expects a sequence of size hints, got {type(sizes).__name__}"
             )
         if not isinstance(sizes, Sequence):
-            # PEP 249 §6.2: ``sizes`` is "specified as a sequence".
-            # Loosened from ``(list, tuple)`` to the structural
-            # ``Sequence`` ABC so cross-driver callers passing a
-            # ``deque`` / ``range`` / custom Sequence subclass —
-            # accepted by stdlib + psycopg2 — work here too.
             raise ProgrammingError(f"setinputsizes expects a Sequence, got {type(sizes).__name__}")
 
     def setoutputsize(self, size: int | None, column: int | None = None, /) -> None:
         """Set output size (no-op for dqlite). See ``setinputsizes``."""
         del self.messages[:]
-        # PEP 249 §6.2 — closed short-circuit before validators. See
-        # ``setinputsizes`` rationale.
         if self._closed or self._connection._closed:
             return
-        # Affinity-before-shape on the open-cursor path; see
-        # ``setinputsizes`` for the full rationale.
         self._connection._check_loop_binding()
-        # PEP 249 §6.2 permits no-op implementations. Stdlib
-        # ``sqlite3``, aiosqlite, psycopg, and asyncpg all accept
-        # ``None`` silently. Symmetric with the sync sibling and with
-        # ``setinputsizes``: treat ``None`` as a no-op for cross-driver
-        # portability while keeping the strict rejection below for
-        # invalid types.
         if size is None:
             return
-        # Validate input shape symmetric with sync sibling.
         if not isinstance(size, int) or isinstance(size, bool):
             raise ProgrammingError(f"setoutputsize expects an int, got {type(size).__name__}")
         if column is not None and (not isinstance(column, int) or isinstance(column, bool)):
@@ -1520,87 +808,43 @@ class AsyncCursor:
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None, /) -> NoReturn:
         """PEP 249 optional extension — not supported.
 
-        Sync despite the cursor being async: the method raises
-        unconditionally, so wrapping it in a coroutine has no value and
-        would diverge from the sync siblings (``nextset`` / ``scroll``)
-        and from the SQLAlchemy adapter (``sqlalchemy-dqlite``), which
-        both expose these as plain methods. Annotated ``NoReturn``
-        because the body always raises — symmetric with ``nextset``.
+        Sync (not async) so a forgotten await raises on the call line, matching
+        the sync siblings and the SQLAlchemy adapter.
         """
-        # PEP 249 §6.1.1 names ``callproc`` among the cursor methods
-        # that clear ``Connection.messages`` / ``Cursor.messages``.
-        # Clear before any guard so the contract holds even on the
-        # closed-cursor / cross-loop / not-supported paths.
         del self.messages[:]
-        # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
-        # Loop-binding check: parallel to the sync side's
-        # ``_check_thread()`` for ``callproc`` / ``nextset`` /
-        # ``scroll``. Without it, a call from a foreign event loop
-        # silently surfaces ``NotSupportedError`` and the caller is
-        # left thinking the cursor is still loop-A bound. Sibling
-        # consistency with ``setinputsizes`` / ``setoutputsize``.
+        # Loop-binding check so a foreign-loop call doesn't silently surface
+        # NotSupportedError while leaving the caller thinking it's still bound.
         self._connection._check_loop_binding()
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> NoReturn:
         """PEP 249 optional extension — not supported."""
-        # PEP 249 §6.1.1 — clear before any guard.
         del self.messages[:]
-        # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
-        # Loop-binding check; see ``callproc`` for rationale. Use
-        # the non-binding helper so a no-op cursor method on a fresh
-        # connection doesn't lazily bind the loop — a later
-        # legitimate call from a different loop would otherwise fail
-        # with a confusing "different event loop" diagnostic
-        # referring to a loop the user did not knowingly bind.
         self._connection._check_loop_binding()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
     def scroll(self, value: int, mode: str = "relative", /) -> NoReturn:
         """PEP 249 optional extension — not supported."""
-        # Sibling consistency with ``nextset`` / ``callproc`` /
-        # ``setinputsizes`` / ``setoutputsize``: clear ``messages`` on
-        # the not-supported path so a future code path that populates
-        # ``messages`` cannot leave stale entries visible after the
-        # caller observed the rejection. Clear before any guard.
         del self.messages[:]
-        # PEP 249 §6.1.2 — closed-cursor ops raise.
         self._check_closed()
-        # Loop-binding check; see ``callproc`` for rationale. Use
-        # the non-binding helper so a no-op cursor method on a fresh
-        # connection doesn't lazily bind the loop — a later
-        # legitimate call from a different loop would otherwise fail
-        # with a confusing "different event loop" diagnostic
-        # referring to a loop the user did not knowingly bind.
         self._connection._check_loop_binding()
-        # PEP 249 §6.1.1 documents ``value`` as an integer offset.
-        # Validate the value-type alongside the mode enumeration so the
-        # "surfaces as a caller-side bug" argument applies symmetrically
-        # to both parameters. ``bool`` is-a ``int`` in Python; explicit
-        # rejection matches the project standard from
-        # ``arraysize.setter``.
+        # Validate value/mode before raising so a caller typo surfaces as a
+        # caller-side bug (bool rejected as an int subclass).
         if not isinstance(value, int) or isinstance(value, bool):
             raise ProgrammingError(
                 f"scroll value must be an integer offset, got {type(value).__name__}"
             )
-        # PEP 249 §6.1.1 enumerates ``mode`` ∈ {"relative", "absolute"};
-        # validate before NotSupportedError so a caller typo surfaces
-        # as a caller-side bug. ProgrammingError stays in dbapi.Error.
         if mode not in ("relative", "absolute"):
             raise ProgrammingError(f"scroll mode must be 'relative' or 'absolute', got {mode!r}")
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def executescript(self, sql_script: str, /) -> NoReturn:
-        """stdlib ``sqlite3.Cursor``-parity stub. See sync sibling.
+        """stdlib ``sqlite3.Cursor``-parity stub — not supported.
 
-        Defined as a plain ``def`` (not ``async def``) so the
-        unconditional raise fires on the call line. An ``async def``
-        stub would defer the raise to ``await`` and a caller who
-        forgot the ``await`` would observe a silent no-op with only a
-        GC-time coroutine-was-never-awaited warning — defeating the
-        diagnostic-leak prevention this stub family was added for.
+        Plain def (not async) so the raise fires on the call line rather than
+        being deferred to a forgotten await.
         """
         del self.messages[:]
         self._check_closed()
@@ -1612,22 +856,9 @@ class AsyncCursor:
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else "open"
-        # Include the parent connection's address and ``id(self)`` so
-        # the repr disambiguates cursors fanned across pooled
-        # connections in logs. See sync ``Cursor.__repr__``. Route
-        # through ``sanitize_for_log`` for sibling-discipline parity:
-        # attacker-influenced control / bidi / ZW chars render as ``?``
-        # rather than ``\uXXXX``, matching the client + dbapi
-        # ``Connection`` reprs.
-        #
-        # ``close()`` swaps ``self._connection`` to a ``weakref.proxy``;
-        # once the parent ``AsyncConnection`` is GC'd, attribute access
-        # on the proxy raises ``ReferenceError`` BEFORE ``getattr``'s
-        # default (``"?"``) is consulted (the default only fires for a
-        # missing attribute). ``ReferenceError`` is outside the
-        # ``dbapi.Error`` hierarchy and ``repr()`` is called by
-        # debuggers / loggers / pytest, so fall back to ``"?"`` to keep
-        # ``repr()`` safe. Mirrors the sync ``Cursor.__repr__``.
+        # sanitize_for_log renders control/bidi/ZW chars as ``?``. A GC'd proxy
+        # parent raises ReferenceError on attribute access (outside dbapi.Error,
+        # and repr is called by debuggers/loggers) so fall back to ``"?"``.
         try:
             address = sanitize_for_log(str(getattr(self._connection, "_address", "?")))
         except ReferenceError:
@@ -1637,10 +868,8 @@ class AsyncCursor:
         )
 
     def __reduce__(self) -> NoReturn:
-        # AsyncCursors hold a back-reference to a loop-bound
-        # AsyncConnection; none of that survives pickling. Surface a
-        # clear driver-level TypeError instead of the default pickle
-        # walk's confusing internal-member message.
+        # AsyncCursors hold a loop-bound connection ref that can't survive
+        # pickling; surface a clear TypeError instead of the default pickle walk.
         raise TypeError(
             f"cannot pickle {type(self).__name__!r} object — async "
             "cursors hold a reference to a loop-bound driver "
@@ -1649,34 +878,9 @@ class AsyncCursor:
         )
 
     def _check_parent_loop_only(self) -> None:
-        # Shared helper used by ``__aiter__`` and ``__aenter__``.
-        #
-        # ``Cursor.close()`` swaps ``self._connection`` for a
-        # ``weakref.proxy``. Once the parent ``AsyncConnection`` is
-        # GC'd, attribute access through the proxy raises
-        # ``ReferenceError`` — outside the PEP 249 ``Error``
-        # hierarchy.
-        #
-        # For ``__aiter__``: silently defer to the first
-        # ``__anext__`` / ``fetchone`` — sync ``Cursor.__iter__`` is
-        # bare ``return self`` per PEP 234 + stdlib `sqlite3` (verified:
-        # ``iter(closed_cur) is closed_cur`` succeeds, the diagnostic
-        # surfaces on the first ``next()``). A GC'd parent surfacing
-        # ``InterfaceError`` from ``aiter()`` itself diverges from
-        # that contract.
-        #
-        # For ``__aenter__``: translate to ``InterfaceError`` so a
-        # cross-driver ``except dbapi.Error:`` clause around
-        # ``async with cur:`` catches the misuse. The async context-
-        # manager protocol does not have a sync analog and PEP 343
-        # gives no guidance, so the fail-fast surface is acceptable.
-        # Callers use ``__aenter__`` to drive a body that requires
-        # cursor invariants; surfacing the diagnostic at the
-        # ``async with`` line is operationally cleaner.
-        #
-        # The deliberate loop-binding fail-fast (cross-loop misuse
-        # at ``async for cur:``) is preserved for the live-parent
-        # case via ``_check_loop_only``.
+        # Used by __aenter__: translate a GC'd-proxy ReferenceError into
+        # InterfaceError so ``except dbapi.Error:`` around ``async with cur:``
+        # catches the misuse. Live-parent loop-binding fail-fast preserved.
         try:
             self._connection._check_loop_only()
         except ReferenceError as e:
@@ -1685,95 +889,36 @@ class AsyncCursor:
             ) from e
 
     def _check_parent_loop_only_lazy(self) -> None:
-        """Variant of ``_check_parent_loop_only`` that silently
-        defers on a GC'd parent — used by ``__aiter__`` to match
-        stdlib `sqlite3`'s ``iter(closed_cur) is closed_cur``
-        contract. Loop-binding mismatch on a live parent still
-        raises (that fail-fast is the deliberate async divergence
-        from sync per the ``__aiter__`` note)."""
+        """Variant used by __aiter__ that silently defers on a GC'd parent to
+        match stdlib's ``iter(closed_cur) is closed_cur``; live-parent
+        loop-binding mismatch still raises."""
         try:
             self._connection._check_loop_only()
         except ReferenceError:
-            # Defer to first ``__anext__`` / ``fetchone``.
             return
 
     def __aiter__(self) -> Self:
-        # PEP 249 §6.4 messages-clear contract: every public cursor
-        # method clears ``messages`` "prior to executing the call".
-        # Symmetric with the sync sibling ``Cursor.__iter__``; sibling
-        # no-op cursor methods (``nextset`` / ``callproc`` /
-        # ``scroll`` / ``setinputsizes`` / ``setoutputsize``) all
-        # clear first. ``__anext__`` itself dispatches to
-        # ``fetchone`` (which clears at its own entry, including on
-        # the terminating call that returns None and surfaces
-        # ``StopAsyncIteration``), so the iter-protocol's clear
-        # obligation is satisfied at every step. The clear here is
-        # for the ``aiter(cur)`` entry point itself — generic
-        # consumer code that calls ``aiter(cur)`` and then never
-        # advances would otherwise observe stale messages from a
-        # prior operation on the cursor.
         del self.messages[:]
-        # Surface a loop-mismatch at the ``async for cursor:`` site
-        # rather than one await deeper inside ``__anext__``'s
-        # ``fetchone``. Use the loop-only variant
-        # (``_check_loop_only``) so a closed connection / closed
-        # cursor does NOT raise here — sync ``Cursor.__iter__`` is
-        # bare ``return self`` per PEP 234 + project pin
-        # (``test_pep249_misc_pins.py``); the async sibling matches
-        # so ``aiter(cur) is cur`` works on closed cursors too.
-        # The closed-state diagnostic is deferred to the first
-        # ``__anext__`` / ``fetchone``, matching the synchronous
-        # pin's documented design.
-        #
-        # Note: the sync ``Cursor.__iter__`` does NOT fail fast on
-        # cross-thread misuse — it defers to the first ``__next__``,
-        # matching stdlib ``sqlite3.Cursor.__iter__``. The async
-        # divergence here is deliberate because ``async for`` is the
-        # only common idiom that crosses event loops; the lazy
-        # loop-bind contract makes the iter-time check structurally
-        # only available on the async side. See the matching note on
-        # ``Cursor.__iter__`` in ``../cursor.py``.
-        #
-        # Use the ``_lazy`` variant so a GC'd parent silently defers
-        # — matching stdlib `sqlite3`'s ``iter(closed_cur) is closed_cur``
-        # contract. The loop-binding fail-fast is preserved for the
-        # live-parent case.
+        # Surface a loop-mismatch at the ``async for cursor:`` site rather than
+        # deeper in __anext__. Loop-only (lazy) variant so a closed cursor / GC'd
+        # parent still yields ``aiter(cur) is cur`` (closed diagnostic deferred to
+        # first __anext__). The iter-time check is a deliberate async-only
+        # divergence: async for is the common cross-loop idiom.
         self._check_parent_loop_only_lazy()
         return self
 
     async def __anext__(self) -> tuple[Any, ...]:
         """Advance the cursor by one row.
 
-        **Row-factory raise behaviour (divergence from stdlib
-        ``sqlite3`` / aiosqlite convention):** if a custom
-        ``row_factory`` raises a non-``StopAsyncIteration`` exception
-        while transforming the next row, the cursor's row index is
-        NOT advanced. A subsequent ``__anext__`` will retry the SAME
-        row, re-running the factory and re-raising. This is
-        deliberate — ``fetchmany``'s snapshot/restore retry semantic
-        (``snapshot + len(result)`` on cancel) requires the
-        un-delivered row to remain pointed-to. The shared helper
-        ``_next_row_unlocked`` applies the factory BEFORE advancing
-        the index so a raise leaves the index unchanged, and the
-        async-iterator path inherits that property.
-
-        To skip past a bad row, drop and re-fetch via a fresh
-        ``execute``, or wrap the iteration in a try/except that
-        breaks out on the raise. The cursor is NOT "terminated" by a
-        factory raise — it is "wedged on the bad row" until the next
-        ``execute`` resets the row buffer. The sync sibling
-        ``Cursor.__next__`` has the same shape for sync/async
-        consistency.
+        Row-factory raise: the index is NOT advanced, so the next __anext__
+        retries the SAME row (the cursor is "wedged" until execute resets the
+        buffer). Deliberate — keeps fetchmany's snapshot/restore retry exact.
         """
         row = await self.fetchone()
         if row is None:
             raise StopAsyncIteration
-        # Cooperative loop yield. ``fetchone`` returns synchronously
-        # for pre-buffered rows (which is every row on a buffered
-        # result set), so without an explicit yield ``async for row
-        # in cursor:`` over a large result monopolises the loop.
-        # Yield every _ANEXT_YIELD_EVERY rows so the common case
-        # (small iterations) pays no scheduler overhead.
+        # Cooperative yield: fetchone is sync for buffered rows, so yield every
+        # _ANEXT_YIELD_EVERY rows to keep a large ``async for`` from hogging the loop.
         self._aiter_yield_counter += 1
         if self._aiter_yield_counter >= _ANEXT_YIELD_EVERY:
             self._aiter_yield_counter = 0
@@ -1781,38 +926,13 @@ class AsyncCursor:
         return row
 
     async def __aenter__(self) -> Self:
-        # PEP 249 §6.4 messages-clear contract — unconditional,
-        # mirroring the sibling __aiter__ above which also clears
-        # regardless of _closed state. Every secondary entry point
-        # in the cursor surface (nextset / callproc / scroll /
-        # setinputsizes / setoutputsize / __iter__ / __aiter__ /
-        # __enter__) clears unconditionally; the closed-cursor case
-        # is admitted because a future driver path that appends to
-        # messages from a cross-loop / cross-thread background
-        # producer (e.g., a deferred warning enqueued from
-        # ``_invalidate``) must not be observed by ``async with cur:``
-        # on a closed cursor.
         del self.messages[:]
-        # Surface loop-binding mismatches up front (mirroring
-        # ``__aiter__``), so a cursor created on loop A and entered
-        # via ``async with cur:`` on loop B raises at the ``with``
-        # line rather than silently delaying the diagnostic to the
-        # first body await. Non-binding so a never-used cursor on a
-        # fresh connection doesn't lazy-bind from ``__aenter__``.
-        # ``_check_parent_loop_only`` translates ``ReferenceError``
-        # from a GC'd proxy parent into ``InterfaceError`` (PEP 249).
+        # Surface loop-binding mismatches at the ``async with`` line (non-binding
+        # so a fresh cursor isn't lazy-bound; GC'd parent -> InterfaceError).
         self._check_parent_loop_only()
-        # Cross-task contention guard, symmetric with ``execute`` /
-        # ``executemany``. ``__aexit__`` runs ``self.close()``
-        # unconditionally; without this guard a foreign task that
-        # enters ``async with cur:`` while Task A is parked
-        # mid-execute on the same cursor will silently close the
-        # cursor on exit. Task A's wire response then hits the
-        # post-await ``if self._closed: return`` short-circuit in
-        # ``_execute_unlocked``, dropping the result; Task A's next
-        # ``fetchone`` raises ``InterfaceError("Cursor is closed")``
-        # — pointing at fetch rather than at the cross-task misuse.
-        # Surface the misuse here at the ``async with`` site instead.
+        # Cross-task contention guard: __aexit__ closes unconditionally, so without
+        # this a foreign task's ``async with cur:`` would close a cursor that
+        # Task A is mid-execute on. Surface the misuse here, not later at fetch.
         cur_task = asyncio.current_task()
         if self._executing_task is not None and self._executing_task is not cur_task:
             raise InterfaceError(

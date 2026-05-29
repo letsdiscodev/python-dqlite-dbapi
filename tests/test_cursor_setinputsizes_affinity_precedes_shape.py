@@ -1,20 +1,6 @@
-"""Pin: on the open-cursor path, ``Cursor.setinputsizes`` /
-``Cursor.setoutputsize`` (sync) and ``AsyncCursor.setinputsizes`` /
-``AsyncCursor.setoutputsize`` (async) fire the thread/loop-affinity
-check BEFORE shape validation.
-
-Both branches raise ``ProgrammingError`` — diagnostic-message
-correctness only. The affinity-before-shape ordering matches the
-sibling open-cursor methods (``nextset`` / ``scroll`` /
-``executescript`` / ``callproc``), so an operator triaging a
-cross-thread / cross-loop misuse with a misshapen ``sizes`` arg
-sees the "wrong thread/loop" diagnostic instead of being misled
-by the shape diagnostic.
-
-The closed-permissive-return contract (PEP 249 §6.2 "free to do
-nothing") is still honoured: closed cursor + bad arg + wrong
-thread → silent return (covered by the sibling
-``test_cursor_setinputsizes_setoutputsize_closed_state_precedes_validation.py``).
+"""On the open-cursor path, ``setinputsizes`` / ``setoutputsize`` (sync and async) fire the
+thread/loop-affinity check BEFORE shape validation, so a cross-thread/loop misuse surfaces
+the affinity diagnostic rather than the shape one.
 """
 
 from __future__ import annotations
@@ -47,7 +33,6 @@ def test_sync_setinputsizes_thread_affinity_precedes_shape_validation() -> None:
         assert holder, "expected a ProgrammingError from cross-thread caller"
         exc = holder[0]
         assert isinstance(exc, ProgrammingError)
-        # Affinity diagnostic — NOT the shape diagnostic.
         msg = str(exc).lower()
         assert "thread" in msg, (
             f"expected thread-affinity diagnostic before shape diagnostic; got {exc!r}"
@@ -92,7 +77,6 @@ async def test_async_setinputsizes_loop_affinity_precedes_shape_validation() -> 
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
     conn._ensure_locks()  # bind to outer loop
-
     holder: list[BaseException] = []
 
     def _runner() -> None:
@@ -147,8 +131,7 @@ async def test_async_setoutputsize_loop_affinity_precedes_shape_validation() -> 
 
 
 def test_sync_open_cursor_same_thread_bad_arg_still_raises_shape() -> None:
-    """Sanity: when the affinity check passes (same thread), the shape
-    validator still fires."""
+    """Sanity: same-thread, the shape validator still fires."""
     conn = Connection("127.0.0.1:9001", timeout=0.5)
     try:
         cur = conn.cursor()

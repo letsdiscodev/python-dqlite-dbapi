@@ -1,14 +1,7 @@
-"""dbapi coded-error classes must surface ``.code`` via repr.
+"""Coded-error classes surface ``.code`` via ``repr``.
 
-Covers ``OperationalError``, ``IntegrityError``, and ``InternalError``
-— the three dbapi classes that accept an optional SQLite extended
-error ``code`` kwarg.
-
-Sentry, Rollbar, and ``logger.error("%r", exc)`` call ``repr(exc)``,
-which drops any attribute not in ``args``. The ``code`` kwarg is
-stored on ``self.code`` so the default repr hid the SQLite extended
-error code. Override ``__repr__`` so the code is visible without
-reaching into ``.code`` manually.
+The default ``repr`` drops attributes not in ``args``, hiding ``.code`` from
+``repr(exc)`` consumers (Sentry, ``logger.error("%r", exc)``); ``__repr__`` is overridden.
 """
 
 from __future__ import annotations
@@ -47,9 +40,7 @@ def test_internal_error_repr_without_code() -> None:
 
 
 def test_str_unchanged() -> None:
-    """str(exc) continues to return only the message, preserving
-    downstream assertions that match on the string form.
-    """
+    """str(exc) still returns only the message, not the code."""
     assert str(OperationalError("plain", code=5)) == "plain"
     assert str(IntegrityError("x", code=2067)) == "x"
     assert str(InternalError("y", code=2)) == "y"

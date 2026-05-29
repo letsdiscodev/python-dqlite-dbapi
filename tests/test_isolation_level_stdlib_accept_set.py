@@ -1,12 +1,6 @@
-"""Pin: ``Connection.isolation_level`` setter accepts the stdlib
-pre-3.12 accept-set (``{None, "", "DEFERRED", "IMMEDIATE",
-"EXCLUSIVE"}``) as no-ops and rejects unknown strings as
-``ProgrammingError`` (PEP 249 §7 caller-shape misuse).
-
-The previous behaviour rejected all four implicit-BEGIN variants
-with ``NotSupportedError``, breaking the canonical cross-driver
-``dst.isolation_level = src.isolation_level`` idiom against a stdlib
-source connection (whose default is ``""``, NOT ``None``).
+"""``Connection.isolation_level`` accepts the stdlib accept-set
+(``{None, "", "DEFERRED", "IMMEDIATE", "EXCLUSIVE"}``) as no-ops and rejects
+unknown strings as ``ProgrammingError`` (stdlib's default is ``""``, not None).
 """
 
 from __future__ import annotations
@@ -22,8 +16,7 @@ from dqlitedbapi.aio.connection import AsyncConnection
     [None, "", "DEFERRED", "IMMEDIATE", "EXCLUSIVE", "deferred", "Immediate"],
 )
 def test_sync_isolation_level_accepts_stdlib_value(value: object) -> None:
-    """All five stdlib values are accepted (case-insensitive for the
-    string variants)."""
+    """Stdlib values are accepted (case-insensitive for the string variants)."""
     conn = dqlitedbapi.Connection("127.0.0.1:9999")
     try:
         conn.isolation_level = value
@@ -50,8 +43,8 @@ def test_sync_isolation_level_rejects_integer_as_programming_error() -> None:
 
 
 def test_sync_isolation_level_stdlib_round_trip_idiom() -> None:
-    """The canonical cross-driver ``dst.isolation_level =
-    src.isolation_level`` idiom works against a stdlib source."""
+    """``dst.isolation_level = src.isolation_level`` works against a stdlib
+    source."""
     import sqlite3
 
     src = sqlite3.connect(":memory:")
@@ -66,7 +59,6 @@ def test_sync_isolation_level_stdlib_round_trip_idiom() -> None:
 
 
 def test_async_isolation_level_accepts_stdlib_default_empty_string() -> None:
-    """Mirror pin on the async sibling."""
     aconn = AsyncConnection("127.0.0.1:9999")
     try:
         aconn.isolation_level = ""

@@ -1,19 +1,5 @@
-"""Pin: ``_convert_bind_param`` honours stdlib's ``__conform__`` /
-``PrepareProtocol`` discovery as a fallback after the explicit
-``register_adapter`` registry, matching stdlib ``sqlite3``'s lookup
-order.
-
-Stdlib ``sqlite3`` documents two parallel adapter-discovery
-mechanisms:
-1. ``register_adapter(type_, adapter)`` — explicit registry (precedence)
-2. ``__conform__(self, protocol)`` on a value, where ``protocol`` is
-   ``sqlite3.PrepareProtocol`` — a class-side hook a value can implement
-   to opt into binding without explicit registration.
-
-Without this pin a class with ``__conform__`` works under stdlib but
-silently fails under dqlite, surfacing only when the wire encoder
-rejects the unknown type.
-"""
+"""Pin: ``_convert_bind_param`` honours ``__conform__``/``PrepareProtocol`` discovery
+as a fallback after the explicit ``register_adapter`` registry (stdlib lookup order)."""
 
 from __future__ import annotations
 
@@ -73,11 +59,8 @@ def test_register_adapter_precedence_over_conform() -> None:
 
 
 def test_conform_returning_none_rejected_at_dbapi_layer() -> None:
-    """If ``__conform__`` returns None for the asked-for protocol the
-    value is left unchanged; the post-chain wire-primitive guard
-    then rejects the non-primitive with ``ProgrammingError``
-    (stdlib parity — non-primitive adapter output rejects at the
-    microprotocols layer, not the wire encoder)."""
+    """``__conform__`` returning None leaves the value unchanged; the wire-primitive
+    guard then rejects the non-primitive (stdlib parity, microprotocols layer)."""
     import pytest
 
     from dqlitedbapi.exceptions import DataError
@@ -91,10 +74,7 @@ def test_conform_returning_none_rejected_at_dbapi_layer() -> None:
 
 
 def test_no_conform_method_no_adapter_rejected_at_dbapi_layer() -> None:
-    """A value without ``__conform__`` and no registered adapter
-    fails the post-chain wire-primitive guard with
-    ``ProgrammingError`` -- stdlib parity for "no adapter / no
-    conform / not a wire primitive"."""
+    """No adapter, no ``__conform__``, not a wire primitive -> rejected (stdlib parity)."""
     import pytest
 
     from dqlitedbapi.exceptions import DataError
@@ -107,11 +87,8 @@ def test_no_conform_method_no_adapter_rejected_at_dbapi_layer() -> None:
 
 
 def test_instance_level_conform_is_honoured() -> None:
-    """Stdlib parity: ``__conform__`` set on an instance (not the
-    class) is honoured. CPython's
-    ``Modules/_sqlite/microprotocols.c`` calls
-    ``PyObject_GetAttrString(obj, "__conform__")`` which consults
-    the instance first; the dqlite implementation must match."""
+    """Stdlib parity: instance-level ``__conform__`` is honoured (CPython's
+    microprotocols.c does ``getattr(obj, "__conform__")``, consulting the instance)."""
 
     class Plain:
         pass
@@ -123,10 +100,8 @@ def test_instance_level_conform_is_honoured() -> None:
 
 
 def test_class_level_conform_still_honoured_after_instance_lookup_change() -> None:
-    """Regression guard: class-side ``__conform__`` continues to work
-    after the lookup change to instance-level ``getattr(value, ...)``.
-    ``getattr`` walks the descriptor protocol so a class-defined
-    method is bound and called as ``method(PrepareProtocol)``."""
+    """Class-side ``__conform__`` still works after the lookup moved to
+    ``getattr(value, ...)`` — getattr binds the class method via the descriptor protocol."""
 
     class WithClassConform:
         def __conform__(self, protocol: type) -> object:
@@ -139,19 +114,8 @@ def test_class_level_conform_still_honoured_after_instance_lookup_change() -> No
 
 
 def test_raising_conform_propagates_unwrapped() -> None:
-    """A ``__conform__`` that raises propagates the exception to the
-    caller, matching stdlib ``sqlite3.Cursor.execute``:
-
-        >>> class Bad:
-        ...     def __conform__(self, protocol):
-        ...         raise RuntimeError("boom")
-        >>> import sqlite3
-        >>> sqlite3.connect(":memory:").execute("SELECT ?", (Bad(),))
-        RuntimeError: boom
-
-    The previous silent-swallow disposition diverged from stdlib and
-    erased the caller's traceback. Full parametric coverage in
-    ``test_convert_bind_param_conform_exception_propagates.py``."""
+    """A raising ``__conform__`` propagates to the caller (stdlib parity; the prior
+    silent-swallow erased the traceback)."""
     import pytest
 
     class Boom:

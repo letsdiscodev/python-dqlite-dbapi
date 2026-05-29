@@ -1,16 +1,5 @@
-"""Async commit/rollback must wrap client-layer exceptions into PEP 249 types.
-
-The sync ``Connection._commit_async`` / ``_rollback_async`` route
-through ``_call_client`` so every ``dqliteclient.exceptions`` class
-surfaces as a ``dqlitedbapi.exceptions`` subclass. The async siblings
-bypass that wrapping and leak raw client exceptions — which violates
-PEP 249 ("all database errors expose as Error subclasses") and breaks
-symmetry with the cursor execute path that already uses ``_call_client``.
-
-Parametrised across every arm of ``_call_client`` so a future
-client-side exception addition that silently bypasses the wrap will
-trip one of the cases.
-"""
+"""Async commit/rollback must route client-layer exceptions through _call_client so each
+surfaces as a dbapi.Error subclass (PEP 249). Parametrised across every _call_client arm."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -30,10 +19,7 @@ def _prime(address: str = "localhost:19001") -> AsyncConnection:
     return conn
 
 
-# Every arm of ``_call_client`` (python-dqlite-dbapi/src/dqlitedbapi/
-# cursor.py:88-115). Adding a new client-side class in this table at
-# the same time as the ``_call_client`` branch keeps the wrap
-# exhaustive.
+# One row per _call_client arm; add a row alongside each new branch to keep the wrap exhaustive.
 _WRAPPING_CASES = [
     pytest.param(
         _client_exc.DqliteConnectionError("socket closed"),
@@ -85,20 +71,13 @@ class TestAsyncCommitWrapping:
         with pytest.raises(expect_cls) as exc_info:
             await conn.commit()
 
-        # PEP 249 "Error" taxonomy: the raised class must be a subclass
-        # of the driver module's Error, not a raw client class.
         assert isinstance(exc_info.value, _dbapi_exc.Error)
-        # ``raise ... from e`` preserves the original so SQLAlchemy's
-        # is_disconnect can walk __cause__ without relying on message
-        # substrings.
+        # __cause__ preserves the original so SA's is_disconnect can walk it without substrings.
         assert exc_info.value.__cause__ is raise_exc
 
     async def test_commit_integrity_error_carries_code(self) -> None:
-        """Constraint-code OperationalError(19, ...) from the server
-        on a COMMIT becomes an IntegrityError with ``.code`` preserved
-        — so the no-tx swallow gate (which checks ``.code``) still
-        works for the separate OperationalError(1, ...) case.
-        """
+        """OperationalError(19) becomes IntegrityError with .code preserved (the no-tx gate
+        checks .code)."""
         conn = _prime()
         assert conn._async_conn is not None
         conn._async_conn.execute.side_effect = _client_exc.OperationalError(  # type: ignore[attr-defined]
@@ -126,11 +105,8 @@ class TestAsyncRollbackWrapping:
 
 
 class TestAsyncNoTxSwallowSurvivesWrapping:
-    """The existing no-tx swallow (``_is_no_transaction_error``) must
-    keep working once COMMIT/ROLLBACK route through ``_call_client``.
-    The gate reads ``.code`` which the wrapped
-    ``dbapi.OperationalError`` preserves.
-    """
+    """The no-tx swallow must keep working once commit/rollback route through _call_client:
+    the gate reads .code, which the wrapped dbapi.OperationalError preserves."""
 
     async def test_commit_no_tx_still_silent(self) -> None:
         conn = _prime()

@@ -1,38 +1,5 @@
-"""``dqlitedbapi.connect`` does leader-redirect-on-connect.
-
-Pins the production-grade connect path: bootstrap from the
-user-supplied address, find the current leader via the cluster
-client, then open the database against the leader's address. The
-behaviour mirrors go-dqlite's ``database/sql`` driver layering
-(``client.NewLeaderConnector(store)``) and is what lets the
-SA pool's reconnect-after-pre-ping path recover from a leader
-flip without surfacing ``SQLITE_IOERR_NOT_LEADER`` to the
-caller.
-
-Tests cover the unit boundary at ``_build_and_connect`` —
-mocking the ``ClusterClient`` and ``DqliteConnection`` so the
-flows pin without a live cluster:
-
-- Happy path: seed IS the leader → ``find_leader`` returns the
-  seed address verbatim → ``DqliteConnection`` is constructed
-  with the seed.
-- Redirect: seed is a follower → ``find_leader`` returns a
-  different address → ``DqliteConnection`` is constructed with
-  the leader's address.
-- Failure: seed unreachable → ``ClusterError`` → translated to
-  ``OperationalError`` with the canonical
-  ``"Failed to find leader from"`` prefix.
-- Failure: seed reachable but no leader yet (transient) →
-  ``ClusterError`` → ``OperationalError``.
-- Failure: cluster-policy rejection during leader discovery →
-  ``InterfaceError``.
-- Mid-connect leader change: ``find_leader`` returns X, X then
-  refuses with NOT_LEADER → existing post-find-leader arm
-  translates to ``OperationalError``; pool retry kicks in.
-
-Live-cluster integration coverage is in
-``tests/integration/test_leader_redirect_live.py``.
-"""
+"""``dqlitedbapi.connect`` does leader-redirect-on-connect: bootstrap from the
+seed, find the leader, then open the database against the leader's address."""
 
 from __future__ import annotations
 
@@ -48,12 +15,7 @@ from dqlitedbapi.exceptions import InterfaceError, OperationalError
 _FakeFindLeader = Callable[[str], Awaitable[str]]
 
 
-# --- _resolve_leader (tests the helper directly) ---
-
-
 async def test_resolve_leader_returns_seed_when_seed_is_leader() -> None:
-    """Happy path: ``find_leader`` returns the seed address verbatim
-    (the seed-as-leader case)."""
     fake_find = AsyncMock(return_value="localhost:9001")
     with patch("dqlitedbapi.connection.ClusterClient") as MockCluster:
         instance = MagicMock()
@@ -67,9 +29,6 @@ async def test_resolve_leader_returns_seed_when_seed_is_leader() -> None:
 
 
 async def test_resolve_leader_returns_redirect_address() -> None:
-    """Redirect: seed is a follower; ``find_leader`` returns a
-    different address — that's what ``_build_and_connect`` will
-    actually open the database against."""
     fake_find = AsyncMock(return_value="node2:9002")
     with patch("dqlitedbapi.connection.ClusterClient") as MockCluster:
         instance = MagicMock()
@@ -82,9 +41,7 @@ async def test_resolve_leader_returns_redirect_address() -> None:
 
 
 async def test_resolve_leader_propagates_cluster_error() -> None:
-    """Seed unreachable / no-leader-yet: ``ClusterError`` propagates
-    so ``_build_and_connect``'s arm can translate to
-    ``OperationalError``."""
+    """``ClusterError`` propagates so ``_build_and_connect`` can map it."""
     with patch("dqlitedbapi.connection.ClusterClient") as MockCluster:
         instance = MagicMock()
         instance.find_leader = AsyncMock(side_effect=_client_exc.ClusterError("no leader known"))
@@ -95,9 +52,7 @@ async def test_resolve_leader_propagates_cluster_error() -> None:
 
 
 async def test_resolve_leader_propagates_cluster_policy_error() -> None:
-    """Cluster-policy rejection (operator allowlist denies a
-    redirect target) propagates so ``_build_and_connect``'s arm
-    can translate to ``InterfaceError``."""
+    """``ClusterPolicyError`` (operator allowlist) propagates for mapping upstream."""
     with patch("dqlitedbapi.connection.ClusterClient") as MockCluster:
         instance = MagicMock()
         instance.find_leader = AsyncMock(side_effect=_client_exc.ClusterPolicyError("rejected"))
@@ -107,14 +62,8 @@ async def test_resolve_leader_propagates_cluster_policy_error() -> None:
             await _resolve_leader("seed:9001", timeout=5.0)
 
 
-# --- _build_and_connect (the wrapping connect path) ---
-
-
 async def test_build_and_connect_uses_leader_address_for_dqlite_connection() -> None:
-    """Pin the load-bearing wiring: the address passed to
-    ``DqliteConnection(...)`` is the leader's address, not the
-    seed. Without this, a leader-flip-after-bootstrap would route
-    the OPEN_DATABASE to the wrong node."""
+    """``DqliteConnection`` is opened against the leader's address, not the seed."""
     with (
         patch("dqlitedbapi.connection._resolve_leader") as mock_resolve,
         patch("dqlitedbapi.connection.DqliteConnection") as MockConn,
@@ -134,16 +83,12 @@ async def test_build_and_connect_uses_leader_address_for_dqlite_connection() -> 
             close_timeout=0.5,
         )
 
-    # ``DqliteConnection`` was constructed with the leader's
-    # address, not the seed.
     args, _kwargs = MockConn.call_args
     assert args[0] == "leader:9999"
 
 
 async def test_build_and_connect_translates_cluster_error_to_operational() -> None:
-    """No leader reachable at all: surface as
-    ``OperationalError`` so the SA pool's retry loop classifies
-    it as transient."""
+    """No leader reachable: surface as ``OperationalError`` (transient for SA pool retry)."""
     with patch("dqlitedbapi.connection._resolve_leader") as mock_resolve:
         mock_resolve.side_effect = _client_exc.ClusterError("no nodes responded")
 
@@ -160,9 +105,7 @@ async def test_build_and_connect_translates_cluster_error_to_operational() -> No
 
 
 async def test_build_and_connect_translates_cluster_policy_to_interface() -> None:
-    """Operator allowlist rejected a redirect target: surface as
-    ``InterfaceError`` (permanent config mismatch — SA's
-    ``is_disconnect`` should NOT enter a retry loop)."""
+    """Allowlist rejection: ``InterfaceError`` (permanent, so SA must not retry)."""
     with patch("dqlitedbapi.connection._resolve_leader") as mock_resolve:
         mock_resolve.side_effect = _client_exc.ClusterPolicyError("rejected")
 
@@ -181,12 +124,8 @@ async def test_build_and_connect_translates_cluster_policy_to_interface() -> Non
 
 
 async def test_build_and_connect_mid_flip_leader_change_propagates() -> None:
-    """``find_leader`` returns X, X then steps down between the
-    two round-trips: ``DqliteConnection.connect`` sees
-    NOT_LEADER → translated by the existing post-find-leader
-    ``DqliteConnectionError`` arm to ``OperationalError`` with
-    the canonical ``Failed to connect:`` prefix. SA's pool
-    retry then kicks in."""
+    """Leader steps down between find_leader and connect: NOT_LEADER maps to
+    ``OperationalError`` (transient) so SA's pool retry kicks in."""
     with (
         patch("dqlitedbapi.connection._resolve_leader") as mock_resolve,
         patch("dqlitedbapi.connection.DqliteConnection") as MockConn,
@@ -215,14 +154,8 @@ async def test_build_and_connect_mid_flip_leader_change_propagates() -> None:
 
 
 async def test_resolve_leader_threads_governors_to_cluster_client() -> None:
-    """``_resolve_leader`` must forward ``trust_server_heartbeat`` /
-    ``max_total_rows`` / ``max_continuation_frames`` to the
-    ``ClusterClient`` it constructs. Without forwarding, the FIRST
-    round-trip — leader discovery — runs with default governors
-    even when the operator opted into different ones, defeating
-    the per-connection setting at exactly the path the security
-    audit flagged.
-    """
+    """Governors must reach the ``ClusterClient`` so leader discovery (the first
+    round-trip) honours per-connection settings, not defaults."""
     captured: dict[str, object] = {}
 
     def fake_cluster_client(store: object, **kwargs: object) -> object:
@@ -247,13 +180,8 @@ async def test_resolve_leader_threads_governors_to_cluster_client() -> None:
     assert captured["trust_server_heartbeat"] is True
 
 
-# --- end-to-end via Connection (sync surface) ---
-
-
 def test_connection_connect_uses_leader_address(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Sanity through the public ``Connection.connect`` surface:
-    the seed → leader redirect propagates all the way down to the
-    inner ``DqliteConnection``."""
+    """The seed -> leader redirect propagates through ``Connection.connect``."""
     captured_addresses: list[str] = []
 
     async def fake_resolve(address: str, *, timeout: float, **_kw: object) -> str:

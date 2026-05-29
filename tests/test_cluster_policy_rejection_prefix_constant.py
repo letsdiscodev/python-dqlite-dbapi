@@ -1,13 +1,6 @@
-"""Pin: ``CLUSTER_POLICY_REJECTION_PREFIX`` is the SSOT for the
-documented "callers can branch on the message prefix without
-importing client-layer types" recipe.
-
-Three previously-divergent raise sites (sync connect-time leader-
-discovery, sync connect-time post-construct, cursor-path rewrap)
-now route through ``cluster_policy_rejection_message`` so a single
-``str(exc).startswith(CLUSTER_POLICY_REJECTION_PREFIX)`` check
-matches every producer. Mirror of the ``FAILED_TO_CONNECT_PREFIX``
-and ``WIRE_DECODE_FAILED_PREFIX`` precedents.
+"""CLUSTER_POLICY_REJECTION_PREFIX is the SSOT so a single
+str(exc).startswith(CLUSTER_POLICY_REJECTION_PREFIX) check matches every raise site that
+routes through cluster_policy_rejection_message.
 """
 
 from __future__ import annotations
@@ -22,8 +15,7 @@ from dqlitedbapi._constants import (
 
 
 def test_constant_is_module_exported() -> None:
-    """``dqlitedbapi.CLUSTER_POLICY_REJECTION_PREFIX`` is part of the
-    public surface (re-exported from ``__init__.py``)."""
+    """CLUSTER_POLICY_REJECTION_PREFIX is re-exported on the public surface."""
     assert dqlitedbapi.CLUSTER_POLICY_REJECTION_PREFIX == "Cluster policy rejection"
     assert "CLUSTER_POLICY_REJECTION_PREFIX" in dqlitedbapi.__all__
 
@@ -35,18 +27,14 @@ def test_helper_short_form_starts_with_prefix() -> None:
 
 
 def test_helper_long_form_starts_with_prefix() -> None:
-    """The ``stage`` variant must also start with the bare prefix so
-    the documented branching recipe matches."""
+    """The stage variant must also start with the bare prefix."""
     msg = cluster_policy_rejection_message("during leader discovery", "policy says no")
     assert msg.startswith(CLUSTER_POLICY_REJECTION_PREFIX)
     assert msg == "Cluster policy rejection during leader discovery; policy says no"
 
 
 def test_no_string_literal_clones_in_source() -> None:
-    """A repo-walk: the literal "Cluster policy rejection" must NOT
-    appear in production source outside the SSOT constant + helper
-    definitions. Catches a future maintainer who copy-pastes the
-    literal back into a raise site."""
+    """The literal "Cluster policy rejection" must not be copy-pasted back into a raise site."""
     src_root = Path(__file__).parent.parent / "src" / "dqlitedbapi"
     paths = [
         src_root / "connection.py",
@@ -58,9 +46,7 @@ def test_no_string_literal_clones_in_source() -> None:
         if not path.exists():
             continue
         text = path.read_text()
-        # Allow the literal in docstrings/comments referring to the
-        # documented prefix contract, but disallow ``f"Cluster policy
-        # rejection`` raise-site literals.
+        # Allow the literal in docstrings/comments; only f-string raise-site clones are banned.
         assert 'f"Cluster policy rejection' not in text, (
             f"{path}: literal 'Cluster policy rejection' must route through "
             f"cluster_policy_rejection_message() so the prefix SSOT is honoured"

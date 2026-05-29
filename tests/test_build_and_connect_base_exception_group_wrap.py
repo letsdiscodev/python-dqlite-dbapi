@@ -1,22 +1,7 @@
-"""Pin: ``_build_and_connect`` wraps :class:`BaseExceptionGroup`
-from BOTH the leader-resolution arm AND the post-construct connect
-arm as :class:`OperationalError` — NOT :class:`DatabaseError` (which
-``_call_client`` uses for its own analogous arm).
-
-The wrap-class choice discriminates how SA's engine classifies the
-failure at the dbapi boundary:
-
-* ``OperationalError`` triggers SA's ``_handle_dbapi_exception`` →
-  ``is_disconnect`` classifier → may invalidate the connection.
-* ``DatabaseError`` (the wider class) bypasses ``is_disconnect``
-  and may not invalidate — a poisoned connection re-enters the
-  pool.
-
-A wrong-class wrap on either ``_build_and_connect`` arm would
-silently turn a connect-time aggregate into a poisoned-pool
-surface. The sibling ``_call_client`` test pins the class for that
-site; these two pins close the gap for ``_build_and_connect``.
-"""
+"""Pin: ``_build_and_connect`` wraps BaseExceptionGroup (both leader-resolution and
+post-construct connect arms) as OperationalError, not DatabaseError. The class choice
+drives SA's is_disconnect classifier; the wider DatabaseError would leave a poisoned
+connection in the pool."""
 
 from __future__ import annotations
 
@@ -31,10 +16,8 @@ from dqlitedbapi.exceptions import OperationalError
 
 @pytest.mark.asyncio
 async def test_build_and_connect_resolve_leader_group_wraps_as_operational_error() -> None:
-    """A ``BaseExceptionGroup`` raised from ``_resolve_leader`` must
-    surface as :class:`OperationalError` with the canonical
-    ``"Failed to find leader"`` prefix, NOT
-    :class:`DatabaseError`."""
+    """Group from _resolve_leader surfaces as OperationalError with the
+    "Failed to find leader" prefix."""
 
     async def _group(*_a: object, **_kw: object) -> str:
         raise BaseExceptionGroup(
@@ -77,9 +60,8 @@ async def test_build_and_connect_resolve_leader_group_wraps_as_operational_error
 
 @pytest.mark.asyncio
 async def test_build_and_connect_post_construct_group_wraps_as_operational_error() -> None:
-    """A ``BaseExceptionGroup`` raised from inside the post-construct
-    ``conn.connect()`` must surface as :class:`OperationalError`
-    with the ``"Failed to connect:"`` prefix."""
+    """Group from post-construct conn.connect() surfaces as OperationalError with
+    the "Failed to connect:" prefix."""
 
     async def _ok_resolve(*_a: object, **_kw: object) -> str:
         return "127.0.0.1:9001"

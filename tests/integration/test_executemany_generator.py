@@ -1,9 +1,5 @@
-"""executemany must accept any iterable — including generators — per PEP 249.
-
-The outer argument's type annotation is ``Iterable[Sequence[Any]]``; the
-runtime loop uses only the iteration protocol. Regression guard so a
-future re-narrowing to ``Sequence[Sequence[Any]]`` trips a test.
-"""
+"""executemany must accept any iterable, including generators (PEP 249);
+guards against re-narrowing the param to ``Sequence[Sequence[Any]]``."""
 
 from collections.abc import Iterator
 

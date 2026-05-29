@@ -1,28 +1,5 @@
-"""Pin: ``_get_resolve_leader_cluster`` constructs ``ClusterClient``
-**outside** the module-level ``threading.Lock``.
-
-The cache lock used to be held across ``ClusterClient.__init__``. Today
-that constructor does no I/O and no ``await`` so the held-across-init
-shape is sound at runtime — but the in-tree comment at
-``connection.py`` calls out that a future refactor adding ``await`` to
-``ClusterClient.__init__`` would turn the lock into a deadlock trap:
-the loop thread would acquire the lock, yield at the new ``await``,
-and any sibling coroutine that also touches ``_get_resolve_leader_cluster``
-would synchronously park on ``threading.Lock.acquire()`` with no way
-to resume.
-
-The standard remedy is the double-checked init pattern: take the lock
-to look up, drop it to construct, retake the lock to register. The
-loser of any concurrent construction race observes the winner's insert
-on the recheck and discards its own client.
-
-This test pins the architectural invariant by spying on
-``ClusterClient.__init__`` and asserting the cache lock is NOT held at
-the moment the constructor runs. The single-flight guarantee (one
-cluster per (address, governors) tuple, even under concurrent demand)
-is also exercised so the refactor preserves the cache's original
-contract.
-"""
+"""``_get_resolve_leader_cluster`` constructs ``ClusterClient`` outside the cache
+lock (double-checked init), so a future async ``__init__`` cannot deadlock."""
 
 from __future__ import annotations
 
@@ -44,19 +21,11 @@ def _clear_cache() -> None:
 
 @pytest.mark.asyncio
 async def test_cluster_client_constructed_without_holding_cache_lock() -> None:
-    """``_RESOLVE_LEADER_CACHE_LOCK`` must NOT be held while
-    ``ClusterClient`` is being constructed. Future-proofs against an
-    async ``ClusterClient.__init__`` turning the held-across-init
-    shape into a deadlock.
-    """
+    """The cache lock must NOT be held while ``ClusterClient`` is constructed."""
     lock_held_during_init: list[bool] = []
 
     def spy_cluster_client(_store: object, **_kwargs: Any) -> MagicMock:
-        # Probe the lock with non-blocking acquire. If the calling
-        # thread already owns the lock recursively, ``acquire(False)``
-        # still returns False because ``threading.Lock`` is non-
-        # reentrant — so a True return here proves the lock is
-        # currently free.
+        # Lock is non-reentrant, so a True acquire here proves it is free.
         acquired = _conn_mod._RESOLVE_LEADER_CACHE_LOCK.acquire(blocking=False)
         if acquired:
             lock_held_during_init.append(False)
@@ -80,22 +49,14 @@ async def test_cluster_client_constructed_without_holding_cache_lock() -> None:
 
 @pytest.mark.asyncio
 async def test_concurrent_resolve_leader_calls_publish_single_cluster() -> None:
-    """Single-flight contract: many concurrent ``_resolve_leader``
-    calls on the same key must converge on ONE published
-    ``ClusterClient`` instance. Under the double-checked-init shape a
-    losing thread may briefly construct an unused client; the test
-    verifies the cache only ever returns one.
-    """
+    """Many concurrent ``_resolve_leader`` calls on the same key must converge
+    on one published ``ClusterClient`` instance."""
     constructed: list[MagicMock] = []
     enter_event = threading.Event()
     proceed_event = threading.Event()
 
     def make_cluster_client(_store: object, **_kwargs: Any) -> MagicMock:
-        # Stall the first constructor so concurrent callers all race
-        # for the lock. Without the stall, the first caller would
-        # complete before any other arrives and the single-flight
-        # property would be trivially satisfied without exercising
-        # the recheck path.
+        # Stall the first constructor so others race the recheck path.
         client = MagicMock()
         client.find_leader = AsyncMock(return_value="leader:9999")
         if not enter_event.is_set():
@@ -109,9 +70,6 @@ async def test_concurrent_resolve_leader_calls_publish_single_cluster() -> None:
             return await _resolve_leader("seed:9002", timeout=5.0)
 
     async def release_after_others_queued() -> None:
-        # Wait for the first constructor to enter, then let it
-        # proceed so the remaining queued callers can run their
-        # cache-recheck path.
         await asyncio.to_thread(enter_event.wait, 2.0)
         proceed_event.set()
 
@@ -123,9 +81,7 @@ async def test_concurrent_resolve_leader_calls_publish_single_cluster() -> None:
         release_after_others_queued(),
     )
 
-    # Drop the release_after_others_queued result.
     leader_addrs = [r for r in results[:-1]]
     assert all(addr == "leader:9999" for addr in leader_addrs)
-    # Exactly one cached entry.
     keys = list(_conn_mod._RESOLVE_LEADER_CACHE.keys())
     assert len(keys) == 1, f"expected one cached cluster, got {len(keys)}"

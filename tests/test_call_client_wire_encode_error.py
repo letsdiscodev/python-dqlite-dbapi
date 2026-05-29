@@ -1,11 +1,5 @@
-"""Pin: a wire-layer ``EncodeError`` raised at a point that bypasses
-the client's ``_run_protocol`` arm reaches ``_call_client`` directly
-and must be wrapped as ``dbapi.DataError`` — NOT propagated as a
-bare wire exception (which leaks past ``except dbapi.Error:``).
-
-PEP 249 §7 classifies encode-side / caller-input issues as
-``DataError``.
-"""
+"""A wire ``EncodeError`` reaching ``_call_client`` must wrap as
+``DataError``, not leak past ``except dbapi.Error:``."""
 
 import pytest
 

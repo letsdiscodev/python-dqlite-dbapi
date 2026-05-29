@@ -1,5 +1,3 @@
-"""Tests for parameter conversion in cursor execute."""
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -7,7 +5,6 @@ from dqlitedbapi.cursor import Cursor
 
 
 def _make_mock_connection() -> tuple[MagicMock, AsyncMock]:
-    """Create a mock Connection with a fake async connection."""
     mock_async_conn = AsyncMock()
     mock_async_conn.execute = AsyncMock(return_value=(0, 0))
     mock_async_conn.query_raw = AsyncMock(return_value=(["id"], [[1]]))
@@ -20,11 +17,8 @@ def _make_mock_connection() -> tuple[MagicMock, AsyncMock]:
     mock_conn._get_async_connection = get_async_conn
 
     def run_sync(coro: object) -> object:
-        # ``asyncio.get_event_loop_policy()`` is deprecated since 3.14
-        # and removed in 3.16. ``asyncio.new_event_loop()`` is the
-        # documented post-deprecation replacement: it creates an event
-        # loop via the current event-loop policy's ``new_event_loop``
-        # without exposing the deprecated policy machinery itself.
+        # new_event_loop() replaces get_event_loop_policy() (deprecated 3.14,
+        # removed 3.16).
         return asyncio.new_event_loop().run_until_complete(coro)  # type: ignore[arg-type]
 
     mock_conn._run_sync = run_sync
@@ -34,11 +28,7 @@ def _make_mock_connection() -> tuple[MagicMock, AsyncMock]:
 
 class TestParameterConversion:
     def test_empty_list_not_converted_to_none(self) -> None:
-        """Passing parameters=[] should not convert to None.
-
-        Use parameterless SQL so the new ``?``-count pre-flight
-        does not reject the empty list as a binding-count mismatch.
-        """
+        """parameters=[] stays []. Parameterless SQL avoids the ?-count pre-flight."""
         mock_conn, mock_async_conn = _make_mock_connection()
         cursor = Cursor(mock_conn)
 
@@ -49,7 +39,6 @@ class TestParameterConversion:
         assert call_args[0][1] == [], f"Expected [], got {call_args[0][1]!r}"
 
     def test_none_params_stays_none(self) -> None:
-        """Passing parameters=None should stay None."""
         mock_conn, mock_async_conn = _make_mock_connection()
         cursor = Cursor(mock_conn)
 
@@ -60,7 +49,6 @@ class TestParameterConversion:
         assert call_args[0][1] is None, f"Expected None, got {call_args[0][1]!r}"
 
     def test_nonempty_params_converted_to_list(self) -> None:
-        """Passing parameters=(1, 2) should convert to [1, 2]."""
         mock_conn, mock_async_conn = _make_mock_connection()
         cursor = Cursor(mock_conn)
 

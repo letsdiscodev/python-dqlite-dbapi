@@ -8,19 +8,8 @@ class TestModuleAttributes:
         assert dqlitedbapi.apilevel == "2.0"
 
     def test_threadsafety(self) -> None:
-        # 2 = threads may share the module AND connections (cursors
-        # remain per-thread per the documented contract). The
-        # declaration is the CAPABILITY ceiling: connections become
-        # safe to share once the user opts in via
-        # ``check_same_thread=False``. Default enforcement remains
-        # strict per-thread. Matches stdlib sqlite3's "advertise
-        # ceiling, default to floor" convention (stdlib reports 3
-        # since CPython 3.11 / bpo-45613 while still defaulting
-        # ``check_same_thread=True``). See ``__init__.py:108-149``
-        # for the full rationale and
-        # ``issues/dbapi-threadsafety-tier-3-cursor-sharing-stdlib-parity.md``
-        # for the future-work proposal that would lift the ceiling
-        # to 3.
+        # 2 = the capability ceiling (share connections via check_same_thread=False);
+        # default enforcement stays strict per-thread, like stdlib sqlite3.
         assert dqlitedbapi.threadsafety == 2
 
     def test_paramstyle(self) -> None:
@@ -32,7 +21,6 @@ class TestModuleAttributes:
 
 class TestExceptions:
     def test_exception_hierarchy(self) -> None:
-        # All exceptions should derive from Error except Warning
         assert issubclass(dqlitedbapi.Error, Exception)
         assert issubclass(dqlitedbapi.Warning, Exception)
         assert issubclass(dqlitedbapi.InterfaceError, dqlitedbapi.Error)
@@ -45,11 +33,8 @@ class TestExceptions:
         assert issubclass(dqlitedbapi.NotSupportedError, dqlitedbapi.DatabaseError)
 
     def test_warning_is_not_subclass_of_error_pep249(self) -> None:
-        """PEP 249 §6: Warning is a sibling of Error under Exception, NOT a
-        subclass. A defensive refactor that "unified" the hierarchy
-        (Warning ← Error) would silently break PEP 249 conformance and
-        cause every cross-driver ``except Error:`` block to start
-        catching warnings."""
+        """PEP 249 §6: Warning is a sibling of Error, not a subclass — else
+        cross-driver ``except Error:`` blocks would start catching warnings."""
         assert not issubclass(dqlitedbapi.Warning, dqlitedbapi.Error)
         assert issubclass(dqlitedbapi.Warning, Exception)
         assert not issubclass(dqlitedbapi.Error, dqlitedbapi.Warning)
@@ -84,16 +69,12 @@ class TestTypeConstructors:
 
     def test_binary(self) -> None:
         b = dqlitedbapi.Binary(b"hello")
-        # PEP 249 Binary() is aliased to stdlib ``memoryview`` (matches
-        # sqlite3.Binary = memoryview, drop-in compatible).
         assert isinstance(b, memoryview)
         assert bytes(b) == b"hello"
 
     def test_binary_is_stdlib_memoryview_alias(self) -> None:
         import sqlite3
 
-        # Parity pin: stdlib sqlite3 has ``Binary = memoryview``; the
-        # dqlite dbapi aliases to the same underlying type.
         assert dqlitedbapi.Binary is memoryview
         assert dqlitedbapi.Binary is sqlite3.Binary
 
@@ -142,17 +123,12 @@ class TestCursorModuleAll:
     def test_cursor_module_wildcard_import_does_not_leak_helpers(self) -> None:
         from dqlitedbapi import cursor as cursor_mod
 
-        # Verify private helpers exist on the module but are not in __all__.
         assert hasattr(cursor_mod, "_call_client")
         assert "_call_client" not in cursor_mod.__all__
 
 
 class TestExceptionsModuleAll:
-    """``dqlitedbapi.exceptions`` re-exports the full PEP 249 class
-    hierarchy. Pin the ``__all__`` list so a future refactor adding a
-    private helper to this module does not leak through
-    ``from dqlitedbapi.exceptions import *``.
-    """
+    """Pin ``exceptions.__all__`` so private helpers stay out of ``import *``."""
 
     def test_exceptions_module_has_all(self) -> None:
         from dqlitedbapi import exceptions as exc_mod
@@ -183,11 +159,7 @@ class TestExceptionsModuleAll:
 
 
 class TestTypesModuleAll:
-    """``dqlitedbapi.types`` re-exports PEP 249 type constructors and
-    type objects. Pin the ``__all__`` list so private helpers
-    (``_iso8601_from_datetime``, ``_Description``, ...) stay
-    private.
-    """
+    """Pin ``types.__all__`` so private helpers stay private."""
 
     def test_types_module_has_all(self) -> None:
         from dqlitedbapi import types as types_mod
@@ -224,26 +196,19 @@ class TestTypesModuleAll:
     def test_types_module_wildcard_import_does_not_leak_private_helpers(self) -> None:
         from dqlitedbapi import types as types_mod
 
-        # Sanity: the private alias lives on the module but stays out of __all__.
         assert hasattr(types_mod, "_Description")
         assert "_Description" not in types_mod.__all__
         assert "_iso8601_from_datetime" not in types_mod.__all__
 
 
 class TestSqliteVersionSourceOfTruth:
-    """Pin: ``sqlite_version_info`` and ``sqlite_version`` are
-    re-exported from a single module-private source
-    (``dqlitedbapi._constants``); sync and async surfaces share the
-    same tuple / string objects. A maintainer who bumped the value
-    in one place but forgot the other would have produced silent
-    divergence; sharing the source makes that drift impossible at
-    the literal level."""
+    """Sync and async surfaces share one ``_constants`` source for
+    ``sqlite_version``/``_info``, so the values cannot drift."""
 
     def test_sync_and_async_share_sqlite_version_info_object(self) -> None:
         import dqlitedbapi.aio
 
-        # Identity (``is``), not just equality — proves the shared-
-        # source-of-truth refactor is in place.
+        # Identity, not equality: proves the shared source of truth.
         assert dqlitedbapi.sqlite_version_info is dqlitedbapi.aio.sqlite_version_info
 
     def test_sync_and_async_share_sqlite_version_string(self) -> None:

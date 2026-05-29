@@ -1,14 +1,5 @@
-"""Pin: ``AsyncConnection.__aexit__``'s commit-cancel arm and
-rollback-Exception arm BOTH call ``force_close_transport()`` so the
-slot is invalidated for SA pool reclaim.
-
-SA's ``is_disconnect`` does NOT classify ``CancelledError`` /
-``KeyboardInterrupt`` / ``SystemExit``, and it walks ``__cause__``
-only (not ``__context__``). Without the defensive force-close,
-the slot would return to the pool with ambiguous server-side
-commit state (commit-cancel arm) or with an OPEN server-side
-transaction (rollback-Exception arm).
-"""
+"""__aexit__'s commit-cancel and rollback-Exception arms both force_close_transport() to
+invalidate the slot: SA's is_disconnect ignores cancel/KI/SystemExit and walks __cause__ only."""
 
 from __future__ import annotations
 
@@ -40,9 +31,6 @@ def _make_conn() -> AsyncConnection:
 
 @pytest.mark.asyncio
 async def test_aexit_commit_cancel_force_closes_transport() -> None:
-    """Clean-exit commit interrupted by CancelledError must
-    force-close the transport before re-raising.
-    """
     conn = _make_conn()
 
     async def cancel_commit() -> None:
@@ -60,9 +48,6 @@ async def test_aexit_commit_cancel_force_closes_transport() -> None:
 
 @pytest.mark.asyncio
 async def test_aexit_commit_keyboardinterrupt_force_closes_transport() -> None:
-    """Same pin for KeyboardInterrupt — equally ambiguous to SA's
-    is_disconnect.
-    """
     conn = _make_conn()
 
     async def ki_commit() -> None:
@@ -79,11 +64,7 @@ async def test_aexit_commit_keyboardinterrupt_force_closes_transport() -> None:
 
 @pytest.mark.asyncio
 async def test_aexit_rollback_exception_force_closes_transport() -> None:
-    """Body raises -> rollback fails with an Exception-class error ->
-    force_close_transport fires (DEBUG log already there, but the
-    side-effect was missing). PEP 343: returning None lets the body
-    exception propagate — pin via __aexit__ direct call.
-    """
+    """Body raises -> rollback fails with an Exception -> force_close_transport fires."""
     from dqlitedbapi.exceptions import OperationalError
 
     conn = _make_conn()
@@ -94,11 +75,8 @@ async def test_aexit_rollback_exception_force_closes_transport() -> None:
     conn.rollback = failing_rollback
     conn.force_close_transport = MagicMock(wraps=conn.force_close_transport)
 
-    # __aexit__ called with a body exception triple.
     body_exc = ValueError("body failure")
     await conn.__aexit__(type(body_exc), body_exc, None)
-    # PEP 343: returning None / falsy lets the body exception
-    # propagate (return type annotation is None).
     conn.force_close_transport.assert_called_once()
     assert conn._closed is True
 
@@ -133,5 +111,4 @@ async def test_aexit_rollback_success_no_force_close() -> None:
     conn.force_close_transport.assert_not_called()
 
 
-# Suppress unused-AsyncMock lint nag.
-_ = AsyncMock
+_ = AsyncMock  # keep import for ruff

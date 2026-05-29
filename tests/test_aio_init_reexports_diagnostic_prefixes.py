@@ -1,11 +1,5 @@
-"""Pin: `dqlitedbapi.aio` re-exports the three diagnostic-surface
-constants from the sync sibling.
-
-Async-only retry middleware authors should be able to import the
-canonical disconnect-discrimination prefixes from `dqlitedbapi.aio`
-without reaching into the sync surface. The constants are
-module-globals shared with the sync side; ``is``-identity holds.
-"""
+"""dqlitedbapi.aio re-exports the three diagnostic-surface constants from the sync
+sibling by identity (shared module-globals)."""
 
 from __future__ import annotations
 
@@ -32,9 +26,6 @@ def test_max_continuation_frames_upper_bound_reexported_by_identity() -> None:
 
 
 def test_all_includes_the_three_constants() -> None:
-    """Public-surface pin: the constants are in `__all__` so
-    `from dqlitedbapi.aio import *` picks them up symmetrically with
-    the sync surface."""
     assert "FAILED_TO_CONNECT_PREFIX" in dqlitedbapi.aio.__all__
     assert "CLUSTER_POLICY_REJECTION_PREFIX" in dqlitedbapi.aio.__all__
     assert "MAX_CONTINUATION_FRAMES_UPPER_BOUND" in dqlitedbapi.aio.__all__

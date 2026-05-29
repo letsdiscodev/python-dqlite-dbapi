@@ -1,14 +1,4 @@
-"""``Cursor.fetchmany(size)`` validates ``size`` is int or None.
-
-Pre-fix non-int / bool slipped past the value check and produced
-either a silent truncation (``range(1.5)`` → 1 iteration) or a
-bare ``TypeError`` outside ``dbapi.Error``. PEP 249 §7 requires
-cursor methods to raise ``dbapi.Error`` subclasses.
-
-Bool is rejected explicitly because ``True`` silently coerces to
-1 (caller-bug trap, not a useful affordance) — same shape as the
-``arraysize.setter`` rejection.
-"""
+"""``Cursor.fetchmany(size)`` rejects non-int/bool with a ``dbapi.Error`` subclass (PEP 249 §7)."""
 
 import pytest
 
@@ -22,8 +12,7 @@ from dqlitedbapi.exceptions import ProgrammingError
 def _sync_cursor() -> Cursor:
     conn = Connection("localhost:19001", timeout=2.0)
     cur = Cursor(conn)
-    # Pretend a result set is active so the type-check fires before
-    # _check_result_set; here we pre-populate the internal state.
+    # Prime an active result set so the type-check fires before _check_result_set.
     cur._description = (("a", None, None, None, None, None, None),)
     cur._rows = []
     cur._row_index = 0
@@ -70,9 +59,8 @@ async def test_fetchmany_rejects_non_int_async(bad_size: object, bad_type: str) 
 
 
 def test_fetchmany_none_uses_arraysize_sync() -> None:
-    """None still routes to ``self._arraysize`` — the validation only
-    applies to non-None non-int values."""
+    """None routes to ``self._arraysize``; validation applies only to non-None non-int."""
     cur = _sync_cursor()
     cur.arraysize = 5
-    rows = cur.fetchmany()  # None → arraysize
+    rows = cur.fetchmany()
     assert rows == []

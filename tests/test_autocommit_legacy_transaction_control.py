@@ -1,16 +1,5 @@
-"""Pin: ``Connection.autocommit`` setter accepts the stdlib
-``sqlite3.LEGACY_TRANSACTION_CONTROL`` sentinel (``-1``) in
-addition to ``True``.
-
-Stdlib 3.12+ uses the sentinel as the "do not change isolation"
-signal that cross-driver code passes through. Without this
-acceptance, callers porting from stdlib hit a spurious
-``NotSupportedError``.
-
-Stdlib itself enforces a similarly strict gate (only ``True`` /
-``False`` / ``LEGACY_TRANSACTION_CONTROL``); we mirror that —
-no truthy coercion.
-"""
+"""Pin: ``autocommit`` setter accepts True and the LEGACY_TRANSACTION_CONTROL
+sentinel (-1), with a strict gate (no truthy coercion) mirroring stdlib."""
 
 from __future__ import annotations
 

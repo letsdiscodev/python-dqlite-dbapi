@@ -1,23 +1,9 @@
-"""Pin: ``AsyncCursor.fetchall`` yields cooperatively while applying a
-custom ``row_factory`` to a large buffer, so the per-row transform does
-not monopolise the user's event loop.
+"""``AsyncCursor.fetchall`` yields cooperatively while applying a custom
+``row_factory`` to a large buffer so the transform does not pin the user's loop.
 
-When ``row_factory`` is set, ``fetchall`` transforms every remaining
-buffered row by calling the user's factory. The prior shape was a single
-list comprehension with no ``await`` — for a multi-100k-row buffer that
-pinned the user's loop for the whole transform (no sibling coroutine
-could run, cancellation could not land). This is the same failure mode
-already fixed for the materialisation pass (``_convert_rows_async``) and
-the description NULL-rescue scan; ``fetchall``'s fetch-time row_factory
-transform was a residual site the prior fixes did not reach.
-
-The fix gates the yield on ``_LARGE_RESULT_ROW_THRESHOLD`` (small results
-keep the straight comprehension — zero scheduler overhead) and fires
-``await asyncio.sleep(0)`` every ``_CONVERT_ROWS_YIELD_EVERY`` rows. The
-``row_factory is None`` path (a plain slice) is unaffected. The
-load-bearing raise-safety contract — factory applied BEFORE
-``_row_index`` advances, so a raise/cancel leaves the whole result
-re-fetchable — is preserved.
+Gated on ``_LARGE_RESULT_ROW_THRESHOLD``; the raise-safety contract (factory
+applied before ``_row_index`` advances, so a raise/cancel leaves the result
+re-fetchable) is preserved.
 """
 
 from __future__ import annotations
@@ -50,9 +36,7 @@ def _prime_async_cursor(rows: list[tuple[Any, ...]]) -> AsyncCursor:
 
 @pytest.mark.asyncio
 async def test_fetchall_row_factory_large_buffer_yields_between_batches() -> None:
-    """A 50k-row fetchall under a row_factory must let a sibling ticker
-    run a non-trivial number of times. Under the prior single
-    comprehension the sibling got zero ticks."""
+    """A 50k-row fetchall under a row_factory must let a sibling ticker run."""
     cur = _prime_async_cursor([(i,) for i in range(50_000)])
     cur._row_factory = lambda _c, r: tuple(r)
 
@@ -85,8 +69,7 @@ async def test_fetchall_row_factory_large_buffer_yields_between_batches() -> Non
 
 @pytest.mark.asyncio
 async def test_fetchall_row_factory_small_buffer_no_yield() -> None:
-    """Small results (below the threshold) must not pay any yield
-    overhead — keep the straight comprehension."""
+    """Small results (below the threshold) must not pay any yield overhead."""
     cur = _prime_async_cursor([(i,) for i in range(100)])
     cur._row_factory = lambda _c, r: tuple(r)
 
@@ -115,8 +98,7 @@ async def test_fetchall_row_factory_small_buffer_no_yield() -> None:
 
 @pytest.mark.asyncio
 async def test_fetchall_row_factory_large_buffer_result_identity() -> None:
-    """The yielding transform must be byte-identical to the prior
-    comprehension output (same objects, same order)."""
+    """The yielding transform must produce identical output (same objects, order)."""
     rows = [(i, i * 2) for i in range(10_000)]
     cur = _prime_async_cursor(list(rows))
     cur._description = (
@@ -132,9 +114,7 @@ async def test_fetchall_row_factory_large_buffer_result_identity() -> None:
 
 @pytest.mark.asyncio
 async def test_fetchall_row_factory_raise_leaves_index_unchanged() -> None:
-    """Raise-safety contract: a factory that raises mid-transform leaves
-    ``_row_index`` unchanged so the whole result is re-fetchable. Must
-    survive the yield insertion."""
+    """Raise-safety: a factory raising mid-transform leaves ``_row_index`` unchanged."""
     cur = _prime_async_cursor([(i,) for i in range(10_000)])
 
     def boom(_c: object, r: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -147,21 +127,18 @@ async def test_fetchall_row_factory_raise_leaves_index_unchanged() -> None:
     with pytest.raises(ValueError, match="boom"):
         await cur.fetchall()
 
-    # Index NOT advanced — the whole buffer is still re-fetchable.
     assert cur._row_index == 0
 
 
 @pytest.mark.asyncio
 async def test_fetchall_row_factory_typeerror_wrapped_on_yielding_path() -> None:
-    """A factory ``TypeError`` raised on the LARGE (yielding) path — on a
-    row well past the first yield boundary — must still surface as
-    ``DataError``, not leak the bare ``TypeError``."""
+    """A factory TypeError on the large (yielding) path must surface as DataError."""
     from dqlitedbapi.exceptions import DataError
 
     cur = _prime_async_cursor([(i,) for i in range(20_000)])
 
     def factory(_c: object, r: tuple[Any, ...]) -> tuple[Any, ...]:
-        if r[0] == 9_000:  # past the 4096-row yield boundary
+        if r[0] == 9_000:  # past the yield boundary
             raise TypeError("argument 1 must be a cursor")
         return tuple(r)
 
@@ -174,19 +151,16 @@ async def test_fetchall_row_factory_typeerror_wrapped_on_yielding_path() -> None
 
 @pytest.mark.asyncio
 async def test_fetchall_row_factory_cancel_mid_transform_leaves_index() -> None:
-    """A cancel landing during a large transform leaves ``_row_index``
-    unchanged so the whole result is re-fetchable. Drive it by cancelling
-    the fetchall task after it has started yielding."""
+    """A cancel during a large transform leaves ``_row_index`` unchanged."""
     cur = _prime_async_cursor([(i,) for i in range(200_000)])
     cur._row_factory = lambda _c, r: tuple(r)
 
     task = asyncio.create_task(cur.fetchall())
-    # Let the transform start and cross several yield boundaries.
+    # Let the transform cross several yield boundaries before cancelling.
     for _ in range(5):
         await asyncio.sleep(0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # Index untouched — re-fetchable in full.
     assert cur._row_index == 0

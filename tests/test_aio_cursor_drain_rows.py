@@ -1,11 +1,4 @@
-"""``AsyncCursor.drain_rows`` transfers ownership of the row buffer
-to the caller without copying.
-
-Intended for adapter layers that rebuffer rows immediately after
-fetch and would otherwise pay 2× memory for the duration of the
-transfer (the cursor's list AND the adapter's deque). The drain
-is sync (no await) and bypasses ``_row_factory``.
-"""
+"""AsyncCursor.drain_rows transfers row-buffer ownership without copying or row_factory."""
 
 from typing import Any
 from unittest.mock import MagicMock
@@ -37,34 +30,21 @@ def test_drain_rows_returns_buffer_and_clears_cursor() -> None:
 
     drained = cur.drain_rows()
 
-    # Same list object — no copy.
-    assert drained is rows
-    # Buffer cleared on the cursor.
+    assert drained is rows  # same list object, no copy
     assert cur._rows == []
     assert cur._row_index == 0
 
 
 def test_drain_rows_post_drain_cursor_returns_no_rows() -> None:
-    """After drain_rows the cursor's row buffer is empty, so a
-    follow-up fetchall must return [] rather than indexing into the
-    cleared buffer with a stale index."""
     rows = [(1,), (2,)]
     cur = _prime_async_cursor(rows)
 
     cur.drain_rows()
-    # ``fetchall`` is async on AsyncCursor — but the test runs the
-    # post-condition check via the synchronous attribute state. A
-    # downstream adapter is expected to close immediately after
-    # drain, which is why fetchall is not exercised here directly.
     assert cur._rows == []
 
 
 def test_drain_rows_does_not_apply_row_factory() -> None:
-    """drain_rows is a raw transfer — adapters that need
-    factory-applied rows fetch through fetchall instead."""
-
     def factory(_c: object, _r: tuple[Any, ...]) -> tuple[Any, ...]:
-        # Should NOT be invoked.
         pytest.fail("row_factory invoked during drain_rows")
 
     cur = _prime_async_cursor([(1,), (2,)])
@@ -75,9 +55,7 @@ def test_drain_rows_does_not_apply_row_factory() -> None:
 
 
 def test_drain_rows_preserves_metadata_fields() -> None:
-    """rowcount / lastrowid / description survive the drain — the
-    adapter reads metadata before draining and the values must not
-    be scrubbed by the drain itself."""
+    """rowcount / lastrowid / description survive the drain."""
     cur = _prime_async_cursor([(1,)])
     cur._rowcount = 1
     cur._lastrowid = 42

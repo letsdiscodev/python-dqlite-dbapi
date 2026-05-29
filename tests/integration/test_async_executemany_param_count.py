@@ -1,21 +1,5 @@
-"""Async ``executemany`` validates the per-row binding count locally,
-matching the sync surface and stdlib ``sqlite3``.
-
-PEP 249 / stdlib ``sqlite3`` raise ``ProgrammingError`` for a row whose
-binding count disagrees with the statement's ``?`` placeholders, before
-touching the database. The sync surface already does this; the async
-``AsyncCursor.executemany`` previously sent a wrong-arity row to the
-server and surfaced an ``InterfaceError`` (the server's SQLITE_RANGE)
-after a wire round-trip — a different exception class and a worse
-diagnostic than the sync sibling for the same deterministic caller bug.
-
-These tests pin the async surface to the sync behaviour: the arity
-check is local and raises ``ProgrammingError``, a single wrong-arity
-row inserts nothing, and a ``str`` row still gets the sharp structural
-diagnostic (a sequence was expected) rather than the misleading
-per-character count — pinning that the structural reject runs before
-the arity check.
-"""
+"""Async ``executemany`` validates per-row binding count locally (``ProgrammingError`` before
+any wire write), matching the sync surface and stdlib ``sqlite3``."""
 
 from __future__ import annotations
 
@@ -36,15 +20,9 @@ async def test_async_executemany_wrong_arity_raises_programming_error(
         await cur.execute("CREATE TABLE async_emany_arity (a, b)")
         await conn.commit()
 
-        # One value supplied for a two-placeholder statement. The sync
-        # surface raises ``ProgrammingError`` locally; the async surface
-        # must match rather than emitting an ``InterfaceError`` after a
-        # wire round-trip.
         with pytest.raises(ProgrammingError, match="Incorrect number of bindings supplied"):
             await cur.executemany("INSERT INTO async_emany_arity (a, b) VALUES (?, ?)", [(3,)])
 
-        # The arity check fires locally, before any wire write — nothing
-        # was inserted.
         check = conn.cursor()
         await check.execute("SELECT count(*) FROM async_emany_arity")
         (count,) = await check.fetchone()  # type: ignore[misc]
@@ -60,12 +38,8 @@ async def test_async_executemany_wrong_arity_raises_programming_error(
 async def test_async_executemany_str_row_gets_structural_diagnostic(
     cluster_address: str,
 ) -> None:
-    # A single ``str`` row (two chars) against a one-placeholder
-    # statement must surface the structural "sequence of values"
-    # diagnostic, NOT the misleading "Incorrect number of bindings ...
-    # uses 1 ... 2 supplied" per-character count. This pins that the
-    # structural reject runs before the arity check, matching the sync
-    # sibling's ordering.
+    # A ``str`` row must get the structural "sequence of values" diagnostic, not the misleading
+    # per-character arity count: the structural reject runs before the arity check.
     conn = await aconnect(cluster_address)
     try:
         cur = conn.cursor()
@@ -86,8 +60,6 @@ async def test_async_executemany_str_row_gets_structural_diagnostic(
 async def test_async_and_sync_executemany_agree_on_arity_error(
     cluster_address: str,
 ) -> None:
-    # The async and sync surfaces must raise the same exception class
-    # and message for an identical wrong-arity batch.
     from dqlitedbapi import connect
 
     sync_exc: ProgrammingError | None = None

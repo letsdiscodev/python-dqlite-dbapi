@@ -1,15 +1,7 @@
-"""Pin: ``_ExecuteManyAccumulator.push`` snapshots cursor fields
-BEFORE reading ``_closed`` and early-returns when the snapshot
-captures a cascade-zeroed cursor. The accompanying executemany
-loop only advances ``_completed_iterations`` when the cursor is
-still operable, so the (count, anchor) invariant on the
-BaseException arm holds even under tier-2 cascade races.
+"""``_ExecuteManyAccumulator.push`` early-returns when the cursor was cascade-zeroed.
 
-Without this defence, a sibling-thread / foreign-thread cascade
-landing between an iteration's wire-return and ``acc.push(self)``
-would capture stale-zero ``_description`` / ``_rows`` /
-``_rowcount`` into the accumulator and advance the counter past
-the push that captured nothing meaningful.
+Guards against a concurrent cascade landing between an iteration's wire-return and
+``acc.push(self)``, which would otherwise capture stale-zero state.
 """
 
 from __future__ import annotations
@@ -20,10 +12,7 @@ from dqlitedbapi.cursor import _ExecuteManyAccumulator
 
 
 def test_push_skips_when_cursor_closed_under_snapshot() -> None:
-    """A cursor whose ``_closed`` flipped True after the snapshot
-    is captured (simulating a cascade race) is NOT pushed: the
-    accumulator's ``_pushed`` counter stays unchanged.
-    """
+    """A cursor whose ``_closed`` flipped True after the snapshot is NOT pushed."""
     acc = _ExecuteManyAccumulator(max_rows=None)
 
     cursor = MagicMock()
@@ -31,7 +20,7 @@ def test_push_skips_when_cursor_closed_under_snapshot() -> None:
     cursor._rows = [("row1",)]
     cursor._rowcount = 1
     cursor._lastrowid = 5
-    cursor._closed = True  # simulate post-snapshot cascade
+    cursor._closed = True
 
     acc.push(cursor)
 
@@ -42,7 +31,6 @@ def test_push_skips_when_cursor_closed_under_snapshot() -> None:
 
 
 def test_push_records_when_cursor_open() -> None:
-    """Regression: open cursor still pushes coherent state."""
     acc = _ExecuteManyAccumulator(max_rows=None)
 
     cursor = MagicMock()
@@ -61,7 +49,6 @@ def test_push_records_when_cursor_open() -> None:
 
 
 def test_push_plain_dml_records_rowcount() -> None:
-    """Regression: non-row-returning DML still accumulates rowcount."""
     acc = _ExecuteManyAccumulator(max_rows=None)
 
     cursor = MagicMock()

@@ -1,26 +1,5 @@
-"""Pin the cursor-state and connection invalidation invariants when an
-``executemany`` is cancelled mid-batch.
-
-``AsyncCursor.executemany`` resets ``_rowcount``, ``_rows``,
-``_description``, ``_lastrowid``, ``_row_index`` on a ``BaseException``
-(which catches ``CancelledError``). The underlying connection is
-invalidated by ``DqliteConnection._run_protocol``'s
-``except (asyncio.CancelledError, KeyboardInterrupt, SystemExit)``
-handler. None of this was previously pinned by an integration test.
-
-A regression that, say, moves the ``_rows = []`` reset out of the
-``except BaseException`` block, or that fails to invalidate the
-underlying connection on cancellation, would silently break the
-contract.
-
-The two test cases:
-
-1. *no enclosing BEGIN*: assert cursor state reset and connection
-   invalidation.
-2. *wrapped in BEGIN*: on a fresh connection, assert the table is
-   empty — the pool's ``_reset_connection`` ROLLBACK on invalidate is
-   the production safety net.
-"""
+"""Cursor-state reset and connection invalidation when an ``executemany``
+is cancelled mid-batch, both with and without an enclosing BEGIN."""
 
 from __future__ import annotations
 
@@ -42,8 +21,7 @@ class TestExecutemanyCancelMidBatch:
             cur = conn.cursor()
             await cur.execute("DROP TABLE IF EXISTS test_em_cancel_no_begin")
             await cur.execute("CREATE TABLE test_em_cancel_no_begin (n INTEGER)")
-            # Pre-load a stale description so we can verify it is reset
-            # by the executemany cancel path.
+            # Pre-load a stale description so we can verify the cancel path resets it.
             await cur.execute("SELECT 1")
             assert cur.description is not None
 
@@ -54,19 +32,15 @@ class TestExecutemanyCancelMidBatch:
                         [(i,) for i in range(1000)],
                     )
 
-            # Cursor state has been reset to PEP-249 "undetermined".
-            # ``_lastrowid`` is intentionally NOT reset on cancellation
-            # — stdlib parity (cleared only by close()).
+            # Cursor state reset to PEP-249 "undetermined"; _lastrowid is
+            # intentionally NOT reset on cancellation (stdlib parity, cleared only by close()).
             assert cur._rowcount == -1
             assert cur._rows == []
             assert cur._description is None
             assert cur._row_index == 0
 
-            # Underlying DqliteConnection is invalidated. The next
-            # operation surfaces as InterfaceError (cursor / connection
-            # closed semantics) or OperationalError, depending on
-            # whether the dbapi adapter's ``_call_client`` wraps the
-            # invalidation as the closed shape — accept either.
+            # Connection is invalidated; the next op surfaces as InterfaceError
+            # or OperationalError depending on how _call_client wraps it.
             with pytest.raises((InterfaceError, OperationalError)):
                 await cur.execute("SELECT 1")
         finally:
@@ -75,8 +49,7 @@ class TestExecutemanyCancelMidBatch:
     async def test_cancel_inside_begin_rolls_back_partial_writes(
         self, cluster_address: str
     ) -> None:
-        # Setup table on a separate connection so the INSERT batch
-        # cancellation does not race with the CREATE TABLE.
+        # Setup on a separate connection so the cancellation can't race the CREATE TABLE.
         setup = await aconnect(cluster_address, timeout=2.0)
         try:
             cur = setup.cursor()
@@ -96,20 +69,15 @@ class TestExecutemanyCancelMidBatch:
                         [(i,) for i in range(1000)],
                     )
         finally:
-            # close() on an invalidated connection is the canonical
-            # cleanup path; the underlying transport is already torn.
             await conn.close()
 
-        # Fresh connection, verify rollback happened.
         verifier = await aconnect(cluster_address, timeout=2.0)
         try:
             vcur = verifier.cursor()
             await vcur.execute("SELECT count(*) FROM test_em_cancel_with_begin")
             row = await vcur.fetchone()
             assert row is not None
-            # The mid-batch cancel invalidates the connection; the
-            # uncommitted BEGIN is rolled back when the underlying
-            # SQLite session ends. No rows should be persisted.
+            # The uncommitted BEGIN is rolled back when the invalidated session ends.
             assert row[0] == 0
         finally:
             await verifier.close()

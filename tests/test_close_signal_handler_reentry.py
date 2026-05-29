@@ -1,18 +1,6 @@
-"""Pin: ``Connection.close()`` invoked from a signal handler while
-a prior ``_run_sync`` is parked on ``Future.result`` does not
-itself pause for ``self._timeout`` seconds in the bounded
-``_op_lock.acquire``.
-
-The SIGTERM / SIGINT operator pattern is "trap the signal,
-gracefully close the connection, exit." If close() takes
-``self._timeout`` seconds (default 10s) just to time out on its
-own held ``_op_lock``, the signal-handler shutdown is
-indistinguishable from "the driver hung."
-
-The same-thread-reentry guard at close() detects this case
-(``_op_lock.locked()`` AND we are the creator thread) and
-schedules ``_close_async`` directly on the loop instead of going
-through ``_run_sync``'s bounded acquire.
+"""close() from a signal handler (prior _run_sync parked) must not block self._timeout on
+its own held _op_lock: the same-thread-reentry guard schedules _close_async on the loop
+directly instead of going through _run_sync's bounded acquire.
 """
 
 from __future__ import annotations
@@ -33,29 +21,10 @@ def _make_with_loop_thread() -> Connection:
 
 
 def test_close_nulls_async_conn_when_run_sync_close_path_is_suppressed() -> None:
-    """``Connection.close()`` wraps the loop-side
-    ``_run_sync(self._close_async())`` call in
-    ``contextlib.suppress(Exception)``. When that suppress
-    fires (e.g. ``_run_sync`` raises before the coroutine body
-    executes — bounded ``_op_lock.acquire`` timeout, wedged
-    loop), ``_close_async``'s own ``finally`` (which nulls
-    ``self._async_conn``) never runs. The dbapi reports the
-    connection closed, but the underlying client-layer
-    connection is still strongly referenced — its writer
-    transport's FD lingers past loop teardown, surfacing as
-    ``ResourceWarning("unclosed transport")`` at GC.
-
-    Mirror the async sibling's discipline (``AsyncConnection``
-    finally clause sets ``self._async_conn = None`` on every
-    exit path): null the inner ref unconditionally before the
-    loop is closed, with a best-effort
-    ``writer.close()`` to reap the FD synchronously.
-    """
+    """close() must null self._async_conn even when the suppressed _run_sync(_close_async())
+    never runs its finally, else the writer transport FD leaks past loop teardown."""
     conn = _make_with_loop_thread()
     try:
-        # Inject a stub _async_conn so the close path actually
-        # has something to null. We don't need a real client
-        # conn — the assertion is purely on lifecycle bookkeeping.
         from unittest.mock import MagicMock
 
         stub_inner = MagicMock()
@@ -65,8 +34,7 @@ def test_close_nulls_async_conn_when_run_sync_close_path_is_suppressed() -> None
 
         # Force the _run_sync arm to raise so the suppress fires.
         def _raise(coro: object) -> None:
-            # Must close the coroutine to suppress
-            # "coroutine was never awaited" warnings.
+            # Close the coroutine to suppress "never awaited" warnings.
             with contextlib.suppress(Exception):
                 coro.close()  # type: ignore[attr-defined]
             raise RuntimeError("simulated _run_sync wedge")
@@ -74,39 +42,26 @@ def test_close_nulls_async_conn_when_run_sync_close_path_is_suppressed() -> None
         with patch.object(conn, "_run_sync", side_effect=_raise):
             conn.close()
 
-        # The load-bearing assertion: the inner reference is
-        # cleared regardless of whether _run_sync ran the
-        # coroutine. Otherwise GC of the dbapi instance is the
-        # only path to FD release, and asyncio prints
-        # "unclosed transport" at that point.
         assert conn._async_conn is None, (
             "Connection.close() must null self._async_conn even "
             "when _run_sync(self._close_async()) is suppressed — "
             "otherwise the underlying writer transport leaks past "
             "loop teardown."
         )
-        # Best-effort writer.close() ran so the FD is reaped
-        # synchronously instead of waiting on
-        # _SelectorSocketTransport's deferred __del__.
+        # Best-effort writer.close() reaps the FD synchronously instead of
+        # waiting on the transport's deferred __del__.
         stub_inner._protocol._writer.close.assert_called_once_with()
     finally:
         conn._closed = True
 
 
 def test_close_does_not_block_when_op_lock_already_held_on_creator_thread() -> None:
-    """Reproduce the signal-handler scenario: acquire ``_op_lock``
-    on the creator thread (mocking the "_run_sync is parked"
-    state), then call ``close()``. close() must NOT block in the
-    bounded acquire — it must detect same-thread reentry and
-    schedule the close on the loop directly."""
+    """With _op_lock held on the creator thread, close() must not block the bounded acquire:
+    it detects same-thread reentry and schedules the close on the loop directly."""
     conn = _make_with_loop_thread()
     try:
-        # Hold _op_lock from the creator thread AND stamp the owner
-        # slot to simulate the "_run_sync is parked" state. The
-        # close() bypass probe is now owner-aware
-        # (``_op_lock_owner == current thread``) rather than the
-        # bare ``locked()`` probe — needed under tier-2 to avoid
-        # releasing a sibling thread's legitimate lock.
+        # Stamp the owner slot too: the bypass probe is owner-aware (not a bare
+        # locked() probe) to avoid releasing a sibling thread's lock under tier-2.
         assert conn._op_lock.acquire(blocking=False)
         conn._op_lock_owner = threading.get_ident()
         try:
@@ -114,8 +69,6 @@ def test_close_does_not_block_when_op_lock_already_held_on_creator_thread() -> N
             conn.close()
             elapsed = time.monotonic() - t0
         finally:
-            # Release in case close() didn't (it shouldn't have to —
-            # _run_sync was bypassed). RuntimeError if already released.
             with contextlib.suppress(RuntimeError):
                 conn._op_lock.release()
         assert elapsed < 1.0, (
@@ -124,17 +77,13 @@ def test_close_does_not_block_when_op_lock_already_held_on_creator_thread() -> N
             f"(elapsed: {elapsed:.2f}s; configured timeout: 2.0s)"
         )
     finally:
-        # Ensure conn is fully closed
         conn._closed = True
 
 
 def test_close_takes_normal_path_when_op_lock_not_held() -> None:
-    """The same-thread-reentry guard fires only when _op_lock is
-    already held. Normal close() (no prior _run_sync in flight)
-    goes through the regular _run_sync path."""
+    """With _op_lock not held, close() goes through the regular _run_sync path."""
     conn = _make_with_loop_thread()
     try:
-        # _op_lock NOT held; close() should go through _run_sync.
         with patch.object(conn, "_run_sync") as run_sync_mock:
             run_sync_mock.return_value = None
             conn.close()
@@ -147,10 +96,8 @@ def test_close_takes_normal_path_when_op_lock_not_held() -> None:
 
 
 def test_close_takes_normal_path_when_op_lock_held_by_other_thread() -> None:
-    """If _op_lock is held by a different thread (cross-thread close
-    is a separate hazard, but the guard should still take the
-    normal path so the bounded acquire correctly waits / times
-    out as a regular cross-thread acquire)."""
+    """If _op_lock is held by a different thread, the guard takes the normal path so the
+    bounded acquire waits/times out as a regular cross-thread acquire."""
     conn = _make_with_loop_thread()
     try:
         sibling_done = threading.Event()
@@ -166,13 +113,9 @@ def test_close_takes_normal_path_when_op_lock_held_by_other_thread() -> None:
         sibling.start()
         try:
             sibling_done.wait()
-            # Now the lock is held by the sibling thread, NOT the
-            # creator thread. The reentry guard's
-            # threading.get_ident() check fails and the normal path
-            # runs. We can't fully test this without spinning the
-            # bounded acquire timeout — just verify
-            # threading.get_ident() != creator_thread is honoured by
-            # exercising the guard predicate logic.
+            # Lock held by the sibling, not the creator thread, so the reentry
+            # guard's get_ident() check fails and the normal path runs. Exercise
+            # the guard predicate rather than spinning the bounded-acquire timeout.
             assert conn._op_lock.locked()
             assert threading.get_ident() == conn._creator_thread
         finally:

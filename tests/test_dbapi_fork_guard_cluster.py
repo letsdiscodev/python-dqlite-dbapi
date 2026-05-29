@@ -1,30 +1,5 @@
-"""Fork-guard cluster pins for dbapi sync + aio surfaces.
-
-Covers four mirror-of-sibling defects:
-
-1. ``AsyncConnection._ensure_connection`` fast-path return — when
-   ``_async_conn`` is already set, the path skipped the pid check
-   so a forked child got the parent's inner conn silently.
-2. ``AsyncConnection._stub_unsupported`` — the stdlib-``sqlite3``-
-   parity stub family checked only ``_closed`` so a forked child
-   calling ``executescript`` / ``set_authorizer`` / ``total_changes``
-   etc. saw ``NotSupportedError`` instead of the canonical
-   ``InterfaceError("after fork")``.
-3. Sync ``Connection._stub_unsupported`` — symmetric to (2).
-4. Sync ``Connection.close()`` fork branch — failed to null
-   ``_async_conn`` / ``_loop`` / ``_thread`` / ``_connect_lock``
-   / ``_transaction_owner`` so the inherited daemon-loop Thread
-   stayed pinned in ``threading._active`` forever in the child.
-   Mirror at ``force_close_transport`` fork branch.
-
-Each pin uses the project's established monkeypatch-based fork
-simulation (``monkeypatch.setattr(dqliteclient.connection,
-"_current_pid", os.getpid() + 1)``) rather than a real ``os.fork`` —
-the production code reads ``_current_pid`` via ``get_current_pid()``
-and this is the same shape used by
-``test_async_connection_cursor_fork_guard.py`` and
-``test_connection_after_fork_raises.py``.
-"""
+"""Fork-guard cluster pins for dbapi sync + aio surfaces (ensure-connection
+fast path, stub family, close / force_close_transport state nulling)."""
 
 from __future__ import annotations
 
@@ -68,15 +43,9 @@ class _FakeInnerConn:
 async def test_ensure_connection_fast_path_raises_after_fork(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``AsyncConnection._ensure_connection`` must raise
-    ``InterfaceError("after fork")`` on its fast-path return when a
-    fork has crossed the boundary — otherwise the forked child would
-    silently receive the parent's already-built inner
-    ``DqliteConnection`` and only fail one frame later at
-    ``cursor()`` / ``execute()``.
-    """
+    """The fast-path return must raise ``after fork`` rather than hand back
+    the parent's inner conn (which would only fail a frame later)."""
     aconn = _spawn_async_conn()
-    # Simulate "parent already connected".
     aconn._async_conn = _FakeInnerConn()  # type: ignore[assignment]
     aconn._connected_flag[0] = True
 
@@ -91,9 +60,7 @@ async def test_ensure_connection_fast_path_raises_after_fork(
 async def test_async_stub_executescript_raises_after_fork(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The stub family routes through ``_stub_unsupported``; the
-    helper must surface the canonical ``InterfaceError`` on fork
-    rather than ``NotSupportedError``."""
+    """The stub family must surface ``after fork`` rather than NotSupportedError."""
     aconn = _spawn_async_conn()
     _real_getpid = os.getpid
     monkeypatch.setattr("dqliteclient.connection.os.getpid", lambda: _real_getpid() + 1)
@@ -173,15 +140,9 @@ def test_sync_stub_total_changes_raises_after_fork(
 def test_sync_close_fork_branch_nulls_parent_loop_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``Connection.close()`` in a forked child must null
-    ``_async_conn``, ``_loop``, ``_thread``, ``_connect_lock``,
-    ``_transaction_owner`` so the child's GC can reap the daemon-
-    loop Thread + asyncio loop chain instead of pinning them via
-    ``threading._active`` forever (the daemon-loop OS thread does
-    NOT survive POSIX ``fork(2)`` — only the calling thread crosses
-    — so the Thread sits in ``_active`` indefinitely with no exit
-    event to drive its removal). Mirror of the client-layer fix.
-    """
+    """``close()`` in a forked child must null the loop/thread state: the
+    daemon-loop OS thread does not survive fork(2), so without this the
+    Thread sits in ``threading._active`` forever with no exit event."""
     import threading
 
     conn = Connection.__new__(Connection)
@@ -203,9 +164,6 @@ def test_sync_close_fork_branch_nulls_parent_loop_state(
     try:
         conn.close()
     finally:
-        # Defensive cleanup of the sentinel loop we set up above.
-        # ``close()`` should have nulled ``conn._loop`` (we still hold
-        # a local reference for the assertion + close).
         pass
 
     assert conn._async_conn is None

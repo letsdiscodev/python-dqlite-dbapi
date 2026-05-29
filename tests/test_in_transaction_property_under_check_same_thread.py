@@ -1,21 +1,6 @@
-"""Pin: ``Connection.in_transaction`` property is relaxed under
-``check_same_thread=False`` so cross-thread reads work, matching
-stdlib ``sqlite3.Connection.in_transaction`` (a plain C-level
-attribute read with no thread check).
-
-The default ``check_same_thread=True`` keeps the affinity raise for
-shipped-API compatibility; cross-thread readers that pre-date the
-relaxation continue to see ``ProgrammingError`` (e.g. monitoring
-threads that catch the raise as a "wrong-thread access detected"
-signal).
-
-The fork check is NEVER relaxed: even under
-``check_same_thread=False``, reading ``in_transaction`` from a
-forked child raises ``InterfaceError``.
-
-Closed-state precedence is preserved: ``in_transaction`` on a
-closed connection returns ``False`` (no thread check at all).
-"""
+"""Pin in_transaction under check_same_thread: relaxed (cross-thread reads
+work) when False, raises ProgrammingError cross-thread when True. The fork
+check is never relaxed, and closed connections always return False."""
 
 from __future__ import annotations
 
@@ -32,12 +17,8 @@ def _make_conn(**kwargs: object) -> Connection:
 
 
 def test_in_transaction_default_raises_cross_thread() -> None:
-    """Default ``check_same_thread=True``: cross-thread read raises
-    ProgrammingError (preserves shipped-API compatibility).
-
-    Inject a non-None ``_async_conn`` so the never-connected
-    short-circuit doesn't fire — the property has to reach the
-    thread check."""
+    """Default check_same_thread=True: cross-thread read raises
+    ProgrammingError."""
     conn = _make_conn()  # default True
 
     class _MockInner:
@@ -60,12 +41,8 @@ def test_in_transaction_default_raises_cross_thread() -> None:
 
 
 def test_in_transaction_relaxed_under_flag_returns_bool() -> None:
-    """``check_same_thread=False``: cross-thread read returns the
-    bool from the inner without raising.
-
-    Inject a non-None ``_async_conn`` whose ``in_transaction``
-    returns True; without the flag the read would raise
-    ``ProgrammingError`` from ``_check_thread``."""
+    """check_same_thread=False: cross-thread read returns the inner bool
+    without raising."""
     conn = _make_conn(check_same_thread=False)
 
     class _MockInner:
@@ -84,22 +61,13 @@ def test_in_transaction_relaxed_under_flag_returns_bool() -> None:
 
 
 def test_in_transaction_fork_check_unconditional_under_flag() -> None:
-    """Even under ``check_same_thread=False``, a forked child still
-    raises ``InterfaceError``. The fork-safety isn't a parameter.
-
-    Simulated by tampering with ``_creator_pid``."""
+    """Even under check_same_thread=False, a forked child still raises
+    InterfaceError; fork-safety isn't a parameter."""
     conn = _make_conn(check_same_thread=False)
-    # Simulate a child process; close-short-circuit MUST run BEFORE
-    # this becomes observable, so we leave _closed=False.
-    conn._creator_pid = -1  # any value != current pid
+    conn._creator_pid = -1  # simulate a child process; any value != current pid
 
-    # The closed-state precedence at the top of the property
-    # short-circuits BEFORE the fork check; tearing closed=True
-    # bypasses everything. We want the property to fire the fork
-    # check, so leave _closed=False AND _async_conn=something-
-    # non-None to defeat the never-connected short-circuit.
-    # Inject a mock that returns True for in_transaction so the
-    # property would otherwise return True.
+    # Leave _closed=False and _async_conn non-None so the property reaches the
+    # fork check rather than short-circuiting on closed/never-connected.
     class _MockInner:
         in_transaction = True
 
@@ -110,12 +78,8 @@ def test_in_transaction_fork_check_unconditional_under_flag() -> None:
 
 
 def test_in_transaction_closed_returns_false_under_flag() -> None:
-    """Closed-state precedence: even under
-    ``check_same_thread=False``, reading ``in_transaction`` on a
-    closed connection short-circuits to ``False`` without any
-    fork/thread check. This is the same as the default-True
-    behaviour; the relaxation should not change closed-state
-    semantics."""
+    """Closed-state precedence: even under check_same_thread=False, a closed
+    connection short-circuits to False without any fork/thread check."""
     conn = _make_conn(check_same_thread=False)
     conn._closed = True
     result: list[bool | None] = [None]
@@ -130,12 +94,8 @@ def test_in_transaction_closed_returns_false_under_flag() -> None:
 
 
 def test_in_transaction_same_thread_unaffected() -> None:
-    """Backward compat: same-thread read works under both flag
-    values. The relaxation only opens up cross-thread; same-thread
-    behaviour is unchanged."""
+    """Same-thread read works under both flag values."""
     conn_default = _make_conn()
     conn_relaxed = _make_conn(check_same_thread=False)
-    # Never-connected → both return False (the short-circuit at the
-    # top of the property).
     assert conn_default.in_transaction is False
     assert conn_relaxed.in_transaction is False

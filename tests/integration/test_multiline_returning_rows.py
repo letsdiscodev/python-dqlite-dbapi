@@ -1,11 +1,7 @@
-"""Integration pin: multi-line ``INSERT ... \\n RETURNING id`` returns
-the expected rows from cursor.fetchall().
+"""Multi-line ``INSERT ... \\n RETURNING id`` returns its rows.
 
-Previously the classification heuristic only matched literal-space
-RETURNING, so multi-line SQL was mis-dispatched as exec-only:
-cursor.description became None, cursor.fetchall() returned []. Pure
-data loss — no exception. This integration test exercises the full
-path end-to-end through a live cluster.
+Regression: the classification heuristic once matched only literal-space RETURNING,
+so multi-line SQL was mis-dispatched as exec-only and dropped rows silently.
 """
 
 from __future__ import annotations

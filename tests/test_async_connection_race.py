@@ -16,7 +16,7 @@ class TestAsyncConnectionRace:
 
         async def slow_connect() -> None:
             connect_started.set()
-            await asyncio.sleep(0.1)  # Simulate slow TCP handshake
+            await asyncio.sleep(0.1)
             connect_finished.set()
 
         with patch("dqlitedbapi.connection.DqliteConnection") as MockDqliteConn:
@@ -27,11 +27,8 @@ class TestAsyncConnectionRace:
             MockDqliteConn.return_value = mock_instance
 
             async def second_caller() -> bool:
-                # Wait for first caller to start connecting
                 await connect_started.wait()
-                # Now call _ensure_connection — it should wait for connect to finish
                 await conn._ensure_connection()
-                # At this point, connect must have finished
                 return connect_finished.is_set()
 
             first_task = asyncio.create_task(conn._ensure_connection())
@@ -40,5 +37,4 @@ class TestAsyncConnectionRace:
             await first_task
             connect_was_finished = await second_task
 
-            # The second caller must have seen connect_finished=True
             assert connect_was_finished, "Second caller got connection before connect() finished"

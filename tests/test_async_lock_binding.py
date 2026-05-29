@@ -1,15 +1,6 @@
-"""AsyncConnection constructed outside a running loop still works.
-
-Previously AsyncConnection eagerly called ``asyncio.Lock()`` in ``__init__``,
-binding the lock to whatever loop happened to be the current event loop at
-construction time. Creating the connection from sync glue code (e.g. the
-SQLAlchemy AsyncAdaptedConnection scaffolding) and then running it in a
-fresh ``asyncio.run()`` would fail because the lock was bound to a loop
-that had since died.
-
-Now the locks are lazily created inside ``_ensure_locks()`` on the loop
-that's actually running the operation.
-"""
+"""AsyncConnection constructed outside a running loop still works: locks are
+lazily created inside ``_ensure_locks()`` on the running loop, not eagerly
+bound to whatever loop was current at ``__init__`` time."""
 
 import asyncio
 
@@ -18,15 +9,13 @@ from dqlitedbapi.aio.connection import AsyncConnection
 
 class TestAsyncLockBinding:
     def test_construction_does_not_create_locks(self) -> None:
-        """No asyncio.Lock should exist until we're inside a loop."""
+        """No asyncio.Lock exists until inside a loop."""
         conn = AsyncConnection("localhost:19001", database="x")
         assert conn._connect_lock is None
         assert conn._op_lock is None
 
     def test_two_separate_asyncio_run_invocations_work(self) -> None:
-        """The same AsyncConnection constructed in sync context must be
-        usable from at least one asyncio.run(...) without crashing on
-        the lock construction path."""
+        """An AsyncConnection built in sync context is usable from asyncio.run()."""
         conn = AsyncConnection("localhost:19001", database="x")
 
         async def touch_locks() -> None:
@@ -36,30 +25,21 @@ class TestAsyncLockBinding:
             async with lock_b:
                 pass
 
-        # First run creates locks on a fresh loop.
         asyncio.run(touch_locks())
-        # Simulate the SQLAlchemy glue pattern: locks from the previous
-        # loop are now stale. The next asyncio.run must not reuse them
-        # (or the user must at least not observe a crash).
-        # We verify by resetting to mimic what a new-loop scenario would
-        # look like if the first loop had been stopped cleanly.
+        # Stale locks from the dead first loop must not be reused on the next run.
         conn._connect_lock = None
         conn._op_lock = None
         asyncio.run(touch_locks())
 
 
 class TestAsyncCloseResetsLocks:
-    """close() nulls the lazily-created locks so a subsequent re-use
-    from a new event loop cannot observe primitives bound to the dead
-    loop. Parity with the sync close() connect_lock reset.
-    """
+    """close() nulls the lazy locks so reuse from a new loop can't observe
+    primitives bound to the dead loop (parity with sync close())."""
 
     def test_close_without_ever_connecting_nulls_locks(self) -> None:
         async def scenario() -> None:
             conn = AsyncConnection("localhost:19001", database="x")
-            # No cursor/execute has run; _async_conn is None but the
-            # caller calls close() anyway (matches the docstring
-            # promise that close is safe even on unused connections).
+            # close() is safe even on an unused connection (_async_conn is None).
             await conn.close()
             assert conn._connect_lock is None
             assert conn._op_lock is None
@@ -68,11 +48,9 @@ class TestAsyncCloseResetsLocks:
 
 
 class TestLoopAffinityEnforcement:
-    """After the first _ensure_locks() call, the AsyncConnection is
-    pinned to that loop. Any subsequent use from a different loop must
-    raise a clean ProgrammingError instead of asyncio's internal
-    "got Future attached to a different loop" RuntimeError.
-    """
+    """After the first _ensure_locks(), the connection is pinned to that loop;
+    use from another loop raises a clean ProgrammingError, not asyncio's
+    internal "got Future attached to a different loop" RuntimeError."""
 
     def test_cross_loop_use_raises_programming_error(self) -> None:
         import asyncio
@@ -89,17 +67,9 @@ class TestLoopAffinityEnforcement:
 
         loop2 = asyncio.new_event_loop()
         try:
-            # The bound loop has been closed by ``asyncio.run`` above
-            # and may or may not have been GC'd before the next
-            # ``_ensure_locks`` call. Either way the loop-affinity
-            # discipline routes the diagnostic through
-            # ``InterfaceError`` (closed / GC'd loop — interface is
-            # gone, reconstruct) per PEP 249 §3, matching the client-
-            # layer sibling at
-            # ``dqliteclient.connection._check_in_use``. A live-but-
-            # different bound loop would raise ``ProgrammingError``;
-            # accept either subclass of ``Error`` so the pin is robust
-            # to GC timing.
+            # The bound loop was closed above; depending on GC timing the
+            # diagnostic is InterfaceError (closed/GC'd loop) or
+            # ProgrammingError (live different loop). Accept either.
             with pytest.raises((InterfaceError, ProgrammingError), match="loop"):
                 loop2.run_until_complete(touch())
         finally:
@@ -122,10 +92,8 @@ class TestLoopAffinityEnforcement:
         asyncio.run(touch())
 
     def test_close_clears_loop_pin(self) -> None:
-        """Close resets the pin so a subsequent asyncio.run on the
-        same object (e.g. test fixture reuse) works without tripping
-        the cross-loop guard.
-        """
+        """Close resets the pin so a later asyncio.run on the same object
+        (e.g. fixture reuse) does not trip the cross-loop guard."""
         import asyncio
 
         from dqlitedbapi.aio.connection import AsyncConnection

@@ -1,13 +1,5 @@
-"""Pin: the async surface re-exports the stdlib-sqlite3-parity
-NotSupportedError stubs that the sync surface already provides.
-
-``register_adapter`` is mirrored to the async surface for the same
-reason — together they cover ``register_converter`` /
-``complete_statement`` / ``enable_callback_tracebacks`` so a
-cross-driver caller porting from aiosqlite gets a
-``dbapi.NotSupportedError`` rather than ``AttributeError``
-(which escapes the dbapi.Error hierarchy).
-"""
+"""Async surface re-exports NotSupportedError stubs so a cross-driver caller gets
+``dbapi.NotSupportedError``, not an ``AttributeError`` outside the Error hierarchy."""
 
 import pytest
 

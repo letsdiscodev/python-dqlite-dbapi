@@ -1,20 +1,6 @@
-"""Pin: ``executemany``'s BaseException arm aligns ``_lastrowid``
-restoration with ``_completed_iterations`` — mid-batch raises
-(in-batch progress > 0) PRESERVE the in-batch lastrowid so callers
-using the (count, anchor) pair for idempotent compensation get a
-consistent surface. Zero-progress raises (input validation, iter 0
-raised before its += 1) restore the pre-batch snapshot.
-
-Before this pin, ``_lastrowid`` was unconditionally restored to the
-pre-batch snapshot — the rowid of the last successful in-batch
-iteration was rolled back, but ``_completed_iterations`` was
-preserved. The two observability fields disagreed: count > 0 said
-"row N committed" while lastrowid pointed at the prior batch's
-last row.
-
-Both the sync ``Cursor`` and the aio ``AsyncCursor`` siblings carry
-the snapshot/restore pair; both are pinned here.
-"""
+"""``executemany``'s BaseException arm aligns ``_lastrowid`` with ``_completed_iterations``:
+mid-batch raises preserve the in-batch lastrowid, zero-progress raises restore the
+pre-batch snapshot, so the (count, anchor) pair never disagrees."""
 
 from __future__ import annotations
 
@@ -66,10 +52,7 @@ def _make_async_cursor_with_state(completed: int, lastrowid: int | None) -> Asyn
 
 
 async def test_sync_mid_batch_raise_preserves_in_batch_lastrowid() -> None:
-    """Iteration 0 succeeds (writes lastrowid=42), iteration 1 raises:
-    lastrowid must be preserved at 42 (matching _completed_iterations==1),
-    not restored to the pre-batch snapshot of 7.
-    """
+    """Iter 0 writes lastrowid=42, iter 1 raises: lastrowid stays 42, not pre-batch 7."""
     cur = _make_sync_cursor_with_state(completed=2, lastrowid=7)
 
     calls = {"n": 0}
@@ -95,17 +78,12 @@ async def test_sync_mid_batch_raise_preserves_in_batch_lastrowid() -> None:
 
 
 async def test_sync_zero_progress_raise_restores_pre_batch_lastrowid() -> None:
-    """Iteration 0 raises BEFORE writing lastrowid: _completed_iterations
-    is still 0, so both lastrowid AND completed_iterations restore to
-    pre-batch snapshots.
-    """
+    """Iter 0 raises before writing lastrowid: both fields restore to pre-batch."""
     cur = _make_sync_cursor_with_state(completed=2, lastrowid=7)
 
     async def fake_execute_async(self_inner: Cursor, operation: str, params: object) -> None:
         raise RuntimeError("iter-0 raised")
 
-    # The first call to _execute_async raises; counter never
-    # increments → restoration path.
     with (
         patch.object(Cursor, "_execute_async", fake_execute_async),
         pytest.raises(RuntimeError, match="iter-0 raised"),

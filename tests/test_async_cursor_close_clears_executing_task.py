@@ -1,22 +1,5 @@
-"""Pin: ``AsyncCursor.close()`` clears ``_executing_task`` alongside
-the rest of the per-execute state.
-
-The execute / executemany entry points re-check ``_check_closed``
-first, so a stale ``_executing_task`` on a closed cursor is not
-load-bearing on the operational path. The scrub keeps the closed-
-cursor invariant uniform: any introspection path (debug helpers,
-third-party event hooks) that reads ``_executing_task`` on a closed
-cursor sees ``None`` rather than the completed task that ran the
-final ``execute()``.
-
-Sibling scrubs already pinned in ``close()``:
-
-- ``_rows`` / ``_description`` / ``_rowcount`` / ``_lastrowid`` /
-  ``_row_index`` (see ``test_aio_cursor_close_scrubs_state.py``)
-- ``_connection`` → ``weakref.proxy`` swap
-
-``_executing_task`` was the residual slot.
-"""
+"""``AsyncCursor.close()`` clears ``_executing_task`` so closed-cursor introspection sees ``None``
+rather than the completed task that ran the final ``execute()``."""
 
 import asyncio
 from unittest.mock import MagicMock
@@ -46,10 +29,7 @@ def _bare_async_cursor() -> AsyncCursor:
 
 async def test_close_clears_executing_task_when_set() -> None:
     cur = _bare_async_cursor()
-    # Simulate state at the end of a successful execute: the
-    # ``_executing_task`` was set during execute entry and would
-    # normally be cleared on the success path. To pin the close-time
-    # scrub, install a non-None task and call close() directly.
+    # Install a non-None task to pin the close-time scrub.
     cur._executing_task = asyncio.current_task()
     assert cur._executing_task is not None
 
@@ -75,6 +55,5 @@ async def test_close_clear_is_idempotent() -> None:
     cur._executing_task = asyncio.current_task()
     cur.close()
     assert cur._executing_task is None
-    # Second close (PEP 249 idempotent contract) keeps the scrub.
-    cur.close()
+    cur.close()  # idempotent (PEP 249)
     assert cur._executing_task is None

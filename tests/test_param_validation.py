@@ -1,10 +1,4 @@
-"""PEP 249 qmark parameter validation tests.
-
-PEP 249: for ``qmark`` paramstyle, "the sequence is mandatory and the
-driver will not accept mappings." We additionally reject ``set``/
-``frozenset`` because they are unordered and would silently scramble
-positional bindings.
-"""
+"""qmark param validation: reject mappings (PEP 249) and unordered set/frozenset."""
 
 import pytest
 

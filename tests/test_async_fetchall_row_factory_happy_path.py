@@ -1,19 +1,5 @@
-"""Pin: ``AsyncCursor.fetchall`` happy-path for a custom row_factory.
-
-The raise-path is covered by
-``test_fetchall_row_factory_raise_replay.py`` (the
-"factory raises → index unchanged" invariant). The SUCCESS path —
-factory applied to every row AND ``_row_index`` advanced to the end
-of the buffer AFTER the transform — had no direct pin.
-
-Without this pin, a refactor that reverses the order (advance index
-first, transform second) would silently regress: the transformed
-output still matches the raw rows in shape, and only a factory raise
-would surface the divergence. This file asserts both halves of the
-contract directly.
-
-See ``aio/cursor.py::AsyncCursor.fetchall`` L795-806.
-"""
+"""Pin: ``AsyncCursor.fetchall`` applies row_factory to every row, then
+advances ``_row_index`` to the buffer end (advance-only-on-success)."""
 
 from __future__ import annotations
 
@@ -41,9 +27,7 @@ def _prime_async_cursor(rows: list[tuple[Any, ...]]) -> AsyncCursor:
 
 
 async def test_async_fetchall_applies_row_factory_and_advances_index() -> None:
-    """fetchall under a row_factory returns the transformed rows AND
-    advances ``_row_index`` to ``len(self._rows)`` AFTER the transform
-    completes — the load-bearing "advance only on success" invariant."""
+    """Returns transformed rows, then advances ``_row_index`` to the buffer end."""
     cur = _prime_async_cursor([(1, "a"), (2, "b")])
     cur._description = (
         ("id", None, None, None, None, None, None),
@@ -57,9 +41,6 @@ async def test_async_fetchall_applies_row_factory_and_advances_index() -> None:
 
     result = await cur.fetchall()
 
-    # Transform applied to every row.
     assert result == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
-    # Index advanced AFTER the transform — to the full buffer length.
     assert cur._row_index == 2
-    # A second fetchall after success returns empty (no rows left).
     assert await cur.fetchall() == []

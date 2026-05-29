@@ -1,10 +1,4 @@
-"""PRAGMA write-form dispatches through the row-returning branch but
-produces zero columns; ``description`` must be ``None`` to match
-stdlib ``sqlite3``, not ``[]`` / ``()`` from an empty comprehension.
-
-Mocks the wire client response so the test does not require a live
-dqlite cluster.
-"""
+"""PRAGMA write-form produces zero columns; description must be None (stdlib parity)."""
 
 from __future__ import annotations
 
@@ -35,7 +29,7 @@ def _make_sync_cursor_with_mock_response(response: tuple[Any, Any, Any, Any]) ->
 
 class TestPragmaWriteDescriptionNone:
     def test_pragma_write_form_sets_description_none(self) -> None:
-        # Server returns (columns=[], column_types=[], row_types=[], rows=[]).
+        # Server returns (columns, column_types, row_types, rows), all empty.
         c = _make_sync_cursor_with_mock_response(([], [], [], []))
         c.execute("PRAGMA foreign_keys = ON")
         assert c.description is None, (
@@ -50,11 +44,5 @@ class TestPragmaWriteDescriptionNone:
         assert len(c.description) == 1
 
 
-# Async equivalent is covered by the shared behaviour: ``AsyncCursor``'s
-# row-returning branch in aio/cursor.py uses the same ``if not columns:
-# self._description = None`` guard as the sync branch tested above.
-# Mocking the full async _ensure_connection / op_lock path to exercise
-# it end-to-end through the public ``execute`` entry would duplicate
-# a lot of existing test infrastructure; the sync coverage pins the
-# contract, and the async mirror is a straight copy of the same
-# branch.
+# Async path uses the same ``if not columns: self._description = None`` guard;
+# the sync coverage above pins the shared contract.

@@ -18,7 +18,6 @@ def test_sync_executemany_returning_accumulates_rows(cluster_address: str) -> No
         assert cur.rowcount == 3
         rows = cur.fetchall()
         assert len(rows) == 3
-        # ids must be 1, 2, 3 in insert order.
         assert [r[0] for r in rows] == [1, 2, 3]
         conn.rollback()
 

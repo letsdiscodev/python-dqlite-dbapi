@@ -1,12 +1,7 @@
-"""Pin: ``with conn.transaction(): conn.commit()`` raises
-``InterfaceError`` instead of silently exiting the transaction.
+"""A stray commit()/rollback() inside ``with conn.transaction()`` raises InterfaceError.
 
-Sync sibling of ``test_async_transaction_ctxmgr_rejects_stray_commit``.
-The ctxmgr owns transaction boundaries — a stray ``conn.commit()``
-inside the body would otherwise end the transaction without exiting
-the ``with`` block, and the surrounding rollback-at-exit no-ops
-because ``in_transaction`` is already False. psycopg /
-psycopg2.connection both reject the same shape.
+The ctxmgr owns the boundaries; otherwise the stray commit ends the tx and the exit-time
+rollback no-ops (in_transaction already False). Matches psycopg/psycopg2.
 """
 
 from __future__ import annotations
@@ -44,21 +39,16 @@ def test_rollback_inside_transaction_ctxmgr_raises(cluster_address: str) -> None
 def test_commit_outside_transaction_ctxmgr_still_works(
     cluster_address: str,
 ) -> None:
-    """Negative pin: bare ``conn.commit()`` outside the ctxmgr is
-    unaffected. The ctxmgr-owns-boundaries guard fires only when the
-    owner-thread token matches."""
+    """Bare commit() outside the ctxmgr is unaffected; the guard fires only for the owner."""
     conn = connect(cluster_address, database="test_sync_tx_stray_commit", timeout=2.0)
     try:
-        conn.commit()  # no-op (autocommit; no tx active) — must not raise
+        conn.commit()  # no-op (no tx active) — must not raise
     finally:
         conn.close()
 
 
 def test_nested_transaction_ctxmgr_rejected(cluster_address: str) -> None:
-    """Pin: nested ``with conn.transaction()`` raises immediately.
-    Two levels of ctxmgr would have ambiguous semantics — the inner
-    body's commit would close the outer's transaction. Match the
-    async sibling's nested-rejection discipline."""
+    """Nested ``with conn.transaction()`` raises: the inner commit would close the outer tx."""
     conn = connect(cluster_address, database="test_sync_tx_stray_commit", timeout=2.0)
     try:
         with (
@@ -72,8 +62,7 @@ def test_nested_transaction_ctxmgr_rejected(cluster_address: str) -> None:
 
 
 def test_transaction_commits_on_clean_exit(cluster_address: str) -> None:
-    """Happy-path pin: a clean exit commits. Inserts a row inside the
-    body, exits cleanly, then re-reads to confirm the row persists."""
+    """A clean exit commits: the row inserted in the body persists."""
     conn = connect(cluster_address, database="test_sync_tx_commit_pin", timeout=2.0)
     try:
         cur = conn.cursor()
@@ -83,7 +72,6 @@ def test_transaction_commits_on_clean_exit(cluster_address: str) -> None:
         with conn.transaction():
             cur.execute("INSERT INTO sync_tx_pin (id, name) VALUES (?, ?)", (1, "alice"))
 
-        # New cursor (defensive — the original would also work).
         cur2 = conn.cursor()
         cur2.execute("SELECT id, name FROM sync_tx_pin WHERE id = ?", (1,))
         rows = cur2.fetchall()
@@ -93,8 +81,7 @@ def test_transaction_commits_on_clean_exit(cluster_address: str) -> None:
 
 
 def test_transaction_rollback_on_exception(cluster_address: str) -> None:
-    """A body exception triggers ROLLBACK — the inserted row must NOT
-    persist after the ``with`` block re-raises."""
+    """A body exception triggers ROLLBACK; the inserted row must not persist."""
     conn = connect(cluster_address, database="test_sync_tx_rollback_pin", timeout=2.0)
     try:
         cur = conn.cursor()

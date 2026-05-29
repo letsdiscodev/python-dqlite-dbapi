@@ -1,4 +1,4 @@
-"""Tests that cursor raises errors when the connection is not usable."""
+"""Cursor surfaces errors when the underlying connection is not connected."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
@@ -9,7 +9,6 @@ from dqlitedbapi.cursor import Cursor
 
 
 def _make_mock_connection_not_connected() -> MagicMock:
-    """Create a mock Connection where the underlying DqliteConnection is not connected."""
     from dqliteclient.exceptions import DqliteConnectionError
 
     mock_async_conn = AsyncMock()
@@ -37,7 +36,6 @@ def _make_mock_connection_not_connected() -> MagicMock:
 
 class TestCursorProtocolCheck:
     def test_execute_query_raises_error_when_not_connected(self) -> None:
-        """execute() should raise when the connection is not connected."""
         mock_conn = _make_mock_connection_not_connected()
         cursor = Cursor(mock_conn)
 
@@ -45,7 +43,6 @@ class TestCursorProtocolCheck:
             cursor.execute("SELECT 1")
 
     def test_execute_dml_raises_error_when_not_connected(self) -> None:
-        """execute() should raise for DML when the connection is not connected."""
         mock_conn = _make_mock_connection_not_connected()
         cursor = Cursor(mock_conn)
 

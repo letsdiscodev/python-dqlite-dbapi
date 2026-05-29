@@ -1,19 +1,6 @@
-"""Pin: ``_run_sync``'s race-recovery branch (sync timeout fires at
-the same instant the loop-thread coroutine completes with an
-exception) re-raises the recovered exception WITHOUT invalidating
-the underlying async connection.
-
-The connection is healthy at that moment — ``_run_protocol``'s
-``finally`` already cleared ``_in_use`` — so nulling
-``self._async_conn`` and scheduling ``_invalidate`` is a gratuitous
-side effect that forces the next sync call to reconnect. Under
-operating regimes where sync timeouts fire near the inner completion
-deadline (slow server + tight sync timeout), the reconnect rate is
-amplified by the race rate.
-
-Sibling fix: the KI/SystemExit arm in ``_run_sync`` already had this
-discipline; this test pins the timeout arm.
-"""
+"""Pin: ``_run_sync``'s race-recovery branch re-raises the recovered exception WITHOUT
+invalidating the connection — it is healthy (``_run_protocol``'s finally cleared ``_in_use``),
+so nulling ``_async_conn`` would gratuitously force a reconnect."""
 
 from __future__ import annotations
 
@@ -30,9 +17,7 @@ from dqlitedbapi.exceptions import IntegrityError
 
 
 class _RecoveredFuture:
-    """``result(timeout=...)`` raises TimeoutError on first call (the
-    sync caller's Future.result), then surfaces the recovered
-    server-side IntegrityError on the bounded re-fetch."""
+    """result() raises TimeoutError first, then the recovered IntegrityError."""
 
     def __init__(self) -> None:
         self._calls = 0
@@ -65,9 +50,7 @@ class _RecoveredFuture:
 def test_race_recovery_does_not_null_async_conn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the recovered exception path fires, ``self._async_conn``
-    must remain pointing at the same object (no nulling) so the next
-    sync call reuses the healthy connection rather than reconnecting."""
+    """The recovered-exception path must keep ``self._async_conn`` so the next call reuses it."""
     conn = Connection("localhost:9001", timeout=0.05)
 
     stub_future = _RecoveredFuture()
@@ -83,10 +66,6 @@ def test_race_recovery_does_not_null_async_conn(
         _fake_run_coroutine_threadsafe,
     )
 
-    # Plant a sentinel on _async_conn so we can observe whether the
-    # recovery branch nulled it. A MagicMock is sufficient — the
-    # production code only reads attributes on it for the invalidate
-    # scheduling.
     sentinel_async_conn = MagicMock(name="async_conn_sentinel")
     sentinel_async_conn._invalidate = lambda *args, **kw: invalidate_calls.append(args)
     conn._async_conn = sentinel_async_conn
@@ -94,18 +73,13 @@ def test_race_recovery_does_not_null_async_conn(
     async def _never_runs() -> None:
         await asyncio.sleep(999)
 
-    # The recovered IntegrityError propagates — same as the existing
-    # fidelity pin.
     with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
         conn._run_sync(_never_runs())
 
-    # Connection MUST remain pointing at the same object — the
-    # recovered-error branch does NOT null _async_conn.
     assert conn._async_conn is sentinel_async_conn, (
         "race-recovery branch must NOT null self._async_conn — the connection "
         "is healthy (the inner coroutine completed)"
     )
-    # _invalidate must NOT have been scheduled.
     assert invalidate_calls == [], (
         f"race-recovery branch must NOT schedule _invalidate; got calls={invalidate_calls}"
     )

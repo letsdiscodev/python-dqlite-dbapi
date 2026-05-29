@@ -1,8 +1,4 @@
-"""``dqlitedbapi.Connection.__init__`` and ``AsyncConnection.__init__``
-eagerly validate the ``address`` argument so a typoed DSN surfaces at
-construction time as ``InterfaceError`` rather than at first use with
-a less helpful downstream error.
-"""
+"""Connection/AsyncConnection __init__ eagerly validate ``address`` with InterfaceError."""
 
 from __future__ import annotations
 

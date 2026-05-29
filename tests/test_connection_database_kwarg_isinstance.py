@@ -1,11 +1,4 @@
-"""Pin: ``Connection`` and ``AsyncConnection`` reject non-str
-``database`` kwarg with ``InterfaceError`` at the construction site,
-mirroring the existing ``address`` discipline.
-
-Without this pin, a caller passing ``database=b"foo"`` flowed bytes
-through to the wire layer where the encoder eventually produced a
-less-actionable DataError far from the ergonomic site.
-"""
+"""Connection/AsyncConnection reject a non-str ``database`` kwarg with InterfaceError."""
 
 from __future__ import annotations
 

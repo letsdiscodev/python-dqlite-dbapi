@@ -1,15 +1,5 @@
-"""``AsyncCursor.arraysize`` and ``AsyncCursor.row_factory`` setters
-must enforce the parent connection's loop-binding affinity contract:
-a state-mutating setter call from a different event loop surfaces
-``ProgrammingError`` rather than silently changing the bound loop's
-behaviour.
-
-Mirror of the sync sibling pin in
-``test_thread_safety_enforcement.py``. The Connection class
-docstring claims every public method on a Connection-allocated
-cursor enforces the affinity contract; ``arraysize`` and
-``row_factory`` setters were the missing surfaces.
-"""
+"""``arraysize`` / ``row_factory`` setters enforce loop-binding affinity: a cross-loop call
+raises ``ProgrammingError`` rather than silently mutating the bound loop's behaviour."""
 
 from __future__ import annotations
 
@@ -70,8 +60,7 @@ async def test_row_factory_setter_rejects_cross_loop_call() -> None:
 
 
 async def test_setters_accept_same_loop_call() -> None:
-    """Sanity: the binding check must NOT reject a call from the same
-    loop the connection was first used on."""
+    """The binding check must NOT reject a call from the same loop."""
     conn = AsyncConnection("127.0.0.1:9001")
     cur = AsyncCursor(conn)
     conn._ensure_locks()

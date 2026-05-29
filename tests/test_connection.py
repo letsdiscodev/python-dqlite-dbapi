@@ -1,5 +1,3 @@
-"""Tests for Connection class."""
-
 from unittest.mock import patch
 
 import pytest
@@ -32,11 +30,7 @@ class TestConnection:
             conn.cursor()
 
     def test_context_manager(self) -> None:
-        # Matches stdlib sqlite3 / psycopg: ``with conn:`` commits or
-        # rolls back but does NOT close. Connection remains reusable.
-        # ``__enter__`` eagerly connects (matching ``AsyncConnection``),
-        # so we mock ``connect`` to keep this a unit test — the point
-        # of this case is to pin the no-close-on-exit shape.
+        # ``with conn:`` commits/rolls back but does NOT close; connection stays reusable.
         with patch.object(Connection, "connect"):
             with Connection("localhost:9001") as conn:
                 assert isinstance(conn, Connection)

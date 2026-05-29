@@ -1,20 +1,4 @@
-"""Two ``executemany`` calls racing on the same async connection are
-serialized by the connection's ``_op_lock``.
-
-The existing protocol-serialization unit test
-(``test_protocol_serialization.py``) pins that two concurrent
-``execute()`` calls on cursors sharing one connection are serialized.
-What is NOT covered:
-
-- Same shape for ``executemany`` (which has its own op_lock
-  acquisition path inside ``_executemany_async``).
-- End-to-end against a live cluster (the existing test uses mocks).
-
-Pin both: under contention, all rows from both racers must persist
-exactly once and no row may be lost to wire desync from interleaved
-op-lock-less batching. A future refactor that drops the lock for
-"fast path" executemany would fail this test loudly.
-"""
+"""Concurrent ``executemany`` calls on one async connection are serialized by ``_op_lock``."""
 
 from __future__ import annotations
 
@@ -39,7 +23,6 @@ async def test_two_executemany_on_same_async_connection_serialized(
         cur_a = conn.cursor()
         cur_b = conn.cursor()
 
-        # Two batches of 50 rows each, racing.
         rows_a = [(i,) for i in range(50)]
         rows_b = [(i,) for i in range(50, 100)]
 
@@ -52,8 +35,6 @@ async def test_two_executemany_on_same_async_connection_serialized(
         check_cur = conn.cursor()
         await check_cur.execute("SELECT count(*) FROM test_concurrent_emany")
         (count,) = await check_cur.fetchone()  # type: ignore[misc]
-        # All 100 rows persisted — neither batch was clobbered nor
-        # interleaved at the wire layer.
         assert count == 100
 
         await check_cur.execute("SELECT id FROM test_concurrent_emany ORDER BY id")
@@ -67,9 +48,7 @@ async def test_two_executemany_on_same_async_connection_serialized(
 async def test_two_execute_loops_on_same_async_connection_serialized(
     cluster_address: str,
 ) -> None:
-    """Same shape as above but with per-row ``execute`` calls inside
-    each task. Pins that the op-lock protects single-row execute
-    paths just as it protects executemany batches."""
+    """Op-lock protects per-row ``execute`` paths just as it protects executemany batches."""
     conn = await aconnect(cluster_address)
     try:
         setup_cur = conn.cursor()

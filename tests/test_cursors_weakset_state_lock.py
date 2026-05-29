@@ -1,26 +1,8 @@
-"""Pin: ``Connection._cursors`` WeakSet ``add`` / ``discard`` /
-snapshot are guarded by ``_state_lock`` under ``check_same_thread=
-False``.
+"""``Connection._cursors`` WeakSet add/discard/snapshot are guarded by ``_state_lock``
+under ``check_same_thread=False``.
 
-``weakref.WeakSet`` is documented as not safe for use by multiple
-threads simultaneously. Under CPython GIL the small dict-insert
-operations the WeakSet performs internally are bytecode-atomic, so
-no breakage today on CPython; under PEP 703 free-threading these
-become real races. Belt-and-suspenders: lock the mutation sites so
-the future PEP 703 reader doesn't have to plumb the lock through
-later.
-
-The lock is the same ``_state_lock`` introduced for the transaction
-ctxmgr (Phase 2.1) — narrow contention surface, single lock to
-reason about lock-order.
-
-Pinned:
-- ``conn.cursor()`` from concurrent threads under
-  check_same_thread=False produces the right set size.
-- ``Connection.close()``'s cascade snapshots under the lock then
-  iterates outside.
-- Default ``check_same_thread=True`` behaviour unchanged (the lock
-  is held but uncontended on single-thread paths).
+``weakref.WeakSet`` is not documented thread-safe; CPython's GIL hides this today but
+PEP 703 free-threading turns the WeakSet mutations into real races, so lock the sites now.
 """
 
 from __future__ import annotations
@@ -36,10 +18,7 @@ def _make_conn(**kwargs: object) -> Connection:
 
 
 def test_concurrent_cursor_creation_under_flag_no_lost_entries() -> None:
-    """``check_same_thread=False``: N threads each call
-    ``conn.cursor()`` M times. After all threads complete,
-    ``len(conn._cursors)`` equals N*M. Without the lock, WeakSet
-    add races could lose entries under PEP 703 / cyclic GC."""
+    """N*M concurrent ``conn.cursor()`` calls all land in ``_cursors`` (no lost entries)."""
     conn = _make_conn(check_same_thread=False)
     n_threads = 10
     n_per_thread = 50
@@ -58,33 +37,24 @@ def test_concurrent_cursor_creation_under_flag_no_lost_entries() -> None:
     for t in threads:
         t.join()
 
-    # Expected: every cursor added is present in _cursors. The
-    # caller-side cursors list holds strong refs so GC didn't reap.
     assert len(conn._cursors) == n_threads * n_per_thread
 
 
 def test_state_lock_used_in_cursor_add_source_pin() -> None:
-    """Source-level pin: ``Connection.cursor()`` body uses
-    ``_state_lock`` around the ``_cursors.add(cur)`` call. Tripwire
-    for a future maintainer who 'optimizes' by dropping the lock."""
+    """Source pin: ``Connection.cursor()`` uses ``_state_lock`` around ``_cursors.add``."""
     import inspect
     import textwrap
 
     import dqlitedbapi.connection as conn_mod
 
     src = textwrap.dedent(inspect.getsource(conn_mod.Connection.cursor))
-    # The expected shape: ``with _state_lock:`` followed by
-    # ``self._cursors.add(cur)``. Just check both anchors appear in
-    # the same source.
     assert "_state_lock" in src
     assert "self._cursors.add" in src
 
 
 def test_state_lock_used_in_cascade_cursors_source_pin() -> None:
-    """Source-level pin: ``Connection._cascade_cursors()`` snapshots
-    ``list(self._cursors)`` under ``_state_lock`` and clears under
-    the lock too. The intermediate iteration runs outside the
-    lock (cursor scrub doesn't re-enter the WeakSet)."""
+    """Source pin: ``_cascade_cursors()`` snapshots and clears ``_cursors`` under
+    ``_state_lock``; the intermediate iteration runs outside the lock."""
     import inspect
     import textwrap
 
@@ -97,9 +67,7 @@ def test_state_lock_used_in_cascade_cursors_source_pin() -> None:
 
 
 def test_concurrent_cursor_creation_and_cascade_close_no_torn_state() -> None:
-    """``check_same_thread=False``: spawn cursors from N threads,
-    then call ``conn._cascade_cursors()`` from the main thread.
-    No exceptions; the cascade completes; ``_cursors`` ends empty."""
+    """Cascade-close while N threads spawn cursors: no exceptions, no torn state."""
     conn = _make_conn(check_same_thread=False)
     cursors: list[object] = []
     cursors_lock = threading.Lock()
@@ -122,17 +90,11 @@ def test_concurrent_cursor_creation_and_cascade_close_no_torn_state() -> None:
     for t in threads:
         t.join()
 
-    # After cascade: _cursors is cleared. Some workers may have
-    # added AFTER cascade ran; those are still in _cursors. The
-    # important thing is that we didn't crash.
-    # (We can't assert on the exact count since workers race the
-    # cascade.)
+    # No count assertion: workers may add after the cascade runs.
 
 
 def test_default_unchanged_cursor_creation_single_thread() -> None:
-    """Backward compat: default ``check_same_thread=True``.
-    Single-thread cursor creation behaviour unchanged; the lock is
-    uncontended on this path."""
+    """Backward compat: default ``check_same_thread=True`` path unchanged."""
     conn = _make_conn()
     c1 = conn.cursor()
     c2 = conn.cursor()

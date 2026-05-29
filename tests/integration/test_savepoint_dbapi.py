@@ -1,10 +1,4 @@
-"""SAVEPOINT round-trip pins at the dbapi layer.
-
-The SQLAlchemy adapter has its own SAVEPOINT integration coverage.
-The dbapi layer needs an equivalent — without it, a future change
-to the SQL classifier or to the in-transaction flag tracking could
-silently break SAVEPOINT routing.
-"""
+"""SAVEPOINT round-trip pins at the dbapi layer (independent of the SQLAlchemy adapter)."""
 
 from __future__ import annotations
 
@@ -52,14 +46,7 @@ async def test_async_savepoint_roundtrip_release(cluster_address: str) -> None:
 
 
 def test_sync_nested_savepoint(cluster_address: str) -> None:
-    """sp1 → sp2 → ROLLBACK TO sp1 implicitly drops sp2.
-
-    Pins SQLite's nested-SAVEPOINT semantics through the SA → dbapi →
-    client → wire round-trip. A regression in the SQL classifier
-    (``_is_row_returning`` / ``_is_dml_with_returning``) or in the
-    client-layer SAVEPOINT tracker would surface here as a row-count
-    mismatch.
-    """
+    """sp1 -> sp2 -> ROLLBACK TO sp1 implicitly drops sp2."""
     conn = connect(cluster_address, timeout=2.0)
     try:
         cur = conn.cursor()
@@ -104,16 +91,7 @@ async def test_async_nested_savepoint(cluster_address: str) -> None:
 
 
 def test_sync_savepoint_autobegin_persists_on_commit(cluster_address: str) -> None:
-    """Bare SAVEPOINT outside an explicit BEGIN auto-begins a transaction.
-
-    Per SQLite, a SAVEPOINT issued without an active transaction starts
-    a new one and the savepoint becomes its outer frame. RELEASE of
-    that outermost savepoint commits the implicit transaction.
-
-    Pins both the row-persistence end-to-end and the client-layer
-    flag tracker: ``conn.in_transaction`` must read True between
-    SAVEPOINT and RELEASE, mirroring stdlib ``sqlite3``.
-    """
+    """Bare SAVEPOINT auto-begins a tx; RELEASE of the outermost savepoint commits it."""
     conn = connect(cluster_address, timeout=2.0)
     try:
         cur = conn.cursor()

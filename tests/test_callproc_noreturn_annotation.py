@@ -1,15 +1,5 @@
-"""Pin: ``Cursor.callproc`` and ``AsyncCursor.callproc`` are annotated
-``-> NoReturn`` because the body unconditionally raises
-``NotSupportedError``. dqlite (and SQLite) have no stored-procedure
-concept.
-
-Symmetric with the same fix applied to ``nextset`` (see
-``test_nextset_noreturn_annotation.py``). ``Sequence[Any] | None``
-is the PEP 249 documented return type but does not reflect what the
-body actually does. ``NoReturn`` makes the contract precise: callers
-know this method never produces a value, and a future refactor that
-changed the body to ``return None`` would fail mypy / type checkers.
-"""
+"""``callproc`` is annotated ``-> NoReturn``: the body always raises
+``NotSupportedError`` (no stored-procedure concept in dqlite/SQLite)."""
 
 from __future__ import annotations
 
@@ -34,10 +24,8 @@ def test_async_cursor_callproc_return_annotation_is_noreturn() -> None:
 
 
 def test_callproc_body_raises_not_supported_error_unconditionally() -> None:
-    """Belt-and-braces source pin: the body raises NotSupportedError,
-    regardless of annotation. ``callproc`` is gated by
-    ``_check_thread`` / ``_check_closed`` first, so we inspect the
-    source rather than driving a runtime call."""
+    """Source pin: body raises NotSupportedError (gated by thread/closed
+    checks first, so inspect source rather than driving a call)."""
     src = inspect.getsource(Cursor.callproc)
     assert "raise NotSupportedError" in src
     src = inspect.getsource(AsyncCursor.callproc)

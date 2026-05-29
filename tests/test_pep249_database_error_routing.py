@@ -1,11 +1,4 @@
-"""Pin: primary SQLite codes that CPython stdlib's
-``util.c::get_exception_class`` routes to bare ``DatabaseError``
-also route there in dqlitedbapi. Without these entries, the
-``OperationalError`` default fallback would misclassify them
-as transient — wrong signal for ``SQLITE_AUTH`` (deterministic
-authorizer rejection), ``SQLITE_NOLFS`` (filesystem capability),
-and the ``SQLITE_NOTICE`` / ``SQLITE_WARNING`` diagnostic codes.
-"""
+"""Primary SQLite codes route to bare DatabaseError, matching CPython util.c."""
 
 from __future__ import annotations
 
@@ -25,11 +18,6 @@ from dqlitedbapi.exceptions import DatabaseError
     ],
 )
 def test_primary_code_routes_to_bare_database_error(code: int, label: str) -> None:
-    """Stdlib parity: each of these primary codes must dispatch to
-    the bare ``DatabaseError`` class rather than the
-    ``OperationalError`` default — CPython
-    ``Modules/_sqlite/util.c::get_exception_class`` routes them
-    via the ``default:`` arm to ``DatabaseError``."""
     cls = _classify_operational(code)
     assert cls is DatabaseError, (
         f"primary code {code} ({label}) must route to DatabaseError "
@@ -46,8 +34,6 @@ def test_primary_code_routes_to_bare_database_error(code: int, label: str) -> No
     ],
 )
 def test_extended_code_inherits_primary_routing(ext_code: int, primary: int) -> None:
-    """Extended codes mask down to their primary via
-    ``primary_sqlite_code``; the routing must follow."""
     cls = _classify_operational(ext_code)
     assert cls is DatabaseError, (
         f"extended code {ext_code} (primary {primary}) must inherit "

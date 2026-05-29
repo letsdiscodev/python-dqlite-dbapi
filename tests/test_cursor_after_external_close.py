@@ -12,16 +12,11 @@ from dqlitedbapi.exceptions import InterfaceError
 
 
 class TestCursorAfterExternalConnectionClose:
-    """Operations on a live cursor whose connection was closed
-    externally must raise InterfaceError rather than hanging or
-    surfacing a cryptic lower-layer error.
-    """
+    """A live cursor whose connection was closed externally must raise InterfaceError."""
 
     def test_sync_cursor_execute_after_connection_close(self) -> None:
-        # Simulate a closed connection without touching any cluster.
-        # The contract we're pinning: when the underlying connection's
-        # _run_sync raises InterfaceError (its documented response to a
-        # closed connection), the cursor surface propagates it.
+        # When the connection's _run_sync raises InterfaceError (its response
+        # to a closed connection), the cursor surface must propagate it.
         from dqlitedbapi.cursor import Cursor
 
         class _ClosedConn:
@@ -42,15 +37,14 @@ class TestCursorAfterExternalConnectionClose:
         with pytest.raises(InterfaceError):
             cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
-        # cursor.close() remains idempotent even after the connection is gone.
+        # close() stays idempotent even after the connection is gone.
         cursor.close()
         cursor.close()
 
     def test_async_cursor_execute_after_connection_close(self) -> None:
         async def _run() -> None:
             conn = AsyncConnection("localhost:19001")
-            # Don't actually connect — keep this a pure state-machine test
-            # so it doesn't depend on the cluster being up.
+            # Don't connect — keep this a pure state-machine test.
             cursor = AsyncCursor(conn)
             await conn.close()
 

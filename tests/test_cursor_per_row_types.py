@@ -1,17 +1,7 @@
-"""Cursor applies per-row wire types, not first-row types, to every row.
+"""Cursor decodes each row with its own wire types, not the first row's.
 
-SQLite is dynamically typed: under UNION, ``CASE``, ``COALESCE``, or
-``typeof()``, different rows in the same column can carry different
-wire ``ValueType`` tags. Using the first row's types to decode every
-row misclassifies later rows — e.g. a row 0 with ISO8601 and a row 1
-with plain TEXT produces a fake-datetime parse on row 1, or a row 0
-with TEXT and row 1 with ISO8601 leaves row 1 as a string even
-though it is a datetime on the wire.
-
-The wire layer preserves per-row types in ``RowsResponse.row_types``;
-the cursor must consume them rather than collapse to
-``column_types``.
-"""
+SQLite is dynamically typed: under UNION/CASE/COALESCE/typeof() a column's
+wire ``ValueType`` can differ per row, so collapsing to ``column_types`` misdecodes."""
 
 from __future__ import annotations
 
@@ -34,8 +24,6 @@ class _AwaitableObj:
 
 
 class _ScriptedClient:
-    """Replays a pre-canned 4-tuple ``query_raw_typed`` response."""
-
     def __init__(
         self,
         columns: list[str],
@@ -50,13 +38,7 @@ class _ScriptedClient:
 
 
 async def test_sync_cursor_uses_per_row_types_iso8601_then_text() -> None:
-    """Row 0 is ISO8601 → becomes datetime; row 1 is TEXT → stays str.
-
-    Without per-row dispatch, the cursor would attempt to parse the
-    row-1 string ``"not-a-date"`` through ``_datetime_from_iso8601``
-    and raise ``DataError``. With per-row dispatch, the TEXT row is
-    left untouched.
-    """
+    """Row 0 ISO8601 -> datetime; row 1 TEXT -> stays str (no fake-datetime parse)."""
     conn = MagicMock()
     scripted = _ScriptedClient(
         columns=["col"],
@@ -86,11 +68,7 @@ async def test_sync_cursor_uses_per_row_types_iso8601_then_text() -> None:
 
 
 async def test_sync_cursor_uses_per_row_types_text_then_iso8601() -> None:
-    """Row 0 is TEXT → stays str; row 1 is ISO8601 → becomes datetime.
-
-    Without per-row dispatch, both rows would be treated as TEXT and
-    row 1 would remain a string despite being ISO8601 on the wire.
-    """
+    """Row 0 TEXT -> stays str; row 1 ISO8601 -> datetime."""
     conn = MagicMock()
     scripted = _ScriptedClient(
         columns=["col"],
@@ -121,7 +99,7 @@ async def test_sync_cursor_uses_per_row_types_text_then_iso8601() -> None:
 
 
 async def test_async_cursor_uses_per_row_types() -> None:
-    """Async parity of the sync test — row-level dispatch on each row."""
+    """Async parity of the sync test."""
     import asyncio
 
     conn = MagicMock()
@@ -155,9 +133,7 @@ async def test_async_cursor_uses_per_row_types() -> None:
 
 
 async def test_empty_rows_still_build_description() -> None:
-    """Zero rows: ``row_types`` is empty; ``column_types`` must still
-    populate ``cursor.description`` so ``description[i][1]`` is non-None.
-    """
+    """Zero rows: ``column_types`` still populates ``description`` (row_types empty)."""
     conn = MagicMock()
     scripted = _ScriptedClient(
         columns=["col"],

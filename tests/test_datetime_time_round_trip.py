@@ -1,11 +1,4 @@
-"""``datetime.time`` round-trips through the dbapi encoder/decoder pair.
-
-``_iso8601_from_time`` supports binding ``datetime.time`` on the
-parameter path; the decoder must accept ``HH:MM:SS[.ffffff][±HH:MM]``
-on the result path so a time column (or an expression that returns
-an ISO8601-tagged time literal) round-trips as ``datetime.time``
-rather than raising DataError.
-"""
+"""``datetime.time`` round-trips through the dbapi encoder/decoder pair."""
 
 from __future__ import annotations
 

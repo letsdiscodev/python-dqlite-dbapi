@@ -1,20 +1,5 @@
-"""Fetch on a cursor whose last ``execute`` was a non-row-returning
-statement returns ``None`` / ``[]`` (stdlib parity), NOT a raise.
-
-The cursor's ``description`` is updated by every ``execute`` call;
-non-row statements (BEGIN, COMMIT, ROLLBACK) clear it. ``fetchone``
-sees ``description is None`` and returns ``None`` matching stdlib
-``sqlite3.Cursor.fetchone()`` after a DML. ``fetchmany`` and
-``fetchall`` are symmetric, returning ``[]``.
-
-A future refactor that preserves the prior call's description across
-non-row statements would silently return stale rows from the prior
-SELECT. Pin one assertion per non-row verb so the regression is loud.
-
-The COMMIT / ROLLBACK / BEGIN cases are the load-bearing ones —
-SAVEPOINT and friends are covered by the in_transaction-flag tests
-elsewhere.
-"""
+"""Fetch after a non-row-returning statement (BEGIN/COMMIT/ROLLBACK) returns
+None/[] (stdlib parity), not stale rows from a prior SELECT."""
 
 from __future__ import annotations
 
@@ -36,8 +21,6 @@ def test_fetchone_after_rollback_returns_none_per_stdlib(
 
         cur.execute("BEGIN")
         cur.execute("SELECT id FROM test_fetch_after_rollback")
-        # ROLLBACK on the same cursor: description cleared; subsequent
-        # fetchone returns None per stdlib parity (NOT stale rows).
         cur.execute("ROLLBACK")
         assert cur.description is None
         assert cur.fetchone() is None
@@ -69,9 +52,6 @@ def test_fetchone_after_commit_returns_none_per_stdlib(
 def test_fetchone_after_begin_returns_none_per_stdlib(
     cluster_address: str,
 ) -> None:
-    """A BEGIN on the same cursor after a SELECT also clears the
-    description — the inverse direction of the COMMIT/ROLLBACK
-    cases above."""
     with dqlitedbapi.connect(cluster_address) as conn:
         cur = conn.cursor()
         cur.execute("DROP TABLE IF EXISTS test_fetch_after_begin")

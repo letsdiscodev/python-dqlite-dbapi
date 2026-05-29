@@ -1,14 +1,6 @@
-"""Pin: ``Cursor.lastrowid`` and ``Cursor.rowcount`` are re-cast to
-signed ``int64`` after coming off the wire.
-
-The wire codec exposes ``ResultResponse.last_insert_id`` and
-``rows_affected`` as ``uint64``; the C dqlite server casts SQLite's
-signed ``sqlite3_int64`` through ``(uint64_t)`` before sending. A
-negative SQLite rowid (legal on ``INTEGER PRIMARY KEY`` tables)
-arrives as ``2**64 - abs(rowid)``. Without the re-cast the dbapi
-exposes the wire value unchanged, breaking parity with stdlib
-``sqlite3.Cursor.lastrowid`` and the Go connector's
-``int64(LastInsertID)`` contract.
+"""``lastrowid``/``rowcount`` are re-cast to signed ``int64`` off the wire:
+the server sends ``uint64``, so a negative SQLite rowid (legal on INTEGER
+PRIMARY KEY tables) arrives as ``2**64 - abs(rowid)``.
 """
 
 from __future__ import annotations

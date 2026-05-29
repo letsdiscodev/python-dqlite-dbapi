@@ -1,14 +1,4 @@
-"""Pin the PEP 249 clearing-discipline contract for `messages`.
-
-PEP 249 §6.1.2:
-    The list is cleared automatically by all standard cursor
-    methods calls (prior to executing the call) to avoid excessive
-    memory usage and can also be cleared by executing
-    ``del cursor.messages[:]``.
-
-Connection analogue in §6.1.1 carries the same contract for its
-``cursor``, ``commit``, and ``rollback`` methods.
-"""
+"""PEP 249 §6.1: cursor/connection methods clear `messages` before executing."""
 
 from __future__ import annotations
 
@@ -27,12 +17,9 @@ from dqlitedbapi.aio.cursor import AsyncCursor
 def _build_cursor() -> Cursor:
     conn = MagicMock(spec=Connection)
     conn._check_thread = MagicMock()
-    # Attach ``messages`` explicitly; ``spec=Connection`` doesn't pick
-    # up the instance attribute set in ``__init__``.
+    # spec=Connection doesn't pick up the instance attribute set in __init__.
     conn.messages = []
-    # Swallow the coroutine argument without scheduling it — the test
-    # only cares about the clearing side-effect, not the underlying
-    # execute.
+    # Swallow the coroutine without scheduling it; we only test the clear side-effect.
     conn._run_sync = MagicMock(side_effect=lambda coro: coro.close())
 
     cursor = Cursor.__new__(Cursor)
@@ -108,11 +95,6 @@ def _build_async_cursor() -> AsyncCursor:
 
 
 def test_async_cursor_execute_clears_messages() -> None:
-    """Pin the pre-clearing for AsyncCursor.execute.
-
-    AsyncCursor.execute does real wire work — patch the awaits so the
-    test stays unit-scoped.
-    """
     cursor = _build_async_cursor()
     _seed(cursor)
 
@@ -190,9 +172,7 @@ def test_connection_cursor_clears_messages() -> None:
     conn._check_thread = MagicMock()
     conn._closed = False
     conn.messages = [(DbApiWarning, "stale")]
-    # Connection.cursor() now registers the new cursor in self._cursors
-    # so Connection.close() can cascade; provide a real WeakSet on the
-    # mock so the add() succeeds.
+    # cursor() registers in _cursors for close() cascade; give the mock a real WeakSet.
     conn._cursors = weakref.WeakSet()
     Connection.cursor(conn)
     assert conn.messages == []
@@ -242,15 +222,12 @@ def test_async_connection_cursor_clears_messages() -> None:
 
     conn = MagicMock(spec=AsyncConnection)
     conn._closed = False
-    # ``cursor()`` reads ``_loop_ref`` for the best-effort loop-binding
-    # check; spec'd mock needs it set explicitly.
+    # cursor() reads _loop_ref for the loop-binding check; spec'd mock needs it set.
     conn._loop_ref = None
-    # Front-line fork-pid guard reads ``_creator_pid``; align with the
-    # current pid so the same-process call proceeds.
+    # Fork-pid guard reads _creator_pid; match current pid so the call proceeds.
     conn._creator_pid = os.getpid()
     conn.messages = [(DbApiWarning, "stale")]
-    # AsyncConnection.cursor() registers the new cursor in a WeakSet
-    # so close() can cascade; give the mock a real one.
+    # cursor() registers in a WeakSet for close() cascade; give the mock a real one.
     conn._cursors = weakref.WeakSet()
     AsyncConnection.cursor(conn)
     assert conn.messages == []

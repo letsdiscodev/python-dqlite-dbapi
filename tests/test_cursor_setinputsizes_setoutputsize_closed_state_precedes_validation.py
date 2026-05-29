@@ -1,17 +1,6 @@
-"""Pin: ``Cursor.setinputsizes`` and ``Cursor.setoutputsize`` (sync
-and async) honour the documented closed-cursor no-op behaviour
-(PEP 249 §6.2 "free to do nothing") regardless of argument shape.
-
-Pre-fix, the input-shape validators (Sequence-check / int-check)
-ran BEFORE the closed-cursor short-circuit. So a closed cursor +
-good arg returned silently, while closed cursor + bad arg raised
-``ProgrammingError``. Closed-state behaviour depended on input
-shape — surprising contract, asymmetric with PEP 249's "free to
-do nothing".
-
-Move the closed-cursor short-circuit ahead of the validators (but
-still after the messages-clear, which is unconditional per PEP 249
-§6.4).
+"""``setinputsizes`` / ``setoutputsize`` (sync and async) honour the closed-cursor no-op
+(PEP 249 §6.2) regardless of argument shape: the closed short-circuit runs ahead of the
+shape validators, but still after the unconditional messages-clear (§6.4).
 """
 
 from __future__ import annotations
@@ -62,8 +51,6 @@ def _bare_async_cursor() -> Any:
 
 @pytest.mark.parametrize("bad_arg", ["oops", b"oops", bytearray(b"oops"), 42])
 def test_sync_setinputsizes_closed_cursor_silent_on_any_arg(bad_arg: Any) -> None:
-    """Closed cursor + any arg shape should be a silent no-op per
-    PEP 249 §6.2 'free to do nothing'."""
     cur = _bare_sync_cursor()
     cur.setinputsizes(bad_arg)
     assert cur.messages == []
@@ -92,8 +79,7 @@ def test_async_setoutputsize_closed_cursor_silent_on_any_arg() -> None:
 
 
 def test_sync_setinputsizes_open_cursor_still_validates() -> None:
-    """Negative-control: open cursor + bad arg still raises (we only
-    short-circuit on closed)."""
+    """Negative-control: open cursor + bad arg still raises."""
     cur = _bare_sync_cursor()
     cur._closed = False  # open cursor
     cur._connection._closed = False

@@ -43,10 +43,8 @@ class TestArraysizeValidation:
         with pytest.raises(ProgrammingError, match=">= 1"):
             c.arraysize = -1
 
-    # Non-int types: PEP 249 says arraysize is an int attribute. A
-    # ``None`` / ``str`` / ``float`` / ``bool`` assignment must surface
-    # a clean ProgrammingError at assignment time, not a downstream
-    # TypeError from a comparison or a silently-stored non-int.
+    # Non-int assignment must raise ProgrammingError at assignment time, not a downstream
+    # TypeError or a silently-stored non-int.
 
     def test_none_rejected_sync(self) -> None:
         c = self._sync_cursor()
@@ -88,9 +86,8 @@ class TestArraysizeValidation:
         with pytest.raises(ProgrammingError, match="bool"):
             c.arraysize = True
 
-    # PEP 249 §6.1.2: state-mutating ops on a closed cursor must
-    # raise ``Error``. The closed-state guard runs FIRST so a
-    # closed-cursor error is not shadowed by a bad-value error.
+    # PEP 249 §6.1.2: the closed-state guard runs first so a closed-cursor error is not
+    # shadowed by a bad-value error.
 
     def test_closed_cursor_raises_sync(self) -> None:
         from dqlitedbapi.exceptions import InterfaceError

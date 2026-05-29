@@ -1,14 +1,5 @@
-"""Pin the documented ``date`` -> ``datetime`` widening on round-trip.
-
-PEP 249 ``Date()`` constructs a ``datetime.date``. The encoder
-serializes bare dates as ``"YYYY-MM-DD"`` (no time component). The
-decoder's fallback parses the string with
-``datetime.date.fromisoformat`` and returns a ``datetime.datetime``
-at midnight — the value widens from date to datetime.
-
-This matches pysqlite's default behaviour and is documented on the
-``_datetime_from_iso8601`` docstring. Pinning the behaviour so a
-future change surfaces as a deliberate semver-meaningful break.
+"""A bare ``date`` widens to ``datetime`` (midnight) on round-trip: the encoder writes
+``"YYYY-MM-DD"`` and the decoder parses it back as ``datetime.datetime``, matching pysqlite.
 """
 
 from __future__ import annotations

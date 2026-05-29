@@ -1,13 +1,6 @@
-"""Pin: ``Connection.cursor()`` rejects unknown kwargs (notably
-stdlib's ``factory=`` Cursor-subclass hook) with
-``NotSupportedError`` rather than letting Python raise a bare
-``TypeError`` outside the ``dbapi.Error`` hierarchy.
-
-Symmetric with the ``connect()``-time ``**unknown_kwargs`` rejection
-— covers the cursor-creation surface (``Connection.cursor`` and its
-async sibling) so the ``factory=`` / ``cached_statements=`` / etc.
-stdlib kwargs surface a typed PEP 249 error.
-"""
+"""Connection.cursor() rejects unknown kwargs (notably stdlib's factory=)
+with NotSupportedError, not a bare TypeError outside the dbapi.Error
+hierarchy. Symmetric with the connect()-time unknown-kwarg rejection."""
 
 import pytest
 

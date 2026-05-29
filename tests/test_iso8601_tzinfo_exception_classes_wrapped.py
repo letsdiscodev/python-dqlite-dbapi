@@ -1,17 +1,6 @@
-"""Pin: ``_iso8601_from_datetime`` and ``_iso8601_from_time`` widen
-the tzinfo-failure catch from ``(TypeError, ValueError)`` to
-``Exception`` so every plausible ``tzinfo.utcoffset`` failure is
-wrapped as ``DataError``.
-
-The prior narrower catch let ``KeyError`` (missing zoneinfo entry),
-``AttributeError`` (incomplete subclass), ``OSError`` (zoneinfo file
-read failure), and ``OverflowError`` escape as themselves —
-violating the docstring's promise that "every plausible tzinfo
-failure stays inside the ``dbapi.Error`` hierarchy."
-
-Catch ``Exception`` (NOT ``BaseException``) so ``CancelledError`` /
-``KeyboardInterrupt`` / ``SystemExit`` continue to propagate
-correctly.
+"""The encoders catch ``Exception`` (not just ``TypeError``/``ValueError``)
+from ``tzinfo.utcoffset`` so KeyError/AttributeError/OSError also wrap as
+``DataError`` — but not ``BaseException``, so CancelledError still propagates.
 """
 
 from __future__ import annotations
@@ -68,8 +57,7 @@ class _IoErrorTz(datetime.tzinfo):
 
 @pytest.mark.parametrize("tz_cls", [_ZoneNotFoundTz, _BrokenSubclassTz, _IoErrorTz])
 def test_datetime_wraps_tzinfo_exception_as_data_error(tz_cls: type[datetime.tzinfo]) -> None:
-    """A datetime whose tzinfo raises a non-(TypeError, ValueError)
-    on utcoffset surfaces as DataError (not as the underlying class)."""
+    """A tzinfo raising a non-(TypeError, ValueError) surfaces as DataError."""
     dt = datetime.datetime(2024, 1, 1, 12, 0, 0, tzinfo=tz_cls())
     with pytest.raises(DataError, match="utcoffset"):
         _iso8601_from_datetime(dt)
@@ -77,7 +65,6 @@ def test_datetime_wraps_tzinfo_exception_as_data_error(tz_cls: type[datetime.tzi
 
 @pytest.mark.parametrize("tz_cls", [_ZoneNotFoundTz, _BrokenSubclassTz, _IoErrorTz])
 def test_time_wraps_tzinfo_exception_as_data_error(tz_cls: type[datetime.tzinfo]) -> None:
-    """Symmetric pin for ``_iso8601_from_time``."""
     t = datetime.time(12, 0, 0, tzinfo=tz_cls())
     with pytest.raises(DataError, match="utcoffset"):
         _iso8601_from_time(t)

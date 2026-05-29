@@ -1,12 +1,5 @@
-"""Pin: ``Connection.force_close_transport`` (sync and async) clears
-``self.messages`` per the project's "every public Connection method
-clears" discipline (extension of PEP 249 §6.4).
-
-Every other public Connection method clears messages as the first
-statement; ``force_close_transport`` (a driver-extension method
-intended for last-resort shutdown like SA's ``do_terminate``) was
-the discipline-gap.
-"""
+"""``Connection.force_close_transport`` (sync and async) clears ``self.messages``,
+per the project's "every public Connection method clears" discipline (PEP 249 §6.4)."""
 
 from __future__ import annotations
 
@@ -71,8 +64,7 @@ def test_async_force_close_transport_clears_messages() -> None:
 
 
 def test_sync_force_close_transport_idempotent_clears_each_call() -> None:
-    """Re-arming messages between calls and re-clearing — pin the
-    idempotence + clear contract jointly."""
+    """Clears messages on every call, even when already closed (idempotent)."""
     c = _bare_sync_connection()
     c.messages.append((Exception, Exception("first")))
     c.force_close_transport()

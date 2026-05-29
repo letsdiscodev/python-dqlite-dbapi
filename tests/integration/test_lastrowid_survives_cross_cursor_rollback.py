@@ -1,16 +1,4 @@
-"""Pin ``cursor.lastrowid`` cursor-scoped semantics under cross-cursor rollback.
-
-stdlib parity: ``Cursor.lastrowid`` is cursor-scoped. ROLLBACK on the
-connection rolls server-side rows back but does NOT clear any cursor's
-``lastrowid`` — it remains as the last-known rowid the cursor reported.
-``_reset_execute_state`` deliberately does not touch ``lastrowid``; this
-test pins that contract for two cursors on the same connection where the
-rollback is initiated against the connection (not a single cursor).
-
-dqlite has no implicit BEGIN — statements are autocommit by default.
-The test issues an explicit ``BEGIN`` through a cursor to make the
-ROLLBACK meaningful.
-"""
+"""ROLLBACK rolls back server rows but does not clear any cursor's ``lastrowid``."""
 
 from __future__ import annotations
 

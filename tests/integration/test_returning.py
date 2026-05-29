@@ -8,7 +8,6 @@ from dqlitedbapi import connect
 @pytest.mark.integration
 class TestReturning:
     def test_insert_returning(self, cluster_address: str) -> None:
-        """INSERT ... RETURNING should return rows via query path."""
         with connect(cluster_address, database="test_returning") as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE ret_test (id INTEGER PRIMARY KEY, name TEXT)")
@@ -18,11 +17,7 @@ class TestReturning:
             cursor.execute("DROP TABLE ret_test")
 
     def test_insert_returning_rowcount(self, cluster_address: str) -> None:
-        """After RETURNING, rowcount reflects the number of returned rows.
-
-        dqlite routes RETURNING through the query path, so rowcount is
-        len(rows) — matches SQLAlchemy's expectation for RETURNING clauses.
-        """
+        """dqlite routes RETURNING through the query path, so rowcount is len(rows)."""
         with connect(cluster_address, database="test_ret_rowcount") as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE rc_test (id INTEGER PRIMARY KEY, v INT)")
@@ -35,7 +30,6 @@ class TestReturning:
             cursor.execute("DROP TABLE rc_test")
 
     def test_insert_returning_multiple(self, cluster_address: str) -> None:
-        """INSERT ... RETURNING should support fetching all returned rows."""
         with connect(cluster_address, database="test_returning_multi") as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE ret_multi (id INTEGER PRIMARY KEY, val TEXT)")
@@ -46,7 +40,6 @@ class TestReturning:
             cursor.execute("DROP TABLE ret_multi")
 
     def test_delete_returning(self, cluster_address: str) -> None:
-        """DELETE ... RETURNING should return deleted rows."""
         with connect(cluster_address, database="test_del_returning") as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE del_ret (id INTEGER PRIMARY KEY, name TEXT)")
@@ -57,7 +50,6 @@ class TestReturning:
             cursor.execute("DROP TABLE del_ret")
 
     def test_update_returning(self, cluster_address: str) -> None:
-        """UPDATE ... RETURNING should return updated rows."""
         with connect(cluster_address, database="test_upd_returning") as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE upd_ret (id INTEGER PRIMARY KEY, name TEXT)")
@@ -68,12 +60,7 @@ class TestReturning:
             cursor.execute("DROP TABLE upd_ret")
 
     def test_update_returning_zero_rows(self, cluster_address: str) -> None:
-        """UPDATE ... WHERE no-match RETURNING leaves a clean PEP 249
-        post-execute state: ``rowcount == 0``, ``fetchone() is None``,
-        ``fetchall() == []``. ``description`` may be present (with the
-        RETURNING column metadata) or None depending on what the wire
-        emits — we accept either, but the cursor must be safely
-        re-iterable (``fetchone()`` and ``fetchall()`` agree)."""
+        """No-match RETURNING leaves a clean PEP 249 state: rowcount 0, no rows, re-iterable."""
         with connect(cluster_address, database="test_upd_ret_zero") as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE rz (id INTEGER PRIMARY KEY, v INT)")
@@ -85,9 +72,7 @@ class TestReturning:
             cursor.execute("DROP TABLE rz")
 
     def test_delete_returning_zero_rows(self, cluster_address: str) -> None:
-        """DELETE ... WHERE no-match RETURNING leaves a clean PEP 249
-        post-execute state. Same pin as ``test_update_returning_zero_rows``
-        but for DELETE."""
+        """DELETE no-match RETURNING leaves a clean PEP 249 state (DELETE sibling)."""
         with connect(cluster_address, database="test_del_ret_zero") as conn:
             cursor = conn.cursor()
             cursor.execute("CREATE TABLE rz (id INTEGER PRIMARY KEY)")

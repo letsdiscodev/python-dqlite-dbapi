@@ -1,31 +1,6 @@
-"""Pin: ``_run_sync`` does not let a bare ``RuntimeError`` from
-``asyncio.run_coroutine_threadsafe`` escape the PEP 249 ``Error``
-hierarchy, and does not leak the unawaited coroutine.
-
-The race shape: ``_run_sync`` calls ``self._ensure_loop()`` to obtain
-a live loop reference, then ``asyncio.run_coroutine_threadsafe(coro,
-loop)``. A sibling thread closing the loop between those two calls
-(typical: ``do_terminate`` from a finalizer thread, SIGTERM-with-
-budget shutdown, manual ``loop.close()`` from a test fixture)
-triggers a bare ``RuntimeError`` from ``run_coroutine_threadsafe``.
-
-Bare RuntimeError consequences:
-
-1. Escapes the PEP 249 ``Error`` hierarchy. SA's ``is_disconnect`` is
-   gated on ``DatabaseError``; a bare RuntimeError here breaks
-   classification and the connection is not retried / invalidated
-   correctly.
-2. The coroutine's lifecycle is broken — it was never scheduled, and
-   nothing called ``coro.close()``. At GC, asyncio emits
-   ``RuntimeWarning("coroutine was never awaited")`` that does not
-   point at dqlite, sending operators on a wild goose chase.
-
-The fix wraps ``run_coroutine_threadsafe`` in ``try/except
-RuntimeError``, calls ``coro.close()`` to suppress the warning, and
-raises an ``OperationalError`` (a ``DatabaseError`` subclass that SA's
-``is_disconnect`` can classify) chained from the underlying
-RuntimeError so the diagnostic is preserved.
-"""
+"""Pin: a loop closed between ``_ensure_loop`` and ``run_coroutine_threadsafe`` surfaces as a
+PEP 249 ``OperationalError`` (so SA's ``is_disconnect`` can classify it), chained from the bare
+RuntimeError, and runs ``coro.close()`` so no unawaited-coroutine warning leaks."""
 
 from __future__ import annotations
 
@@ -41,19 +16,14 @@ from dqlitedbapi.connection import Connection
 
 
 def _make_connection() -> Connection:
-    """Build a minimal sync Connection bypassing the constructor's
-    cluster machinery; only the state needed for ``_run_sync`` is
-    populated.
-    """
+    """Minimal sync Connection with only the state ``_run_sync`` needs."""
     conn = Connection.__new__(Connection)
-    # Connection's __init__ would normally do this; we only need
-    # _op_lock and _timeout for _run_sync's lock-acquire path.
     import threading
 
     conn._op_lock = threading.Lock()
     conn._timeout = 5.0
     conn._closed_flag = [False]
-    conn._async_conn = None  # not needed for the schedule-time race
+    conn._async_conn = None
     conn._creator_pid = 0
     return conn
 
@@ -63,21 +33,14 @@ async def _trivial_coro() -> int:
 
 
 def test_run_sync_raises_pep249_error_when_loop_closed_at_schedule() -> None:
-    """A loop closed between ``_ensure_loop`` returning and
-    ``run_coroutine_threadsafe`` running must surface as a PEP 249
-    ``OperationalError`` (a ``DatabaseError`` subclass), NOT a bare
-    ``RuntimeError``.
-    """
+    """A loop closed at schedule time must surface as OperationalError, not bare RuntimeError."""
     conn = _make_connection()
     closed_loop = asyncio.new_event_loop()
-    closed_loop.close()  # simulate the race outcome
+    closed_loop.close()
 
     with patch.object(conn, "_ensure_loop", return_value=closed_loop):
         with pytest.raises(_dbapi_exc.Error) as exc_info:
             conn._run_sync(_trivial_coro())
-        # Specifically OperationalError so SA's is_disconnect can
-        # classify it, with the underlying RuntimeError chained on
-        # __cause__ for diagnostics.
         assert isinstance(exc_info.value, _dbapi_exc.OperationalError), (
             f"expected OperationalError, got {type(exc_info.value).__name__}"
         )
@@ -87,12 +50,7 @@ def test_run_sync_raises_pep249_error_when_loop_closed_at_schedule() -> None:
 
 
 def test_run_sync_does_not_leak_unawaited_coroutine_warning() -> None:
-    """The fix must call ``coro.close()`` on the schedule-failure
-    path so asyncio's ``RuntimeWarning("coroutine was never awaited")``
-    does NOT fire at GC. Without ``coro.close()`` the warning surfaces
-    in caller code with no dqlite frame in the traceback, sending
-    operators chasing the wrong layer.
-    """
+    """``coro.close()`` on the schedule-failure path prevents the unawaited-coroutine warning."""
     conn = _make_connection()
     closed_loop = asyncio.new_event_loop()
     closed_loop.close()
@@ -103,8 +61,6 @@ def test_run_sync_does_not_leak_unawaited_coroutine_warning() -> None:
             warnings.simplefilter("always")
             with pytest.raises(_dbapi_exc.OperationalError):
                 conn._run_sync(coro)
-            # Force coroutine GC to surface the warning if it would
-            # have fired.
             del coro
             import gc
 
@@ -122,11 +78,7 @@ def test_run_sync_does_not_leak_unawaited_coroutine_warning() -> None:
 
 
 def test_run_sync_propagates_runtimeerror_message_in_cause() -> None:
-    """The OperationalError raised from the schedule-failure path
-    must carry the underlying RuntimeError as ``__cause__`` so
-    operators reading the traceback see the actual loop-closed signal,
-    not just the dqlite-level remap.
-    """
+    """The OperationalError must carry the underlying RuntimeError as ``__cause__``."""
     conn = _make_connection()
     closed_loop = asyncio.new_event_loop()
     closed_loop.close()
@@ -138,6 +90,4 @@ def test_run_sync_propagates_runtimeerror_message_in_cause() -> None:
         conn._run_sync(_trivial_coro())
     cause: Any = exc_info.value.__cause__
     assert isinstance(cause, RuntimeError)
-    # asyncio's wording is "Event loop is closed" — pin a non-empty
-    # str(cause) so the diagnostic carries through.
     assert str(cause), "RuntimeError cause must carry a non-empty message"

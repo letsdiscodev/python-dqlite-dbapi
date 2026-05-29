@@ -1,9 +1,4 @@
-"""Pin: ``Cursor.setoutputsize(None)`` and ``AsyncCursor.setoutputsize(None)``
-accept None silently (PEP 249 §6.2 permits "do nothing").
-
-Mirrors stdlib ``sqlite3``, aiosqlite, psycopg, asyncpg. The strict
-rejection for genuinely invalid types (str, float, dict) remains.
-"""
+"""setoutputsize(None) is a silent no-op; invalid types (str/float/dict) still rejected."""
 
 from __future__ import annotations
 

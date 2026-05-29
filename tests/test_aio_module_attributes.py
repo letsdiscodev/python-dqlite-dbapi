@@ -11,16 +11,13 @@ class TestAioModuleAttributes:
         assert aio.apilevel == "2.0"
 
     def test_threadsafety(self) -> None:
-        # 2 = threads may share the module AND connections — mirrors
-        # the sync surface bump (see test_module_attributes.py for
-        # the full rationale).
+        # 2 = threads may share the module AND connections (see test_module_attributes.py).
         assert aio.threadsafety == 2
 
     def test_paramstyle(self) -> None:
         assert aio.paramstyle == "qmark"
 
     def test_type_constructors_exported(self) -> None:
-        """PEP 249 type constructors should be available from aio module."""
         assert callable(aio.Date)
         assert callable(aio.Time)
         assert callable(aio.Timestamp)
@@ -30,7 +27,6 @@ class TestAioModuleAttributes:
         assert callable(aio.Binary)
 
     def test_type_objects_exported(self) -> None:
-        """PEP 249 type objects should be available from aio module."""
         assert aio.STRING == "TEXT"
         assert aio.BINARY == "BLOB"
         assert aio.NUMBER == "INTEGER"

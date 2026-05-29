@@ -1,13 +1,4 @@
-"""Pin: PEP 249 classification for newly-mapped SQLite primary codes.
-
-CPython stdlib ``sqlite3`` (``Modules/_sqlite/util.c::_pysqlite_seterror``)
-maps several primary codes that the dqlite dbapi previously bucketed
-into ``OperationalError``. Callers porting between stdlib and dqlite
-who use ``except DatabaseError:`` for corruption-handling get
-incomplete coverage when those codes route to ``OperationalError``.
-
-This file pins the new mappings and the rationale.
-"""
+"""Pin: PEP 249 classification for SQLite primary codes (matching stdlib sqlite3)."""
 
 from __future__ import annotations
 
@@ -40,7 +31,6 @@ async def test_primary_code_classifies_to_pep249_class(
 
     with pytest.raises(exc_class) as ei:
         await _call_client(_raise())
-    # Code preserved on every class (DatabaseError now also carries code).
     assert ei.value.code == code  # type: ignore[attr-defined]
 
 
@@ -54,8 +44,7 @@ async def test_primary_code_classifies_to_pep249_class(
 async def test_extended_corrupt_codes_classify_to_database_error(
     extended: int, exc_class: type[Exception]
 ) -> None:
-    """Extended CORRUPT codes mask down to primary 11 via
-    primary_sqlite_code; verify they reach DatabaseError too."""
+    """Extended CORRUPT codes mask down to primary 11 and still reach DatabaseError."""
 
     async def _raise() -> None:
         raise _client_exc.OperationalError(f"extended {extended}", extended)
@@ -66,8 +55,7 @@ async def test_extended_corrupt_codes_classify_to_database_error(
 
 
 def test_database_error_carries_code_and_raw_message() -> None:
-    """Sanity: the public DatabaseError now accepts code/raw_message
-    so the new mappings preserve those attributes."""
+    """DatabaseError accepts code/raw_message so the mappings preserve them."""
     exc = DatabaseError("disk image is malformed", code=11)
     assert exc.code == 11
     assert exc.raw_message == "disk image is malformed"

@@ -1,9 +1,4 @@
-"""Pin: ``unregister_adapter`` removes a previously-registered adapter.
-
-Counterpart to ``register_adapter``. Without this, test cleanup needed
-to reach into the private ``dqlitedbapi.types._ADAPTERS`` dict — a
-private-API leak.
-"""
+"""``unregister_adapter`` removes a previously-registered adapter."""
 
 from __future__ import annotations
 
@@ -23,12 +18,7 @@ def test_unregister_adapter_round_trip() -> None:
 
 
 def test_unregister_adapter_raises_when_no_adapter_registered() -> None:
-    """Calling unregister on a never-registered type raises
-    ``AdapterLookupError`` — which inherits from both
-    ``ProgrammingError`` (PEP 249 hierarchy) and stdlib ``LookupError``
-    (matches stdlib ``sqlite3.unregister_adapter`` (Python 3.13+) that
-    raises ``KeyError``).
-    """
+    """Unregister on a never-registered type raises ``AdapterLookupError``."""
     import pytest
 
     from dqlitedbapi.exceptions import ProgrammingError
@@ -42,12 +32,8 @@ def test_unregister_adapter_raises_when_no_adapter_registered() -> None:
 
 
 def test_unregister_adapter_unknown_type_catchable_as_lookuperror() -> None:
-    """Cross-driver parity: stdlib ``sqlite3.unregister_adapter``
-    raises ``KeyError`` (a ``LookupError`` subclass) on the same
-    condition. Cross-driver code that catches ``LookupError`` for the
-    "no adapter to remove" case must also catch against dqlite — the
-    multi-inheritance on ``AdapterLookupError`` is the parity hook.
-    """
+    """Parity: stdlib raises ``KeyError`` (a ``LookupError``); dqlite's
+    ``AdapterLookupError`` multi-inherits ``LookupError`` to stay catchable."""
     import pytest
 
     from dqlitedbapi.exceptions import AdapterLookupError
@@ -57,8 +43,7 @@ def test_unregister_adapter_unknown_type_catchable_as_lookuperror() -> None:
 
     with pytest.raises(LookupError, match="no adapter registered"):
         dqlitedbapi.unregister_adapter(_Quux)
-    # Same exception is also catchable as the concrete class and as
-    # ``dqlitedbapi.Error`` (PEP 249 hierarchy purity).
+    # Also catchable as the concrete class and as ``dqlitedbapi.Error``.
     with pytest.raises(AdapterLookupError):
         dqlitedbapi.unregister_adapter(_Quux)
     with pytest.raises(dqlitedbapi.Error):
@@ -68,10 +53,7 @@ def test_unregister_adapter_unknown_type_catchable_as_lookuperror() -> None:
 
 
 def test_adapter_lookup_error_exported() -> None:
-    """``AdapterLookupError`` is published on both the sync and async
-    surfaces so cross-driver code can introspect the concrete class
-    without reaching into ``dqlitedbapi.exceptions``.
-    """
+    """``AdapterLookupError`` is published on both the sync and async surfaces."""
     import dqlitedbapi.aio
     import dqlitedbapi.exceptions
 
@@ -88,6 +70,5 @@ def test_unregister_adapter_publicly_exported() -> None:
 
     assert "unregister_adapter" in dqlitedbapi.__all__
     assert dqlitedbapi.unregister_adapter is dqlitedbapi.types.unregister_adapter
-    # async surface re-exports the same callable.
     assert "unregister_adapter" in dqlitedbapi.aio.__all__
     assert dqlitedbapi.aio.unregister_adapter is dqlitedbapi.unregister_adapter

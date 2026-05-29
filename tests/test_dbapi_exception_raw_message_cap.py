@@ -1,14 +1,5 @@
-"""Defense-in-depth pin: every dbapi exception class with a
-``raw_message`` field caps that field at ~4 KiB.
-
-The wire layer caps a single ``FailureResponse`` at ~64 KiB; without a
-per-instance cap on the dbapi exception classes, a hostile-server fan-
-out of 64 KiB messages flowing through cross-process pickled exception
-graphs (Celery, ProcessPoolExecutor, structured-error capture) would
-produce multi-MB payloads. Mirrors the cap discipline already in place
-on the client-layer ``DqliteError`` base and the ``OperationalError``
-display-message cap.
-"""
+"""Pin: every dbapi exception with a ``raw_message`` field caps it at
+~4 KiB, so a hostile-server fan-out cannot produce multi-MB payloads."""
 
 from __future__ import annotations
 
@@ -68,8 +59,7 @@ def test_short_raw_message_round_trips(cls: type) -> None:
     [InterfaceError, DatabaseError, OperationalError],
 )
 def test_default_raw_message_from_message_capped(cls: type) -> None:
-    """When ``raw_message`` is omitted, the ``message`` argument is
-    used as the source — the cap still applies."""
+    """When ``raw_message`` is omitted, ``message`` is the source and is capped."""
     big = "Y" * 63_000
     e = cls(big)
     assert e.raw_message is not None

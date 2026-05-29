@@ -1,20 +1,5 @@
-"""Pin: ``Connection.close()`` / ``AsyncConnection.close()`` satisfies
-PEP 249 §6.1's implicit-rollback contract.
-
-PEP 249 §6.1: "Note that closing a connection without committing the
-changes first will cause an implicit rollback to be performed."
-
-Most drivers implement this with an explicit client-side ROLLBACK
-round-trip during close. dqlite's server tears down the connection-
-bound transaction when the TCP connection closes (the server-side
-gateway state is per-connection), so the spec's contract is satisfied
-transparently — no client-side ROLLBACK round-trip is needed.
-
-This test pins the externally observable contract: after a BEGIN +
-INSERT + close (no commit), a fresh connection MUST NOT see the row.
-The test guards against a future refactor that breaks the server-side
-teardown semantics.
-"""
+"""``close()`` satisfies PEP 249 §6.1's implicit-rollback contract. dqlite needs no client-side
+ROLLBACK: the server tears down the per-connection transaction when the TCP connection closes."""
 
 from __future__ import annotations
 
@@ -31,9 +16,7 @@ def _fresh_db_name(prefix: str) -> str:
 async def test_async_close_rolls_back_uncommitted_transaction(
     cluster_address: str,
 ) -> None:
-    """Open conn, BEGIN+INSERT, close WITHOUT commit. Re-open and
-    SELECT — the row must not be present (PEP 249 §6.1 contract via
-    server-side teardown)."""
+    """BEGIN+INSERT then close without commit; a re-opened connection must not see the row."""
     db_name = _fresh_db_name("test_close_rb_async")
 
     setup = await aconnect(cluster_address, database=db_name)
@@ -71,7 +54,7 @@ async def test_async_close_rolls_back_uncommitted_transaction(
 def test_sync_close_rolls_back_uncommitted_transaction(
     cluster_address: str,
 ) -> None:
-    """Sync sibling of the async test. Same contract."""
+    """Sync sibling of the async test."""
     db_name = _fresh_db_name("test_close_rb_sync")
 
     setup = dqlitedbapi.connect(cluster_address, database=db_name)
@@ -109,10 +92,7 @@ def test_sync_close_rolls_back_uncommitted_transaction(
 async def test_async_close_after_commit_preserves_committed_row(
     cluster_address: str,
 ) -> None:
-    """Negative pin: a committed transaction's row MUST survive
-    close. Guards against a hypothetical future refactor adding a
-    client-side ROLLBACK that fires after commit and rolls back the
-    already-committed write (idempotency check)."""
+    """Negative pin: a committed row must survive close (no spurious post-commit ROLLBACK)."""
     db_name = _fresh_db_name("test_close_committed")
 
     setup = await aconnect(cluster_address, database=db_name)

@@ -1,11 +1,5 @@
-"""Pin: ``AsyncCursor.__aenter__`` translates ``ReferenceError`` from a
-GC'd parent ``AsyncConnection`` to ``InterfaceError``, mirroring
-``__aiter__``'s discipline.
-
-Without this pin, ``async with cur:`` on a closed cursor whose parent
-has been garbage-collected raises bare ``ReferenceError`` (outside the
-PEP 249 ``Error`` hierarchy) when the proxy attribute access fails.
-"""
+"""Pin: ``AsyncCursor.__aenter__`` translates ``ReferenceError`` from a GC'd parent into
+``InterfaceError`` (inside the PEP 249 hierarchy), mirroring ``__aiter__``."""
 
 from __future__ import annotations
 
@@ -18,13 +12,10 @@ from dqlitedbapi.aio import AsyncConnection
 
 
 async def test_aenter_on_closed_cursor_with_gc_parent_raises_interface_error() -> None:
-    """A weakref.proxy from a GC'd AsyncConnection must not leak
-    ``ReferenceError`` out of ``__aenter__``."""
+    """A weakref.proxy from a GC'd AsyncConnection must not leak ``ReferenceError``."""
     conn = AsyncConnection("localhost:9001")
     cur = conn.cursor()
     cur.close()
-    # Drop the connection ref and force GC so the proxy referent
-    # disappears.
     del conn
     gc.collect()
     with pytest.raises(dqlitedbapi.InterfaceError):

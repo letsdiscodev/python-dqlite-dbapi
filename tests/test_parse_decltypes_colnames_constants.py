@@ -1,12 +1,6 @@
-"""Pin: ``PARSE_DECLTYPES`` and ``PARSE_COLNAMES`` are exposed as
-module-level constants on both the sync and async dbapi surfaces with
-the same literal values stdlib ``sqlite3`` uses (1 and 2).
-
-The ``detect_types=`` connect kwarg is still rejected by the
-``unknown_kwargs`` gate (no converter machinery in this driver); the
-constants are exposed so cross-driver porting code that references
-the names doesn't hit ``AttributeError`` outside the dbapi error
-hierarchy.
+"""Pin: ``PARSE_DECLTYPES``/``PARSE_COLNAMES`` exposed (values 1/2) though
+``detect_types=`` stays rejected — so porting code referencing the names
+doesn't hit a bare AttributeError.
 """
 
 from __future__ import annotations
@@ -49,7 +43,6 @@ def test_parse_constants_in_async_all() -> None:
 
 
 def test_detect_types_still_rejected_at_connect_kwarg_gate() -> None:
-    """Exposing the constants doesn't change the connect-time rejection."""
     with pytest.raises(NotSupportedError, match="detect_types"):
         dqlitedbapi.connect(
             "127.0.0.1:9999",

@@ -1,14 +1,6 @@
-"""Pin: ``_validate_close_timeout`` enforces the 0.01 s floor at the
-dbapi layer so direct callers see the same diagnostic SA's URL parser
-enforces.
-
-Threat model: a programmer using ``dqlitedbapi.aio.aconnect(addr,
-close_timeout=0.0001)`` directly bypasses SA's URL-side floor. Below
-0.01 s, the dispose-time writer-close completes before FIN flushes,
-leaving connections lingering in TIME_WAIT. The SA URL parser
-previously enforced this floor at the dialect boundary; centralising
-the check at the dbapi layer means every entry path (URL,
-connect_args, direct dbapi, direct client) sees the same diagnostic.
+"""_validate_close_timeout enforces the 0.01s floor at the dbapi layer so every entry path
+(URL, connect_args, direct dbapi/client) sees the same diagnostic. Below 0.01s, the
+dispose-time writer-close completes before FIN flushes, leaving connections in TIME_WAIT.
 """
 
 from __future__ import annotations
@@ -25,10 +17,8 @@ def test_close_timeout_below_floor_raises_programming_error() -> None:
 
 
 def test_close_timeout_floor_diagnostic_carries_fin_flush_rationale() -> None:
-    """The dbapi wrapper threads ``min_value_rationale`` through to the
-    client's ``validate_timeout`` so dbapi/SA operators see the same
-    FIN-flush explanation that direct ``DqliteConnection`` /
-    ``ConnectionPool`` callers see when the floor trips."""
+    """The wrapper threads min_value_rationale to validate_timeout so the FIN-flush
+    explanation matches what direct client callers see when the floor trips."""
     with pytest.raises(ProgrammingError) as exc:
         _validate_close_timeout(0.0001)
     assert "FIN flushes" in str(exc.value), (
@@ -39,17 +29,15 @@ def test_close_timeout_floor_diagnostic_carries_fin_flush_rationale() -> None:
 
 
 def test_close_timeout_at_floor_accepted() -> None:
-    _validate_close_timeout(0.01)  # boundary value
+    _validate_close_timeout(0.01)
 
 
 def test_close_timeout_at_default_accepted() -> None:
-    _validate_close_timeout(0.5)  # default
+    _validate_close_timeout(0.5)
 
 
 def test_close_timeout_zero_rejected_via_validate_timeout() -> None:
-    """Zero is rejected by the inner ``validate_timeout`` (positive
-    requirement) BEFORE the floor check fires; the diagnostic
-    mentions positivity."""
+    """Zero is rejected by validate_timeout's positivity check before the floor check fires."""
     with pytest.raises(ProgrammingError, match="positive"):
         _validate_close_timeout(0.0)
 

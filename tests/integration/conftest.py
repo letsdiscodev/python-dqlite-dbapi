@@ -13,5 +13,4 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture
 def cluster_address() -> str:
-    """Get the test cluster address."""
     return DQLITE_TEST_CLUSTER
