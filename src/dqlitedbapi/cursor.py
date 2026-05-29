@@ -9,6 +9,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, Self
 
 import dqliteclient.exceptions as _client_exc
+from dqliteclient.connection import _split_top_level_statements
 from dqlitedbapi._constants import cluster_policy_rejection_message
 from dqlitedbapi.exceptions import (
     DatabaseError,
@@ -913,6 +914,12 @@ def _strip_sql_noise(sql: str) -> str:
     return _SQL_NOISE_RE.sub(" ", sql)
 
 
+_CREATE_TRIGGER_PREFIX_RE: Final = re.compile(
+    r"^\s*CREATE\s+(?:TEMP\s+|TEMPORARY\s+)?TRIGGER\b",
+    re.IGNORECASE,
+)
+
+
 def _is_multi_statement(sql: str) -> bool:
     """Return ``True`` if ``sql`` contains more than one statement.
 
@@ -929,8 +936,20 @@ def _is_multi_statement(sql: str) -> bool:
     String literals and comments are neutralised first (via
     ``_strip_sql_noise``) so a ``;`` inside a string or comment is
     not detected as a statement boundary.
+
+    ``CREATE [TEMP] TRIGGER ... BEGIN <body> END`` is a SINGLE statement
+    whose body legitimately contains ``;`` separators that the flat scan
+    below would otherwise count as statement boundaries. For trigger DDL
+    only, defer to the client layer's trigger-aware tokenizer
+    (``_split_top_level_statements``, which tracks ``BEGIN..END`` /
+    ``CASE..END`` depth) so a single trigger is not rejected while a
+    trigger followed by a second statement still is. Non-trigger SQL
+    keeps the tuned flat-scan behaviour (including the empty-statement
+    and leading/trailing ``;`` edge cases pinned by existing tests).
     """
     cleaned = _strip_sql_noise(sql)
+    if _CREATE_TRIGGER_PREFIX_RE.match(cleaned):
+        return len(_split_top_level_statements(sql)) > 1
     semicolon = cleaned.find(";")
     while semicolon != -1:
         # The character past the ``;`` and everything after must
