@@ -4,8 +4,7 @@ Stdlib ``sqlite3.connect(timeout=N)`` defaults to a 5-second
 ``busy_timeout`` at the SQLite C library level. When a write hits
 contention the C library transparently sleeps and retries via a
 deterministic curve (``main.c::sqliteDefaultBusyCallback``). dqlite's
-server-side VFS authorizer denies ``PRAGMA busy_timeout`` (see
-``done/dbapi-pragma-deny-list-no-regression-pin.md``), so callers
+server-side VFS authorizer denies ``PRAGMA busy_timeout``, so callers
 cannot tune the retry behaviour through the canonical SQLite escape
 hatch. Without an in-driver retry, application code that worked
 against stdlib ``sqlite3`` silently regresses on dqlite — two

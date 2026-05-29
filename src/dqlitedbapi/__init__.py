@@ -121,16 +121,15 @@ apilevel: _Final[_Literal["2.0"]] = "2.0"
 # shareable across threads — the documented contract is "share
 # connections, not cursors" (see ``Connection`` docstring); the
 # ceiling stays at PEP 249 tier 2 for that reason. Tier 3 (cursors
-# shareable too) is tracked as future work in
-# ``issues/dbapi-threadsafety-tier-3-cursor-sharing-stdlib-parity.md``.
+# shareable too) is possible future work.
 #
 # DEFAULT enforcement is still per-thread: ``check_same_thread``
 # defaults to ``True`` and ``Connection._check_thread()`` raises
 # ``ProgrammingError`` on cross-thread method calls. Pass
 # ``check_same_thread=False`` to use the connection sharing
 # advertised here. The wire is always serialised by ``_op_lock``;
-# the Phase 2 hardening (``_state_lock`` for transaction owner
-# read-check-reserve, ``_cursors`` WeakSet add/discard) closes
+# the connection-state hardening (``_state_lock`` for transaction
+# owner read-check-reserve, ``_cursors`` WeakSet add/discard) closes
 # the cross-thread correctness gaps for the connection-shared
 # path.
 #

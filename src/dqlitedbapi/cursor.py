@@ -1876,8 +1876,7 @@ class Cursor:
 
         # Intercept ``PRAGMA busy_timeout`` at the cursor layer BEFORE
         # the wire round-trip — dqlite's VFS authorizer rejects the
-        # PRAGMA server-side (see done/dbapi-pragma-deny-list-no-
-        # regression-pin.md), so the canonical SQLite escape hatch
+        # PRAGMA server-side, so the canonical SQLite escape hatch
         # would otherwise raise ``DatabaseError("not authorized")``.
         # The interception updates the connection's ``_busy_timeout``
         # (setter form) and writes the cursor's result state so
