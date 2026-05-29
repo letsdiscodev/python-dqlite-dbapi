@@ -1055,8 +1055,14 @@ def _convert_bind_param(value: Any) -> Any:
     # ``sqlite3.register_adapter``.
     original_type = type(value)
     adapter = _ADAPTERS.get(original_type)
+    # Track whether an adapter or ``__conform__`` actually transformed the
+    # value, so the post-chain validation below can tell "a registered
+    # adapter returned a non-primitive" apart from "no adapter exists for
+    # this type" and emit an accurate diagnostic for each.
+    transformed = False
     if adapter is not None:
         value = adapter(value)
+        transformed = True
     else:
         # Stdlib parity: fall back to the value's ``__conform__``
         # hook with ``PrepareProtocol`` as the requested protocol
@@ -1108,6 +1114,7 @@ def _convert_bind_param(value: Any) -> Any:
                 raise
             if adapted is not None:
                 value = adapted
+                transformed = True
     # ``datetime.datetime`` is a subclass of ``datetime.date`` but not
     # of ``datetime.time``, so the datetime/date check must fire first
     # for datetime inputs. ``datetime.time`` falls through to its own
@@ -1130,11 +1137,24 @@ def _convert_bind_param(value: Any) -> Any:
     # the diagnostic clarity is the substantive improvement, not the
     # class flip.
     if not isinstance(value, _WIRE_PRIMITIVES):
+        if transformed:
+            # A registered adapter (or ``__conform__``) ran and returned a
+            # non-wire-primitive — name both the input type and the
+            # adapter-produced type so the operator can fix the adapter.
+            raise DataError(
+                f"adapter for {original_type.__name__} produced "
+                f"non-primitive {type(value).__name__}; wire layer accepts "
+                f"only int / float / str / bytes / bytearray / memoryview / "
+                f"bool / None. Register an adapter that returns one of those."
+            )
+        # No adapter / ``__conform__`` for this type — the value was never
+        # transformed. Say so plainly (mirroring stdlib's "type X is not
+        # supported") rather than blaming a non-existent adapter.
         raise DataError(
-            f"adapter for {original_type.__name__} produced "
-            f"non-primitive {type(value).__name__}; wire layer accepts "
-            f"only int / float / str / bytes / bytearray / memoryview / "
-            f"bool / None. Register an adapter that returns one of those."
+            f"type {original_type.__name__} is not supported; wire layer "
+            f"accepts only int / float / str / bytes / bytearray / "
+            f"memoryview / bool / None. Register an adapter that returns "
+            f"one of those."
         )
     # Pre-wire NUL guard: dqlite's wire TEXT is NUL-terminated UTF-8
     # (see ``dqlitewire.encode_text``), so embedded NULs cannot

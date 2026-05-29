@@ -131,15 +131,17 @@ async def test_convert_params_async_conform_raise_propagates_unwrapped() -> None
 
 
 @pytest.mark.asyncio
-async def test_convert_params_async_adapter_failure_wraps_as_data_error() -> None:
-    """Exception parity: a documented adapter-misuse failure still wraps
-    as ``DataError`` on the async path."""
+async def test_convert_params_async_unsupported_type_wraps_as_data_error() -> None:
+    """Exception parity: an unsupported type (a None-returning
+    ``__conform__`` declines adaptation, so no adapter runs) wraps as
+    ``DataError`` with the "type X is not supported" diagnostic on the
+    async path — not the "adapter for X produced ..." wording."""
 
     class WithFailingConform:
         def __conform__(self, _protocol: object) -> object:
             return None
 
-    with pytest.raises(DataError, match="adapter for"):
+    with pytest.raises(DataError, match="is not supported"):
         await cursor_mod._convert_params_async([WithFailingConform()])
 
 

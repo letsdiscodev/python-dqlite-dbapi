@@ -74,8 +74,11 @@ def test_adapter_lookup_error_still_wraps_as_data_error() -> None:
             # then falls back to its own checks.
             return None
 
-    # An unknown type with a None-returning conform forces the
-    # fallback adapter chain to ultimately raise TypeError, which
-    # the new narrow arm still wraps.
-    with pytest.raises(DataError, match="adapter for"):
+    # A None-returning ``__conform__`` declines adaptation, so no
+    # transform runs and the value reaches the post-chain check as an
+    # unsupported type — wrapped as ``DataError`` with the "type X is
+    # not supported" diagnostic (NOT the "adapter for X produced ..."
+    # wording, which is reserved for a real adapter returning a
+    # non-primitive).
+    with pytest.raises(DataError, match="is not supported"):
         _convert_params([WithFailingConform()])
