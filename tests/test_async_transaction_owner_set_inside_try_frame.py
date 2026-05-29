@@ -17,7 +17,6 @@ applied to ``cursor.py``.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 
 import pytest
 
@@ -103,44 +102,6 @@ async def test_close_clears_transaction_owner_as_backstop() -> None:
     conn._transaction_owner = asyncio.current_task()
     await conn.close()
     assert conn._transaction_owner is None
-
-
-async def test_close_does_not_clear_transaction_owner_synchronously_pre_teardown() -> None:
-    """Concurrent-task safety: the backstop clear in close() runs AFTER
-    the underlying protocol close, not synchronously in the prologue.
-
-    A foreign-task close() must not strip the slot mid-way through a
-    legitimate concurrent transaction(); the slot is owned by the
-    in-flight task until its own ``finally`` arm runs.
-
-    Without the AFTER-teardown placement, close()'s synchronous prologue
-    would write ``_transaction_owner = None`` before any await,
-    confusing diagnostics that walk the slot after a foreign-task close
-    races with an in-flight transaction.
-    """
-    conn = AsyncConnection("localhost:9001")
-    try:
-        cur = conn.cursor()
-        await cur.execute("SELECT 1")
-        cur.close()
-        # Synthetic owner — stand-in for a concurrent task parked
-        # inside transaction(). We don't actually hold a real txn open
-        # because that would race with the close(); inspect the slot
-        # state at the synchronous-prologue boundary by reading the
-        # source path directly.
-        sentinel = asyncio.current_task()
-        conn._transaction_owner = sentinel
-        # Drive close(); the slot must be cleared by the trailing
-        # backstop, not before. We can't easily observe the slot
-        # mid-close from the same task, but the source structure pin
-        # below is an additional guard.
-        await conn.close()
-        # Post-close clear is correct (recovery semantics preserved).
-        assert conn._transaction_owner is None
-    finally:
-        # Idempotent close; ignore if already closed.
-        with contextlib.suppress(Exception):
-            await conn.close()
 
 
 def test_close_clear_runs_after_underlying_teardown_source_pin() -> None:
