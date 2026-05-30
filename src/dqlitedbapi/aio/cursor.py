@@ -590,13 +590,9 @@ class AsyncCursor:
                 # _ExecuteManyAccumulator.apply.
                 self._check_closed()
                 acc.apply(self)
-                # stdlib parity: a successful non-empty executemany clears
-                # _lastrowid (no single row is the canonical last-inserted). An
-                # empty batch preserves the pre-batch snapshot.
-                if self._completed_iterations > 0:
-                    self._lastrowid = None
-                else:
-                    self._lastrowid = lastrowid_pre_batch
+                # stdlib parity: executemany leaves lastrowid unchanged; restore
+                # the pre-batch value rather than exposing an in-batch rowid.
+                self._lastrowid = lastrowid_pre_batch
         finally:
             # Clear unconditionally — see ``execute`` finally for the rationale.
             self._executing_task = None

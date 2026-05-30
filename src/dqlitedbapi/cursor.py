@@ -1209,11 +1209,9 @@ class Cursor:
         completed iterations persisted — wrap in a transaction for
         atomicity.
 
-        lastrowid is cleared to None on a non-empty batch (no single
-        iteration's rowid is canonically "the" one); the empty-batch path
-        preserves the pre-batch value (a deliberate divergence from
-        stdlib, which clears even on empty). Rejected calls preserve
-        lastrowid since no batch ran.
+        lastrowid is preserved across executemany — the pre-batch value is
+        kept, matching stdlib sqlite3, which does not update lastrowid for
+        executemany. Rejected calls preserve it too, since no batch ran.
         """
         del self.messages[:]
         # See ``execute``'s prelude comment for the ordering rationale.
@@ -1351,14 +1349,10 @@ class Cursor:
                 # still operable to keep the (count, anchor) invariant.
                 if not self._closed:
                     self._completed_iterations += 1
-            # Clear lastrowid after a non-empty batch: no single
-            # iteration's rowid is canonically "the" one, so None forces
-            # callers to use a single-row execute. Empty batch restores
-            # the pre-batch snapshot (divergence from stdlib).
-            if self._completed_iterations > 0:
-                self._lastrowid = None
-            else:
-                self._lastrowid = lastrowid_pre_batch
+            # stdlib sqlite3 leaves lastrowid unchanged across executemany;
+            # restore the pre-batch value rather than exposing an in-batch
+            # iteration's rowid (which no single iteration owns canonically).
+            self._lastrowid = lastrowid_pre_batch
         except BaseException:
             # Mid-batch failure: rowcount=-1 ("undetermined") so the last
             # iteration's count isn't mistaken for the cumulative total.

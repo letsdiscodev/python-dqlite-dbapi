@@ -103,8 +103,9 @@ async def test_async_executemany_cancel_preserves_in_batch_lastrowid() -> None:
     assert cur._completed_iterations == 1
 
 
-async def test_sync_executemany_success_clears_lastrowid() -> None:
-    """Success path still clears lastrowid to None after the batch."""
+async def test_sync_executemany_success_preserves_lastrowid() -> None:
+    """Success path preserves the pre-batch lastrowid (stdlib parity — executemany
+    does not update lastrowid), not an in-batch iteration's rowid."""
     cur = Cursor.__new__(Cursor)
     cur._closed = False
     cur._description = None
@@ -127,5 +128,5 @@ async def test_sync_executemany_success_clears_lastrowid() -> None:
     with patch.object(Cursor, "_execute_async", fake_execute_async):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
-    assert cur._lastrowid is None
+    assert cur._lastrowid == 5
     assert cur._completed_iterations == 2

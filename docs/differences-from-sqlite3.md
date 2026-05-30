@@ -57,9 +57,6 @@ on `is None` for these columns.
 
 You can usually ignore these, but they are here so nothing surprises you:
 
-- **`executemany()` clears `lastrowid` to `None`.** Stdlib leaves the prior
-  INSERT's rowid sticky; which row's id is "the" id for a batch is
-  ambiguous, so the driver clears it.
 - **`lastrowid` is `None` (not `0`) before the first INSERT.** After the
   first INSERT both drivers agree and keep the value sticky across
   UPDATE/DELETE/DDL.
