@@ -2395,9 +2395,12 @@ class Connection:
         )
 
     def __enter__(self) -> Self:
-        """Eager-connect and return self. __exit__ commits/rolls back
-        but does NOT close (stdlib parity) — the socket + loop thread
-        stay alive for reuse; close() or a pool owns teardown."""
+        """Eager-connect and return self. __exit__ commits/rolls back but does
+        NOT close (like stdlib sqlite3) — the socket + loop thread stay alive for
+        reuse; close() or a pool owns teardown. Because the driver is
+        autocommit-by-default, ``with conn:`` does NOT implicitly begin a
+        transaction (statements autocommit individually); use
+        ``conn.transaction()`` or an explicit BEGIN for atomic grouping."""
         # Eager connect so ``with`` fails at the line, not in the body.
         try:
             self.connect()
