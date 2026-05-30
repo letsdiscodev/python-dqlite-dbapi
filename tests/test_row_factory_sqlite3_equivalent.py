@@ -38,6 +38,30 @@ def test_row_unknown_column_raises_key_error() -> None:
         _ = row["missing"]
 
 
+def test_row_column_name_access_case_insensitive() -> None:
+    import sqlite3
+
+    cur = _cursor_with_description("name", "Value")
+    row = Row(cur, (1, 2))
+    assert row["NAME"] == row["name"] == row["Name"] == 1
+    assert row["value"] == row["VALUE"] == row["Value"] == 2
+
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    std = con.execute("SELECT 1 AS name, 2 AS Value").fetchone()
+    con.close()
+    assert row["NAME"] == std["NAME"]
+    assert row["value"] == std["value"]
+
+
+def test_row_duplicate_case_columns_first_match_wins() -> None:
+    # Two columns differing only in case: the first one wins (matches sqlite3.Row).
+    cur = _cursor_with_description("x", "X")
+    row = Row(cur, (1, 2))
+    assert row["x"] == 1
+    assert row["X"] == 1
+
+
 def test_row_dict_conversion() -> None:
     cur = _cursor_with_description("x", "y")
     row = Row(cur, (1, 2))

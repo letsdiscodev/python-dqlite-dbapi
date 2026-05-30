@@ -39,11 +39,12 @@ class Row:
         if _is_int_not_bool(key):
             return self._values[key]
         if isinstance(key, str):
-            try:
-                idx = self._columns.index(key)
-            except ValueError as exc:
-                raise KeyError(key) from exc
-            return self._values[idx]
+            # Column-name lookup is case-insensitive (ASCII), matching
+            # sqlite3.Row; first matching column wins.
+            for idx, col in enumerate(self._columns):
+                if col == key or (col.isascii() and key.isascii() and col.lower() == key.lower()):
+                    return self._values[idx]
+            raise KeyError(key)
         raise TypeError(f"Row indices must be int or str, not {type(key).__name__}")
 
     def __iter__(self) -> Iterator[Any]:
