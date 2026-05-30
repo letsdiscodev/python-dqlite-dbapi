@@ -1,4 +1,4 @@
-"""Cursor.arraysize rejects non-positive values."""
+"""Cursor.arraysize rejects negative / non-int values but accepts 0 (stdlib parity)."""
 
 import pytest
 
@@ -18,14 +18,15 @@ class TestArraysizeValidation:
         conn = AsyncConnection("localhost:19001")
         return AsyncCursor(conn)
 
-    def test_zero_rejected_sync(self) -> None:
+    def test_zero_accepted_sync(self) -> None:
+        # stdlib sqlite3 allows arraysize=0 (fetchmany() then returns []).
         c = self._sync_cursor()
-        with pytest.raises(ProgrammingError, match=">= 1"):
-            c.arraysize = 0
+        c.arraysize = 0
+        assert c.arraysize == 0
 
     def test_negative_rejected_sync(self) -> None:
         c = self._sync_cursor()
-        with pytest.raises(ProgrammingError, match=">= 1"):
+        with pytest.raises(ProgrammingError, match="non-negative"):
             c.arraysize = -5
 
     def test_positive_accepted_sync(self) -> None:
@@ -33,14 +34,14 @@ class TestArraysizeValidation:
         c.arraysize = 10
         assert c.arraysize == 10
 
-    def test_zero_rejected_async(self) -> None:
+    def test_zero_accepted_async(self) -> None:
         c = self._async_cursor()
-        with pytest.raises(ProgrammingError, match=">= 1"):
-            c.arraysize = 0
+        c.arraysize = 0
+        assert c.arraysize == 0
 
     def test_negative_rejected_async(self) -> None:
         c = self._async_cursor()
-        with pytest.raises(ProgrammingError, match=">= 1"):
+        with pytest.raises(ProgrammingError, match="non-negative"):
             c.arraysize = -1
 
     # Non-int assignment must raise ProgrammingError at assignment time, not a downstream

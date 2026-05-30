@@ -1024,9 +1024,11 @@ class Cursor:
         # Reject bool explicitly: ``arraysize = True`` coercing to 1 is a
         # caller-bug trap.
         if not _is_int_not_bool(value):
-            raise ProgrammingError(f"arraysize must be a positive int, got {type(value).__name__}")
-        if value < 1:
-            raise ProgrammingError(f"arraysize must be >= 1, got {value}")
+            raise ProgrammingError(
+                f"arraysize must be a non-negative int, got {type(value).__name__}"
+            )
+        if value < 0:
+            raise ProgrammingError(f"arraysize must be non-negative, got {value}")
         self._arraysize = value
 
     @property
