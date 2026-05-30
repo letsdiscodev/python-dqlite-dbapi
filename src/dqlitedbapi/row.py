@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any, final
 
+from dqlitedbapi._constants import _is_int_not_bool
+
 
 @final
 class Row:
@@ -34,7 +36,7 @@ class Row:
         if isinstance(key, slice):
             return self._values[key]
         # ``bool`` is an ``int`` subclass; reject it rather than let ``row[True]`` mean column 1.
-        if isinstance(key, int) and not isinstance(key, bool):
+        if _is_int_not_bool(key):
             return self._values[key]
         if isinstance(key, str):
             try:

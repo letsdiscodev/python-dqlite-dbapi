@@ -20,6 +20,7 @@ from dqliteclient import (
 )
 from dqliteclient import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
+from dqlitedbapi._constants import _is_int_not_bool
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.connection import (
     _STDLIB_IMPLICIT_TX_VALUES,
@@ -903,7 +904,7 @@ class AsyncConnection:
         if value is True:
             self._autocommit_value: bool | int = value
             return
-        if isinstance(value, int) and not isinstance(value, bool) and value == -1:
+        if _is_int_not_bool(value) and value == -1:
             self._autocommit_value = -1
             return
         raise NotSupportedError(

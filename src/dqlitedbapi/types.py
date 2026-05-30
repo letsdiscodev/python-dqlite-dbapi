@@ -6,6 +6,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Final, final
 
+from dqlitedbapi._constants import _is_int_not_bool
 from dqlitedbapi.exceptions import AdapterLookupError, DataError, ProgrammingError
 from dqlitewire import ValueType
 
@@ -199,7 +200,7 @@ class _DBAPIType:
             return other.upper() in self.values
         if isinstance(other, ValueType):
             return int(other) in self.values
-        if isinstance(other, int) and not isinstance(other, bool):
+        if _is_int_not_bool(other):
             return other in self.values
         return NotImplemented
 

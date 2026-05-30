@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, Self
 
 import dqliteclient.exceptions as _client_exc
 from dqliteclient.connection import _split_top_level_statements
-from dqlitedbapi._constants import cluster_policy_rejection_message
+from dqlitedbapi._constants import _is_int_not_bool, cluster_policy_rejection_message
 from dqlitedbapi.exceptions import (
     DatabaseError,
     DataError,
@@ -1004,7 +1004,7 @@ class Cursor:
         self._connection._check_thread()
         # Reject bool explicitly: ``arraysize = True`` coercing to 1 is a
         # caller-bug trap.
-        if not isinstance(value, int) or isinstance(value, bool):
+        if not _is_int_not_bool(value):
             raise ProgrammingError(f"arraysize must be a positive int, got {type(value).__name__}")
         if value < 1:
             raise ProgrammingError(f"arraysize must be >= 1, got {value}")
@@ -1445,7 +1445,7 @@ class Cursor:
 
         if size is None:
             size = self._arraysize
-        elif not isinstance(size, int) or isinstance(size, bool):
+        elif not _is_int_not_bool(size):
             # Reject non-int/bool: keep it in the Error hierarchy and
             # avoid True coercing to 1.
             raise ProgrammingError(f"fetchmany expects an int or None, got {type(size).__name__}")
@@ -1564,9 +1564,9 @@ class Cursor:
         self._connection._check_thread()
         if size is None:
             return
-        if not isinstance(size, int) or isinstance(size, bool):
+        if not _is_int_not_bool(size):
             raise ProgrammingError(f"setoutputsize expects an int, got {type(size).__name__}")
-        if column is not None and (not isinstance(column, int) or isinstance(column, bool)):
+        if column is not None and not _is_int_not_bool(column):
             raise ProgrammingError(
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
@@ -1599,7 +1599,7 @@ class Cursor:
         # Validate value/mode before the unconditional raise so a caller
         # typo surfaces as a distinct caller-side bug. bool rejected
         # explicitly (project standard).
-        if not isinstance(value, int) or isinstance(value, bool):
+        if not _is_int_not_bool(value):
             raise ProgrammingError(
                 f"scroll value must be an integer offset, got {type(value).__name__}"
             )

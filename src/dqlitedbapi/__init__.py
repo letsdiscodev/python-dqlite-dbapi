@@ -13,7 +13,7 @@ from dqliteclient import (
     DEFAULT_TIMEOUT_SECONDS,
     DialFunc,
 )
-from dqlitedbapi._constants import CLUSTER_POLICY_REJECTION_PREFIX
+from dqlitedbapi._constants import CLUSTER_POLICY_REJECTION_PREFIX, _is_int_not_bool
 from dqlitedbapi._constants import (
     SQLITE_VERSION as _SQLITE_VERSION,
 )
@@ -179,7 +179,7 @@ def connect(
     if (
         autoc is not _SENTINEL
         and autoc is not True
-        and not (isinstance(autoc, int) and not isinstance(autoc, bool) and autoc == -1)
+        and not (_is_int_not_bool(autoc) and autoc == -1)
     ):
         raise NotSupportedError(
             f"dqlite connect() accepts autocommit=True or autocommit=-1 "

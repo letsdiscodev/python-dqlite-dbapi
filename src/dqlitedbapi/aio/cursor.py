@@ -7,6 +7,7 @@ from collections.abc import Coroutine, Iterable, Sequence
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Self
 
+from dqlitedbapi._constants import _is_int_not_bool
 from dqlitedbapi.cursor import (
     _CONVERT_ROWS_YIELD_EVERY,
     _EXECUTEMANY_REJECT_VERBS,
@@ -214,7 +215,7 @@ class AsyncCursor:
         # the creator loop's next fetchmany size.
         self._connection._check_loop_binding()
         # Reject bools (int subclass): ``arraysize = True`` coercing to 1 is a trap.
-        if not isinstance(value, int) or isinstance(value, bool):
+        if not _is_int_not_bool(value):
             raise ProgrammingError(f"arraysize must be a positive int, got {type(value).__name__}")
         if value < 1:
             raise ProgrammingError(f"arraysize must be >= 1, got {value}")
@@ -653,7 +654,7 @@ class AsyncCursor:
 
         if size is None:
             size = self._arraysize
-        elif not isinstance(size, int) or isinstance(size, bool):
+        elif not _is_int_not_bool(size):
             # bool rejected: ``True`` silently coercing to 1 is a caller-bug trap.
             raise ProgrammingError(f"fetchmany expects an int or None, got {type(size).__name__}")
         if size < 0:
@@ -798,9 +799,9 @@ class AsyncCursor:
         self._connection._check_loop_binding()
         if size is None:
             return
-        if not isinstance(size, int) or isinstance(size, bool):
+        if not _is_int_not_bool(size):
             raise ProgrammingError(f"setoutputsize expects an int, got {type(size).__name__}")
-        if column is not None and (not isinstance(column, int) or isinstance(column, bool)):
+        if column is not None and not _is_int_not_bool(column):
             raise ProgrammingError(
                 f"setoutputsize column expects an int or None, got {type(column).__name__}"
             )
@@ -832,7 +833,7 @@ class AsyncCursor:
         self._connection._check_loop_binding()
         # Validate value/mode before raising so a caller typo surfaces as a
         # caller-side bug (bool rejected as an int subclass).
-        if not isinstance(value, int) or isinstance(value, bool):
+        if not _is_int_not_bool(value):
             raise ProgrammingError(
                 f"scroll value must be an integer offset, got {type(value).__name__}"
             )

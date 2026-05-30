@@ -37,6 +37,7 @@ from dqlitedbapi._constants import (
 from dqlitedbapi._constants import (
     SQLITE_VERSION_INFO as _SQLITE_VERSION_INFO,
 )
+from dqlitedbapi._constants import _is_int_not_bool
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.exceptions import (
@@ -206,7 +207,7 @@ def connect(
     if (
         autoc is not _SENTINEL
         and autoc is not True
-        and not (isinstance(autoc, int) and not isinstance(autoc, bool) and autoc == -1)
+        and not (_is_int_not_bool(autoc) and autoc == -1)
     ):
         raise NotSupportedError(
             f"dqlite connect() accepts autocommit=True or autocommit=-1 "
@@ -296,7 +297,7 @@ async def aconnect(
     if (
         autoc is not _SENTINEL
         and autoc is not True
-        and not (isinstance(autoc, int) and not isinstance(autoc, bool) and autoc == -1)
+        and not (_is_int_not_bool(autoc) and autoc == -1)
     ):
         raise NotSupportedError(
             f"dqlite aconnect() accepts autocommit=True or autocommit=-1 "

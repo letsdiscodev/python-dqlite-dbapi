@@ -201,6 +201,7 @@ FAILED_TO_CONNECT_PREFIX: Final[str] = "Failed to connect: "
 
 # Shared with the cursor-side rewrap site (avoids a circular import).
 from dqlitedbapi._constants import (  # noqa: E402
+    _is_int_not_bool,
     cluster_policy_rejection_message,
 )
 
@@ -1707,7 +1708,7 @@ class Connection:
         # Tight exact-int -1 gate (stdlib discipline): loose == -1 would
         # accept -1.0 / Decimal and break isinstance(autocommit, int).
         # Canonicalise-store as int(-1).
-        if isinstance(value, int) and not isinstance(value, bool) and value == -1:
+        if _is_int_not_bool(value) and value == -1:
             self._autocommit_value = -1
             return
         raise NotSupportedError(
