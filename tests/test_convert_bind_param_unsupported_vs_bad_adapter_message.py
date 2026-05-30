@@ -1,5 +1,6 @@
-"""_convert_bind_param's DataError distinguishes "no adapter for this type" from "a registered
-adapter returned a non-primitive"; only the message text differs, the class stays DataError."""
+"""_convert_bind_param distinguishes "no adapter for this type" (a caller type mistake →
+ProgrammingError, matching stdlib sqlite3) from "a registered adapter returned a
+non-primitive" (an adapter-config problem → DataError)."""
 
 from __future__ import annotations
 
@@ -7,12 +8,12 @@ from decimal import Decimal
 
 import pytest
 
-from dqlitedbapi import DataError, register_adapter, unregister_adapter
+from dqlitedbapi import DataError, ProgrammingError, register_adapter, unregister_adapter
 from dqlitedbapi.types import _convert_bind_param
 
 
 def test_unsupported_type_with_no_adapter_says_not_supported() -> None:
-    with pytest.raises(DataError) as exc:
+    with pytest.raises(ProgrammingError) as exc:
         _convert_bind_param(Decimal("1.5"))
     msg = str(exc.value)
     assert "is not supported" in msg

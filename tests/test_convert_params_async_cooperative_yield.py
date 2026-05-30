@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from dqlitedbapi import cursor as cursor_mod
-from dqlitedbapi.exceptions import DataError, ProgrammingError
+from dqlitedbapi.exceptions import ProgrammingError
 
 
 async def _count_sibling_ticks_during(coro: Any) -> tuple[Any, int]:
@@ -100,14 +100,15 @@ async def test_convert_params_async_conform_raise_propagates_unwrapped() -> None
 
 
 @pytest.mark.asyncio
-async def test_convert_params_async_unsupported_type_wraps_as_data_error() -> None:
-    """A None-returning ``__conform__`` (declines adaptation) wraps as DataError."""
+async def test_convert_params_async_unsupported_type_raises_programming_error() -> None:
+    """A None-returning ``__conform__`` (declines adaptation) leaves an unsupported
+    type → ProgrammingError (stdlib parity)."""
 
     class WithFailingConform:
         def __conform__(self, _protocol: object) -> object:
             return None
 
-    with pytest.raises(DataError, match="is not supported"):
+    with pytest.raises(ProgrammingError, match="is not supported"):
         await cursor_mod._convert_params_async([WithFailingConform()])
 
 

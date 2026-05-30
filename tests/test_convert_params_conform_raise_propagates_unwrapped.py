@@ -1,6 +1,6 @@
 """Pin: a user ``__conform__`` raising a non-PEP-249 exception propagates
-unwrapped through ``_convert_params``; documented adapter-misuse
-(LookupError/TypeError/ValueError) still wraps as ``DataError``.
+unwrapped through ``_convert_params``; a declined (None-returning) ``__conform__``
+leaves an unsupported type, which raises ``ProgrammingError`` (stdlib parity).
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from dqlitedbapi.cursor import _convert_params
-from dqlitedbapi.exceptions import DataError
+from dqlitedbapi.exceptions import ProgrammingError
 
 
 class _BadConform:
@@ -36,17 +36,16 @@ def test_conform_custom_exception_propagates_unwrapped() -> None:
         _convert_params([BadCustom()])
 
 
-def test_adapter_lookup_error_still_wraps_as_data_error() -> None:
-    """Regression: an adapter-misuse failure still wraps as DataError."""
+def test_unsupported_type_after_declined_conform_raises_programming_error() -> None:
+    """A None-returning ``__conform__`` declines adaptation, so the value reaches
+    the post-chain check as an unsupported type → ProgrammingError (stdlib parity)."""
 
     class UnknownType:
         pass
 
-    # A None-returning ``__conform__`` declines adaptation, so the value
-    # reaches the post-chain check as an unsupported type.
     class WithFailingConform:
         def __conform__(self, _protocol: object) -> object:
             return None
 
-    with pytest.raises(DataError, match="is not supported"):
+    with pytest.raises(ProgrammingError, match="is not supported"):
         _convert_params([WithFailingConform()])

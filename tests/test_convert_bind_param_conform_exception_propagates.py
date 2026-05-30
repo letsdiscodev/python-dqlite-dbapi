@@ -30,13 +30,13 @@ def test_conform_typeerror_propagates_unwrapped() -> None:
 def test_conform_returning_none_rejects_non_primitive_at_dbapi_layer() -> None:
     """__conform__ returning None leaves the value unchanged; the wire-primitive guard then
     rejects it at the dbapi layer with the original type named in the diagnostic."""
-    from dqlitedbapi.exceptions import DataError
+    from dqlitedbapi.exceptions import ProgrammingError
 
     class Declines:
         def __conform__(self, protocol: object) -> object:
             return None
 
-    with pytest.raises(DataError, match="Declines"):
+    with pytest.raises(ProgrammingError, match="Declines"):
         _convert_bind_param(Declines())
 
 

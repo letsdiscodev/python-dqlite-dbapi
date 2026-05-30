@@ -112,12 +112,13 @@ def test_register_adapter_for_parent_does_not_fire_for_subclass_pin() -> None:
     register_adapter(Base, lambda b: f"custom:{b.n}")
     try:
         assert _convert_bind_param(Base(5)) == "custom:5"
-        # Child misses the exact-type lookup; the wire-primitive guard rejects it.
+        # Child misses the exact-type lookup; the wire-primitive guard rejects it
+        # as an unsupported type (ProgrammingError, matching stdlib sqlite3).
         import pytest
 
-        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.exceptions import ProgrammingError
 
-        with pytest.raises(DataError, match="Child"):
+        with pytest.raises(ProgrammingError, match="Child"):
             _convert_bind_param(Child(5))
     finally:
         unregister_adapter(Base)

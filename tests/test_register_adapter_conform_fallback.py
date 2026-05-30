@@ -63,13 +63,13 @@ def test_conform_returning_none_rejected_at_dbapi_layer() -> None:
     guard then rejects the non-primitive (stdlib parity, microprotocols layer)."""
     import pytest
 
-    from dqlitedbapi.exceptions import DataError
+    from dqlitedbapi.exceptions import ProgrammingError
 
     class Opaque:
         def __conform__(self, protocol: type) -> object:
             return None
 
-    with pytest.raises(DataError, match="Opaque"):
+    with pytest.raises(ProgrammingError, match="Opaque"):
         _convert_bind_param(Opaque())
 
 
@@ -77,12 +77,12 @@ def test_no_conform_method_no_adapter_rejected_at_dbapi_layer() -> None:
     """No adapter, no ``__conform__``, not a wire primitive -> rejected (stdlib parity)."""
     import pytest
 
-    from dqlitedbapi.exceptions import DataError
+    from dqlitedbapi.exceptions import ProgrammingError
 
     class Plain:
         pass
 
-    with pytest.raises(DataError, match="Plain"):
+    with pytest.raises(ProgrammingError, match="Plain"):
         _convert_bind_param(Plain())
 
 

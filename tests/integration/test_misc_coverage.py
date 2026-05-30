@@ -147,71 +147,71 @@ class TestMultiStatementRejection:
 
 @pytest.mark.integration
 class TestUnsupportedBindParameterTypes:
-    """Types the wire codec cannot encode must surface as ``DataError``, not a
+    """Types the wire codec cannot encode must surface as ``ProgrammingError``, not a
     wire-layer ``EncodeError`` or silent misencoding."""
 
-    def test_decimal_rejected_as_data_error(self, cluster_address: str) -> None:
+    def test_decimal_rejected_as_programming_error(self, cluster_address: str) -> None:
         from decimal import Decimal
 
-        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.exceptions import ProgrammingError
 
         with connect(cluster_address, database="test_bind_types") as conn:
             c = conn.cursor()
-            with pytest.raises(DataError):
+            with pytest.raises(ProgrammingError):
                 c.execute("SELECT ?", [Decimal("3.14")])
 
-    def test_fraction_rejected_as_data_error(self, cluster_address: str) -> None:
+    def test_fraction_rejected_as_programming_error(self, cluster_address: str) -> None:
         from fractions import Fraction
 
-        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.exceptions import ProgrammingError
 
         with connect(cluster_address, database="test_bind_types") as conn:
             c = conn.cursor()
-            with pytest.raises(DataError):
+            with pytest.raises(ProgrammingError):
                 c.execute("SELECT ?", [Fraction(1, 3)])
 
-    def test_complex_rejected_as_data_error(self, cluster_address: str) -> None:
-        from dqlitedbapi.exceptions import DataError
+    def test_complex_rejected_as_programming_error(self, cluster_address: str) -> None:
+        from dqlitedbapi.exceptions import ProgrammingError
 
         with connect(cluster_address, database="test_bind_types") as conn:
             c = conn.cursor()
-            with pytest.raises(DataError):
+            with pytest.raises(ProgrammingError):
                 c.execute("SELECT ?", [complex(1, 2)])
 
-    def test_uuid_rejected_as_data_error(self, cluster_address: str) -> None:
-        """UUID is not wire-recognized; must surface as DataError (psycopg/asyncpg accept it)."""
+    def test_uuid_rejected_as_programming_error(self, cluster_address: str) -> None:
+        """UUID is not wire-recognized; surfaces as ProgrammingError (psycopg/asyncpg accept it)."""
         from uuid import UUID
 
-        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.exceptions import ProgrammingError
 
         with connect(cluster_address, database="test_bind_types") as conn:
             c = conn.cursor()
-            with pytest.raises(DataError):
+            with pytest.raises(ProgrammingError):
                 c.execute(
                     "SELECT ?",
                     [UUID("12345678-1234-5678-1234-567812345678")],
                 )
 
-    def test_path_rejected_as_data_error(self, cluster_address: str) -> None:
-        """``pathlib.Path`` must surface as DataError so the caller is steered to ``str(path)``."""
+    def test_path_rejected_as_programming_error(self, cluster_address: str) -> None:
+        """``pathlib.Path`` surfaces as ProgrammingError, steering the caller to ``str(path)``."""
         from pathlib import Path
 
-        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.exceptions import ProgrammingError
 
         with connect(cluster_address, database="test_bind_types") as conn:
             c = conn.cursor()
-            with pytest.raises(DataError):
+            with pytest.raises(ProgrammingError):
                 c.execute("SELECT ?", [Path("/tmp/foo")])
 
-    def test_array_array_rejected_as_data_error(self, cluster_address: str) -> None:
-        """``array.array`` is bytes-like but not an accepted BLOB input; must be DataError."""
+    def test_array_array_rejected_as_programming_error(self, cluster_address: str) -> None:
+        """``array.array`` is bytes-like but not an accepted BLOB input; ProgrammingError."""
         from array import array
 
-        from dqlitedbapi.exceptions import DataError
+        from dqlitedbapi.exceptions import ProgrammingError
 
         with connect(cluster_address, database="test_bind_types") as conn:
             c = conn.cursor()
-            with pytest.raises(DataError):
+            with pytest.raises(ProgrammingError):
                 c.execute("SELECT ?", [array("b", b"hello")])
 
     def test_intenum_round_trips_as_int(self, cluster_address: str) -> None:

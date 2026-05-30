@@ -568,7 +568,7 @@ def _convert_bind_param(value: Any) -> Any:
                 f"only int / float / str / bytes / bytearray / memoryview / "
                 f"bool / None. Register an adapter that returns one of those."
             )
-        raise DataError(
+        raise ProgrammingError(
             f"type {original_type.__name__} is not supported; wire layer "
             f"accepts only int / float / str / bytes / bytearray / "
             f"memoryview / bool / None. Register an adapter that returns "
