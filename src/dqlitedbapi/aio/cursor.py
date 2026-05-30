@@ -164,7 +164,9 @@ class AsyncCursor:
 
     @property
     def rowcount(self) -> int:
-        """Rows affected by the last execute, or -1 if unknown/inapplicable."""
+        """Rows affected (DML) or, for SELECT, rows produced (dqlite buffers the
+        full result, unlike stdlib's -1); -1 if unknown/inapplicable.
+        """
         return self._rowcount
 
     @property

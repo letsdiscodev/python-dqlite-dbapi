@@ -96,5 +96,5 @@ for.
 This package implements the DB-API 2.0 specification (PEP 249):
 
 - `apilevel = "2.0"`
-- `threadsafety = 1` (threads may share module, not connections)
+- `threadsafety = 2` (threads may share module and connections, not cursors)
 - `paramstyle = "qmark"` (question mark placeholders)

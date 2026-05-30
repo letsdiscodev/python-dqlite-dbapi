@@ -810,9 +810,10 @@ class Connection:
     mid-batch cancel without a surrounding BEGIN persists the completed
     iterations.
 
-    Thread-affinity: ``check_same_thread=True`` (default) enforces the
-    threadsafety=1 contract — foreign-thread calls raise
-    ProgrammingError. ``check_same_thread=False`` relaxes the
+    Thread-affinity: ``threadsafety`` is 2 (threads may share the module
+    and connections, but not cursors). ``check_same_thread=True``
+    (default) confines a connection to its creating thread — foreign-thread
+    calls raise ProgrammingError; ``check_same_thread=False`` relaxes the
     cross-thread check (the wire is already serialised by ``_op_lock``).
     Under it, the contract matches stdlib sqlite3: **share connections
     across threads; create one cursor per thread** (per-cursor result

@@ -937,7 +937,9 @@ class Cursor:
 
     @property
     def rowcount(self) -> int:
-        """Rows affected by the last execute; -1 if unknown / not applicable."""
+        """Rows affected (DML) or, for SELECT, rows produced (dqlite buffers the
+        full result, unlike stdlib's -1); -1 if unknown / not applicable.
+        """
         return self._rowcount
 
     @property
@@ -998,7 +1000,7 @@ class Cursor:
         # Closed-state guard on the SETTER only; the getter stays
         # permissive like peer drivers.
         self._check_closed()
-        # Enforce threadsafety=1 affinity. _check_thread short-circuits
+        # Enforce the default per-thread affinity. _check_thread short-circuits
         # under check_same_thread=False, where the cursor-per-thread
         # sub-contract becomes the caller's responsibility.
         self._connection._check_thread()
