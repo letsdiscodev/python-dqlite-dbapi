@@ -69,9 +69,10 @@ You can usually ignore these, but they are here so nothing surprises you:
   `description[i][1]` (importable from `dqlitedbapi`). Test it with
   `type_code == UNKNOWN`; for column types on an empty result, query
   `PRAGMA table_info(...)`.
-- **CTE-prefixed pure DML** (`WITH ... INSERT/UPDATE/DELETE`) is
-  misclassified as row-returning, so `rowcount` comes back `-1` and
-  `lastrowid` is stale. Use plain DML, or `INSERT ... RETURNING id`.
+- **CTE-prefixed DML** (`WITH ... INSERT/UPDATE/DELETE`) sets `lastrowid` and
+  reports `rowcount` as the affected-row count. That `rowcount` is a dqlite
+  extra: stdlib sqlite3 returns `-1` for CTE-prefixed DML (it counts only
+  non-CTE DML). `WITH ... SELECT` and `WITH ... RETURNING` return rows as usual.
 
 ### Type-code sentinels: compare with `==`, not `in {}`
 

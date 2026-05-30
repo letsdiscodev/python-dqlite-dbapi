@@ -739,13 +739,19 @@ class _ExecuteManyAccumulator:
 def _is_row_returning(sql: str) -> bool:
     """Heuristic for "does this statement return a result set?" (SSOT for both cursors).
 
-    Matches a leading SELECT/VALUES/PRAGMA/EXPLAIN/WITH or an embedded
-    RETURNING. Known limitation: ``WITH ... INSERT`` (no RETURNING) is
-    misclassified as a query — a full parser is out of scope.
+    A leading SELECT/VALUES/PRAGMA/EXPLAIN returns rows; a leading WITH (CTE) is
+    resolved to its top-level statement so ``WITH ... INSERT`` (no RETURNING)
+    routes as DML, while ``WITH ... SELECT`` stays a query; an embedded RETURNING
+    on any DML makes it row-returning.
     """
     cleaned = _strip_sql_noise(sql)
     normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
-    if normalized.startswith(_ROW_RETURNING_PREFIXES):
+    body = _strip_leading_with_clause(normalized) if normalized.startswith("WITH") else normalized
+    # If the CTE could not be parsed, _strip_leading_with_clause returns the
+    # original (still WITH-prefixed); preserve the safe "treat as query" default.
+    if body.startswith("WITH"):
+        return True
+    if body.startswith(("SELECT", "VALUES", "PRAGMA", "EXPLAIN")):
         return True
     return _RETURNING_WORD_RE.search(normalized) is not None
 
@@ -840,7 +846,8 @@ def _is_insert_or_replace(sql: str) -> bool:
     """
     cleaned = _strip_sql_noise(sql)
     normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
-    return normalized.startswith(("INSERT", "REPLACE"))
+    body = _strip_leading_with_clause(normalized) if normalized.startswith("WITH") else normalized
+    return body.startswith(("INSERT", "REPLACE"))
 
 
 def _is_dml_rowcount_meaningful(sql: str) -> bool:
@@ -852,7 +859,8 @@ def _is_dml_rowcount_meaningful(sql: str) -> bool:
     """
     cleaned = _strip_sql_noise(sql)
     normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
-    return normalized.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
+    body = _strip_leading_with_clause(normalized) if normalized.startswith("WITH") else normalized
+    return body.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
 
 
 def _is_pragma(sql: str) -> bool:

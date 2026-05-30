@@ -41,8 +41,8 @@ async def test_lastrowid_sticky_across_update_and_delete(monkeypatch) -> None:
 
 
 def test_is_insert_or_replace_prefix_detection() -> None:
-    """Detect INSERT / INSERT OR REPLACE / INSERT OR IGNORE / REPLACE;
-    reject UPDATE / DELETE / DDL / WITH."""
+    """Detect INSERT / INSERT OR REPLACE / INSERT OR IGNORE / REPLACE, including a
+    CTE-prefixed INSERT; reject UPDATE / DELETE / DDL / WITH ... SELECT."""
     from dqlitedbapi.cursor import _is_insert_or_replace
 
     for sql in (
@@ -53,6 +53,7 @@ def test_is_insert_or_replace_prefix_detection() -> None:
         "REPLACE INTO t VALUES (1)",
         "  -- c\n  INSERT INTO t VALUES (1)",  # leading comment
         "/* c */ INSERT INTO t VALUES (1)",
+        "WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte",  # CTE-prefixed INSERT
     ):
         assert _is_insert_or_replace(sql), sql
     for sql in (
@@ -61,7 +62,7 @@ def test_is_insert_or_replace_prefix_detection() -> None:
         "CREATE TABLE t (x INT)",
         "DROP TABLE t",
         "SELECT * FROM t",
-        "WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte",
+        "WITH cte AS (SELECT 1) SELECT * FROM cte",
         "COMMIT",
     ):
         assert not _is_insert_or_replace(sql), sql
