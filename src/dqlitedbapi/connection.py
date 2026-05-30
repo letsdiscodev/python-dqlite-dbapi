@@ -1100,41 +1100,48 @@ class Connection:
         ``self._timeout`` so a same-thread signal-handler re-entry
         raises cleanly instead of deadlocking the non-reentrant lock.
         """
-        # acquire(timeout=...) is SIGINT-interruptible: a KI/SystemExit
-        # escapes BEFORE the try block, skipping its cleanup arm. If a
-        # prior op is in flight it owns _in_use, wedging the connection;
-        # schedule a defensive _invalidate. Gated on _in_use so a KI on
-        # a quiet acquire doesn't invalidate gratuitously.
+        # The acquire, the owner-stamp, and the body all sit under one
+        # try/finally so a SIGINT-delivered KeyboardInterrupt/SystemExit
+        # raised anywhere after the lock is held — including in the
+        # owner-stamp gap — cannot escape with the lock latched. `acquired`
+        # is bound first so the finally never NameErrors on the inner arm
+        # below (which re-raises before `acquired` is assigned).
+        acquired = False
         try:
-            acquired = self._op_lock.acquire(timeout=self._timeout)
-        except (KeyboardInterrupt, SystemExit):
-            # The lock may be held if KI landed in the gap between
-            # acquire returning True and the STORE_FAST; best-effort
-            # release (suppress the unlocked-lock RuntimeError).
-            with contextlib.suppress(RuntimeError):
-                self._op_lock_owner = None
-                self._op_lock.release()
-            # Close the never-scheduled coro to avoid a warning.
-            coro.close()
-            # Synchronously null _async_conn so a retry from the signal
-            # handler doesn't hit "another operation is in progress" on
-            # the stale in-use conn (the queued _invalidate only lands
-            # when the slow read yields). GIL-atomic STORE_ATTR; the
-            # loop coro keeps its own ref and reaps via _invalidate.
-            dying = self._async_conn
-            if dying is not None and self._loop is not None and dying._in_use:
-                self._async_conn = None
+            # acquire(timeout=...) is SIGINT-interruptible: a KI/SystemExit
+            # can land between acquire returning True and the STORE_FAST,
+            # leaving the lock held with `acquired` still False — so the
+            # inner arm best-effort releases it (the outer finally skips
+            # release when `acquired` is False). A prior op in flight owns
+            # _in_use, wedging the connection; schedule a defensive
+            # _invalidate, gated on _in_use so a KI on a quiet acquire
+            # doesn't invalidate gratuitously.
+            try:
+                acquired = self._op_lock.acquire(timeout=self._timeout)
+            except (KeyboardInterrupt, SystemExit):
                 with contextlib.suppress(RuntimeError):
-                    self._loop.call_soon_threadsafe(
-                        dying._invalidate,
-                        InterfaceError("operation interrupted during op-lock acquire"),
-                    )
-            raise
-        # Stamp owner before the try/finally so the close() bypass probe
-        # can read it (only on the acquired arm). GIL-atomic.
-        if acquired:
-            self._op_lock_owner = threading.get_ident()
-        try:
+                    self._op_lock_owner = None
+                    self._op_lock.release()
+                # Close the never-scheduled coro to avoid a warning.
+                coro.close()
+                # Synchronously null _async_conn so a retry from the signal
+                # handler doesn't hit "another operation is in progress" on
+                # the stale in-use conn (the queued _invalidate only lands
+                # when the slow read yields). GIL-atomic STORE_ATTR; the
+                # loop coro keeps its own ref and reaps via _invalidate.
+                dying = self._async_conn
+                if dying is not None and self._loop is not None and dying._in_use:
+                    self._async_conn = None
+                    with contextlib.suppress(RuntimeError):
+                        self._loop.call_soon_threadsafe(
+                            dying._invalidate,
+                            InterfaceError("operation interrupted during op-lock acquire"),
+                        )
+                raise
+            # Stamp owner on the acquired arm so the close() bypass probe
+            # can read it. GIL-atomic.
+            if acquired:
+                self._op_lock_owner = threading.get_ident()
             if not acquired:
                 coro.close()
                 # OperationalError (not InterfaceError) so SA's
