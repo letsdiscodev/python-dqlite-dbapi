@@ -855,6 +855,15 @@ def _is_dml_rowcount_meaningful(sql: str) -> bool:
     return normalized.startswith(("INSERT", "UPDATE", "DELETE", "REPLACE"))
 
 
+def _is_pragma(sql: str) -> bool:
+    """True if ``sql`` is a PRAGMA. stdlib sqlite3 reports rowcount=-1 for all
+    PRAGMA (read or write); a read-form PRAGMA otherwise lands in the
+    row-returning branch and would pick up len(rows)."""
+    cleaned = _strip_sql_noise(sql)
+    normalized = _strip_leading_comments(cleaned).upper().lstrip("(")
+    return normalized.startswith("PRAGMA")
+
+
 class Cursor:
     """PEP 249 compliant database cursor."""
 
@@ -1188,7 +1197,9 @@ class Cursor:
             # result up front, so the count is known) — a divergence from
             # stdlib's -1, relied on by SA insertmanyvalues. Portable
             # "did SELECT find anything" idiom is ``fetchone() is not None``.
-            self._rowcount = len(rows)
+            # PRAGMA reads are the exception: stdlib reports -1 for ALL PRAGMA,
+            # so match that (and the busy_timeout interceptor) rather than len.
+            self._rowcount = -1 if _is_pragma(operation) else len(rows)
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))
             if _is_insert_or_replace(operation):

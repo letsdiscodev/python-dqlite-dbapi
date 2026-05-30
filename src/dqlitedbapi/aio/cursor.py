@@ -20,6 +20,7 @@ from dqlitedbapi.cursor import (
     _is_dml_rowcount_meaningful,
     _is_dml_with_returning,
     _is_insert_or_replace,
+    _is_pragma,
     _is_row_returning,
     _strip_leading_comments,
     _strip_sql_noise,
@@ -321,8 +322,9 @@ class AsyncCursor:
             self._row_index = 0
             # dqlite returns the buffered row count (not stdlib's -1): the wire
             # buffers up front and the RETURNING path relies on this for SA's
-            # insertmanyvalues.
-            self._rowcount = len(rows)
+            # insertmanyvalues. PRAGMA reads are the exception — stdlib reports
+            # -1 for ALL PRAGMA, so match that rather than len.
+            self._rowcount = -1 if _is_pragma(operation) else len(rows)
         else:
             last_id, affected = await _call_client(conn.execute(operation, params))
             # Post-await close-race guard (see query branch). _lastrowid is

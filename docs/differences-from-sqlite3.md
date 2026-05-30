@@ -34,8 +34,8 @@ covers the differences you are most likely to notice when porting code.
   server-side counterpart in dqlite; their stubs raise `NotSupportedError`.
 - **`rowcount` after SELECT is `len(rows)`.** Stdlib returns `-1` for queries.
   dqlite knows the full result at execute time, so it reports the count.
-  `rowcount` stays `-1` for true non-result paths (PRAGMA write, a
-  never-executed cursor).
+  `rowcount` stays `-1` for non-result paths, for all PRAGMA statements (read
+  or write — matching stdlib), and for a never-executed cursor.
 
 ## NULL in BOOLEAN/DATETIME columns depends on the server version
 
