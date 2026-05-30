@@ -12,8 +12,9 @@ namespace: the module attributes (`apilevel`, `threadsafety`, `paramstyle`,
 `IntegrityError`, `InternalError`, `ProgrammingError`, `NotSupportedError`),
 the type constructors (`Date`, `Time`, `Timestamp`, `DateFromTicks`,
 `TimeFromTicks`, `TimestampFromTicks`, `Binary`), the type sentinels
-(`STRING`, `BINARY`, `NUMBER`, `DATETIME`, `ROWID`), `register_adapter` /
-`unregister_adapter`, and the `NotSupportedError` stubs for stdlib-only APIs.
+(`STRING`, `BINARY`, `NUMBER`, `DATETIME`, `ROWID`, `UNKNOWN`), the `Row`
+factory and `DescriptionTuple`, `register_adapter` / `unregister_adapter`, and
+the `NotSupportedError` stubs for stdlib-only APIs.
 
 ## The one difference to watch
 
