@@ -19,7 +19,8 @@ def test_sync_fetchmany_clears_messages_only_once() -> None:
         cur.messages.append(("Warning", "sentinel"))  # type: ignore[arg-type]
         more = cur.fetchmany(2)
         assert len(more) == 2
-        # The sentinel is wiped by the prelude clear (correct); the real pin is structural below.
+        assert ("Warning", "sentinel") not in cur.messages
+        assert cur.messages == []
     finally:
         conn.close()
 
