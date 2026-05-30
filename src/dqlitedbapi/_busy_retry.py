@@ -78,7 +78,9 @@ def retry_sync_on_busy[T](
     Under ``check_same_thread=False`` a retried statement sees sibling writes between attempts
     (``_op_lock`` is released during the sleep); wrap in ``conn.transaction()`` for a snapshot.
     """
-    busy_timeout_ms = int(busy_timeout * 1000)
+    # round (not int): ``N / 1000.0`` is not exactly representable, so the retry
+    # budget matches the PRAGMA busy_timeout getter's echo instead of landing at N-1.
+    busy_timeout_ms = round(busy_timeout * 1000)
     if busy_timeout_ms <= 0:
         return run_sync(coro_factory())
     count = 0
@@ -117,7 +119,9 @@ async def retry_async_on_busy[T](
     per attempt (released during sleep), but ``executemany`` holds it across the whole loop to
     preserve cancel-atomicity, accepting sibling-task starvation across retries.
     """
-    busy_timeout_ms = int(busy_timeout * 1000)
+    # round (not int): ``N / 1000.0`` is not exactly representable, so the retry
+    # budget matches the PRAGMA busy_timeout getter's echo instead of landing at N-1.
+    busy_timeout_ms = round(busy_timeout * 1000)
     if busy_timeout_ms <= 0:
         return await coro_factory()
     count = 0

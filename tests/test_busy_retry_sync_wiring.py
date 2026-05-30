@@ -90,6 +90,24 @@ def test_retry_sync_keyboardinterrupt_propagates() -> None:
         retry_sync_on_busy(5.0, run_sync_mock, lambda: MagicMock())
 
 
+def test_retry_sync_budget_rounds_fractional_ms_matching_getter() -> None:
+    """The retry budget uses round(busy_timeout*1000), matching the PRAGMA
+    busy_timeout getter's echo (2.1s -> 2100ms, not int()'s 2099)."""
+    captured: list[int] = []
+
+    def fake_delay(count: int, budget_ms: int) -> None:
+        captured.append(budget_ms)
+        return None  # exhaust immediately so the original BUSY re-raises
+
+    run_sync_mock = MagicMock(side_effect=OperationalError("locked", code=SQLITE_BUSY))
+    with (
+        patch("dqlitedbapi._busy_retry.next_busy_delay_ms", side_effect=fake_delay),
+        pytest.raises(OperationalError),
+    ):
+        retry_sync_on_busy(2.1, run_sync_mock, lambda: MagicMock())
+    assert captured == [2100]
+
+
 def test_retry_sync_coro_factory_called_each_attempt() -> None:
     """Coroutines are single-use, so the helper calls ``coro_factory()`` once per attempt."""
     run_sync_mock = MagicMock(
