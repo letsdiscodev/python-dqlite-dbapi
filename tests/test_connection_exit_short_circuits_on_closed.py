@@ -31,7 +31,7 @@ def test_sync_exit_short_circuits_when_closed_mid_with() -> None:
     conn._closed = True
     conn._async_conn = None
 
-    conn.__exit__(None, None, None)
+    assert conn.__exit__(None, None, None) is None
 
 
 def test_sync_exit_short_circuits_when_force_close_set_closed_but_async_conn_still_alive() -> None:
@@ -40,7 +40,7 @@ def test_sync_exit_short_circuits_when_force_close_set_closed_but_async_conn_sti
 
     conn._closed = True
 
-    conn.__exit__(None, None, None)
+    assert conn.__exit__(None, None, None) is None
 
 
 def test_sync_exit_with_body_exception_short_circuits_when_closed() -> None:
@@ -50,7 +50,8 @@ def test_sync_exit_with_body_exception_short_circuits_when_closed() -> None:
     conn._async_conn = None
 
     body_exc = ValueError("body sentinel")
-    conn.__exit__(type(body_exc), body_exc, None)
+    # Falsy return => the body exception propagates instead of being suppressed.
+    assert conn.__exit__(type(body_exc), body_exc, None) is None
 
 
 @pytest.mark.asyncio
@@ -66,4 +67,4 @@ async def test_async_exit_short_circuits_when_closed_mid_with() -> None:
     aconn._closed = True
     aconn._async_conn = None
 
-    await aconn.__aexit__(None, None, None)
+    assert await aconn.__aexit__(None, None, None) is None
