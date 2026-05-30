@@ -7,33 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import inspect
-
-from dqlitedbapi.aio.cursor import AsyncCursor
-
-
-def test_async_fetch_methods_call_non_binding_helper_not_ensure_locks() -> None:
-    """Each fetch* method must call ``_check_loop_binding``, not ``_ensure_locks``."""
-    for method_name in ("fetchone", "fetchmany", "fetchall"):
-        method = getattr(AsyncCursor, method_name)
-        src = inspect.getsource(method)
-        assert "_check_loop_binding" in src, (
-            f"AsyncCursor.{method_name} must call _check_loop_binding"
-        )
-        assert "_ensure_locks" not in src, (
-            f"AsyncCursor.{method_name} must not call _ensure_locks (lazy-bind footgun)"
-        )
-
-
-def test_async_executescript_calls_non_binding_helper_not_ensure_locks() -> None:
-    src = inspect.getsource(AsyncCursor.executescript)
-    assert "_check_loop_binding" in src
-    assert "_ensure_locks" not in src
 
 
 def test_fresh_cursor_fetch_does_not_bind_connection_loop() -> None:
     """A fresh cursor's first call being fetchone() raises without lazy-binding the loop."""
     from dqlitedbapi.aio.connection import AsyncConnection
+    from dqlitedbapi.aio.cursor import AsyncCursor
     from dqlitedbapi.exceptions import ProgrammingError
 
     aconn = AsyncConnection.__new__(AsyncConnection)

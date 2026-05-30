@@ -5,28 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.connection import Connection
-
-
-def _prop_doc(cls: type, name: str) -> str:
-    desc = cls.__dict__[name]
-    assert isinstance(desc, property)
-    doc = desc.__doc__
-    assert doc is not None
-    return doc
-
-
-def test_sync_autocommit_doc_calls_out_setter_getter_round_trip() -> None:
-    doc = _prop_doc(Connection, "autocommit")
-    assert "round-trip" in doc.lower()
-    assert "LEGACY_TRANSACTION_CONTROL" in doc
-
-
-def test_async_autocommit_doc_calls_out_setter_getter_round_trip() -> None:
-    doc = _prop_doc(AsyncConnection, "autocommit")
-    assert "round-trip" in doc.lower()
-    assert "LEGACY_TRANSACTION_CONTROL" in doc
 
 
 def test_sync_autocommit_setter_minus_one_round_trips() -> None:

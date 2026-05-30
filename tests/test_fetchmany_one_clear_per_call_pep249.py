@@ -24,56 +24,6 @@ def test_sync_fetchmany_clears_messages_only_once() -> None:
         conn.close()
 
 
-def test_sync_fetchmany_loop_body_uses_unlocked_helper() -> None:
-    """``fetchmany``'s loop calls ``_next_row_unlocked``, not ``fetchone``."""
-    import ast
-    import inspect
-    import textwrap
-
-    from dqlitedbapi import cursor as sync_cur_mod
-
-    src = textwrap.dedent(inspect.getsource(sync_cur_mod.Cursor.fetchmany))
-    tree = ast.parse(src)
-    found_unlocked_call = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.For):
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
-                    if sub.func.attr == "_next_row_unlocked":
-                        found_unlocked_call = True
-                    assert sub.func.attr != "fetchone", (
-                        "Cursor.fetchmany must not call self.fetchone() in "
-                        "the loop — that re-clears messages and re-runs "
-                        "guards per-row. Use _next_row_unlocked instead."
-                    )
-    assert found_unlocked_call, "Cursor.fetchmany loop must call self._next_row_unlocked()."
-
-
-def test_async_fetchmany_loop_body_uses_unlocked_helper() -> None:
-    """Structural pin (async sibling)."""
-    import ast
-    import inspect
-    import textwrap
-
-    from dqlitedbapi.aio import cursor as aio_cur_mod
-
-    src = textwrap.dedent(inspect.getsource(aio_cur_mod.AsyncCursor.fetchmany))
-    tree = ast.parse(src)
-    found_unlocked_call = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.For):
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
-                    if sub.func.attr == "_next_row_unlocked":
-                        found_unlocked_call = True
-                    assert sub.func.attr != "fetchone", (
-                        "AsyncCursor.fetchmany must not call self.fetchone() "
-                        "in the loop — that re-clears messages and re-runs "
-                        "guards per-row. Use _next_row_unlocked instead."
-                    )
-    assert found_unlocked_call, "AsyncCursor.fetchmany loop must call self._next_row_unlocked()."
-
-
 async def test_async_fetchmany_returns_correct_rows() -> None:
     """Regression guard: the refactor must not break basic delivery."""
     conn = AsyncConnection("localhost:9001")

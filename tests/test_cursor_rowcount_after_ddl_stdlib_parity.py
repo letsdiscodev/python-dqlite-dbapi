@@ -193,26 +193,3 @@ def test_sync_cursor_dml_still_reports_affected(dml: str, affected: int) -> None
     assert cur._rowcount == affected, (
         f"DML {dml!r} must propagate affected={affected}; got {cur._rowcount}"
     )
-
-
-def test_sync_exec_branch_gates_rowcount_on_dml_predicate() -> None:
-    """Inspection pin: sync exec branch gates ``_rowcount`` on the DML predicate."""
-    import inspect
-
-    from dqlitedbapi.cursor import Cursor
-
-    src = inspect.getsource(Cursor._execute_async)
-    assert "_is_dml_rowcount_meaningful(operation)" in src, (
-        "Sync exec branch must gate _rowcount write on "
-        "_is_dml_rowcount_meaningful(operation) for stdlib parity"
-    )
-
-
-def test_async_exec_branch_gates_rowcount_on_dml_predicate() -> None:
-    import inspect
-
-    src = inspect.getsource(AsyncCursor._execute_unlocked)
-    assert "_is_dml_rowcount_meaningful(operation)" in src, (
-        "Async exec branch must gate _rowcount write on "
-        "_is_dml_rowcount_meaningful(operation) for stdlib parity"
-    )

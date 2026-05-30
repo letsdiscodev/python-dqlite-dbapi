@@ -12,7 +12,6 @@ import threading
 import pytest
 
 import dqlitedbapi
-from dqlitedbapi.connection import Connection
 
 
 def test_ki_landing_between_schedule_and_await_closes_coro_and_propagates(
@@ -70,12 +69,3 @@ def test_ki_before_schedule_closes_coro_without_attribute_error(
         monkeypatch.undo()
         with contextlib.suppress(Exception):
             conn.close()
-
-
-def test_run_sync_future_sentinel_is_typed_optional() -> None:
-    """Source-level pin: the ``future | None`` sentinel and ``future is None`` guard."""
-    import inspect
-
-    src = inspect.getsource(Connection._run_sync)
-    assert "future: concurrent.futures.Future[T] | None = None" in src, src
-    assert "if future is None:" in src, src

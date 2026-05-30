@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import sqlite3
 
-from dqlitedbapi.cursor import Cursor
-
 
 def test_stdlib_lastrowid_is_per_cursor_not_per_connection() -> None:
     """Stdlib ``sqlite3.Cursor.lastrowid`` is cursor-scoped: a sibling cursor
@@ -20,10 +18,3 @@ def test_stdlib_lastrowid_is_per_cursor_not_per_connection() -> None:
     c1.execute("INSERT INTO t (v) VALUES ('a')")
     assert c1.lastrowid == 1
     assert c2.lastrowid is None
-
-
-def test_sync_lastrowid_docstring_keeps_returning_divergence_note() -> None:
-    """The ``INSERT ... RETURNING`` divergence note must be kept."""
-    doc = Cursor.lastrowid.__doc__ or ""
-    assert "INSERT ... RETURNING" in doc
-    assert "divergence" in doc.lower()

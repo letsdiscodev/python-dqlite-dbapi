@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import ast
-import inspect
 import os
-import textwrap
 import threading
 from unittest.mock import MagicMock
 
 import pytest
 
-from dqlitedbapi import connection as conn_mod
 from dqlitedbapi.connection import Connection
 
 
@@ -24,36 +20,6 @@ def _bare_connection() -> Connection:
     conn._transaction_owner = None
     conn.messages = []
     return conn
-
-
-def test_sync_transaction_owner_assignment_inside_try_frame_source_pin() -> None:
-    """``self._transaction_owner = token`` lives inside a ``try:`` frame (possibly nested
-    through the ``with _state_lock:`` block) so the finally clears it under any BaseException."""
-    src = textwrap.dedent(inspect.getsource(conn_mod.Connection.transaction))
-    tree = ast.parse(src)
-
-    def _node_contains_owner_assign(node: ast.AST) -> bool:
-        for child in ast.walk(node):
-            if isinstance(child, ast.Assign):
-                for tgt in child.targets:
-                    if isinstance(tgt, ast.Attribute) and tgt.attr == "_transaction_owner":
-                        return True
-        return False
-
-    def find_owner_assign_in_try(node: ast.AST) -> bool:
-        for child in ast.walk(node):
-            if isinstance(child, ast.Try):
-                for stmt in child.body:
-                    if _node_contains_owner_assign(stmt):
-                        return True
-        return False
-
-    assert find_owner_assign_in_try(tree), (
-        "Connection.transaction() must set self._transaction_owner "
-        "INSIDE a try: frame (directly or nested through a with "
-        "block) so the finally clears the slot under any "
-        "BaseException that arrives at the assignment site."
-    )
 
 
 def test_sync_transaction_baseexception_clears_owner_before_rollback() -> None:

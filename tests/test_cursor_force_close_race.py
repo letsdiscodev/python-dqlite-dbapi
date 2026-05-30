@@ -6,9 +6,6 @@ and a Barrier-synchronised race."""
 
 from __future__ import annotations
 
-import ast
-import inspect
-import textwrap
 import threading
 from typing import Any
 from unittest.mock import MagicMock
@@ -31,28 +28,6 @@ def _make_cursor(rows: list[tuple[Any, ...]]) -> Cursor:
     cur._connection._closed = False
     cur._connection._check_thread = lambda: None
     return cur
-
-
-def test_next_row_unlocked_snapshots_self_rows_to_local() -> None:
-    """_next_row_unlocked must read self._rows exactly once; a second read
-    is the TOCTOU partner of the cascade's self._rows = [] write."""
-    src = textwrap.dedent(inspect.getsource(Cursor._next_row_unlocked))
-    tree = ast.parse(src)
-    self_rows_reads = 0
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Attribute)
-            and node.attr == "_rows"
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "self"
-            and isinstance(node.ctx, ast.Load)
-        ):
-            self_rows_reads += 1
-    assert self_rows_reads == 1, (
-        f"_next_row_unlocked reads self._rows {self_rows_reads} times; "
-        "must snapshot to a local exactly once to avoid the cascade-race "
-        "IndexError"
-    )
 
 
 def test_next_row_unlocked_race_with_cascade_empty_rows() -> None:

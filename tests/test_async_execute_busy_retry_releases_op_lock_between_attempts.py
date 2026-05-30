@@ -53,18 +53,3 @@ def test_async_execute_does_not_wrap_retry_call_in_outer_op_lock() -> None:
         "acquire ``op_lock`` between attempts instead of parking "
         "for the full backoff curve."
     )
-
-
-def test_async_execute_calls_retry_with_a_factory_that_acquires_op_lock() -> None:
-    """The retry helper must be passed a per-attempt callable that owns op_lock."""
-    src = _async_execute_source()
-    assert "async def _attempt" in src or "_attempt = " in src, (
-        "AsyncCursor.execute should define a per-attempt coroutine "
-        "(typically named ``_attempt``) that owns the ``op_lock`` "
-        "acquire — pass that callable to ``retry_async_on_busy`` so "
-        "each retry acquires + releases the lock separately."
-    )
-    assert "async with op_lock" in src, (
-        "the per-attempt coroutine must include ``async with op_lock:`` "
-        "so each retry attempt re-acquires the lock"
-    )

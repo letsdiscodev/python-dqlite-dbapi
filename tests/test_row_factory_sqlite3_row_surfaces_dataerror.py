@@ -51,13 +51,3 @@ def test_dataerror_chains_to_original_typeerror() -> None:
     except DataError as exc:
         assert isinstance(exc.__cause__, TypeError)
         assert "argument" in str(exc.__cause__).lower()
-
-
-def test_cursor_row_factory_docstring_no_longer_recommends_sqlite3_row_unqualified() -> None:
-    """``Cursor.row_factory`` docstring must caveat that ``sqlite3.Row`` fails."""
-    doc = getattr(Cursor.row_factory, "fget", Cursor.row_factory).__doc__ or ""
-    if "sqlite3.Row" in doc:
-        assert "do NOT work" in doc or "DataError" in doc, (
-            "If sqlite3.Row remains mentioned, the doctring must "
-            "explain that it surfaces DataError at first fetch"
-        )

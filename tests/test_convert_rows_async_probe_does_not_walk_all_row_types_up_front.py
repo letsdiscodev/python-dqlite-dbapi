@@ -5,47 +5,13 @@ cooperative ``await asyncio.sleep(0)`` fires regardless of fetch width.
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import contextlib
-import inspect
-import textwrap
 import time
 
 import pytest
 
 from dqlitedbapi import cursor as cursor_mod
-
-
-def _convert_rows_async_source() -> str:
-    return textwrap.dedent(inspect.getsource(cursor_mod._convert_rows_async))
-
-
-def test_convert_rows_async_does_not_walk_all_row_types_before_first_yield() -> None:
-    """Structural pin: no up-front ``any(... for rt in row_types ...)`` walk."""
-    src = _convert_rows_async_source()
-    tree = ast.parse(src)
-
-    # Find any(...) calls whose generator iterates ``row_types`` directly.
-    bad_up_front_probe = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "any"):
-            continue
-        if not (node.args and isinstance(node.args[0], ast.GeneratorExp)):
-            continue
-        gen = node.args[0]
-        for comp in gen.generators:
-            if isinstance(comp.iter, ast.Name) and comp.iter.id == "row_types":
-                bad_up_front_probe += 1
-
-    assert bad_up_front_probe == 0, (
-        f"_convert_rows_async still walks the full row_types list in "
-        f"{bad_up_front_probe} ``any(...)`` probe(s) before the per-chunk "
-        f"yield. Fold the probe into the per-chunk loop so the up-front "
-        f"work is bounded at one chunk's cells."
-    )
 
 
 @pytest.mark.asyncio

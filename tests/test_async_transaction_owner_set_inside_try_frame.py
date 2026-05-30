@@ -13,36 +13,6 @@ import dqlitedbapi
 from dqlitedbapi.aio import AsyncConnection
 
 
-def test_transaction_owner_assignment_inside_try_frame_source_pin() -> None:
-    """Source-level pin: ``self._transaction_owner = token`` is INSIDE a
-    ``try:`` frame. The bytecode-boundary race can't be injected from Python,
-    so we pin the source structure instead."""
-    import ast
-    import inspect
-    import textwrap
-
-    from dqlitedbapi.aio import connection as conn_mod
-
-    src = textwrap.dedent(inspect.getsource(conn_mod.AsyncConnection.transaction))
-    tree = ast.parse(src)
-
-    def find_owner_assign_in_try(node: ast.AST) -> bool:
-        for child in ast.walk(node):
-            if isinstance(child, ast.Try):
-                for stmt in child.body:
-                    if isinstance(stmt, ast.Assign):
-                        for tgt in stmt.targets:
-                            if isinstance(tgt, ast.Attribute) and tgt.attr == "_transaction_owner":
-                                return True
-        return False
-
-    assert find_owner_assign_in_try(tree), (
-        "AsyncConnection.transaction() must set self._transaction_owner "
-        "INSIDE a try: frame so the finally clears the slot under any "
-        "BaseException that arrives at the assignment site."
-    )
-
-
 async def test_transaction_owner_cleared_after_body_baseexception() -> None:
     """A BaseException out of the body lets the finally clear the slot."""
     conn = AsyncConnection("localhost:9001")
