@@ -440,6 +440,7 @@ def _datetime_from_unixtime(value: int) -> datetime.datetime:
 # branches so a caller adapter can override them. Module-scope per stdlib
 # pre-3.12 sqlite3.
 _ADAPTERS: dict[type, Callable[[Any], Any]] = {}
+_MISSING: Final = object()
 
 # Wire-primitive types the codec accepts after adapter / __conform__
 # chaining. ``bool`` listed explicitly (it's an int subclass) for greppability.
@@ -502,12 +503,13 @@ def unregister_adapter(type_: type, /) -> None:
     Raises :class:`~dqlitedbapi.exceptions.AdapterLookupError` (subclass of
     both ProgrammingError and LookupError) if no entry exists.
     """
-    if type_ not in _ADAPTERS:
+    # Atomic pop (not check-then-del): avoids a TOCTOU where a concurrent
+    # unregister between the membership test and the delete would raise KeyError.
+    if _ADAPTERS.pop(type_, _MISSING) is _MISSING:
         raise AdapterLookupError(
             f"no adapter registered for {type_.__name__}",
             code=None,
         )
-    del _ADAPTERS[type_]
 
 
 def _convert_bind_param(value: Any) -> Any:
