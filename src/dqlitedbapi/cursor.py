@@ -1556,8 +1556,10 @@ class Cursor:
         body without masking the body's exception. Clears the result-set
         surface (description / _rows / _row_index) but PRESERVES rowcount
         and lastrowid (stdlib parity; SA reads lastrowid lazily after
-        close). arraysize is also kept (it is a config hint). description
-        becoming None is the one divergence from stdlib.
+        close). arraysize is also kept (it is a config hint). Clearing
+        description is deliberate (stdlib and aiosqlite keep it): it drives
+        the rownumber extension's closed-cursor None semantics, since
+        rownumber returns None when description is None.
         """
         # PEP 249 §6.1.2: clear messages first. Suppress AttributeError
         # so close() from __exit__ after a body exception cannot supplant
