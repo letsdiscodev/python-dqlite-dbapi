@@ -1070,23 +1070,45 @@ class Connection:
             return snapshot
         with self._loop_lock:
             if self._loop is None or self._loop.is_closed():
-                self._loop = asyncio.new_event_loop()
-                self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-                self._thread.start()
-                # Capture primitives only — closing over self would
-                # keep the Connection alive. _inner_finalize_handle is
-                # populated later with a weakref.ref(inner).
-                self._finalizer = weakref.finalize(
-                    self,
-                    _cleanup_loop_thread,
-                    self._loop,
-                    self._thread,
-                    self._closed_flag,
-                    self._address,
-                    self._creator_pid,
-                    self._close_timeout,
-                    self._inner_finalize_handle,
-                )
+                # Build locals and publish to self only after the thread is
+                # started AND the finalizer registered, wrapped so a
+                # KeyboardInterrupt/SystemExit landing between the steps can't
+                # leave a half-built orphan. A never-run loop reports
+                # is_closed()==False, so a published orphan would pass the
+                # recovery guard above forever and wedge every later _run_sync.
+                # Mirrors _run_sync's KI-between-bytecodes hardening.
+                new_loop = asyncio.new_event_loop()
+                thread = threading.Thread(target=new_loop.run_forever, daemon=True)
+                try:
+                    thread.start()
+                    # Capture primitives only — closing over self would keep the
+                    # Connection alive. _inner_finalize_handle is populated later
+                    # with a weakref.ref(inner).
+                    finalizer = weakref.finalize(
+                        self,
+                        _cleanup_loop_thread,
+                        new_loop,
+                        thread,
+                        self._closed_flag,
+                        self._address,
+                        self._creator_pid,
+                        self._close_timeout,
+                        self._inner_finalize_handle,
+                    )
+                except BaseException:
+                    # Tear the partial build down so nothing orphaned is published:
+                    # stop+join a started thread before closing its loop (close()
+                    # on a running loop would raise), else just close the loop.
+                    if thread.is_alive():
+                        new_loop.call_soon_threadsafe(new_loop.stop)
+                        thread.join(timeout=self._close_timeout)
+                    new_loop.close()
+                    raise
+                # Publish _loop LAST: the recovery guards key on it, so whenever
+                # it is non-None the thread and finalizer are already in place.
+                self._thread = thread
+                self._finalizer = finalizer
+                self._loop = new_loop
         return self._loop
 
     def _run_sync[T](self, coro: Coroutine[Any, Any, T]) -> T:
