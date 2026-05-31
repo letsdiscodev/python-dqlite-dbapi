@@ -29,10 +29,18 @@ cur.execute("INSERT INTO t VALUES (?)", (2,))
 conn.commit()       # or conn.rollback()
 ```
 
-A bare `BEGIN` is SQLite's default (`BEGIN DEFERRED`). dqlite's Raft FSM
-serializes the transaction across the cluster regardless of the
-`DEFERRED` / `IMMEDIATE` / `EXCLUSIVE` qualifier, so the qualifier changes
-only lock-acquisition timing on the leader, never isolation.
+Under the default session mode (`immediate`) a bare `BEGIN` / `BEGIN
+TRANSACTION` is rewritten to `BEGIN IMMEDIATE`, so the deferred-to-write
+upgrade can't fail later with `SQLITE_BUSY_SNAPSHOT`; an explicit `DEFERRED`
+/ `IMMEDIATE` / `EXCLUSIVE` qualifier is passed through unchanged. dqlite's
+Raft FSM serializes the transaction across the cluster regardless of the
+qualifier, so the qualifier changes only lock-acquisition timing on the
+leader, never isolation.
+
+The session mode is selected with the `session_mode` connect argument (or the
+`DQLITE_SESSION_MODE` environment variable): `immediate` (default; rewrites a
+bare `BEGIN`), `deferred` / `exclusive` (no rewrite), or `read_only` (issues
+`PRAGMA query_only = 1`).
 
 The connection also works as a context manager (matching stdlib `sqlite3`):
 the `with conn:` block commits on clean exit and rolls back on exception.
