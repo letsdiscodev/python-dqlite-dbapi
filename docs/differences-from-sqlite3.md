@@ -22,6 +22,11 @@ covers the differences you are most likely to notice when porting code.
   SQLite's legacy unenforced behavior.
 - **SERIALIZABLE isolation only.** Every statement is ordered by Raft;
   weaker isolation levels are not exposed.
+- **`connect()` timeouts differ from stdlib.** stdlib's `timeout` is the
+  busy (lock-wait) budget; here `timeout` is a per-RPC-phase deadline and
+  the busy budget is the separate `busy_timeout` argument. `connect()` also
+  exposes safety caps — `max_message_size`, `max_continuation_frames`,
+  `max_total_rows` — and `trust_server_heartbeat`.
 - **Result sets are fully materialized at `execute()` time.** Stdlib streams
   rows lazily from the C engine; dqlite drains every continuation frame into
   the cursor's in-memory buffer before `execute()` returns, and `fetchone()`
