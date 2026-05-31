@@ -128,6 +128,25 @@ def test_negative_value_clamps_to_zero() -> None:
     assert cur._rows == [(0,)]
 
 
+@pytest.mark.parametrize(
+    ("ms", "expected"),
+    [
+        (2147483647, 2147483647),  # INT32_MAX: kept
+        (2147483648, 0),  # INT32_MAX + 1: saturates to 0
+        (4294967296, 0),  # 2**32
+        (4294967297, 0),  # 2**32 + 1 (saturates, does not wrap to 1)
+        (4294972296, 0),  # 2**32 + 5000 (does not wrap to 5000)
+    ],
+)
+def test_value_above_int32_max_saturates_to_zero(ms: int, expected: int) -> None:
+    """SQLite stores busy_timeout as a signed int32; values above INT32_MAX collapse to 0."""
+    cur = _FakeCursor()
+    intercepted = try_intercept_busy_timeout(cur, f"PRAGMA busy_timeout = {ms}", None)
+    assert intercepted is True
+    assert cur._rows == [(expected,)]
+    assert cur._connection._busy_timeout == expected / 1000.0
+
+
 def test_zero_value_disables_retry() -> None:
     """PRAGMA busy_timeout = 0 is the 'no retry' setter."""
     cur = _FakeCursor(busy_timeout_seconds=5.0)

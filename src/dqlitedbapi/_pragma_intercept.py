@@ -52,8 +52,11 @@ def try_intercept_busy_timeout(
     setter_value = setter_eq if setter_eq is not None else setter_paren
     connection = cursor._connection
     if setter_value is not None:
-        # SQLite clamps negative values to 0 (no wait) — stdlib parity.
-        new_ms = max(0, int(setter_value))
+        # SQLite stores busy_timeout via sqlite3_busy_timeout(db, int32): any value
+        # outside the positive signed-32-bit range collapses to 0 (no wait) — both
+        # negatives and values above INT32_MAX, matching stdlib's saturate-to-0.
+        n = int(setter_value)
+        new_ms = n if 0 < n <= 2147483647 else 0
         connection._busy_timeout = new_ms / 1000.0
     # Round rather than truncate: ``N / 1000.0`` is not exactly representable, so a plain
     # ``int(seconds * 1000)`` lands at ``N - 1``; ``round`` matches stdlib's exact echo.
