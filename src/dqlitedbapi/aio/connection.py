@@ -942,7 +942,8 @@ class AsyncConnection:
             self._isolation_level_value: str | None = value
             return
         if isinstance(value, str) and value.upper() in _STDLIB_IMPLICIT_TX_VALUES:
-            self._isolation_level_value = value
+            # Normalize case like stdlib's uppercased read-back ('deferred' -> 'DEFERRED').
+            self._isolation_level_value = value.upper()
             return
         raise ProgrammingError(
             f"isolation_level must be None or one of "

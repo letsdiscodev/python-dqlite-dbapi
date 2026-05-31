@@ -21,11 +21,12 @@ from dqlitedbapi.exceptions import InterfaceError
     [None, "", "DEFERRED", "IMMEDIATE", "EXCLUSIVE", "deferred", "Immediate"],
 )
 def test_sync_isolation_level_round_trips_setter_input(value: object) -> None:
-    """The widened accept-set round-trips through the getter."""
+    """The widened accept-set round-trips through the getter, uppercased like stdlib."""
     conn = Connection("127.0.0.1:9999")
     try:
         conn.isolation_level = value
-        assert conn.isolation_level == value
+        expected = value.upper() if isinstance(value, str) else value
+        assert conn.isolation_level == expected
     finally:
         conn._closed = True
 
