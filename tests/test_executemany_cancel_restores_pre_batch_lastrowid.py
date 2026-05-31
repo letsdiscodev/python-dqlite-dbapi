@@ -1,6 +1,7 @@
-"""``executemany`` keeps a consistent (``_completed_iterations``, ``_lastrowid``) pair
-on the BaseException re-raise: mid-batch raises preserve the in-batch lastrowid,
-zero-progress raises restore the pre-batch snapshots for both."""
+"""``executemany`` restores ``_lastrowid`` to the pre-batch value on the BaseException
+re-raise (matching the success path, the docstring, and stdlib). ``_completed_iterations``
+is the separate partial-progress anchor: restored only on a zero-progress raise, preserved
+on a mid-batch raise."""
 
 from unittest.mock import MagicMock, patch
 
@@ -12,9 +13,9 @@ from dqlitedbapi.cursor import Cursor
 pytestmark = pytest.mark.asyncio
 
 
-async def test_sync_executemany_cancel_preserves_in_batch_lastrowid() -> None:
-    """Iteration 0 succeeds (writes _lastrowid), iteration 1 raises: the in-batch
-    lastrowid is preserved to align with _completed_iterations == 1."""
+async def test_sync_executemany_cancel_restores_pre_batch_lastrowid() -> None:
+    """Iteration 0 succeeds (writes _lastrowid), iteration 1 raises: lastrowid is
+    restored to the pre-batch value while _completed_iterations stays at 1."""
     cur = Cursor.__new__(Cursor)
     cur._closed = False
     cur._description = None
@@ -43,9 +44,8 @@ async def test_sync_executemany_cancel_preserves_in_batch_lastrowid() -> None:
     ):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-    assert cur._lastrowid == 101, (
-        "in-batch lastrowid must be PRESERVED when _completed_iterations > 0; "
-        f"got {cur._lastrowid!r}"
+    assert cur._lastrowid == 5, (
+        f"lastrowid must restore to pre-batch on a mid-batch raise; got {cur._lastrowid!r}"
     )
     assert cur._rowcount == -1
     assert cur._rows == []
@@ -53,7 +53,7 @@ async def test_sync_executemany_cancel_preserves_in_batch_lastrowid() -> None:
     assert cur._completed_iterations == 1
 
 
-async def test_async_executemany_cancel_preserves_in_batch_lastrowid() -> None:
+async def test_async_executemany_cancel_restores_pre_batch_lastrowid() -> None:
     cur = AsyncCursor.__new__(AsyncCursor)
     cur._closed = False
     cur._description = None
@@ -92,9 +92,9 @@ async def test_async_executemany_cancel_preserves_in_batch_lastrowid() -> None:
     ):
         await cur.executemany("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-    assert cur._lastrowid == 101, (
-        "AsyncCursor.executemany must PRESERVE in-batch lastrowid (101) "
-        "when _completed_iterations > 0; got "
+    assert cur._lastrowid == 5, (
+        "AsyncCursor.executemany must restore lastrowid to pre-batch (5) "
+        "on a mid-batch raise; got "
         f"{cur._lastrowid!r}"
     )
     assert cur._rowcount == -1

@@ -577,16 +577,18 @@ class AsyncCursor:
                             self._completed_iterations += 1
                 except BaseException:
                     # Mid-batch failure: reset _rowcount to -1 and clear result
-                    # state. Restore _lastrowid and _completed_iterations to the
-                    # pre-batch snapshot only on ZERO in-batch progress; non-zero
-                    # progress PRESERVES both so the (count, anchor) pair stays
-                    # consistent for idempotent compensation.
+                    # state. _lastrowid restores to pre-batch unconditionally —
+                    # matching the success path, the docstring, and stdlib, which
+                    # leave lastrowid unchanged across executemany.
+                    # _completed_iterations is the separate partial-progress anchor
+                    # (surfaced via rownumber) and restores only on ZERO in-batch
+                    # progress.
                     self._rowcount = -1
                     self._rows = []
                     self._description = None
                     self._row_index = 0
+                    self._lastrowid = lastrowid_pre_batch
                     if self._completed_iterations == 0:
-                        self._lastrowid = lastrowid_pre_batch
                         self._completed_iterations = completed_iterations_pre_batch
                     del self.messages[:]
                     raise

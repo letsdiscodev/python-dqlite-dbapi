@@ -1,6 +1,7 @@
-"""``executemany``'s BaseException arm aligns ``_lastrowid`` with ``_completed_iterations``:
-mid-batch raises preserve the in-batch lastrowid, zero-progress raises restore the
-pre-batch snapshot, so the (count, anchor) pair never disagrees."""
+"""``executemany``'s BaseException arm restores ``_lastrowid`` to the pre-batch value on
+EVERY raise (matching the success path, the docstring, and stdlib). ``_completed_iterations``
+is the separate partial-progress anchor: preserved on a mid-batch raise, restored on a
+zero-progress raise."""
 
 from __future__ import annotations
 
@@ -51,8 +52,9 @@ def _make_async_cursor_with_state(completed: int, lastrowid: int | None) -> Asyn
     return cur
 
 
-async def test_sync_mid_batch_raise_preserves_in_batch_lastrowid() -> None:
-    """Iter 0 writes lastrowid=42, iter 1 raises: lastrowid stays 42, not pre-batch 7."""
+async def test_sync_mid_batch_raise_restores_pre_batch_lastrowid() -> None:
+    """Iter 0 writes lastrowid=42, iter 1 raises: lastrowid restores to pre-batch 7,
+    while _completed_iterations stays at the in-batch count (1)."""
     cur = _make_sync_cursor_with_state(completed=2, lastrowid=7)
 
     calls = {"n": 0}
@@ -71,9 +73,8 @@ async def test_sync_mid_batch_raise_preserves_in_batch_lastrowid() -> None:
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
     assert cur._completed_iterations == 1, "in-batch counter preserved"
-    assert cur._lastrowid == 42, (
-        f"in-batch lastrowid must be preserved when _completed_iterations > 0; "
-        f"got {cur._lastrowid!r}"
+    assert cur._lastrowid == 7, (
+        f"lastrowid must restore to pre-batch on a mid-batch raise; got {cur._lastrowid!r}"
     )
 
 
@@ -96,7 +97,7 @@ async def test_sync_zero_progress_raise_restores_pre_batch_lastrowid() -> None:
     )
 
 
-async def test_async_mid_batch_raise_preserves_in_batch_lastrowid() -> None:
+async def test_async_mid_batch_raise_restores_pre_batch_lastrowid() -> None:
     """Aio sibling: same shape as the sync mid-batch case above."""
     cur = _make_async_cursor_with_state(completed=2, lastrowid=7)
 
@@ -119,9 +120,8 @@ async def test_async_mid_batch_raise_preserves_in_batch_lastrowid() -> None:
         await cur.executemany("INSERT INTO t VALUES (?)", [(1,), (2,)])
 
     assert cur._completed_iterations == 1
-    assert cur._lastrowid == 42, (
-        f"aio: in-batch lastrowid must be preserved when "
-        f"_completed_iterations > 0; got {cur._lastrowid!r}"
+    assert cur._lastrowid == 7, (
+        f"aio: lastrowid must restore to pre-batch on a mid-batch raise; got {cur._lastrowid!r}"
     )
 
 

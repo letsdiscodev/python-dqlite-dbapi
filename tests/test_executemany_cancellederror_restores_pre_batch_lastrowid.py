@@ -47,8 +47,8 @@ async def test_sync_executemany_cancellederror_mid_batch_restores_pre_batch_last
     ):
         await cur._executemany_async("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-    # Arm fires for CancelledError: torn state reset, in-batch lastrowid preserved.
-    assert cur._lastrowid == 101
+    # Arm fires for CancelledError: torn state reset, lastrowid restored to pre-batch.
+    assert cur._lastrowid == 5
     assert cur._rowcount == -1
     assert cur._rows == []
     assert cur._description is None
@@ -95,7 +95,7 @@ async def test_async_executemany_cancellederror_mid_batch_restores_pre_batch_las
     ):
         await cur.executemany("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-    assert cur._lastrowid == 101
+    assert cur._lastrowid == 5
     assert cur._rowcount == -1
     assert cur._rows == []
     assert cur._description is None

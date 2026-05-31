@@ -27,10 +27,10 @@ def test_sync_executemany_failure_clears_rowcount(cluster_address: str) -> None:
                 [(1,), (2,), (1,)],
             )
         assert cur.rowcount == -1
-        # lastrowid is preserved at the last successful in-batch rowid (2), so the
-        # (_completed_iterations, lastrowid) pair stays consistent for compensation;
-        # the pre-batch snapshot (42) is restored only if no in-batch iteration committed.
-        assert cur.lastrowid == 2
+        # lastrowid restores to the pre-batch snapshot (42) on a mid-batch failure,
+        # matching the success path / docstring / stdlib; _completed_iterations stays
+        # at the in-batch count (2) as the separate partial-progress anchor.
+        assert cur.lastrowid == pre_batch_lastrowid
         assert cur._completed_iterations == 2
         assert cur._rows == []
         assert cur._description is None
@@ -56,8 +56,9 @@ async def test_async_executemany_failure_clears_rowcount(
                 [(1,), (2,), (1,)],
             )
         assert cur.rowcount == -1
-        # lastrowid preserved at the last successful in-batch row (2).
-        assert cur.lastrowid == 2
+        # lastrowid restores to the pre-batch snapshot (42) on a mid-batch failure;
+        # _completed_iterations stays at the in-batch count (2).
+        assert cur.lastrowid == pre_batch_lastrowid
         assert cur._completed_iterations == 2
         assert cur._rows == []
         assert cur._description is None

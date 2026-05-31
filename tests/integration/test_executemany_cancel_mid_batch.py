@@ -32,8 +32,9 @@ class TestExecutemanyCancelMidBatch:
                         [(i,) for i in range(1000)],
                     )
 
-            # Cursor state reset to PEP-249 "undetermined"; _lastrowid is
-            # intentionally NOT reset on cancellation (stdlib parity, cleared only by close()).
+            # Cursor state reset to PEP-249 "undetermined"; _lastrowid restores to
+            # the pre-batch value on the cancel arm (here no INSERT preceded the
+            # batch, so it stays None).
             assert cur._rowcount == -1
             assert cur._rows == []
             assert cur._description is None
