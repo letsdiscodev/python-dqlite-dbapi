@@ -6,8 +6,21 @@ from typing import Final
 
 from dqlitewire import DEFAULT_MAX_RAW_MESSAGE as _DEFAULT_MAX_RAW_MESSAGE
 from dqlitewire import LEADER_ERROR_CODES as _LEADER_ERROR_CODES
+from dqlitewire import SQLITE_IOERR_LEADERSHIP_LOST as _SQLITE_IOERR_LEADERSHIP_LOST
+from dqlitewire import (
+    SQLITE_IOERR_LEADERSHIP_LOST_LEGACY as _SQLITE_IOERR_LEADERSHIP_LOST_LEGACY,
+)
 from dqlitewire import cap_raw_message as _wire_cap_raw_message
 from dqlitewire import is_dqlite_namespace_code as _is_dqlite_namespace_code
+
+# The subset of LEADER_ERROR_CODES that leaves a write in doubt. Only LEADERSHIP_LOST
+# qualifies: the server emits it from the raft apply callback (leader.c exec_apply_cb),
+# i.e. after the entry was submitted, so it may or may not have been persisted.
+# NOT_LEADER is a clean pre-apply rejection (gateway.c CHECK_LEADER / synchronous
+# raft_apply), where the write definitely did not apply, so it stays a plain failure.
+AMBIGUOUS_COMMIT_CODES: Final[frozenset[int]] = frozenset(
+    {_SQLITE_IOERR_LEADERSHIP_LOST, _SQLITE_IOERR_LEADERSHIP_LOST_LEGACY}
+)
 
 __all__ = [
     "AdapterLookupError",
@@ -227,7 +240,9 @@ class OperationalError(_DatabaseErrorWithCode):
 
 
 class AmbiguousCommitError(OperationalError):
-    """COMMIT raced a leader flip; the write may or may not have persisted.
+    """COMMIT lost leadership after submitting the entry; the write may or may not
+    have persisted (see AMBIGUOUS_COMMIT_CODES). A plain not-leader rejection is a
+    clean failure and stays an OperationalError, not this.
 
     Retry only with idempotent DML or after an out-of-band state check: retrying
     non-idempotent DML risks silent duplicate writes.

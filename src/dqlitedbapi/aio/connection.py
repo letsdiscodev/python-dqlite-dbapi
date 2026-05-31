@@ -34,6 +34,7 @@ from dqlitedbapi.connection import (
 )
 from dqlitedbapi.cursor import _call_client, _validate_executemany_seq_shape
 from dqlitedbapi.exceptions import (
+    AMBIGUOUS_COMMIT_CODES,
     AmbiguousCommitError,
     InterfaceError,
     NotSupportedError,
@@ -46,9 +47,6 @@ from dqlitewire import (
 )
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
-)
-from dqlitewire import (
-    LEADER_ERROR_CODES as _LEADER_ERROR_CODES,
 )
 from dqlitewire import (
     sanitize_for_log,
@@ -960,10 +958,11 @@ class AsyncConnection:
         No-op if never used or if the server reports "no transaction active" (the common case
         here — autocommit-by-default unless an explicit ``BEGIN`` was issued).
 
-        Caveats: a leader flip mid-COMMIT raises OperationalError with the write in doubt
-        (use idempotent DML before retry). An outer asyncio.timeout cancels without
-        re-classifying to TimeoutError, bypassing the phase-aware diagnostic — treat
-        CancelledError as "invalidate the connection".
+        Caveats: losing leadership after the COMMIT entry is submitted raises
+        AmbiguousCommitError with the write in doubt (use idempotent DML before retry);
+        a plain not-leader rejection is a clean failure and raises OperationalError. An
+        outer asyncio.timeout cancels without re-classifying to TimeoutError, bypassing
+        the phase-aware diagnostic — treat CancelledError as "invalidate the connection".
         """
         # Loop check BEFORE the messages-clear so a stray cross-loop commit() doesn't scribble
         # the bound loop's messages, and the owner-Task check below doesn't misfire cross-loop.
@@ -1054,13 +1053,14 @@ class AsyncConnection:
                         request_in_flight = False
                         if _is_no_transaction_error(e):
                             return
-                        # Leader flip mid-COMMIT (in doubt): rewrap as AmbiguousCommitError so
-                        # OperationalError-catching middleware still sees it while retry code
-                        # can branch on the in-doubt shape. Retrying non-idempotent DML here
-                        # risks duplicate writes.
-                        if e.code in _LEADER_ERROR_CODES:
+                        # Leadership lost after the COMMIT entry was submitted (in doubt):
+                        # rewrap as AmbiguousCommitError so OperationalError-catching middleware
+                        # still sees it while retry code can branch on the in-doubt shape.
+                        # Retrying non-idempotent DML here risks duplicate writes. A plain
+                        # not-leader rejection is a clean pre-apply failure -> stays Operational.
+                        if e.code in AMBIGUOUS_COMMIT_CODES:
                             raise AmbiguousCommitError(
-                                "ambiguous commit: leader flipped during "
+                                "ambiguous commit: leadership lost during "
                                 "COMMIT; the write may or may not have "
                                 f"been persisted. Original: {e}",
                                 code=e.code,

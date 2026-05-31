@@ -29,6 +29,7 @@ from dqliteclient import parse_address as _client_parse_address
 from dqlitedbapi import exceptions as _exc
 from dqlitedbapi.cursor import Cursor, _call_client, _validate_executemany_seq_shape
 from dqlitedbapi.exceptions import (
+    AMBIGUOUS_COMMIT_CODES,
     AmbiguousCommitError,
     DatabaseError,
     DataError,
@@ -43,9 +44,6 @@ from dqlitewire import (
 )
 from dqlitewire import (
     DEFAULT_MAX_TOTAL_ROWS as _DEFAULT_MAX_TOTAL_ROWS,
-)
-from dqlitewire import (
-    LEADER_ERROR_CODES as _LEADER_ERROR_CODES,
 )
 from dqlitewire import (
     NO_TRANSACTION_MESSAGE_SUBSTRINGS,
@@ -1782,10 +1780,11 @@ class Connection:
 
         Silent no-op if never used or if the server reports "no active
         transaction" (the common case here, since every statement
-        auto-commits unless an explicit BEGIN ran). Caveat: a leader
-        flip mid-COMMIT raises with a LEADER_ERROR_CODES code and the
-        write may or may not have persisted — use idempotent DML before
-        retrying.
+        auto-commits unless an explicit BEGIN ran). Caveat: losing
+        leadership after the COMMIT entry is submitted raises
+        AmbiguousCommitError (the write may or may not have persisted —
+        use idempotent DML before retrying); a plain not-leader rejection
+        is a clean failure and raises OperationalError.
         """
         # Thread check before the messages clear (scopes to the owner).
         self._check_thread()
@@ -1844,10 +1843,12 @@ class Connection:
         except OperationalError as e:
             if _is_no_transaction_error(e):
                 return
-            # Leader flip mid-COMMIT -> in-doubt Raft entry.
-            if e.code in _LEADER_ERROR_CODES:
+            # Leadership lost after the COMMIT entry was submitted -> in doubt.
+            # A plain not-leader rejection is a clean pre-apply failure and stays
+            # OperationalError.
+            if e.code in AMBIGUOUS_COMMIT_CODES:
                 raise AmbiguousCommitError(
-                    "ambiguous commit: leader flipped during COMMIT; "
+                    "ambiguous commit: leadership lost during COMMIT; "
                     "the write may or may not have been persisted. "
                     f"Original: {e}",
                     code=e.code,

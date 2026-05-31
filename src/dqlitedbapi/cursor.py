@@ -12,6 +12,8 @@ import dqliteclient.exceptions as _client_exc
 from dqliteclient.connection import _split_top_level_statements
 from dqlitedbapi._constants import _is_int_not_bool, cluster_policy_rejection_message
 from dqlitedbapi.exceptions import (
+    AMBIGUOUS_COMMIT_CODES,
+    AmbiguousCommitError,
     DatabaseError,
     DataError,
     Error,
@@ -872,6 +874,19 @@ def _is_pragma(sql: str) -> bool:
     return normalized.startswith("PRAGMA")
 
 
+_COMMIT_STMT_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?:COMMIT|END)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_commit_statement(sql: str) -> bool:
+    """True if ``sql`` is an explicit COMMIT (or its ``END`` synonym). Used to give the
+    cursor COMMIT path the same in-doubt classification as Connection.commit()."""
+    normalized = _strip_leading_comments(_strip_sql_noise(sql)).lstrip()
+    return _COMMIT_STMT_RE.match(normalized) is not None
+
+
 class Cursor:
     """PEP 249 compliant database cursor."""
 
@@ -1211,7 +1226,21 @@ class Cursor:
             # so match that (and the busy_timeout interceptor) rather than len.
             self._rowcount = -1 if _is_pragma(operation) else len(rows)
         else:
-            last_id, affected = await _call_client(conn.execute(operation, params))
+            try:
+                last_id, affected = await _call_client(conn.execute(operation, params))
+            except OperationalError as e:
+                # Mirror Connection.commit(): an explicit COMMIT that loses leadership after
+                # the entry was submitted leaves the write in doubt. A not-leader rejection is
+                # a clean pre-apply failure and stays OperationalError.
+                if _is_commit_statement(operation) and e.code in AMBIGUOUS_COMMIT_CODES:
+                    raise AmbiguousCommitError(
+                        "ambiguous commit: leadership lost during COMMIT; "
+                        "the write may or may not have been persisted. "
+                        f"Original: {e}",
+                        code=e.code,
+                        raw_message=getattr(e, "raw_message", None),
+                    ) from e
+                raise
             if _is_insert_or_replace(operation):
                 self._lastrowid = _to_signed_int64(last_id)
             if _is_dml_rowcount_meaningful(operation):
