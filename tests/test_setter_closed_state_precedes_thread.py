@@ -1,5 +1,6 @@
-"""autocommit/isolation_level setters check thread before closed-state, so a foreign-thread
-call (even on a closed conn) raises ProgrammingError, not InterfaceError."""
+"""All state-mutating setters check closed-state BEFORE thread affinity (matching
+row_factory/text_factory and the async surface), so a foreign-thread call on a CLOSED
+connection raises InterfaceError (closed), not ProgrammingError (thread)."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from typing import Any
 import pytest
 
 import dqlitedbapi
-from dqlitedbapi.exceptions import ProgrammingError
+from dqlitedbapi.exceptions import InterfaceError
 
 
 @pytest.mark.parametrize(
@@ -19,7 +20,7 @@ from dqlitedbapi.exceptions import ProgrammingError
         ("isolation_level", None),
     ],
 )
-def test_setter_on_closed_from_foreign_thread_raises_thread_affinity(name: str, value: Any) -> None:
+def test_setter_on_closed_from_foreign_thread_raises_closed_first(name: str, value: Any) -> None:
     c = dqlitedbapi.connect("127.0.0.1:9999")
     c._closed = True
     c._closed_flag[0] = True
@@ -36,9 +37,9 @@ def test_setter_on_closed_from_foreign_thread_raises_thread_affinity(name: str, 
     t.start()
     t.join()
     assert len(captured) == 1
-    assert isinstance(captured[0], ProgrammingError), (
-        f"{name}.setter from a foreign thread (even on closed conn) "
-        f"must raise ProgrammingError (thread-affinity precedence); "
+    assert isinstance(captured[0], InterfaceError), (
+        f"{name}.setter on a closed conn (even from a foreign thread) "
+        f"must raise InterfaceError (closed-state precedence); "
         f"got {type(captured[0]).__name__}: {captured[0]}"
     )
 

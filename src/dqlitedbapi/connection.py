@@ -1718,14 +1718,14 @@ class Connection:
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
-        # Thread check before the messages clear (no-op path is still an
-        # attempt). suppress(AttributeError) for __new__-built fixtures.
-        self._check_thread()
+        # State-mutating setter -> closed-then-thread checks (matches
+        # row_factory/text_factory and the async surface). suppress for fixtures.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
+        self._check_thread()
         # Accept True and the -1 LEGACY_TRANSACTION_CONTROL sentinel
         # (both no-op the wire; stored so the getter round-trips). The
         # inner _async_conn slot is intentionally not mirrored (pinned
@@ -1768,13 +1768,14 @@ class Connection:
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
-        # Thread check first; suppress(AttributeError) for fixtures.
-        self._check_thread()
+        # State-mutating setter -> closed-then-thread checks (matches
+        # row_factory/text_factory and the async surface). suppress for fixtures.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
             if self._closed:
                 raise InterfaceError(f"Connection is closed (id={id(self)})")
+        self._check_thread()
         # Accept the stdlib pre-3.12 set (None/""/DEFERRED/IMMEDIATE/
         # EXCLUSIVE) as no-ops; store so the getter round-trips. Inner
         # _async_conn slot is intentionally not mirrored (pinned by
