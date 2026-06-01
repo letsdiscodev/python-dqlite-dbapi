@@ -1005,6 +1005,12 @@ class Cursor:
         with "no result set"); gate on cur.closed first if the
         distinction matters.
         """
+        # Closed short-circuit before the thread check so the documented
+        # closed -> None contract holds even cross-thread (a closed cursor has
+        # no live fetch to protect). Mirrors AsyncCursor.rownumber. getattr
+        # defensively so a partially-__new__-built fixture (no _closed) doesn't crash.
+        if getattr(self, "_closed", False):
+            return None
         # getattr defensively for __new__-built fixtures and the GC'd
         # weakref.proxy parent (every access raises ReferenceError).
         conn = getattr(self, "_connection", None)
