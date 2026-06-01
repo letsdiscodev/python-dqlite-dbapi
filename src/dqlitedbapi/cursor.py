@@ -1172,6 +1172,10 @@ class Cursor:
         fatal-error invalidation, and leader-change detection all apply.
         """
         conn = await self._connection._get_async_connection()
+        # _get_async_connection awaits, so a foreign-thread close can race; re-check
+        # before the wire (mirrors AsyncCursor._execute_unlocked). The post-wire scrub
+        # below still covers a close that lands while the result is in flight.
+        self._check_closed()
         params = _convert_params(parameters)
 
         if _is_row_returning(operation):
