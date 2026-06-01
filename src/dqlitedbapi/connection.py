@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import threading
+import time
 import warnings
 import weakref
 from collections.abc import Coroutine, Iterable, Iterator, Sequence
@@ -130,6 +131,11 @@ def _join_budget_for_current_thread(
 # N=4 covers the worst case: handshake + open_database + send +
 # read+drain. Steady-state bottoms out at N=2.
 _SYNC_PHASES_MULTIPLIER: Final[int] = 4
+# Slice length for _run_sync's result wait: short enough that a concurrent
+# force_close_transport unblocks the caller promptly (it sets
+# _force_close_requested before stopping the loop), long enough that a normal
+# in-flight op adds no measurable wakeup overhead.
+_FORCE_CLOSE_POLL_INTERVAL: Final[float] = 0.05
 
 # Fallback join budget for ``_cleanup_loop_thread`` when the captured
 # ``close_timeout`` is missing or invalid.
@@ -1014,6 +1020,12 @@ class Connection:
         # Mutable flag the finalizer reads; a list avoids the finalizer
         # closing over ``self`` and preventing GC.
         self._closed_flag: list[bool] = [False]
+        # Set by force_close_transport before it abruptly stops the loop, so a
+        # concurrent _run_sync (check_same_thread=False) bails promptly instead of
+        # riding out sync_timeout on a future the stopped loop will never resolve.
+        # Deliberately NOT _closed_flag: close() sets that and then runs its own
+        # _run_sync(self._close_async()), which must not bail.
+        self._force_close_requested: bool = False
         # Box for late-publishing the inner handle into the finalizer's
         # captured args (mutated by _get_async_connection to a
         # weakref.ref). Not cleared on explicit close (finalizer is
@@ -1208,8 +1220,36 @@ class Connection:
                         f"event loop closed before coroutine could be scheduled: {e}"
                     ) from e
                 # Future.result() is a happens-before barrier; loop-thread
-                # writes are visible here.
-                return future.result(timeout=sync_timeout)
+                # writes are visible here. Wait in slices (rather than one
+                # result(timeout=sync_timeout)) so a concurrent
+                # force_close_transport — which sets _force_close_requested
+                # and then stops the loop, orphaning this future — unblocks us
+                # promptly instead of riding out the full sync_timeout. When the
+                # flag is not set this is behaviourally identical: it re-raises
+                # the genuine TimeoutError at the deadline into the arm below.
+                deadline = time.monotonic() + sync_timeout
+                while True:
+                    remaining = deadline - time.monotonic()
+                    try:
+                        return future.result(
+                            timeout=max(0.0, min(_FORCE_CLOSE_POLL_INTERVAL, remaining))
+                        )
+                    except TimeoutError:
+                        if self._force_close_requested:
+                            # Honour a result that already landed (avoid a
+                            # spurious failure / non-idempotent retry), else bail
+                            # with the closed-connection contract rather than the
+                            # timeout/invalidate path below.
+                            if future.done() and not future.cancelled():
+                                return future.result(timeout=0)
+                            future.cancel()
+                            raise InterfaceError(
+                                f"Connection force-closed during operation (id={id(self)})"
+                            ) from None
+                        if remaining <= _FORCE_CLOSE_POLL_INTERVAL:
+                            # Genuine sync_timeout: re-raise to the arm below
+                            # (recovered-result check + invalidate).
+                            raise
             except TimeoutError as e:
                 # Only future.result can raise this, so future is bound;
                 # assert is for mypy.
@@ -1570,6 +1610,9 @@ class Connection:
         if self._closed:
             return
         self._closed = True
+        # Signal a concurrent in-flight _run_sync to bail BEFORE we stop the loop
+        # (its future would otherwise never resolve). Set before any teardown.
+        self._force_close_requested = True
         self._closed_flag[0] = True
         # Fork-after-init: same shape as close()'s pid guard.
         if get_current_pid() != self._creator_pid:

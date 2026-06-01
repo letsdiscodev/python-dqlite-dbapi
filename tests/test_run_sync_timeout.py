@@ -33,9 +33,13 @@ class TestRunSyncTimeout:
 
         class _StubFuture:
             def __init__(self) -> None:
-                self._calls = 0
+                self._cancel_called = False
 
             def cancel(self) -> bool:
+                # The except-TimeoutError arm calls cancel() before the bounded wait;
+                # flip so only that bounded wait raises the surprise error, not the
+                # slice-poll's repeated result() calls.
+                self._cancel_called = True
                 return True
 
             def done(self) -> bool:
@@ -46,10 +50,9 @@ class TestRunSyncTimeout:
                 return False
 
             def result(self, timeout: float | None = None) -> None:
-                self._calls += 1
-                if self._calls == 1:
-                    raise cf.TimeoutError()
-                raise RuntimeError("surprise bug during cancel")
+                if self._cancel_called:
+                    raise RuntimeError("surprise bug during cancel")
+                raise cf.TimeoutError()
 
         stub = _StubFuture()
 
@@ -128,22 +131,25 @@ class TestRunSyncCancelSuccessRace:
             """result() raises TimeoutError first, then returns the late success."""
 
             def __init__(self) -> None:
-                self._calls = 0
+                self._done_checked = False
 
             def cancel(self) -> bool:
                 return False  # cancel lost the race
 
             def done(self) -> bool:
+                # Only the except-TimeoutError recovery arm calls done(); flip so
+                # result() yields the late success only there, not during the
+                # slice-poll's repeated result() calls.
+                self._done_checked = True
                 return True
 
             def cancelled(self) -> bool:
                 return False
 
             def result(self, timeout: float | None = None) -> int:
-                self._calls += 1
-                if self._calls == 1:
-                    raise cf.TimeoutError()
-                return 1234
+                if self._done_checked:
+                    return 1234
+                raise cf.TimeoutError()
 
         stub = _LateSuccessFuture()
 
@@ -184,24 +190,27 @@ class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
             """result() raises TimeoutError first, then the recovered IntegrityError."""
 
             def __init__(self) -> None:
-                self._calls = 0
+                self._done_checked = False
 
             def cancel(self) -> bool:
                 return False
 
             def done(self) -> bool:
+                # Only the recovery arm calls done(); see _LateSuccessFuture.
+                self._done_checked = True
                 return True
 
             def cancelled(self) -> bool:
                 return False
 
             def result(self, timeout: float | None = None) -> Any:
-                self._calls += 1
-                if self._calls == 1:
-                    raise cf.TimeoutError()
-                raise IntegrityError(
-                    "UNIQUE constraint failed", code=2067, raw_message="UNIQUE constraint failed"
-                )
+                if self._done_checked:
+                    raise IntegrityError(
+                        "UNIQUE constraint failed",
+                        code=2067,
+                        raw_message="UNIQUE constraint failed",
+                    )
+                raise cf.TimeoutError()
 
         stub = _LateIntegrityErrorFuture()
 
@@ -235,22 +244,25 @@ class TestRunSyncTimeoutRecoveredExceptionPreservesClass:
 
         class _Stub:
             def __init__(self) -> None:
-                self._calls = 0
+                self._done_checked = False
 
             def cancel(self) -> bool:
                 return False
 
             def done(self) -> bool:
+                # Recovery happens via the except-TimeoutError arm (which calls done()),
+                # so the recovered IntegrityError's __context__ is the re-raised
+                # TimeoutError; raising it during a slice would lose that context.
+                self._done_checked = True
                 return True
 
             def cancelled(self) -> bool:
                 return False
 
             def result(self, timeout: float | None = None) -> Any:
-                self._calls += 1
-                if self._calls == 1:
-                    raise cf.TimeoutError()
-                raise IntegrityError("constraint failed", code=2067, raw_message="x")
+                if self._done_checked:
+                    raise IntegrityError("constraint failed", code=2067, raw_message="x")
+                raise cf.TimeoutError()
 
         stub = _Stub()
         monkeypatch.setattr(
@@ -295,9 +307,12 @@ class TestRunSyncTimeoutSynchronousNullOutOfAsyncConn:
 
         class _StubFuture:
             def __init__(self) -> None:
-                self._calls = 0
+                self._cancel_called = False
 
             def cancel(self) -> bool:
+                # The except-TimeoutError arm calls cancel() before the bounded wait;
+                # see the logs-unexpected-error stub above.
+                self._cancel_called = True
                 return True
 
             def done(self) -> bool:
@@ -307,10 +322,9 @@ class TestRunSyncTimeoutSynchronousNullOutOfAsyncConn:
                 return False
 
             def result(self, timeout: float | None = None) -> None:
-                self._calls += 1
-                if self._calls == 1:
-                    raise cf.TimeoutError()
-                raise cf.CancelledError()  # bounded-wait: coroutine unwound cleanly
+                if self._cancel_called:
+                    raise cf.CancelledError()  # bounded-wait: coroutine unwound cleanly
+                raise cf.TimeoutError()
 
         stub = _StubFuture()
 
