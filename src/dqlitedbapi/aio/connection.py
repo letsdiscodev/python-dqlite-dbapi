@@ -151,6 +151,9 @@ def _cascade_cursors_closed(cursors: list[Any]) -> None:
         cur._rowcount = -1
         cur._lastrowid = None
         cur._row_index = 0
+        # Null the single-flight slot like AsyncCursor.close(), else __aenter__'s
+        # _executing_task check fires "already executing" on a cascade-closed cursor.
+        cur._executing_task = None
         with contextlib.suppress(AttributeError):
             del cur.messages[:]
         with contextlib.suppress(TypeError):
@@ -525,6 +528,10 @@ class AsyncConnection:
                     cur._rowcount = -1
                     cur._lastrowid = None
                     cur._row_index = 0
+                    # Null the single-flight slot like AsyncCursor.close() (see
+                    # _cascade_cursors_closed) so __aenter__ doesn't report
+                    # "already executing" on a cascade-closed cursor.
+                    cur._executing_task = None
                     del cur.messages[:]
                     with contextlib.suppress(TypeError):
                         cur._connection = weakref.proxy(cur._connection)
