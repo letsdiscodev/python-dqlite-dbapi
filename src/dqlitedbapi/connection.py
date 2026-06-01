@@ -2001,9 +2001,13 @@ class Connection:
                     with _state_lock:
                         self._transaction_owner = token
         finally:
-            # Clear only if we still own the slot (== because the token
-            # is a thread-id int, not an interned-guaranteed object).
-            if self._transaction_owner == token:
+            # Clear if we still own the slot (== because the token is a
+            # thread-id int, not an interned-guaranteed object), OR if a
+            # signal in the COMMIT/ROLLBACK restore window left it parked at
+            # the internal sentinel — that sentinel is only ever set within
+            # this same frame, so reaping it here can't clear a sibling's slot
+            # and avoids a permanent transaction() wedge.
+            if self._transaction_owner == token or self._transaction_owner is _OWNER_INTERNAL_BUSY:
                 self._transaction_owner = None
             with contextlib.suppress(Exception):
                 cursor.close()
