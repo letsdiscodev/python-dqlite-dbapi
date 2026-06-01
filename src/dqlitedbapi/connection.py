@@ -1857,6 +1857,17 @@ class Connection:
     async def _commit_async(self) -> None:
         if self._async_conn is None:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        # Re-check under the op_lock (this coroutine runs via _run_sync, which holds it)
+        # so a foreign-thread close()/_invalidate that nulled _protocol AFTER commit()'s
+        # pre-lock check raises the ambiguous-state signal rather than a plain "Not
+        # connected" OperationalError. Mirrors the async commit() under-lock recheck.
+        if getattr(self._async_conn, "_protocol", "_sentinel") is None:
+            raise InterfaceError(
+                f"Connection invalidated (id={id(self)}); reconnect before "
+                "retrying commit / rollback. The prior call may have "
+                "reached the leader before cancel landed; server-side "
+                "transaction state is ambiguous."
+            )
         # In-lock clear (atomic with the op) closes the window where a
         # sibling could write messages after commit()'s pre-lock clear.
         del self.messages[:]
@@ -1925,6 +1936,14 @@ class Connection:
     async def _rollback_async(self) -> None:
         if self._async_conn is None:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
+        # Under-op_lock recheck; see _commit_async.
+        if getattr(self._async_conn, "_protocol", "_sentinel") is None:
+            raise InterfaceError(
+                f"Connection invalidated (id={id(self)}); reconnect before "
+                "retrying commit / rollback. The prior call may have "
+                "reached the leader before cancel landed; server-side "
+                "transaction state is ambiguous."
+            )
         # In-lock clear; see _commit_async.
         del self.messages[:]
         try:
