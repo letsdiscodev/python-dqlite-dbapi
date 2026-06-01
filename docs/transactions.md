@@ -67,12 +67,14 @@ level.
 
 ## Leader flips during COMMIT
 
-If the Raft leader changes during a COMMIT, the driver raises
-`OperationalError` (with a code in `dqlitewire.LEADER_ERROR_CODES`). The
-write may or may not have been persisted — Raft may already have replicated
-the commit log entry before the flip. Use idempotent DML (`INSERT OR
+If the leader loses leadership *after* the COMMIT entry was submitted, the
+write is in doubt — Raft may already have replicated it — and the driver
+raises `AmbiguousCommitError` (an `OperationalError` subclass, so
+`except OperationalError` still catches it). Use idempotent DML (`INSERT OR
 REPLACE`, `UPDATE` on a unique key) or an out-of-band state check before
-retrying.
+retrying. A plain not-leader rejection *before* the entry was submitted is a
+clean failure (the write definitely did not apply) and raises a plain
+`OperationalError`.
 
 ## With SQLAlchemy
 
