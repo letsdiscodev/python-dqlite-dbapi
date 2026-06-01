@@ -1380,6 +1380,11 @@ class Cursor:
         lastrowid_pre_batch = self._lastrowid
         try:
             for params in seq_of_parameters:
+                # Abort the batch if a foreign thread closed the cursor mid-batch
+                # (check_same_thread=False; close() flips _closed without the op_lock),
+                # so a closed cursor stops issuing autocommitting writes. Mirrors the
+                # AsyncCursor per-iteration guard.
+                self._check_closed()
                 # Structural reject BEFORE len() so a single string/bytes
                 # row gets the sharp diagnostic, not a per-character count.
                 _validate_caller_param_shape(params)
@@ -1417,6 +1422,8 @@ class Cursor:
                     _resolve_busy_timeout_seconds(self._connection),
                     _execute_iter,
                 )
+                # Re-check after the wire returns, before pushing/continuing the batch.
+                self._check_closed()
                 acc.push(self)
                 # push() early-returns if a tier-2 cascade zeroed the
                 # cursor mid-iteration; advance the counter only when
@@ -1446,6 +1453,7 @@ class Cursor:
                 self._completed_iterations = completed_iterations_pre_batch
             del self.messages[:]
             raise
+        self._check_closed()
         acc.apply(self)
 
     def _check_result_set(self) -> None:
