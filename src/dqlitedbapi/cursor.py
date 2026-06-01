@@ -1172,6 +1172,16 @@ class Cursor:
             columns, column_types, row_types, rows = await _call_client(
                 conn.query_raw_typed(operation, params)
             )
+            if self._closed:
+                # Closed by a foreign thread (check_same_thread=False) while parked on
+                # the wire. Drop the result and scrub the introspection fields (not gated
+                # by _check_closed, so a bare return would leave the PRIOR query's values
+                # visible on a closed cursor). Mirrors AsyncCursor._execute_unlocked.
+                self._description = None
+                self._rows = []
+                self._row_index = 0
+                self._rowcount = -1
+                return
             if not columns:
                 # PRAGMA write form (``PRAGMA foreign_keys = ON``)
                 # produces no columns. Match stdlib: description=None and
@@ -1241,6 +1251,14 @@ class Cursor:
                         raw_message=getattr(e, "raw_message", None),
                     ) from e
                 raise
+            if self._closed:
+                # Same close-race guard as the query branch; _lastrowid is PRESERVED
+                # (stdlib persists it across a close-during-DML boundary).
+                self._description = None
+                self._rows = []
+                self._row_index = 0
+                self._rowcount = -1
+                return
             if _is_insert_or_replace(operation):
                 self._lastrowid = _to_signed_int64(last_id)
             if _is_dml_rowcount_meaningful(operation):
