@@ -62,8 +62,10 @@ class Row:
     def __hash__(self) -> int:
         return hash((self._columns, self._values))
 
-    def keys(self) -> tuple[str, ...]:
-        return self._columns
+    def keys(self) -> list[str]:
+        # Fresh mutable list per call, matching stdlib sqlite3.Row.keys();
+        # also shields the internal _columns tuple from caller mutation.
+        return list(self._columns)
 
     def __repr__(self) -> str:
         pairs = ", ".join(f"{k}={v!r}" for k, v in zip(self._columns, self._values, strict=False))

@@ -32,5 +32,5 @@ def test_row_eq_with_non_row_is_false_not_error() -> None:
 def test_row_with_none_description_has_no_columns() -> None:
     r = Row(_NoDescription(), ())
     assert len(r) == 0
-    assert r.keys() == ()
+    assert r.keys() == []
     assert dict(r) == {}

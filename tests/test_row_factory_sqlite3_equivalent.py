@@ -74,6 +74,18 @@ def test_row_keys_returns_column_names() -> None:
     assert tuple(row.keys()) == ("x", "y")
 
 
+def test_row_keys_returns_fresh_mutable_list() -> None:
+    """keys() returns a fresh list per call (stdlib sqlite3.Row parity); mutating it
+    must not affect the row or a later keys() call."""
+    cur = _cursor_with_description("x", "y")
+    row = Row(cur, (1, 2))
+    keys = row.keys()
+    assert isinstance(keys, list)
+    assert row.keys() is not row.keys()
+    keys.append("z")
+    assert row.keys() == ["x", "y"]
+
+
 def test_row_len_matches_value_count() -> None:
     cur = _cursor_with_description("x", "y", "z")
     row = Row(cur, (1, 2, 3))
