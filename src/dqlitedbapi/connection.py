@@ -886,6 +886,9 @@ class Connection:
             max_continuation_frames: Per-query frame cap, bounding
                 decode work a hostile server can inflict via 1-row
                 frames.
+            max_message_size: Hard cap (bytes) on a single wire message,
+                bounding decode work/memory from a hostile or buggy
+                server. ``None`` uses the wire default (64 MiB).
             trust_server_heartbeat: Widen the per-read deadline to the
                 server heartbeat (300 s hard cap). Default False.
             close_timeout: Transport-drain budget for ``close()``.
@@ -905,6 +908,11 @@ class Connection:
                 creator thread; ``False`` shares across threads (one
                 cursor per thread). ``close()`` and the fork check are
                 never relaxed. See the class docstring.
+            session_mode: Transaction session mode — ``immediate``
+                (default; rewrites a bare ``BEGIN`` to ``BEGIN
+                IMMEDIATE``), ``deferred`` / ``exclusive`` (no rewrite),
+                or ``read_only`` (emits ``PRAGMA query_only = 1``).
+                ``None`` uses ``DQLITE_SESSION_MODE`` or ``immediate``.
         """
         _validate_timeout(timeout)
         _validate_close_timeout(close_timeout)
