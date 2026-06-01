@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Final
 from dqlitewire import ValueType
 
 if TYPE_CHECKING:
+    from dqlitedbapi.aio.cursor import AsyncCursor
     from dqlitedbapi.cursor import Cursor
 
 # Matches single-statement ``PRAGMA busy_timeout`` (getter and ``=N``/``(N)`` setter forms);
@@ -32,7 +33,7 @@ _PRAGMA_BUSY_TIMEOUT_RE = re.compile(
 
 
 def try_intercept_busy_timeout(
-    cursor: Cursor,
+    cursor: Cursor | AsyncCursor,
     statement: str,
     parameters: object,
 ) -> bool:

@@ -412,7 +412,7 @@ class AsyncCursor:
                 try_rewrite_begin_to_immediate,
             )
 
-            if try_intercept_busy_timeout(self, operation, parameters):  # type: ignore[arg-type]
+            if try_intercept_busy_timeout(self, operation, parameters):
                 return self
 
             # Rewrite plain BEGIN -> BEGIN IMMEDIATE under the default "immediate"
