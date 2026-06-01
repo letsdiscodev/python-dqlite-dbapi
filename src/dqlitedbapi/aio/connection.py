@@ -1220,7 +1220,8 @@ class AsyncConnection:
         if self._transaction_owner is not None:
             raise InterfaceError(
                 f"Nested conn.transaction() not supported (id={id(self)}); "
-                "exit the outer block before opening a new one."
+                "exit the outer block before opening a new one. "
+                f"(owner task id={self._transaction_owner})"
             )
         token = asyncio.current_task()
         # Set the owner slot INSIDE the try so a BaseException at the bytecode boundary can't
