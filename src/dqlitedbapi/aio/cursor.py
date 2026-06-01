@@ -17,6 +17,7 @@ from dqlitedbapi.cursor import (
     _convert_params_async,
     _convert_rows_async,
     _ExecuteManyAccumulator,
+    _is_commit_statement,
     _is_dml_rowcount_meaningful,
     _is_dml_with_returning,
     _is_insert_or_replace,
@@ -29,9 +30,12 @@ from dqlitedbapi.cursor import (
     _validate_executemany_seq_shape,
 )
 from dqlitedbapi.exceptions import (
+    AMBIGUOUS_COMMIT_CODES,
+    AmbiguousCommitError,
     DataError,
     InterfaceError,
     NotSupportedError,
+    OperationalError,
     ProgrammingError,
 )
 from dqlitedbapi.types import UNKNOWN as _UNKNOWN_TYPE
@@ -328,7 +332,21 @@ class AsyncCursor:
             # -1 for ALL PRAGMA, so match that rather than len.
             self._rowcount = -1 if _is_pragma(operation) else len(rows)
         else:
-            last_id, affected = await _call_client(conn.execute(operation, params))
+            try:
+                last_id, affected = await _call_client(conn.execute(operation, params))
+            except OperationalError as e:
+                # Mirror Connection.commit() and the sync cursor: an explicit COMMIT that
+                # loses leadership after the entry was submitted leaves the write in doubt.
+                # A not-leader rejection is a clean pre-apply failure and stays OperationalError.
+                if _is_commit_statement(operation) and e.code in AMBIGUOUS_COMMIT_CODES:
+                    raise AmbiguousCommitError(
+                        "ambiguous commit: leadership lost during COMMIT; "
+                        "the write may or may not have been persisted. "
+                        f"Original: {e}",
+                        code=e.code,
+                        raw_message=getattr(e, "raw_message", None),
+                    ) from e
+                raise
             # Post-await close-race guard (see query branch). _lastrowid is
             # PRESERVED: stdlib persists it across a close-during-DML boundary.
             if self._closed:

@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import weakref
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -21,6 +21,7 @@ import dqliteclient.exceptions as _client_exc
 import dqlitedbapi
 from dqlitedbapi import Connection
 from dqlitedbapi.aio.connection import AsyncConnection
+from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.exceptions import (
     AMBIGUOUS_COMMIT_CODES,
     AmbiguousCommitError,
@@ -164,6 +165,75 @@ def test_cursor_insert_leadership_lost_is_not_remapped(code: int) -> None:
         assert ei.value.code == code
     finally:
         conn._closed = True
+
+
+def _make_async_cursor(code: int) -> AsyncCursor:
+    """An AsyncCursor whose underlying connection.execute raises a client leader error."""
+    cur = AsyncCursor.__new__(AsyncCursor)
+    cur._closed = False
+    cur._description = None
+    cur._rows = []
+    cur._rowcount = -1
+    cur._lastrowid = None
+    cur._row_index = 0
+    cur._arraysize = 1
+    cur.messages = []
+    cur._completed_iterations = 0
+    cur._executing_task = None
+
+    inner = MagicMock()
+
+    async def _raise(_sql: str, _params: object) -> None:
+        raise _client_exc.OperationalError("leader", code)
+
+    inner.execute = _raise
+
+    conn = MagicMock()
+    conn._max_total_rows = None
+
+    async def _ensure() -> object:
+        return inner
+
+    conn._ensure_connection = _ensure
+    cur._connection = conn
+    return cur
+
+
+@pytest.mark.parametrize("code", _IN_DOUBT_CODES)
+async def test_async_cursor_commit_leadership_lost_is_ambiguous(code: int) -> None:
+    cur = _make_async_cursor(code)
+    with (
+        patch.object(AsyncCursor, "_check_closed", lambda self: None),
+        pytest.raises(AmbiguousCommitError) as ei,
+    ):
+        await cur._execute_unlocked("COMMIT", None)
+    assert isinstance(ei.value, OperationalError)
+    assert ei.value.code == code
+
+
+@pytest.mark.parametrize("code", _NOT_LEADER_CODES)
+async def test_async_cursor_commit_not_leader_is_plain_operational(code: int) -> None:
+    cur = _make_async_cursor(code)
+    with (
+        patch.object(AsyncCursor, "_check_closed", lambda self: None),
+        pytest.raises(OperationalError) as ei,
+    ):
+        await cur._execute_unlocked("COMMIT", None)
+    assert not isinstance(ei.value, AmbiguousCommitError)
+    assert ei.value.code == code
+
+
+@pytest.mark.parametrize("code", _IN_DOUBT_CODES)
+async def test_async_cursor_insert_leadership_lost_is_not_remapped(code: int) -> None:
+    """The remap is scoped to explicit COMMIT; a bare DML leader-loss stays Operational."""
+    cur = _make_async_cursor(code)
+    with (
+        patch.object(AsyncCursor, "_check_closed", lambda self: None),
+        pytest.raises(OperationalError) as ei,
+    ):
+        await cur._execute_unlocked("INSERT INTO t VALUES (1)", None)
+    assert not isinstance(ei.value, AmbiguousCommitError)
+    assert ei.value.code == code
 
 
 def test_ambiguous_commit_error_is_exported_at_package_level() -> None:
