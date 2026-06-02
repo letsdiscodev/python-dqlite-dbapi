@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dqlite-dbapi"
-version = "0.2.2"
+version = "0.3.0"
 description = "PEP 249 (DB-API 2.0) compliant interface for dqlite"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -26,8 +26,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "dqlite-client>=0.2.2,<0.3.0",
-    "dqlite-wire>=0.2.2,<0.3.0",
+    "dqlite-client>=0.3.0,<0.4.0",
+    "dqlite-wire>=0.3.0,<0.4.0",
 ]
 
 [tool.uv.sources]

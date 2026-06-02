@@ -83,7 +83,7 @@ LEGACY_TRANSACTION_CONTROL: _Final[int] = -1
 PARSE_DECLTYPES: _Final[int] = 1
 PARSE_COLNAMES: _Final[int] = 2
 
-__version__: _Final[str] = "0.2.2"
+__version__: _Final[str] = "0.3.0"
 
 __all__ = [  # grouped by PEP 249 section, not alphabetical
     "__version__",
