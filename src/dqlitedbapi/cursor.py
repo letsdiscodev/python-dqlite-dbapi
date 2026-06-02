@@ -1005,10 +1005,8 @@ class Cursor:
         with "no result set"); gate on cur.closed first if the
         distinction matters.
         """
-        # Closed short-circuit before the thread check so the documented
-        # closed -> None contract holds even cross-thread (a closed cursor has
-        # no live fetch to protect). Mirrors AsyncCursor.rownumber. getattr
-        # defensively so a partially-__new__-built fixture (no _closed) doesn't crash.
+        # Closed-first so the closed -> None contract holds cross-thread; getattr
+        # guards a partially-__new__-built fixture with no _closed.
         if getattr(self, "_closed", False):
             return None
         # getattr defensively for __new__-built fixtures and the GC'd
@@ -1238,12 +1236,9 @@ class Cursor:
                 )
             self._rows = _convert_rows(rows, row_types, column_types)
             self._row_index = 0
-            # rowcount = len(rows) for SELECT (the wire buffers the whole
-            # result up front, so the count is known) — a divergence from
-            # stdlib's -1, relied on by SA insertmanyvalues. Portable
-            # "did SELECT find anything" idiom is ``fetchone() is not None``.
-            # PRAGMA reads are the exception: stdlib reports -1 for ALL PRAGMA,
-            # so match that (and the busy_timeout interceptor) rather than len.
+            # rowcount = len(rows) for SELECT: a deliberate divergence from
+            # stdlib's -1 that SA insertmanyvalues relies on. PRAGMA reads are
+            # the exception — stdlib reports -1 for all PRAGMA.
             self._rowcount = -1 if _is_pragma(operation) else len(rows)
         else:
             try:
@@ -1439,15 +1434,10 @@ class Cursor:
             # iteration's rowid (which no single iteration owns canonically).
             self._lastrowid = lastrowid_pre_batch
         except BaseException:
-            # Mid-batch failure: rowcount=-1 ("undetermined") so the last
-            # iteration's count isn't mistaken for the cumulative total.
-            # lastrowid restores to pre-batch unconditionally — matching the
-            # success path, the docstring, and stdlib, which leave lastrowid
-            # unchanged across executemany. _completed_iterations is the
-            # separate partial-progress anchor (surfaced via rownumber) and
-            # is restored only on zero in-batch progress. (The classifier-raise
-            # path is handled by the inner try above.) messages cleared per
-            # PEP 249 §6.1.1.
+            # Mid-batch failure: rowcount=-1 ("undetermined"). stdlib leaves
+            # lastrowid unchanged across executemany, so restore the pre-batch
+            # value; _completed_iterations restores only on zero progress.
+            # messages cleared per PEP 249 §6.1.1.
             self._rowcount = -1
             self._rows = []
             self._description = None

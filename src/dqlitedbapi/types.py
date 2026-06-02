@@ -503,8 +503,7 @@ def unregister_adapter(type_: type, /) -> None:
     Raises :class:`~dqlitedbapi.exceptions.AdapterLookupError` (subclass of
     both ProgrammingError and LookupError) if no entry exists.
     """
-    # Atomic pop (not check-then-del): avoids a TOCTOU where a concurrent
-    # unregister between the membership test and the delete would raise KeyError.
+    # Atomic pop closes the check-then-del TOCTOU (concurrent unregister -> KeyError).
     if _ADAPTERS.pop(type_, _MISSING) is _MISSING:
         raise AdapterLookupError(
             f"no adapter registered for {type_.__name__}",

@@ -63,8 +63,6 @@ class Row:
         return hash((self._columns, self._values))
 
     def keys(self) -> list[str]:
-        # Fresh mutable list per call, matching stdlib sqlite3.Row.keys();
-        # also shields the internal _columns tuple from caller mutation.
         return list(self._columns)
 
     def __repr__(self) -> str:

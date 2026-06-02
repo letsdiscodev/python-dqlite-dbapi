@@ -1769,8 +1769,7 @@ class Connection:
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
-        # State-mutating setter -> closed-then-thread checks (matches
-        # row_factory/text_factory and the async surface). suppress for fixtures.
+        # State-mutating setter: closed check before thread check. suppress for fixtures.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
@@ -1819,8 +1818,7 @@ class Connection:
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
-        # State-mutating setter -> closed-then-thread checks (matches
-        # row_factory/text_factory and the async surface). suppress for fixtures.
+        # State-mutating setter: closed check before thread check. suppress for fixtures.
         with contextlib.suppress(AttributeError):
             del self.messages[:]
         with contextlib.suppress(AttributeError):
@@ -1837,7 +1835,7 @@ class Connection:
             self._isolation_level_value: str | None = value
             return
         if isinstance(value, str) and value.upper() in _STDLIB_IMPLICIT_TX_VALUES:
-            # Normalize case like stdlib's uppercased read-back ('deferred' -> 'DEFERRED').
+            # stdlib parity: isolation_level reads back uppercased.
             self._isolation_level_value = value.upper()
             return
         raise ProgrammingError(

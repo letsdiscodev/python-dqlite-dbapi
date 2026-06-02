@@ -326,10 +326,9 @@ class AsyncCursor:
                 )
             self._rows = await _convert_rows_async(rows, row_types, column_types)
             self._row_index = 0
-            # dqlite returns the buffered row count (not stdlib's -1): the wire
-            # buffers up front and the RETURNING path relies on this for SA's
-            # insertmanyvalues. PRAGMA reads are the exception — stdlib reports
-            # -1 for ALL PRAGMA, so match that rather than len.
+            # rowcount = len(rows) for SELECT: a deliberate divergence from
+            # stdlib's -1 that SA insertmanyvalues relies on. PRAGMA reads are
+            # the exception — stdlib reports -1 for all PRAGMA.
             self._rowcount = -1 if _is_pragma(operation) else len(rows)
         else:
             try:
@@ -594,12 +593,9 @@ class AsyncCursor:
                         if not self._closed:
                             self._completed_iterations += 1
                 except BaseException:
-                    # Mid-batch failure: reset _rowcount to -1 and clear result
-                    # state. _lastrowid restores to pre-batch unconditionally —
-                    # matching the success path, the docstring, and stdlib, which
-                    # leave lastrowid unchanged across executemany.
-                    # _completed_iterations is the separate partial-progress anchor
-                    # (surfaced via rownumber) and restores only on ZERO in-batch
+                    # Mid-batch failure: rowcount=-1 and clear result state. stdlib
+                    # leaves lastrowid unchanged across executemany, so restore the
+                    # pre-batch value; _completed_iterations restores only on zero
                     # progress.
                     self._rowcount = -1
                     self._rows = []

@@ -947,7 +947,7 @@ class AsyncConnection:
             self._isolation_level_value: str | None = value
             return
         if isinstance(value, str) and value.upper() in _STDLIB_IMPLICIT_TX_VALUES:
-            # Normalize case like stdlib's uppercased read-back ('deferred' -> 'DEFERRED').
+            # stdlib parity: isolation_level reads back uppercased.
             self._isolation_level_value = value.upper()
             return
         raise ProgrammingError(
