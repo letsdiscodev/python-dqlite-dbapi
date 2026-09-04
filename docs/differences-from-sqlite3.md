@@ -37,6 +37,15 @@ covers the differences you are most likely to notice when porting code.
   `create_window_function`, `iterdump`, `backup`, `set_authorizer`,
   `serialize`, `blobopen`, `executescript`, and `register_converter` have no
   server-side counterpart in dqlite; their stubs raise `NotSupportedError`.
+- **A lost connection stays lost.** When the wire session drops (transport
+  error, leader change, or an interrupted call), `closed` becomes `True`,
+  `invalidated` becomes `True`, and every further call raises
+  `InterfaceError`. The driver never reconnects behind your back, because a
+  silent reconnect would drop transaction state; open a new connection (a
+  pool does this for you).
+- **Bad `connect()` arguments raise `ProgrammingError`**, not `TypeError` /
+  `ValueError`, so configuration mistakes stay inside the `dbapi.Error`
+  hierarchy.
 - **`rowcount` after SELECT is `len(rows)`.** Stdlib returns `-1` for queries.
   dqlite knows the full result at execute time, so it reports the count.
   `rowcount` stays `-1` for non-result paths, for all PRAGMA statements (read

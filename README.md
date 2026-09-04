@@ -87,6 +87,8 @@ Using SQLAlchemy or an ORM? Prefer
   gotcha).
 - [Differences from `aiosqlite`](docs/differences-from-aiosqlite.md) — for
   the async surface.
+- [Architecture](docs/architecture.md) — how the sync surface wraps the
+  async core, and the threading, lifecycle, and error-mapping policies.
 
 ## Development
 

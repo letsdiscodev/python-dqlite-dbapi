@@ -26,8 +26,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "dqlite-client>=0.3.0,<0.4.0",
-    "dqlite-wire>=0.3.0,<0.4.0",
+    "dqlite-client>=0.4.0,<0.5.0",
+    "dqlite-wire>=0.4.0,<0.5.0",
 ]
 
 [tool.uv.sources]

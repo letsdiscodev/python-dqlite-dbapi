@@ -46,7 +46,7 @@ def test_aenter_from_foreign_loop_raises_programming_error() -> None:
     async def loop_a_setup() -> None:
         conn_holder["c"] = AsyncConnection("localhost:9001")
 
-    asyncio.new_event_loop().run_until_complete(loop_a_setup())
+    asyncio.run(loop_a_setup())
     conn = conn_holder["c"]
     cur = conn.cursor()
 
@@ -54,6 +54,6 @@ def test_aenter_from_foreign_loop_raises_programming_error() -> None:
         async with cur:
             pass
 
-    # Placeholder: a full two-event-loop repro is too costly at the unit level. Cross-loop
-    # misuse is covered by test_async_cursor_setinputsizes_loop_binding.py.
-    pass
+    # Cursors carry no loop binding of their own; entering one from another loop is fine
+    # until it touches the wire, which is where the connection's loop check fires.
+    asyncio.run(loop_b())

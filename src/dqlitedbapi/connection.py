@@ -63,7 +63,7 @@ class Connection(UnsupportedSqlite3Api):
         session_mode: str | None = None,
     ) -> None:
         if not isinstance(check_same_thread, bool):
-            raise InterfaceError(
+            raise ProgrammingError(
                 f"check_same_thread must be a bool, got {type(check_same_thread).__name__}"
             )
         self._async = AsyncConnection(

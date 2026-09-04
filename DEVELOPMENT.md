@@ -33,8 +33,8 @@ uv sync --extra dev
 # Run unit tests only
 .venv/bin/pytest tests/ --ignore=tests/integration
 
-# Run all tests (requires Docker cluster)
-cd ../dqlite-test-cluster && docker compose up -d
+# Run all tests (requires the Docker cluster from the sibling python-dqlite-dev checkout)
+(cd ../python-dqlite-dev/cluster && docker compose up -d)
 .venv/bin/pytest tests/
 ```
 

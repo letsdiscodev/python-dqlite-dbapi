@@ -29,22 +29,34 @@ cur.execute("INSERT INTO t VALUES (?)", (2,))
 conn.commit()       # or conn.rollback()
 ```
 
-Under the default session mode (`immediate`) a bare `BEGIN` / `BEGIN
-TRANSACTION` is rewritten to `BEGIN IMMEDIATE`, so the deferred-to-write
-upgrade can't fail later with `SQLITE_BUSY_SNAPSHOT`; an explicit `DEFERRED`
-/ `IMMEDIATE` / `EXCLUSIVE` qualifier is passed through unchanged. dqlite's
-Raft FSM serializes the transaction across the cluster regardless of the
-qualifier, so the qualifier changes only lock-acquisition timing on the
-leader, never isolation.
+A bare `BEGIN` / `BEGIN TRANSACTION` is qualified according to the
+connection's session mode; an explicit `DEFERRED` / `IMMEDIATE` /
+`EXCLUSIVE` qualifier is always passed through unchanged. dqlite's Raft FSM
+serializes the transaction across the cluster regardless of the qualifier, so
+the qualifier changes only lock-acquisition timing on the leader, never
+isolation.
 
-The session mode is selected with the `session_mode` connect argument (or the
-`DQLITE_SESSION_MODE` environment variable): `immediate` (default; rewrites a
-bare `BEGIN`), `deferred` / `exclusive` (no rewrite), or `read_only` (issues
-`PRAGMA query_only = 1`).
+| `session_mode` | bare `BEGIN` becomes | notes |
+| --- | --- | --- |
+| `immediate` (default) | `BEGIN IMMEDIATE` | takes the write lock up front, so a read-then-write cannot fail later with `SQLITE_BUSY_SNAPSHOT` |
+| `deferred` | `BEGIN` | SQLite's default deferred transaction |
+| `exclusive` | `BEGIN EXCLUSIVE` | |
+| `read_only` | `BEGIN` | the connection runs with `PRAGMA query_only = 1`; writes raise `OperationalError` |
+
+The mode is selected with the `session_mode` connect argument (or the
+`DQLITE_SESSION_MODE` environment variable), read back through the
+`session_mode` property, and changed at runtime with `set_session_mode()`,
+which may not be called inside a transaction. `default_session_mode` is the
+value given at construction.
 
 The connection also works as a context manager (matching stdlib `sqlite3`):
 the `with conn:` block commits on clean exit and rolls back on exception.
 It does **not** close the connection — the connection stays reusable.
+
+`conn.transaction()` (sync) / `async with conn.transaction():` wraps a block
+in `BEGIN` / `COMMIT` / `ROLLBACK`. Calling `commit()` or `rollback()`
+inside the block raises `InterfaceError`, because the block owns the
+boundaries; use `SAVEPOINT` for nesting.
 
 ## `commit()` / `rollback()` details
 
