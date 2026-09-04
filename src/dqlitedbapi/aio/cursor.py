@@ -431,15 +431,19 @@ class AsyncCursor:
             )
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None, /) -> NoReturn:
+        self._check_open()
         raise NotSupportedError("dqlite does not support stored procedures")
 
     def nextset(self) -> NoReturn:
+        self._check_open()
         raise NotSupportedError("dqlite does not support multiple result sets")
 
     def scroll(self, value: int, mode: str = "relative", /) -> NoReturn:
+        self._check_open()
         raise NotSupportedError("dqlite cursors are not scrollable")
 
     def executescript(self, sql_script: str, /) -> NoReturn:
+        self._check_open()
         raise NotSupportedError(
             "executescript() is not supported: there is no multi-statement primitive; "
             "execute one statement at a time"

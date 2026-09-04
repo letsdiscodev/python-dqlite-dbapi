@@ -154,6 +154,7 @@ class Connection(UnsupportedSqlite3Api):
 
     @busy_timeout.setter
     def busy_timeout(self, value: float) -> None:
+        self._check_thread()
         self._async.busy_timeout = value
 
     @property
@@ -162,6 +163,7 @@ class Connection(UnsupportedSqlite3Api):
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
+        self._check_thread()
         self._async.row_factory = value
 
     @property
@@ -170,6 +172,7 @@ class Connection(UnsupportedSqlite3Api):
 
     @text_factory.setter
     def text_factory(self, value: object) -> None:
+        self._check_thread()
         self._async.text_factory = value
 
     @property
@@ -178,6 +181,7 @@ class Connection(UnsupportedSqlite3Api):
 
     @autocommit.setter
     def autocommit(self, value: object) -> None:
+        self._check_thread()
         self._async.autocommit = value
 
     @property
@@ -186,6 +190,7 @@ class Connection(UnsupportedSqlite3Api):
 
     @isolation_level.setter
     def isolation_level(self, value: object) -> None:
+        self._check_thread()
         self._async.isolation_level = value
 
     # -- lifecycle -----------------------------------------------------------------

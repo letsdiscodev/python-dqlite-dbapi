@@ -49,6 +49,7 @@ class Cursor:
 
     @arraysize.setter
     def arraysize(self, value: int) -> None:
+        self._connection._check_thread()
         self._async.arraysize = value
 
     @property
@@ -61,6 +62,7 @@ class Cursor:
 
     @row_factory.setter
     def row_factory(self, value: object) -> None:
+        self._connection._check_thread()
         self._async.row_factory = value
 
     @property
@@ -91,24 +93,31 @@ class Cursor:
         return self._async._fetchall(self)
 
     def close(self) -> None:
+        self._connection._check_thread()
         self._async.close()
 
     def setinputsizes(self, sizes: Sequence[Any] | None, /) -> None:
+        self._connection._check_thread()
         self._async.setinputsizes(sizes)
 
     def setoutputsize(self, size: int | None, column: int | None = None, /) -> None:
+        self._connection._check_thread()
         self._async.setoutputsize(size, column)
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None, /) -> NoReturn:
+        self._connection._check_thread()
         self._async.callproc(procname, parameters)
 
     def nextset(self) -> NoReturn:
+        self._connection._check_thread()
         self._async.nextset()
 
     def scroll(self, value: int, mode: str = "relative", /) -> NoReturn:
+        self._connection._check_thread()
         self._async.scroll(value, mode)
 
     def executescript(self, sql_script: str, /) -> NoReturn:
+        self._connection._check_thread()
         self._async.executescript(sql_script)
 
     def __iter__(self) -> Self:
