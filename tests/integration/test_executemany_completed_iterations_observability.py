@@ -39,11 +39,10 @@ def test_completed_iterations_resets_per_call(cluster_address: str) -> None:
 
 
 @pytest.mark.integration
-def test_completed_iterations_starts_at_zero() -> None:
+def test_completed_iterations_starts_at_zero(cluster_address: str) -> None:
     """A never-executed cursor reports 0."""
-    cur = dqlitedbapi.Cursor.__new__(dqlitedbapi.Cursor)
-    cur._completed_iterations = 0  # mirror __init__
-    assert cur.completed_iterations == 0
+    with dqlitedbapi.connect(cluster_address) as conn:
+        assert conn.cursor().completed_iterations == 0
 
 
 @pytest.mark.integration

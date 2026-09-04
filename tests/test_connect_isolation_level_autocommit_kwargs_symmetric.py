@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 import dqlitedbapi
-from dqlitedbapi.exceptions import NotSupportedError
+from dqlitedbapi.exceptions import NotSupportedError, ProgrammingError
 
 
 def test_sync_connect_accepts_isolation_level_none() -> None:
@@ -32,7 +32,7 @@ def test_sync_connect_accepts_autocommit_minus_one() -> None:
 
 def test_sync_connect_rejects_isolation_level_unknown_string() -> None:
     """Unknown strings stay rejected even though the setter accepts the stdlib set."""
-    with pytest.raises(NotSupportedError, match="isolation_level"):
+    with pytest.raises(ProgrammingError, match="isolation_level"):
         dqlitedbapi.connect("127.0.0.1:9001", isolation_level="SERIALIZABLE")
 
 
@@ -52,7 +52,7 @@ def test_async_connect_accepts_isolation_level_none() -> None:
 def test_async_connect_rejects_isolation_level_unknown_string() -> None:
     from dqlitedbapi.aio import connect as aio_connect
 
-    with pytest.raises(NotSupportedError, match="isolation_level"):
+    with pytest.raises(ProgrammingError, match="isolation_level"):
         aio_connect("127.0.0.1:9001", isolation_level="SERIALIZABLE")
 
 
@@ -96,7 +96,7 @@ async def test_aconnect_accepts_autocommit_minus_one() -> None:
 async def test_aconnect_rejects_isolation_level_unknown_string() -> None:
     from dqlitedbapi.aio import aconnect
 
-    with pytest.raises(NotSupportedError, match="isolation_level"):
+    with pytest.raises(ProgrammingError, match="isolation_level"):
         await aconnect("127.0.0.1:9001", isolation_level="SERIALIZABLE")
 
 

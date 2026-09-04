@@ -19,7 +19,7 @@ class TestLastrowidWithReturning:
             # DDL surfaces last_insert_id=0 on its Exec response.
             lastrowid_after_ddl = cursor.lastrowid
             cursor.execute("INSERT INTO lri_test (v) VALUES (?) RETURNING id", (42,))
-            returned_id = cursor.fetchone()[0]  # type: ignore[index]
+            returned_id = cursor.fetchone()[0]
             assert returned_id >= 1
             # RETURNING does not update lastrowid; it still holds the Exec-path value.
             assert cursor.lastrowid == lastrowid_after_ddl

@@ -1,28 +1,43 @@
-"""PEP 249 exception hierarchy for dqlite."""
+"""PEP 249 exception hierarchy and translation of client-layer errors."""
 
-import sqlite3 as _stdlib_sqlite3
+import sqlite3 as _sqlite3
+from collections.abc import Awaitable
 from functools import lru_cache
 from typing import Final
 
-from dqlitewire import DEFAULT_MAX_RAW_MESSAGE as _DEFAULT_MAX_RAW_MESSAGE
-from dqlitewire import LEADER_ERROR_CODES as _LEADER_ERROR_CODES
-from dqlitewire import SQLITE_IOERR_LEADERSHIP_LOST as _SQLITE_IOERR_LEADERSHIP_LOST
+import dqliteclient.exceptions as _client
 from dqlitewire import (
-    SQLITE_IOERR_LEADERSHIP_LOST_LEGACY as _SQLITE_IOERR_LEADERSHIP_LOST_LEGACY,
-)
-from dqlitewire import cap_raw_message as _wire_cap_raw_message
-from dqlitewire import is_dqlite_namespace_code as _is_dqlite_namespace_code
-
-# The subset of LEADER_ERROR_CODES that leaves a write in doubt. Only LEADERSHIP_LOST
-# qualifies: the server emits it from the raft apply callback (leader.c exec_apply_cb),
-# i.e. after the entry was submitted, so it may or may not have been persisted.
-# NOT_LEADER is a clean pre-apply rejection (gateway.c CHECK_LEADER / synchronous
-# raft_apply), where the write definitely did not apply, so it stays a plain failure.
-AMBIGUOUS_COMMIT_CODES: Final[frozenset[int]] = frozenset(
-    {_SQLITE_IOERR_LEADERSHIP_LOST, _SQLITE_IOERR_LEADERSHIP_LOST_LEGACY}
+    BARE_DATABASE_ERROR_CODES,
+    DEFAULT_MAX_RAW_MESSAGE,
+    DQLITE_NOTFOUND,
+    DQLITE_PARSE,
+    DQLITE_PROTO,
+    LEADER_ERROR_CODES,
+    SQLITE_AUTH,
+    SQLITE_CONSTRAINT,
+    SQLITE_ERROR,
+    SQLITE_INTERNAL,
+    SQLITE_IOERR_LEADERSHIP_LOST,
+    SQLITE_IOERR_LEADERSHIP_LOST_LEGACY,
+    SQLITE_MISMATCH,
+    SQLITE_MISUSE,
+    SQLITE_NOLFS,
+    SQLITE_NOMEM,
+    SQLITE_NOTFOUND,
+    SQLITE_NOTICE,
+    SQLITE_RANGE,
+    SQLITE_TOOBIG,
+    SQLITE_WARNING,
+    EncodeError,
+    cap_raw_message,
+    is_dqlite_namespace_code,
+    primary_sqlite_code,
 )
 
 __all__ = [
+    "AMBIGUOUS_COMMIT_CODES",
+    "CLUSTER_POLICY_REJECTION_PREFIX",
+    "FAILED_TO_CONNECT_PREFIX",
     "AdapterLookupError",
     "AmbiguousCommitError",
     "DataError",
@@ -37,10 +52,107 @@ __all__ = [
     "Warning",
 ]
 
+# Message prefixes sqlalchemy-dqlite matches on; keep them stable.
+FAILED_TO_CONNECT_PREFIX: Final[str] = "Failed to connect: "
+CLUSTER_POLICY_REJECTION_PREFIX: Final[str] = "Cluster policy rejection"
 
-# Primary codes (0-28) collide by value with stdlib authorizer-action constants, so a
-# dir(sqlite3) walk picks the wrong (alphabetically-first) name; hardcode canonical names.
-# Source of truth: https://www.sqlite.org/rescode.html
+# LEADERSHIP_LOST is raised from the raft apply callback, i.e. after the entry was
+# submitted, so the write is in doubt. NOT_LEADER is a clean pre-apply rejection.
+AMBIGUOUS_COMMIT_CODES: Final[frozenset[int]] = frozenset(
+    {SQLITE_IOERR_LEADERSHIP_LOST, SQLITE_IOERR_LEADERSHIP_LOST_LEGACY}
+)
+
+_NO_TRANSACTION_SUBSTRINGS: Final[tuple[str, ...]] = ("no transaction is active",)
+
+
+class Warning(Exception):  # noqa: A001, N818 - PEP 249 mandated name
+    """PEP 249 Warning class; exported for parity, never raised by this driver."""
+
+
+class Error(Exception):
+    """Base class of all driver errors.
+
+    ``code`` is the SQLite/dqlite result code when the server supplied one;
+    ``raw_message`` is the untruncated server text.
+    """
+
+    code: int | None
+    raw_message: str
+
+    def __init__(
+        self,
+        message: object = "",
+        code: int | None = None,
+        *,
+        raw_message: str | None = None,
+    ) -> None:
+        text = message if isinstance(message, str) else str(message)
+        super().__init__(_cap(text))
+        self.code = code
+        self.raw_message = _cap(text if raw_message is None else raw_message)
+
+    @property
+    def sqlite_errorcode(self) -> int | None:
+        return self.code
+
+    @property
+    def sqlite_errorname(self) -> str | None:
+        return _sqlite_errorname(self.code)
+
+    def __repr__(self) -> str:
+        msg = self.args[0] if self.args else ""
+        if self.code is None:
+            return f"{type(self).__name__}({msg!r})"
+        return f"{type(self).__name__}({msg!r}, code={self.code})"
+
+
+class InterfaceError(Error):
+    """Misuse of the driver interface (closed handles, wrong thread or loop, bad arguments)."""
+
+
+class DatabaseError(Error):
+    """Error reported by the database or the cluster."""
+
+
+class DataError(DatabaseError):
+    """Problem with the processed data (bad bind value, unparsable server value)."""
+
+
+class OperationalError(DatabaseError):
+    """Error related to database operation, including transport and cluster faults."""
+
+
+class AmbiguousCommitError(OperationalError):
+    """COMMIT lost leadership after the entry was submitted; the write may or may not persist."""
+
+
+class IntegrityError(DatabaseError):
+    """Constraint violation (SQLITE_CONSTRAINT family)."""
+
+
+class InternalError(DatabaseError):
+    """Internal database error (SQLITE_INTERNAL family)."""
+
+
+class ProgrammingError(DatabaseError):
+    """Caller error: bad SQL, wrong parameter count, misuse of the API."""
+
+
+class NotSupportedError(DatabaseError):
+    """The requested feature has no counterpart in dqlite."""
+
+
+class AdapterLookupError(ProgrammingError, LookupError):
+    """``unregister_adapter`` found no adapter for the type."""
+
+
+def _cap(text: str) -> str:
+    capped = cap_raw_message(text, DEFAULT_MAX_RAW_MESSAGE)
+    assert capped is not None
+    return capped
+
+
+# Primary result codes collide by value with stdlib authorizer constants, so name them here.
 _PRIMARY_RESULT_CODE_NAMES: Final[dict[int, str]] = {
     0: "SQLITE_OK",
     1: "SQLITE_ERROR",
@@ -77,215 +189,94 @@ _PRIMARY_RESULT_CODE_NAMES: Final[dict[int, str]] = {
 
 
 @lru_cache(maxsize=1)
-def _stdlib_extended_code_to_name() -> dict[int, str]:
-    """Map stdlib extended SQLITE_* codes (>= 256) to names; codes < 256 collide with
-    authorizer/opcode/limit/config constants so they are excluded here."""
+def _extended_code_names() -> dict[int, str]:
     table: dict[int, str] = {}
-    for name in dir(_stdlib_sqlite3):
-        if not name.startswith("SQLITE_"):
-            continue
-        value = getattr(_stdlib_sqlite3, name)
-        if not isinstance(value, int):
-            continue
-        if value < 256:
-            # Primary codes are hand-curated in _PRIMARY_RESULT_CODE_NAMES (collision ambiguity).
-            continue
-        table.setdefault(value, name)
+    for name in dir(_sqlite3):
+        value = getattr(_sqlite3, name)
+        if name.startswith("SQLITE_") and isinstance(value, int) and value >= 256:
+            table.setdefault(value, name)
     return table
 
 
 def _sqlite_errorname(code: int | None) -> str | None:
-    """Symbolic SQLite name for code, or None for unknown/dqlite-namespace/leader codes."""
     if code is None:
         return None
-    name = _PRIMARY_RESULT_CODE_NAMES.get(code)
-    if name is not None:
-        return name
-    # dqlite-namespace codes collide by value with stdlib SQLITE_DBCONFIG_* opcodes
-    # (e.g. DQLITE_NOTFOUND=1002); short-circuit to avoid surfacing bogus opcode names.
-    if _is_dqlite_namespace_code(code):
+    if code in _PRIMARY_RESULT_CODE_NAMES:
+        return _PRIMARY_RESULT_CODE_NAMES[code]
+    # dqlite-namespace and legacy leader codes collide with unrelated stdlib constants.
+    if is_dqlite_namespace_code(code) or code in LEADER_ERROR_CODES:
         return None
-    # Legacy leader codes (8202/8458) collide with stdlib IOERR_DATA/IOERR_CORRUPTFS;
-    # suppress so all leader codes behave uniformly with the modern ones.
-    if code in _LEADER_ERROR_CODES:
-        return None
-    return _stdlib_extended_code_to_name().get(code)
+    return _extended_code_names().get(code)
 
 
-class Warning(Exception):  # noqa: A001, N818 - PEP 249 §7 mandated class name
-    """PEP 249 Warning class; exported for parity but never raised."""
-
-    pass
-
-
-# Cap on raw_message; single source of truth at the wire layer (where the rationale lives).
-_MAX_RAW_MESSAGE: Final[int] = _DEFAULT_MAX_RAW_MESSAGE
-
-
-def _cap_raw_message(raw_message: str) -> str:
-    capped = _wire_cap_raw_message(raw_message, _MAX_RAW_MESSAGE)
-    # _wire_cap_raw_message returns None only for None input; this caller passes str.
-    assert capped is not None
-    return capped
-
-
-class Error(Exception):
-    """Base class for all database errors."""
-
-    def __reduce__(
-        self,
-    ) -> tuple[type["Error"], tuple[object, ...], dict[str, object]]:
-        # Default __reduce__ drops instance fields (code/raw_message); preserve them so
-        # cross-process pickling keeps the server text SA's is_disconnect reads.
-        return (self.__class__, self.args, self.__getstate__())
-
-    def __getstate__(self) -> dict[str, object]:
-        return self.__dict__.copy()
-
-    def __setstate__(self, state: dict[str, object] | None) -> None:
-        if state:
-            self.__dict__.update(state)
+_CODE_TO_CLASS: Final[dict[int, type[Error]]] = {
+    SQLITE_CONSTRAINT: IntegrityError,
+    SQLITE_MISMATCH: IntegrityError,
+    SQLITE_INTERNAL: InternalError,
+    SQLITE_NOTFOUND: InternalError,
+    SQLITE_NOMEM: InternalError,
+    SQLITE_TOOBIG: DataError,
+    SQLITE_RANGE: InterfaceError,
+    SQLITE_MISUSE: InterfaceError,
+    SQLITE_NOLFS: DatabaseError,
+    SQLITE_AUTH: DatabaseError,
+    SQLITE_NOTICE: DatabaseError,
+    SQLITE_WARNING: DatabaseError,
+    **dict.fromkeys(BARE_DATABASE_ERROR_CODES, DatabaseError),
+    DQLITE_PROTO: InterfaceError,
+    DQLITE_NOTFOUND: ProgrammingError,
+    DQLITE_PARSE: ProgrammingError,
+}
 
 
-class InterfaceError(Error):
-    """Error related to the database interface; optionally carries code and raw_message."""
-
-    code: int | None
-    raw_message: str
-
-    def __init__(
-        self,
-        message: object = "",
-        code: int | None = None,
-        *,
-        raw_message: str | None = None,
-    ) -> None:
-        # Cap the displayed message (args[0]) so the wire-layer 64 KiB ceiling does not
-        # amplify through pickled-exception / repr surfaces; non-str messages pass through.
-        capped_message: object = _cap_raw_message(message) if isinstance(message, str) else message
-        super().__init__(capped_message)
-        self.code = code
-        resolved = str(message) if raw_message is None else raw_message
-        self.raw_message = _cap_raw_message(resolved)
-
-    @property
-    def sqlite_errorcode(self) -> int | None:
-        """Stdlib sqlite3-parity alias for code (Python 3.11+)."""
-        return self.code
-
-    @property
-    def sqlite_errorname(self) -> str | None:
-        """Stdlib sqlite3-parity alias (3.11+): symbolic name of code, or None."""
-        return _sqlite_errorname(self.code)
-
-    def __repr__(self) -> str:
-        msg = self.args[0] if self.args else ""
-        if self.code is None:
-            return f"{type(self).__name__}({msg!r})"
-        return f"{type(self).__name__}({msg!r}, code={self.code})"
+def classify(code: int | None) -> type[Error]:
+    """PEP 249 class for a server result code; unknown codes are ``OperationalError``."""
+    if code is None:
+        return OperationalError
+    return _CODE_TO_CLASS.get(primary_sqlite_code(code), OperationalError)
 
 
-class DatabaseError(Error):
-    """Error related to the database; optionally carries code and raw_message."""
-
-    code: int | None
-    raw_message: str
-
-    def __init__(
-        self,
-        message: object = "",
-        code: int | None = None,
-        *,
-        raw_message: str | None = None,
-    ) -> None:
-        # See InterfaceError.__init__ for why the displayed message is capped.
-        capped_message: object = _cap_raw_message(message) if isinstance(message, str) else message
-        super().__init__(capped_message)
-        self.code = code
-        resolved = str(message) if raw_message is None else raw_message
-        self.raw_message = _cap_raw_message(resolved)
-
-    @property
-    def sqlite_errorcode(self) -> int | None:
-        """Stdlib sqlite3-parity alias for code (Python 3.11+)."""
-        return self.code
-
-    @property
-    def sqlite_errorname(self) -> str | None:
-        """Stdlib sqlite3-parity alias (3.11+): symbolic name of code, or None."""
-        return _sqlite_errorname(self.code)
-
-    def __repr__(self) -> str:
-        msg = self.args[0] if self.args else ""
-        if self.code is None:
-            return f"{type(self).__name__}({msg!r})"
-        return f"{type(self).__name__}({msg!r}, code={self.code})"
+def translate(exc: BaseException) -> Error | None:
+    """Map a client-layer exception to its dbapi equivalent; ``None`` if it is not one."""
+    raw = getattr(exc, "raw_message", None) or str(exc)
+    if isinstance(exc, _client.OperationalError):
+        return classify(exc.code)(exc.message, code=exc.code, raw_message=exc.raw_message)
+    if isinstance(exc, _client.ClusterPolicyError):
+        return InterfaceError(f"{CLUSTER_POLICY_REJECTION_PREFIX}; {exc}", raw_message=raw)
+    if isinstance(exc, _client.DqliteConnectionError):
+        return OperationalError(str(exc), code=exc.code, raw_message=raw)
+    if isinstance(exc, _client.ClusterError | _client.ProtocolError):
+        return OperationalError(str(exc), raw_message=raw)
+    if isinstance(exc, _client.DataError):
+        return DataError(str(exc), raw_message=raw)
+    if isinstance(exc, EncodeError):
+        return DataError(f"wire encode failed: {exc}", raw_message=raw)
+    if isinstance(exc, _client.InterfaceError):
+        return InterfaceError(str(exc), raw_message=raw)
+    if isinstance(exc, _client.DqliteError):
+        return DatabaseError(
+            f"unrecognized client error ({type(exc).__name__}): {exc}", raw_message=raw
+        )
+    if isinstance(exc, OSError):
+        return OperationalError(str(exc), raw_message=raw)
+    return None
 
 
-class _DatabaseErrorWithCode(DatabaseError):
-    """Internal marker base for the five coded PEP 249 DatabaseError subclasses.
-
-    Do NOT use isinstance(exc, _DatabaseErrorWithCode) to detect code-bearing errors:
-    bare DatabaseError (CORRUPT/NOTADB/FORMAT) also carries a code. Use
-    getattr(exc, "code", None) is not None instead.
-    """
-
-    pass
-
-
-class OperationalError(_DatabaseErrorWithCode):
-    """Error related to database operation."""
-
-    pass
+async def call[T](awaitable: Awaitable[T]) -> T:
+    """Await a client coroutine, re-raising client errors as dbapi errors."""
+    try:
+        return await awaitable
+    except Exception as exc:
+        mapped = translate(exc)
+        if mapped is None:
+            raise
+        raise mapped from exc
 
 
-class AmbiguousCommitError(OperationalError):
-    """COMMIT lost leadership after submitting the entry; the write may or may not
-    have persisted (see AMBIGUOUS_COMMIT_CODES). A plain not-leader rejection is a
-    clean failure and stays an OperationalError, not this.
-
-    Retry only with idempotent DML or after an out-of-band state check: retrying
-    non-idempotent DML risks silent duplicate writes.
-    """
-
-    pass
-
-
-class IntegrityError(_DatabaseErrorWithCode):
-    """Constraint violation (UNIQUE, NOT NULL, FOREIGN KEY, CHECK; SQLITE_CONSTRAINT family)."""
-
-    pass
-
-
-class InternalError(_DatabaseErrorWithCode):
-    """Internal database error (SQLITE_INTERNAL family)."""
-
-    pass
-
-
-class ProgrammingError(_DatabaseErrorWithCode):
-    """Programming error (e.g. table not found, SQL syntax error)."""
-
-    pass
-
-
-class NotSupportedError(DatabaseError):
-    """Method or database API not supported by database."""
-
-    pass
-
-
-class DataError(_DatabaseErrorWithCode):
-    """Error due to problems with the processed data (e.g. SQLITE_MISMATCH, SQLITE_TOOBIG)."""
-
-    pass
-
-
-class AdapterLookupError(ProgrammingError, LookupError):
-    """Raised by unregister_adapter when the type has no registered adapter.
-
-    Inherits LookupError too (stdlib parity: sqlite3 raises KeyError); ProgrammingError is
-    first in the MRO so Error-rooted classification wins ambiguous catches.
-    """
-
-    pass
+def is_no_transaction_error(exc: BaseException) -> bool:
+    """True for the server's "no transaction is active" reply to COMMIT / ROLLBACK."""
+    code = getattr(exc, "code", None)
+    if code is None or primary_sqlite_code(code) != SQLITE_ERROR:
+        return False
+    raw = (getattr(exc, "raw_message", None) or str(exc)).lower()
+    return any(s in raw for s in _NO_TRANSACTION_SUBSTRINGS)

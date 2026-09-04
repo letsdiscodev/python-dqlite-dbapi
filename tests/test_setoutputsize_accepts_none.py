@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from dqlitedbapi import Cursor
-from dqlitedbapi.aio import AsyncConnection, AsyncCursor
+from dqlitedbapi.aio import AsyncConnection
 from dqlitedbapi.connection import Connection
 from dqlitedbapi.exceptions import ProgrammingError
 
@@ -13,7 +12,7 @@ from dqlitedbapi.exceptions import ProgrammingError
 def test_sync_setoutputsize_none_is_noop() -> None:
     conn = Connection("localhost:9001")
     try:
-        cur = Cursor(conn)
+        cur = conn.cursor()
         try:
             cur.setoutputsize(None)
             cur.setoutputsize(None, None)
@@ -26,7 +25,7 @@ def test_sync_setoutputsize_none_is_noop() -> None:
 def test_sync_setoutputsize_str_still_rejected() -> None:
     conn = Connection("localhost:9001")
     try:
-        cur = Cursor(conn)
+        cur = conn.cursor()
         try:
             with pytest.raises(ProgrammingError):
                 cur.setoutputsize("five")  # type: ignore[arg-type]
@@ -38,7 +37,7 @@ def test_sync_setoutputsize_str_still_rejected() -> None:
 
 async def test_async_setoutputsize_none_is_noop() -> None:
     conn = AsyncConnection("localhost:9001")
-    cur = AsyncCursor(conn)
+    cur = conn.cursor()
     try:
         cur.setoutputsize(None)
         cur.setoutputsize(None, None)
@@ -48,7 +47,7 @@ async def test_async_setoutputsize_none_is_noop() -> None:
 
 async def test_async_setoutputsize_str_still_rejected() -> None:
     conn = AsyncConnection("localhost:9001")
-    cur = AsyncCursor(conn)
+    cur = conn.cursor()
     try:
         with pytest.raises(ProgrammingError):
             cur.setoutputsize("five")  # type: ignore[arg-type]

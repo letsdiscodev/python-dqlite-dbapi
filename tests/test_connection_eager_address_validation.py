@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from dqlitedbapi import Connection, InterfaceError
+from dqlitedbapi import Connection, ProgrammingError
 from dqlitedbapi.aio.connection import AsyncConnection
 
 
@@ -21,12 +21,12 @@ from dqlitedbapi.aio.connection import AsyncConnection
     ],
 )
 def test_sync_init_rejects_invalid_address(bad: str) -> None:
-    with pytest.raises(InterfaceError, match="Invalid address"):
+    with pytest.raises(ProgrammingError, match="Invalid address"):
         Connection(bad)
 
 
 def test_sync_init_rejects_non_string_address() -> None:
-    with pytest.raises(InterfaceError, match="host:port"):
+    with pytest.raises(ProgrammingError, match="host:port"):
         Connection(None)  # type: ignore[arg-type]
 
 
@@ -35,12 +35,12 @@ def test_sync_init_accepts_valid_address() -> None:
 
 
 def test_async_init_rejects_invalid_address() -> None:
-    with pytest.raises(InterfaceError, match="Invalid address"):
+    with pytest.raises(ProgrammingError, match="Invalid address"):
         AsyncConnection("host:abc")
 
 
 def test_async_init_rejects_non_string_address() -> None:
-    with pytest.raises(InterfaceError, match="host:port"):
+    with pytest.raises(ProgrammingError, match="host:port"):
         AsyncConnection(None)  # type: ignore[arg-type]
 
 

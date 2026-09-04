@@ -25,7 +25,7 @@ async def test_async_executemany_wrong_arity_raises_programming_error(
 
         check = conn.cursor()
         await check.execute("SELECT count(*) FROM async_emany_arity")
-        (count,) = await check.fetchone()  # type: ignore[misc]
+        (count,) = await check.fetchone()
         assert count == 0
     finally:
         cleanup = conn.cursor()

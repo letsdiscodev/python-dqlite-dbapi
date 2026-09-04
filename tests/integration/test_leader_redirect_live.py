@@ -102,6 +102,6 @@ def test_connect_after_leader_flip_routes_to_new_leader(
 @pytest.mark.integration
 def test_connect_to_unreachable_seed_raises_operational_error() -> None:
     # Port 1: nothing is listening, so leader resolution fails.
-    with pytest.raises(OperationalError, match="Failed to find leader"):
+    with pytest.raises(OperationalError, match="Failed to connect"):
         conn = connect("127.0.0.1:1", timeout=1.0)
         conn.connect()  # explicit connect for clearer failure point

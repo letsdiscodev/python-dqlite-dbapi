@@ -76,15 +76,15 @@ def test_session_mode_stored_on_connection(cluster_address: str) -> None:
     """The mode and its construction-time default are stored on the connection."""
     conn = dqlitedbapi.connect(cluster_address, session_mode="read_only")
     try:
-        assert conn._dqlite_session_mode == "read_only"
-        assert conn._dqlite_session_mode_default == "read_only"
+        assert conn.session_mode == "read_only"
+        assert conn.default_session_mode == "read_only"
     finally:
         conn.close()
 
 
 @pytest.mark.integration
 def test_invalid_session_mode_raises_at_construct(cluster_address: str) -> None:
-    with pytest.raises(ValueError, match="Invalid session_mode"):
+    with pytest.raises(dqlitedbapi.ProgrammingError, match="Invalid session_mode"):
         dqlitedbapi.connect(cluster_address, session_mode="not_a_mode")
 
 

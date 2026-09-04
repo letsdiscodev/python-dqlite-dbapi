@@ -62,7 +62,7 @@ def test_pragma_busy_timeout_intercepted_sync(cluster_address: str, pragma: str)
         assert row is not None
         if "=" in pragma:
             assert row[0] == 1000
-            assert conn._busy_timeout == 1.0
+            assert conn.busy_timeout == 1.0
         else:
             assert row[0] == 5000
 
@@ -78,7 +78,7 @@ async def test_pragma_busy_timeout_intercepted_async(cluster_address: str, pragm
         assert row is not None
         if "=" in pragma:
             assert row[0] == 1000
-            assert conn._busy_timeout == 1.0
+            assert conn.busy_timeout == 1.0
         else:
             assert row[0] == 5000
     finally:

@@ -30,7 +30,7 @@ def test_force_close_unblocks_concurrent_run_sync(cluster_address: str) -> None:
             ready.set()
             t0 = time.monotonic()
             try:
-                conn._run_sync(asyncio.sleep(30))  # stand-in for a slow in-flight wire op
+                conn._run(asyncio.sleep(30))  # stand-in for a slow in-flight wire op
             except BaseException as e:  # noqa: BLE001
                 result["exc"] = e
                 result["elapsed"] = time.monotonic() - t0

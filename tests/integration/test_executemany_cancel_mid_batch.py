@@ -35,10 +35,10 @@ class TestExecutemanyCancelMidBatch:
             # Cursor state reset to PEP-249 "undetermined"; _lastrowid restores to
             # the pre-batch value on the cancel arm (here no INSERT preceded the
             # batch, so it stays None).
-            assert cur._rowcount == -1
-            assert cur._rows == []
-            assert cur._description is None
-            assert cur._row_index == 0
+            assert cur.rowcount == -1
+            assert cur.description is None
+            assert cur.rownumber is None
+            assert await cur.fetchall() == []
 
             # Connection is invalidated; the next op surfaces as InterfaceError
             # or OperationalError depending on how _call_client wraps it.

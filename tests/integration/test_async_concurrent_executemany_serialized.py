@@ -34,7 +34,7 @@ async def test_two_executemany_on_same_async_connection_serialized(
 
         check_cur = conn.cursor()
         await check_cur.execute("SELECT count(*) FROM test_concurrent_emany")
-        (count,) = await check_cur.fetchone()  # type: ignore[misc]
+        (count,) = await check_cur.fetchone()
         assert count == 100
 
         await check_cur.execute("SELECT id FROM test_concurrent_emany ORDER BY id")

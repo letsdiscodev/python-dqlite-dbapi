@@ -26,7 +26,7 @@ class TestDateTimeRoundTrip:
             cursor.execute("DELETE FROM dt_naive")
             cursor.execute("INSERT INTO dt_naive (ts) VALUES (?)", [dt])
             cursor.execute("SELECT ts FROM dt_naive")
-            (value,) = cursor.fetchone()  # type: ignore[misc]
+            (value,) = cursor.fetchone()
             assert isinstance(value, datetime.datetime)
             assert value.tzinfo is None, f"expected naive, got tzinfo={value.tzinfo}"
             assert value == dt
@@ -44,7 +44,7 @@ class TestDateTimeRoundTrip:
             cursor.execute("DELETE FROM dt_aware")
             cursor.execute("INSERT INTO dt_aware (ts) VALUES (?)", [dt])
             cursor.execute("SELECT ts FROM dt_aware")
-            (value,) = cursor.fetchone()  # type: ignore[misc]
+            (value,) = cursor.fetchone()
             assert isinstance(value, datetime.datetime)
             assert value == dt
             assert value.utcoffset() == datetime.timedelta(hours=5, minutes=30)
@@ -59,7 +59,7 @@ class TestDateTimeRoundTrip:
             cursor.execute("DELETE FROM dt_us")
             cursor.execute("INSERT INTO dt_us (ts) VALUES (?)", [dt])
             cursor.execute("SELECT ts FROM dt_us")
-            (value,) = cursor.fetchone()  # type: ignore[misc]
+            (value,) = cursor.fetchone()
             assert value.microsecond == 123456
             cursor.execute("DROP TABLE dt_us")
 
@@ -73,7 +73,7 @@ class TestDateTimeRoundTrip:
             cursor.execute("DELETE FROM dt_null")
             cursor.execute("INSERT INTO dt_null (ts) VALUES (NULL)")
             cursor.execute("SELECT ts FROM dt_null")
-            (value,) = cursor.fetchone()  # type: ignore[misc]
+            (value,) = cursor.fetchone()
             assert value is None
             cursor.execute("DROP TABLE dt_null")
 
@@ -87,7 +87,7 @@ class TestDateTimeRoundTrip:
             cursor.execute("DELETE FROM dt_date")
             cursor.execute("INSERT INTO dt_date (d) VALUES (?)", [d])
             cursor.execute("SELECT d FROM dt_date")
-            (value,) = cursor.fetchone()  # type: ignore[misc]
+            (value,) = cursor.fetchone()
             assert isinstance(value, datetime.datetime)
             assert value.date() == d
             cursor.execute("DROP TABLE dt_date")
@@ -108,7 +108,7 @@ class TestTimeBindParam:
             cursor.execute("DELETE FROM t_naive")
             cursor.execute("INSERT INTO t_naive (v) VALUES (?)", [t])
             cursor.execute("SELECT v FROM t_naive")
-            (value,) = cursor.fetchone()  # type: ignore[misc]
+            (value,) = cursor.fetchone()
             assert value == "12:30:45"
             cursor.execute("DROP TABLE t_naive")
 
@@ -120,7 +120,7 @@ class TestTimeBindParam:
             cursor.execute("DELETE FROM t_us")
             cursor.execute("INSERT INTO t_us (v) VALUES (?)", [t])
             cursor.execute("SELECT v FROM t_us")
-            (value,) = cursor.fetchone()  # type: ignore[misc]
+            (value,) = cursor.fetchone()
             assert value == "12:30:45.123456+00:00"
             cursor.execute("DROP TABLE t_us")
 
@@ -143,7 +143,7 @@ class TestUnixtimeColumn:
             cursor.execute("DELETE FROM ut_test")
             cursor.execute("INSERT INTO ut_test (ts) VALUES (?)", [epoch])
             cursor.execute("SELECT ts FROM ut_test")
-            (value,) = cursor.fetchone()  # type: ignore[misc]
+            (value,) = cursor.fetchone()
             assert isinstance(value, datetime.datetime)
             assert value == expected
             cursor.execute("DROP TABLE ut_test")

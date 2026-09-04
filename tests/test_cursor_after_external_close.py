@@ -15,21 +15,11 @@ class TestCursorAfterExternalConnectionClose:
     """A live cursor whose connection was closed externally must raise InterfaceError."""
 
     def test_sync_cursor_execute_after_connection_close(self) -> None:
-        # When the connection's _run_sync raises InterfaceError (its response
-        # to a closed connection), the cursor surface must propagate it.
-        from dqlitedbapi.cursor import Cursor
+        from dqlitedbapi.connection import Connection
 
-        class _ClosedConn:
-            _closed = True
-
-            def _check_thread(self) -> None:
-                return None
-
-            def _run_sync(self, coro) -> None:  # noqa: ANN001
-                coro.close()
-                raise InterfaceError("Connection is closed")
-
-        cursor = Cursor(_ClosedConn())  # type: ignore[arg-type]
+        conn = Connection("localhost:19001", timeout=2.0)
+        cursor = conn.cursor()
+        conn.close()
 
         with pytest.raises(InterfaceError):
             cursor.execute("SELECT 1")
