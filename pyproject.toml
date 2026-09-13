@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dqlite-dbapi"
-version = "0.6.0"
+version = "0.7.0"
 description = "PEP 249 (DB-API 2.0) compliant interface for dqlite"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -26,8 +26,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "dqlite-client>=0.6.0,<0.7.0",
-    "dqlite-wire>=0.6.0,<0.7.0",
+    "dqlite-client>=0.7.0,<0.8.0",
+    "dqlite-wire>=0.7.0,<0.8.0",
 ]
 
 [tool.uv.sources]
@@ -56,6 +56,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: requires a running dqlite cluster"]
 filterwarnings = [
     # Promote deprecations to errors so the suite catches stdlib
     # deprecation surface under the CPython version the workspace
@@ -69,7 +70,7 @@ filterwarnings = [
 [tool.mypy]
 strict = true
 python_version = "3.13"
-# Tests live under ``tests/`` with no ``__init__.py``; mypy needs
+# Tests are not a package; mypy needs
 # ``explicit_package_bases`` (or namespace packages) to avoid the
 # duplicate-conftest module-name collision when scanning sibling
 # integration/ subdirectories. ``mypy_path`` mirrors the
