@@ -256,9 +256,9 @@ class TestBindBoundaryDataErrors:
         """A bind value over the wire BLOB cap must surface as ``DataError``,
         never a raw EncodeError or silent truncation."""
         from dqlitedbapi.exceptions import DataError
-        from dqlitewire.types import _MAX_BLOB_SIZE
+        from dqlitewire.limits import MAX_BLOB_SIZE
 
-        big = b"x" * (_MAX_BLOB_SIZE + 1)
+        big = b"x" * (MAX_BLOB_SIZE + 1)
         with connect(cluster_address, database="test_bind_overflow") as conn:
             c = conn.cursor()
             with pytest.raises(DataError):
