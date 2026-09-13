@@ -91,7 +91,8 @@ async def test_async_nested_savepoint(cluster_address: str) -> None:
 
 
 def test_sync_savepoint_autobegin_persists_on_commit(cluster_address: str) -> None:
-    """Bare SAVEPOINT auto-begins a tx; RELEASE of the outermost savepoint commits it."""
+    """Bare SAVEPOINT auto-begins a tx; RELEASE of the outermost savepoint commits it
+    server-side while the local flag stays conservatively set until commit()."""
     conn = connect(cluster_address, timeout=2.0)
     try:
         cur = conn.cursor()
@@ -104,6 +105,8 @@ def test_sync_savepoint_autobegin_persists_on_commit(cluster_address: str) -> No
         cur.execute("INSERT INTO test_sp_dbapi_autobegin (n) VALUES (1)")
         assert conn.in_transaction is True
         cur.execute("RELEASE SAVEPOINT sp1")
+        assert conn.in_transaction is True
+        conn.commit()
         assert conn.in_transaction is False
 
         cur.execute("SELECT n FROM test_sp_dbapi_autobegin")
@@ -125,6 +128,8 @@ async def test_async_savepoint_autobegin_persists_on_commit(cluster_address: str
         await cur.execute("INSERT INTO test_sp_dbapi_autobegin_aio (n) VALUES (1)")
         assert conn.in_transaction is True
         await cur.execute("RELEASE SAVEPOINT sp1")
+        assert conn.in_transaction is True
+        await conn.commit()
         assert conn.in_transaction is False
 
         await cur.execute("SELECT n FROM test_sp_dbapi_autobegin_aio")

@@ -4,7 +4,7 @@ from typing import Final, Literal, NoReturn
 
 from dqlitedbapi.exceptions import NotSupportedError
 
-__version__: Final[str] = "0.4.0"
+__version__: Final[str] = "0.5.0"
 
 apilevel: Final[Literal["2.0"]] = "2.0"
 threadsafety: Final[Literal[2]] = 2
