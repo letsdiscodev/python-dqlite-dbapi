@@ -144,9 +144,7 @@ def test_sync_cursor_execute_rejects_non_str_operation(bad: object) -> None:
 
 @pytest.mark.parametrize("bad", [None, b"SELECT 1", 42, ["SELECT 1"]])
 async def test_async_cursor_execute_rejects_non_str_operation(bad: object) -> None:
-    from dqlitedbapi.aio import aconnect
-
-    conn = await aconnect("localhost:9001")
+    conn = AsyncConnection("localhost:9001")  # lazy: the guard fires before any dial
     cur = conn.cursor()
     try:
         with pytest.raises(ProgrammingError, match="operation must be a str"):
@@ -174,9 +172,7 @@ def test_sync_cursor_executemany_rejects_non_str_operation(bad: object) -> None:
     "bad", [None, b"INSERT INTO t VALUES (?)", 42, ["INSERT INTO t VALUES (?)"]]
 )
 async def test_async_cursor_executemany_rejects_non_str_operation(bad: object) -> None:
-    from dqlitedbapi.aio import aconnect
-
-    conn = await aconnect("localhost:9001")
+    conn = AsyncConnection("localhost:9001")  # lazy: the guard fires before any dial
     cur = conn.cursor()
     try:
         with pytest.raises(ProgrammingError, match="operation must be a str"):
@@ -205,9 +201,7 @@ def test_sync_connection_executemany_shortcut_rejects_non_str_operation(bad: obj
 async def test_async_connection_executemany_shortcut_rejects_non_str_operation(
     bad: object,
 ) -> None:
-    from dqlitedbapi.aio import aconnect
-
-    conn = await aconnect("localhost:9001")
+    conn = AsyncConnection("localhost:9001")  # lazy: the guard fires before any dial
     try:
         with pytest.raises(ProgrammingError, match="operation must be a str"):
             await conn.executemany(bad, [(1,), (2,)])  # type: ignore[arg-type]

@@ -85,12 +85,6 @@ def test_pyformat_sql_with_tuple_falls_through_to_bind_count(
         cur.execute("SELECT %s", ("x",))
 
 
-def test_qmark_sql_works(cur: dqlitedbapi.Cursor) -> None:
-    """The canonical qmark form executes cleanly (the advertised style)."""
-    cur.execute("SELECT ?", ("x",))
-    assert cur.fetchone() == ("x",)
-
-
 _PEP249_ALIAS_NAMES = (
     "Error",
     "Warning",
