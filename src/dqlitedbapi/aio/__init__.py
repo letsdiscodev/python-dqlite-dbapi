@@ -5,6 +5,7 @@
 names so aiosqlite-style code can import one namespace.
 """
 
+from typing import Any
 from typing import Final as _Final
 
 from dqliteclient import DEFAULT_CLOSE_TIMEOUT_SECONDS as _DEFAULT_CLOSE_TIMEOUT_SECONDS
@@ -24,6 +25,7 @@ from dqlitedbapi._module import (
     sqlite_version_info,
     threadsafety,
 )
+from dqlitedbapi._sql import SESSION_MODES, validate_session_mode
 from dqlitedbapi.aio.connection import AsyncConnection, apply_stdlib_connect_kwargs
 from dqlitedbapi.aio.cursor import AsyncCursor
 from dqlitedbapi.exceptions import (
@@ -80,6 +82,8 @@ __all__ = [
     "PARSE_COLNAMES",
     "connect",
     "aconnect",
+    "SESSION_MODES",
+    "validate_session_mode",
     "AsyncConnection",
     "AsyncCursor",
     "DialFunc",
@@ -162,40 +166,9 @@ def connect(
     return connection
 
 
-async def aconnect(
-    address: str,
-    *,
-    database: str = "default",
-    timeout: float = DEFAULT_TIMEOUT_SECONDS,
-    max_total_rows: int | None = _DEFAULT_MAX_TOTAL_ROWS,
-    max_continuation_frames: int | None = _DEFAULT_MAX_CONTINUATION_FRAMES,
-    max_message_size: int | None = None,
-    trust_server_heartbeat: bool = False,
-    close_timeout: float = DEFAULT_CLOSE_TIMEOUT_SECONDS,
-    dial_timeout: float | None = None,
-    attempt_timeout: float | None = None,
-    dial_func: DialFunc | None = None,
-    busy_timeout: float = 5.0,
-    session_mode: str | None = None,
-    **stdlib_kwargs: object,
-) -> AsyncConnection:
-    """Like :func:`connect`, but awaits the wire session before returning."""
-    connection = connect(
-        address,
-        database=database,
-        timeout=timeout,
-        max_total_rows=max_total_rows,
-        max_continuation_frames=max_continuation_frames,
-        max_message_size=max_message_size,
-        trust_server_heartbeat=trust_server_heartbeat,
-        close_timeout=close_timeout,
-        dial_timeout=dial_timeout,
-        attempt_timeout=attempt_timeout,
-        dial_func=dial_func,
-        busy_timeout=busy_timeout,
-        session_mode=session_mode,
-        **stdlib_kwargs,
-    )
+async def aconnect(address: str, **kwargs: Any) -> AsyncConnection:
+    """Like :func:`connect` (same keyword arguments), but awaits the wire session."""
+    connection = connect(address, **kwargs)
     try:
         await connection.connect()
     except BaseException:

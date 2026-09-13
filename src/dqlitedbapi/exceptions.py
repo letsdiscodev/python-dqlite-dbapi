@@ -1,5 +1,6 @@
 """PEP 249 exception hierarchy and translation of client-layer errors."""
 
+import os
 import sqlite3 as _sqlite3
 from collections.abc import Awaitable
 from functools import lru_cache
@@ -13,6 +14,7 @@ from dqlitewire import (
     DQLITE_PARSE,
     DQLITE_PROTO,
     LEADER_ERROR_CODES,
+    NO_TRANSACTION_MESSAGE_SUBSTRINGS,
     SQLITE_AUTH,
     SQLITE_CONSTRAINT,
     SQLITE_ERROR,
@@ -61,8 +63,6 @@ CLUSTER_POLICY_REJECTION_PREFIX: Final[str] = "Cluster policy rejection"
 AMBIGUOUS_COMMIT_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_IOERR_LEADERSHIP_LOST, SQLITE_IOERR_LEADERSHIP_LOST_LEGACY}
 )
-
-_NO_TRANSACTION_SUBSTRINGS: Final[tuple[str, ...]] = ("no transaction is active",)
 
 
 class Warning(Exception):  # noqa: A001, N818 - PEP 249 mandated name
@@ -144,6 +144,30 @@ class NotSupportedError(DatabaseError):
 
 class AdapterLookupError(ProgrammingError, LookupError):
     """``unregister_adapter`` found no adapter for the type."""
+
+
+class ErrorAttributes:
+    """PEP 249 optional extension: the exception classes as connection attributes."""
+
+    Error = Error
+    Warning = Warning  # noqa: A003 - PEP 249 mandated name
+    InterfaceError = InterfaceError
+    DatabaseError = DatabaseError
+    DataError = DataError
+    OperationalError = OperationalError
+    IntegrityError = IntegrityError
+    InternalError = InternalError
+    ProgrammingError = ProgrammingError
+    NotSupportedError = NotSupportedError
+    AmbiguousCommitError = AmbiguousCommitError
+
+
+def raise_if_forked(pid: int) -> None:
+    if os.getpid() != pid:
+        raise InterfaceError(
+            f"Connection used after fork; reconstruct it in the child process "
+            f"(created in pid {pid}, current pid {os.getpid()})"
+        )
 
 
 def _cap(text: str) -> str:
@@ -279,4 +303,4 @@ def is_no_transaction_error(exc: BaseException) -> bool:
     if code is None or primary_sqlite_code(code) != SQLITE_ERROR:
         return False
     raw = (getattr(exc, "raw_message", None) or str(exc)).lower()
-    return any(s in raw for s in _NO_TRANSACTION_SUBSTRINGS)
+    return any(s in raw for s in NO_TRANSACTION_MESSAGE_SUBSTRINGS)

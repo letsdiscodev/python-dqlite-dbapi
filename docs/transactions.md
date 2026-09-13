@@ -58,6 +58,13 @@ in `BEGIN` / `COMMIT` / `ROLLBACK`. Calling `commit()` or `rollback()`
 inside the block raises `InterfaceError`, because the block owns the
 boundaries; use `SAVEPOINT` for nesting.
 
+`in_transaction` is a conservative local flag: `BEGIN` and `SAVEPOINT` set
+it, `COMMIT` and `ROLLBACK` clear it, and `RELEASE` leaves it alone. After
+releasing an outermost savepoint opened outside a `BEGIN` the engine is back
+in autocommit but the flag stays `True` until the next `COMMIT` or
+`ROLLBACK`; the driver treats the server's "no transaction is active" reply
+to that redundant statement as success.
+
 ## `commit()` / `rollback()` details
 
 - Calling `commit()` / `rollback()` before any query has run is a silent

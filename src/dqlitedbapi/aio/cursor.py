@@ -393,11 +393,6 @@ class AsyncCursor:
         self._check_open()
         return self._fetchall(self)
 
-    def drain_rows(self) -> list[tuple[Any, ...]]:
-        """Hand over the raw row buffer (no ``row_factory``) and leave the cursor empty."""
-        rows, self._rows, self._index = self._rows, [], 0
-        return rows
-
     # -- lifecycle -------------------------------------------------------------
 
     def close(self) -> None:

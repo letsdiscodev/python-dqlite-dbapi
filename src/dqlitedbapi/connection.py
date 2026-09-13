@@ -11,19 +11,23 @@ from types import TracebackType
 from typing import Any, NoReturn, Self
 
 from dqliteclient import DEFAULT_CLOSE_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS, DialFunc
-from dqlitedbapi import exceptions as _exc
 from dqlitedbapi._loop import LoopThread
 from dqlitedbapi._stubs import UnsupportedSqlite3Api
 from dqlitedbapi.aio.connection import AsyncConnection
 from dqlitedbapi.cursor import Cursor
-from dqlitedbapi.exceptions import InterfaceError, ProgrammingError
+from dqlitedbapi.exceptions import (
+    ErrorAttributes,
+    InterfaceError,
+    ProgrammingError,
+    raise_if_forked,
+)
 from dqlitedbapi.types import RowFactory
 from dqlitewire import DEFAULT_MAX_CONTINUATION_FRAMES, DEFAULT_MAX_TOTAL_ROWS
 
 __all__ = ["Connection"]
 
 
-class Connection(UnsupportedSqlite3Api):
+class Connection(UnsupportedSqlite3Api, ErrorAttributes):
     """PEP 249 connection.
 
     Every call runs the matching :class:`AsyncConnection` coroutine on a private loop
@@ -31,18 +35,6 @@ class Connection(UnsupportedSqlite3Api):
     creating thread; with ``False`` any thread may use it and calls are serialised, but
     each thread must use its own cursor.
     """
-
-    Error = _exc.Error
-    Warning = _exc.Warning  # noqa: A003 - PEP 249 mandated name
-    InterfaceError = _exc.InterfaceError
-    DatabaseError = _exc.DatabaseError
-    DataError = _exc.DataError
-    OperationalError = _exc.OperationalError
-    IntegrityError = _exc.IntegrityError
-    InternalError = _exc.InternalError
-    ProgrammingError = _exc.ProgrammingError
-    NotSupportedError = _exc.NotSupportedError
-    AmbiguousCommitError = _exc.AmbiguousCommitError
 
     def __init__(
         self,
@@ -93,11 +85,7 @@ class Connection(UnsupportedSqlite3Api):
     # -- plumbing ----------------------------------------------------------------
 
     def _check_thread(self) -> None:
-        if os.getpid() != self._pid:
-            raise InterfaceError(
-                f"Connection used after fork; reconstruct it in the child process "
-                f"(created in pid {self._pid}, current pid {os.getpid()})"
-            )
+        raise_if_forked(self._pid)
         if self._check_same_thread and threading.get_ident() != self._thread_id:
             raise ProgrammingError(
                 "dqlitedbapi objects created in a thread can only be used in that same "

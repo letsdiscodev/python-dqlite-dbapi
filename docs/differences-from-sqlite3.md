@@ -35,7 +35,7 @@ covers the differences you are most likely to notice when porting code.
   with an explicit `LIMIT`.
 - **No SQLite extension APIs.** `create_function`, `create_aggregate`,
   `create_window_function`, `iterdump`, `backup`, `set_authorizer`,
-  `serialize`, `blobopen`, `executescript`, and `register_converter` have no
+  `serialize`, `blobopen`, `executescript`, and `register_converter` (a module function) have no
   server-side counterpart in dqlite; their stubs raise `NotSupportedError`.
 - **A lost connection stays lost.** When the wire session drops (transport
   error, leader change, or an interrupted call), `closed` becomes `True`,

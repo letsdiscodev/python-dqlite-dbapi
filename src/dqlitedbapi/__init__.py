@@ -17,6 +17,7 @@ from dqlitedbapi._module import (
     sqlite_version_info,
     threadsafety,
 )
+from dqlitedbapi._sql import SESSION_MODES, validate_session_mode
 from dqlitedbapi.aio.connection import apply_stdlib_connect_kwargs as _apply_stdlib_connect_kwargs
 from dqlitedbapi.connection import Connection
 from dqlitedbapi.cursor import Cursor
@@ -70,6 +71,8 @@ __all__ = [
     "PARSE_DECLTYPES",
     "PARSE_COLNAMES",
     "connect",
+    "SESSION_MODES",
+    "validate_session_mode",
     "Connection",
     "Cursor",
     "DialFunc",

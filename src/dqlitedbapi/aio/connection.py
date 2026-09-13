@@ -31,12 +31,14 @@ from dqlitedbapi.exceptions import (
     AMBIGUOUS_COMMIT_CODES,
     FAILED_TO_CONNECT_PREFIX,
     AmbiguousCommitError,
+    ErrorAttributes,
     InterfaceError,
     NotSupportedError,
     OperationalError,
     ProgrammingError,
     call,
     is_no_transaction_error,
+    raise_if_forked,
     translate,
 )
 from dqlitedbapi.types import RowFactory, is_int_not_bool
@@ -50,24 +52,12 @@ logger = logging.getLogger(__name__)
 _ISOLATION_LEVELS: Final[frozenset[str]] = frozenset({"", "DEFERRED", "IMMEDIATE", "EXCLUSIVE"})
 
 
-class AsyncConnection(UnsupportedSqlite3Api):
+class AsyncConnection(UnsupportedSqlite3Api, ErrorAttributes):
     """Connection to a dqlite cluster, bound to the event loop it first runs on.
 
     Operations are serialised by an internal lock, so concurrent tasks queue rather
     than fail. Statements autocommit unless an explicit ``BEGIN`` is open.
     """
-
-    Error = _exc.Error
-    Warning = _exc.Warning  # noqa: A003 - PEP 249 mandated name
-    InterfaceError = _exc.InterfaceError
-    DatabaseError = _exc.DatabaseError
-    DataError = _exc.DataError
-    OperationalError = _exc.OperationalError
-    IntegrityError = _exc.IntegrityError
-    InternalError = _exc.InternalError
-    ProgrammingError = _exc.ProgrammingError
-    NotSupportedError = _exc.NotSupportedError
-    AmbiguousCommitError = _exc.AmbiguousCommitError
 
     def __init__(
         self,
@@ -171,8 +161,10 @@ class AsyncConnection(UnsupportedSqlite3Api):
 
     @property
     def in_transaction(self) -> bool:
+        """Conservative: set by BEGIN / SAVEPOINT, cleared by COMMIT / ROLLBACK, so it can
+        read True after the outermost savepoint was released; see docs/transactions.md."""
         client = self._client
-        return client is not None and not self.closed and client.in_transaction
+        return client is not None and client.in_transaction
 
     @property
     def session_mode(self) -> str:
@@ -257,11 +249,7 @@ class AsyncConnection(UnsupportedSqlite3Api):
     # -- guards ------------------------------------------------------------------
 
     def _check_usable(self) -> None:
-        if os.getpid() != self._pid:
-            raise InterfaceError(
-                f"Connection used after fork; reconstruct it in the child process "
-                f"(created in pid {self._pid}, current pid {os.getpid()})"
-            )
+        raise_if_forked(self._pid)
         if self._closed:
             raise InterfaceError(f"Connection is closed (id={id(self)})")
         if self._invalidated:
@@ -442,6 +430,10 @@ class AsyncConnection(UnsupportedSqlite3Api):
             raise ProgrammingError(str(exc)) from exc
         if mode == self._session_mode:
             return
+        if self._client is None:  # applied when the wire session opens
+            self._check_usable()
+            self._session_mode = mode
+            return
         async with self._operation() as client:
             if client.in_transaction:
                 raise InterfaceError("set_session_mode() cannot be called inside a transaction")
@@ -502,7 +494,7 @@ class AsyncConnection(UnsupportedSqlite3Api):
         exc_tb: TracebackType | None,
     ) -> None:
         """Commit on clean exit, roll back on exception; does not close (stdlib parity)."""
-        if self.closed or self._client is None:
+        if self.closed:
             return
         if exc_type is None:
             await self.commit()

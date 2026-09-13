@@ -91,6 +91,16 @@ for.
 .venv/bin/pytest tests/ --ignore=tests/integration
 ```
 
+## Commit messages
+
+Commit messages must not carry internal workflow vocabulary ("Round N",
+"Phase N", issue tokens, `done/*.md` references). The shared checker lives in
+the sibling `python-dqlite-dev` checkout:
+
+```bash
+../python-dqlite-dev/scripts/check-commit-msg.sh --range origin/main..HEAD
+```
+
 ## PEP 249 Compliance
 
 This package implements the DB-API 2.0 specification (PEP 249):

@@ -28,6 +28,8 @@ Modules:
 | `aio/connection.py` | `AsyncConnection`: lifecycle, transactions, session mode, operation lock |
 | `aio/cursor.py` | `AsyncCursor`: execute / executemany, result buffering, description |
 | `connection.py`, `cursor.py` | sync adapters over the async classes |
+| `_module.py` | module-level PEP 249 constants (`apilevel`, `paramstyle`, `sqlite_version_info`) |
+| `_stubs.py` | stdlib `sqlite3` methods with no dqlite counterpart, raising `NotSupportedError` |
 | `_loop.py` | the background loop thread used by the sync adapter |
 | `_sql.py` | statement classification (row-returning, DML verbs, BEGIN rewrite, PRAGMA intercept) |
 | `_busy.py` | `SQLITE_BUSY` retry curve |
@@ -161,9 +163,11 @@ The dialect relies on exactly this dbapi surface, beyond PEP 249 itself:
 
 - module: `connect`, exception classes, `paramstyle`, `sqlite_version_info`,
   `FAILED_TO_CONNECT_PREFIX`, `CLUSTER_POLICY_REJECTION_PREFIX`;
+- module: `SESSION_MODES`, `validate_session_mode`;
 - connection: `cursor()`, `commit()`, `rollback()`, `close()`,
   `force_close_transport()`, `connect()` (async), `session_mode`,
-  `default_session_mode`, `set_session_mode()`, `in_transaction`;
-- cursor: `execute()`, `executemany()`, `description`, `rowcount`,
-  `lastrowid`, `drain_rows()` (async), `close()`;
+  `default_session_mode`, `set_session_mode()`, `in_transaction`,
+  `invalidated`, `closed`;
+- cursor: `execute()`, `executemany()`, `fetchall()`, `description`,
+  `rowcount`, `lastrowid`, `close()`;
 - `types.format_utc_offset()` for the dialect's datetime processors.

@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Final
 
 from dqlitedbapi.exceptions import OperationalError
-from dqlitewire import SQLITE_BUSY
+from dqlitewire import SQLITE_BUSY, primary_sqlite_code
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,11 @@ def next_delay_ms(attempt: int, budget_ms: int) -> int | None:
 
 
 def is_busy(exc: BaseException) -> bool:
-    return isinstance(exc, OperationalError) and exc.code == SQLITE_BUSY
+    return (
+        isinstance(exc, OperationalError)
+        and exc.code is not None
+        and primary_sqlite_code(exc.code) == SQLITE_BUSY
+    )
 
 
 async def retry_on_busy[T](busy_timeout: float, attempt: Callable[[], Awaitable[T]]) -> T:

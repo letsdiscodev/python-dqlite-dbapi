@@ -20,10 +20,9 @@ def _restore_adapters() -> Iterator[None]:
         _ADAPTERS.update(snapshot)
 
 
-# The sibling python-dqlite-dev checkout provides the ``cluster_control`` fixture.
+# The sibling python-dqlite-dev checkout provides dqlitetestlib (cluster fixtures).
 _TESTLIB = Path(__file__).resolve().parent.parent.parent / "python-dqlite-dev" / "testlib"
 if _TESTLIB.exists() and str(_TESTLIB) not in sys.path:
     sys.path.insert(0, str(_TESTLIB))
-
 if _TESTLIB.exists():
     pytest_plugins = ["dqlitetestlib.fixtures"]
